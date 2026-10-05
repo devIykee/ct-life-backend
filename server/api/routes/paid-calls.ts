@@ -36,6 +36,9 @@ const EndBody = z.object({
   secondsUsed: z.number().int().min(0),
 });
 
+/**
+ *
+ */
 export function registerPaidCallRoutes(app: FastifyInstance): void {
   app.post(
     '/v1/paid-calls',

@@ -167,6 +167,9 @@ export async function updateCreator(
   return getCreatorByUserId(ctx, userId);
 }
 
+/**
+ *
+ */
 export async function getCreatorByUserId(ctx: AppContext, userId: string): Promise<CreatorProfile> {
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<{

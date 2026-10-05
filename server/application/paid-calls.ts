@@ -355,6 +355,9 @@ export async function endPaidCall(
   return loadPaidCall(ctx, callId);
 }
 
+/**
+ *
+ */
 export async function loadPaidCall(ctx: AppContext, callId: string): Promise<PaidCallRow> {
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<{
