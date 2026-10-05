@@ -4,6 +4,29 @@
 
 The full content lives in M2 onward. M0 ships the directory layout and the pure-library contract. M2 fills in the nine Phase 1 archetypes.
 
+## Perp Degen NPC (Mermaid)
+
+```mermaid
+stateDiagram-v2
+    [*] --> goto
+    goto: goto perp_terminal
+    act: act frantic_type 60-120s
+    rekt: react liquidated
+    moon: react moon_jump
+    talk: talk to the moon
+    leave: leave to rekt_clinic
+    cry: act cry at rekt_clinic
+
+    goto --> act : arrived
+    act --> rekt : 70% (rng) or liquidation event
+    act --> moon : 30% (rng)
+    rekt --> leave : anim end
+    leave --> cry : arrived
+    cry --> goto : 30s, back to perp_terminal
+    moon --> talk : anim end
+    talk --> goto : 4s, back to perp_terminal
+```
+
 ## Package layout
 
 ```

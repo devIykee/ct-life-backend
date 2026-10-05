@@ -251,3 +251,32 @@ $ pnpm test:unit    → 10/10 passed
 $ pnpm smoke        → 7/7 required checks passed
 $ pnpm db:verify    → 15/15 schema invariants passed
 ```
+
+## M2 — NPC brain (#30)
+
+**Status:** DONE
+**Last command:** `pnpm test:unit` → 20/20 passed
+**Last commit:** pending (this session)
+
+### Done in this slice
+
+- [x] `packages/npc-brain/src/clock.ts` — `Clock`, `SystemClock`, `SimulatedClock`.
+- [x] `packages/npc-brain/src/rng.ts` — `SeededRng` (mulberry32).
+- [x] `packages/npc-brain/src/index.ts` — all 9 Phase 1 archetypes as pure state machines: `town_crier`, `giveaway_guy`, `reply_guy`, `perp_degen_npc`, `rekt_guy`, `wallet_tracker`, `doomposter`, `spaces_host`, `ore_miner`.
+- [x] `packages/npc-brain/src/index.test.ts` — 10 tests on a `SimulatedClock` and fixed seed, including a reproducibility test.
+- [x] `packages/npc-brain/package.json` — workspace package declaration.
+- [x] `docs/NPCS.md` — Mermaid state diagram for `perp_degen_npc`.
+
+### Static gate this slice
+
+```
+$ pnpm typecheck    → no errors
+$ pnpm lint         → no errors
+$ pnpm format:check → all files match
+$ pnpm docs:check   → OK
+$ pnpm boundary:check → layering OK
+$ pnpm contract:check  → all steps green
+$ pnpm test:unit    → 20/20 passed (10 from npc-brain)
+$ pnpm smoke        → 7/7 required checks passed
+$ pnpm db:verify    → 15/15 schema invariants passed
+```
