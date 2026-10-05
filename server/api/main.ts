@@ -33,6 +33,7 @@ import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
+import { registerBusinessRoutes } from './routes/businesses.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -140,6 +141,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerCosmeticRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
+  registerBusinessRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 
