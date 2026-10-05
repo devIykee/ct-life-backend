@@ -16,6 +16,7 @@ import { registerCoreRoutes } from './routes/core.js';
 import { registerSocialRoutes } from './routes/social.js';
 import { registerWorkRoutes } from './routes/work.js';
 import { registerOpsRoutes } from './routes/ops.js';
+import { registerPaymentsRoutes } from './routes/payments.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -52,6 +53,19 @@ export async function buildServer(): Promise<ServerHandle> {
     reply.header('x-request-id', id);
     req.ctx = ctx;
     done();
+  });
+
+  // Capture the raw body for signed webhook routes. The body
+  // is the same JSON Fastify would otherwise parse; we just
+  // preserve the original string for HMAC verification.
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (req, body, done) => {
+    (req as unknown as { rawBody: string }).rawBody = body as string;
+    try {
+      const parsed = body === '' ? {} : JSON.parse(body as string);
+      done(null, parsed);
+    } catch (e) {
+      done(e as Error, undefined);
+    }
   });
 
   // Global onSend hook: caches idempotent responses.
@@ -93,6 +107,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerSocialRoutes(app);
   registerWorkRoutes(app);
   registerOpsRoutes(app, ctx);
+  registerPaymentsRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 
