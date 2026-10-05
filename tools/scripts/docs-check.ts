@@ -320,6 +320,8 @@ function main(): void {
   }
 
   if (!failed) {
+    // eslint-disable-next-line no-console
+    console.log(
       `docs-check: OK (${referenced.size} env vars in code, ${errorCodes.size} error codes, ${messages.size} realtime messages, ${brokenLinks.length === 0 ? 'all links resolve' : 'all links resolve'}).`,
     );
     process.exit(0);
