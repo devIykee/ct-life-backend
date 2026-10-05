@@ -1,0 +1,13 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "traits": [
+    { "id": "fast_talker", "label": "Fast Talker", "effect": "say cooldown 2s -> 1.5s" },
+    { "id": "deep_pockets", "label": "Deep Pockets", "effect": "rent penalty 0.5x" },
+    { "id": "iron_will", "label": "Iron Will", "effect": "Sanity decay 0.8x" },
+    { "id": "early_bird", "label": "Early Bird", "effect": "shift pay +10% before noon" },
+    { "id": "sleuth", "label": "Sleuth", "effect": "Sleuth NPC pays you for tips" },
+    { "id": "rug_veteran", "label": "Rug Veteran", "effect": "REKT card visual variant" }
+  ]
+}

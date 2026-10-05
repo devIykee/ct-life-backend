@@ -1,0 +1,11 @@
+{
+  "version": "1.0.0-rc1",
+  "minerTiers": [
+    { "id": "none", "label": "None", "minOre": 0, "minStakedOre": 0, "hardhat": false },
+    { "id": "prospector", "label": "Prospector", "minOre": 1, "minStakedOre": 0, "hardhat": false },
+    { "id": "miner", "label": "Miner", "minOre": 1, "minStakedOre": 1, "hardhat": true },
+    { "id": "refiner", "label": "Refiner", "minOre": 1, "minStakedOre": 10, "hardhat": true }
+  ],
+  "boardCacheSec": 2,
+  "maxRoundAgeSec": 600
+}

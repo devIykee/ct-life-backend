@@ -1,0 +1,11 @@
+{
+  "_owner": "BE (FE writes the words)",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "_note": "BE owns the IDs. FE authors the localized strings in a sibling locale file.",
+  "toasts": [
+    { "id": "toast_drained", "textId": "ui.toast.drained" },
+    { "id": "toast_payment_confirmed", "textId": "ui.toast.paymentConfirmed" },
+    { "id": "toast_promoted", "textId": "ui.toast.promoted" }
+  ]
+}

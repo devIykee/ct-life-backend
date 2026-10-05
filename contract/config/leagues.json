@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0-rc1",
+  "leagues": [
+    {
+      "id": "iron",
+      "label": "Iron",
+      "minNetWorthCents": 0,
+      "maxMembers": 5000,
+      "promote": "above:bronze"
+    },
+    {
+      "id": "bronze",
+      "label": "Bronze",
+      "minNetWorthCents": 100000,
+      "maxMembers": 2000,
+      "promote": "above:silver"
+    },
+    {
+      "id": "silver",
+      "label": "Silver",
+      "minNetWorthCents": 1000000,
+      "maxMembers": 800,
+      "promote": "above:gold"
+    },
+    {
+      "id": "gold",
+      "label": "Gold",
+      "minNetWorthCents": 10000000,
+      "maxMembers": 200,
+      "promote": "above:diamond"
+    },
+    {
+      "id": "diamond",
+      "label": "Diamond",
+      "minNetWorthCents": 100000000,
+      "maxMembers": 50,
+      "promote": null
+    }
+  ],
+  "seasonLengthDays": 30,
+  "seasonResetCron": "Mon 00:00 UTC"
+}

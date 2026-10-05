@@ -1,0 +1,2928 @@
+openapi: 3.1.0
+info:
+  title: CT Life REST API
+  version: 1.0.0-rc1
+  description: |
+    REST v1 for the CT Life backend. Every endpoint is keyed by `x-phase` (1-6)
+    and lists the error codes it can return, the auth policy, the idempotency
+    contract, the headers it reads, and at least one example response.
+
+    The contract is the source of truth; the Unity client consumes it. Breaking
+    changes bump the major version; additive changes bump the minor version
+    and are recorded in `contract/CHANGELOG.md`.
+
+    All money is `bigint` cents (field names end in `Cents`) or string base
+    units (token amounts). Times are ISO-8601 UTC for REST, epoch milliseconds
+    for realtime. The week runs Mon 00:00 to Sun 23:59:59 UTC.
+  contact:
+    name: deviykee
+    url: https://github.com/devIykee/ct-life-backend
+  license:
+    name: MIT
+    url: https://github.com/devIykee/ct-life-backend/blob/main/LICENSE
+
+servers:
+  - url: https://api.ctlife.dev/v1
+    description: prod
+  - url: https://staging-api.ctlife.dev/v1
+    description: staging
+  - url: http://localhost:4010/v1
+    description: local
+
+tags:
+  - name: auth
+    description: Sign In With Solana, JWT, refresh, JWKS. Phases 1+.
+  - name: player
+    description: Profile, character, lottery, needs, homes. Phase 1+ except where noted.
+  - name: work
+    description: Careers, shifts, gigs, daily clue. Phase 1+ except where noted.
+  - name: markets
+    description: Coin trades, perps, predictions, alpha calls, smart money. Phase 2+.
+  - name: social
+    description: Public profile, blocks, reports, leaderboards, tombstones, feed, DMs, tips. Phase 1+ except where noted.
+  - name: voice
+    description: RTC tokens, spaces, free video calls, creator profile, paid calls. Phase 3+.
+  - name: payments
+    description: Top-up, cosmetic, ad booking, season pass intents. Phase 2+.
+  - name: shop
+    description: Shop, inventory. Phase 4+.
+  - name: ads
+    description: Ad slots, uploads, bookings, live creatives. Phase 5+.
+  - name: ore
+    description: ORE board, my ORE, stake transaction builder. Phase 2+.
+  - name: liveops
+    description: Active events, weekly meta, push registration. Phase 1+ except where noted.
+  - name: admin
+    description: Moderation, ad approval, force-price, skill overrides. Backend-only.
+  - name: webhooks
+    description: Helius and LiveKit signed webhooks. Backend-only.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/challenge:
+    get:
+      tags: [auth]
+      operationId: getAuthChallenge
+      summary: Issue a SIWS challenge (nonce + SIWS message fields).
+      description: |
+        Returns a single-use nonce (5 min) and the SIWS message fields. The
+        client builds `sign_in_payload` for the wallet, signs it, and posts
+        the result to `POST /auth/verify`. Anonymous.
+      x-phase: 1
+      security: []
+      responses:
+        "200":
+          description: Challenge
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthChallenge" }
+              example:
+                nonce: "4e9c7b27-1f0a-4d3e-9a5e-2c7e0d4b3a8f"
+                domain: "ctlife.dev"
+                statement: "Sign in to CT Life"
+                uri: "https://ctlife.dev"
+                version: "1"
+                chainId: "solana:devnet"
+                issuedAt: "2026-10-05T12:00:00.000Z"
+                expirationTime: "2026-10-05T12:05:00.000Z"
+        "5xx":
+          $ref: "#/components/responses/ServerError"
+
+  /auth/verify:
+    post:
+      tags: [auth]
+      operationId: postAuthVerify
+      summary: Verify a SIWS signature and issue a JWT pair.
+      description: |
+        Verifies the Ed25519 signature against the nonce, looks up the Seeker
+        Genesis Token on mainnet via Helius, upserts the user, and returns
+        `{ accessToken, refreshToken, user }`. Anonymous.
+      x-phase: 1
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AuthVerifyRequest" }
+            example:
+              address: "Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ"
+              signedMessage: "ctlife.dev wants you to sign in with your Solana account..."
+              signature: "base64-encoded-ed25519-signature"
+              nonce: "4e9c7b27-1f0a-4d3e-9a5e-2c7e0d4b3a8f"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthVerifyResponse" }
+              example:
+                accessToken: "eyJhbGciOiJSUzI1NiIs..."
+                refreshToken: "rt_8f4..."
+                user:
+                  id: "0192a1c2-..."
+                  wallet: "Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ"
+                  isSeeker: true
+                  hasCharacter: false
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "401":
+          description: Nonce invalid, signature invalid, or expired
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                NONCE_INVALID:
+                  value: { error: { code: "NONCE_INVALID", message: "Nonce is missing, used, or expired.", details: {} } }
+                SIGNATURE_INVALID:
+                  value: { error: { code: "SIGNATURE_INVALID", message: "Ed25519 signature did not verify.", details: {} } }
+                TOKEN_EXPIRED:
+                  value: { error: { code: "TOKEN_EXPIRED", message: "Access token expired; refresh.", details: {} } }
+        "409":
+          description: SGT already linked
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "SGT_ALREADY_LINKED", message: "This Seeker Genesis Token is already linked to another account.", details: {} } }
+        "5xx": { $ref: "#/components/responses/ServerError" }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      operationId: postAuthRefresh
+      summary: Rotate the refresh token and issue a new pair.
+      x-phase: 1
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refreshToken]
+              properties:
+                refreshToken: { type: string }
+            example:
+              refreshToken: "rt_8f4..."
+      responses:
+        "200":
+          description: New pair
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthVerifyResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: postAuthLogout
+      summary: Revoke the refresh token.
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Logged out }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /auth/jwks:
+    get:
+      tags: [auth]
+      operationId: getAuthJwks
+      summary: Public keys for verifying access tokens.
+      x-phase: 1
+      security: []
+      responses:
+        "200":
+          description: JWKS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items: { type: object }
+              example:
+                keys:
+                  - kty: "RSA"
+                    kid: "ctlife-1"
+                    use: "sig"
+                    alg: "RS256"
+                    n: "0vx7agoebGcQSuuU..."
+                    e: "AQAB"
+
+  /auth/dev:
+    post:
+      tags: [auth]
+      operationId: postAuthDev
+      summary: Dev-only auth (no signature). Disabled in staging and prod.
+      x-phase: 1
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [wallet]
+              properties:
+                wallet: { type: string }
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthVerifyResponse" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "404":
+          description: ENABLE_DEV_AUTH is not on, or APP_ENV is staging/prod
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "NOT_FOUND", message: "Endpoint disabled in this environment.", details: {} } }
+
+  /config:
+    get:
+      tags: [player]
+      operationId: getConfig
+      summary: All registries and game config.
+      description: |
+        Returns the full contract snapshot: every ID registry, every config
+        file. Cached by `version` and `minClientVersion` (ETag). The
+        `degraded` field lists features currently in degraded mode (kill
+        switches). Clients with `X-Client-Version` below `minClientVersion`
+        receive `CLIENT_OUTDATED` and must update.
+      x-phase: 1
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/XClientVersion"
+      responses:
+        "200":
+          description: Config
+          headers:
+            ETag:
+              schema: { type: string }
+              description: Strong ETag. Send `If-None-Match` to get 304.
+            Cache-Control:
+              schema: { type: string }
+              example: "public, max-age=60"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConfigResponse" }
+              example:
+                version: "1.0.0-rc1"
+                minClientVersion: "1.0.0-rc1"
+                degraded: []
+                venues: { "timeline_square": { "name": "Timeline Square", "maxClients": 50 } }
+        "304": { description: Not modified; ETag matches. }
+        "426":
+          description: Client outdated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "CLIENT_OUTDATED", message: "Update required. X-Client-Version is below minClientVersion.", details: { "minClientVersion": "1.0.0-rc1" } } }
+        "5xx": { $ref: "#/components/responses/ServerError" }
+
+  /me:
+    get:
+      tags: [player]
+      operationId: getMe
+      summary: Current player state.
+      x-phase: 1
+      responses:
+        "200":
+          description: Me
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+              example:
+                user:
+                  id: "0192a1c2-..."
+                  wallet: "Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ"
+                  isSeeker: true
+                  skrName: "anon"
+                character:
+                  alias: "anon"
+                  look: { skinTone: "tan", headId: "head_skull_visor", hairId: "hair_mohawk_pink", topId: "top_hoodie_black", bottomId: "bottom_jeans_indigo", shoesId: "shoes_sneakers_white", accId: "acc_aviators" }
+                  tribeId: "trencher"
+                  traitIds: ["fast_talker", "iron_will"]
+                  dreamId: "make_10k"
+                needs: { energy: 50, hunger: 50, fun: 50, hygiene: 50, sanity: 50 }
+                skills: { clout: 1, coding: 1, trading: 1, writing: 1, design: 1, security: 1 }
+                cashCents: 150000
+                debtCents: 0
+                homeId: "hacker_house"
+                minerTier: "none"
+                flags: {}
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /characters:
+    post:
+      tags: [player]
+      operationId: postCharacter
+      summary: Create the character for the current user.
+      description: |
+        Allowed once per user. `ageConfirmed: true` is required. The lottery
+        roll is forced before the character is created on a later milestone
+        (call `POST /lottery/roll`). The character's look is locked until
+        `PATCH /characters/me/look` in Phase 4.
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCharacterRequest" }
+            example:
+              alias: "anon"
+              look:
+                skinTone: "tan"
+                headId: "head_skull_visor"
+                hairId: "hair_mohawk_pink"
+                topId: "top_hoodie_black"
+                bottomId: "bottom_jeans_indigo"
+                shoesId: "shoes_sneakers_white"
+                accId: "acc_aviators"
+              traitIds: ["fast_talker", "iron_will"]
+              dreamId: "make_10k"
+              tribeId: "trencher"
+              ageConfirmed: true
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Character" }
+        "400":
+          description: Validation failed (ageConfirmed missing, invalid look, etc.)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "VALIDATION_FAILED", message: "Request body or params failed validation.", details: { "field": "ageConfirmed" } } }
+        "409":
+          description: Alias already taken
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "ALIAS_TAKEN", message: "Alias is taken.", details: {} } }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /lottery/roll:
+    post:
+      tags: [player]
+      operationId: postLotteryRoll
+      summary: Roll the birth lottery once.
+      description: |
+        Returns one of `seeker` (only if the wallet has a verified Seeker
+        Genesis Token), `insider`, or `exit_liquidity`. The weights in
+        `lottery.json` decide the outcome. Allowed once per account.
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Outcome
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [outcome, cashCents, debtCents, homeId]
+                properties:
+                  outcome: { type: string, enum: [seeker, insider, exit_liquidity] }
+                  cashCents: { type: integer }
+                  debtCents: { type: integer }
+                  homeId: { type: string }
+              example:
+                outcome: "insider"
+                cashCents: 300000
+                debtCents: 0
+                homeId: "studio"
+        "409":
+          description: Already rolled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "ALREADY_ROLLED", message: "Birth lottery has already been rolled for this account.", details: {} } }
+
+  /needs/actions:
+    post:
+      tags: [player]
+      operationId: postNeedsAction
+      summary: Apply a needs action (eat, sleep, shower, touch_grass, party).
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [actionId]
+              properties:
+                actionId: { type: string, enum: [eat, sleep, shower, touch_grass, party] }
+            example: { actionId: "eat" }
+      responses:
+        "200":
+          description: Updated needs and cash
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [needs, cashCents]
+                properties:
+                  needs: { $ref: "#/components/schemas/Needs" }
+                  cashCents: { type: integer }
+              example:
+                needs: { energy: 50, hunger: 80, fun: 50, hygiene: 50, sanity: 50 }
+                cashCents: 150000
+        "400":
+          description: Action not allowed here (party requires club venue) or invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "VALIDATION_FAILED", message: "Action 'party' is only allowed in club venues.", details: { "venueId": "timeline_square" } } }
+        "402":
+          description: Insufficient cash (e.g. restaurant order in M4)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "INSUFFICIENT_CASH", message: "Cash balance is insufficient.", details: { "shortfallCents": 50000 } } }
+
+  /characters/me/look:
+    patch:
+      tags: [player]
+      operationId: patchCharactersMeLook
+      summary: Change the character's look.
+      x-phase: 4
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Look" }
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Character" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+
+  /homes:
+    get:
+      tags: [player]
+      operationId: getHomes
+      summary: List available homes.
+      x-phase: 4
+      responses:
+        "200":
+          description: Homes
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Home" }
+              example:
+                - { id: "parents_basement", name: "Parent's Basement", rentCents: 2000, nextDueAt: "2026-10-12T20:00:00.000Z" }
+                - { id: "hacker_house", name: "Hacker House", rentCents: 6000, nextDueAt: "2026-10-12T20:00:00.000Z" }
+
+  /homes/{homeId}/rent:
+    post:
+      tags: [player]
+      operationId: postHomesHomeIdRent
+      summary: Sign a lease for the given home.
+      x-phase: 4
+      parameters:
+        - name: homeId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Lease signed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [homeId, rentCents, nextDueAt]
+                properties:
+                  homeId: { type: string }
+                  rentCents: { type: integer }
+                  nextDueAt: { type: string, format: date-time }
+        "402":
+          description: Insufficient cash for deposit
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "INSUFFICIENT_CASH", message: "Cash balance is insufficient.", details: { "shortfallCents": 2000 } } }
+
+  /homes/{ownerId}/visit:
+    post:
+      tags: [player]
+      operationId: postHomesOwnerIdVisit
+      summary: Visit a player's home and join their `home` room.
+      x-phase: 4
+      parameters:
+        - name: ownerId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Room to join
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roomId]
+                properties:
+                  roomId: { type: string, description: "Pass to `client.joinById(roomId)`." }
+              example: { roomId: "home:0192a1c2-..." }
+
+  /characters/me/tribe:
+    patch:
+      tags: [player]
+      operationId: patchCharactersMeTribe
+      summary: Change tribe (once per season).
+      x-phase: 6
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tribeId]
+              properties:
+                tribeId: { type: string }
+      responses:
+        "200":
+          description: Character
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Character" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /careers:
+    get:
+      tags: [work]
+      operationId: getCareers
+      summary: All careers with my level and XP.
+      x-phase: 1
+      responses:
+        "200":
+          description: Careers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name, level, xp, active]
+                  properties:
+                    id: { type: string }
+                    name: { type: string }
+                    level: { type: integer, minimum: 0, maximum: 5 }
+                    xp: { type: integer, minimum: 0 }
+                    active: { type: boolean }
+
+  /careers/{careerId}/apply:
+    post:
+      tags: [work]
+      operationId: postCareersCareerIdApply
+      summary: Apply for a career.
+      x-phase: 1
+      parameters:
+        - name: careerId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Job
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /shifts:
+    post:
+      tags: [work]
+      operationId: postShifts
+      summary: Start a shift.
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [careerId]
+              properties:
+                careerId: { type: string }
+      responses:
+        "200":
+          description: Shift
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Shift" }
+              example:
+                shiftId: "shift_0192a1c2-..."
+                miniGameIds: ["discord_mod_ban"]
+                endsAt: "2026-10-05T12:01:00.000Z"
+
+  /shifts/{shiftId}/complete:
+    post:
+      tags: [work]
+      operationId: postShiftsShiftIdComplete
+      summary: Complete a shift with the per-mini-game scores.
+      description: |
+        Scores are capped at `maxScore` from `mini_games.json`. The shift
+        cannot be completed before `endsAt` (returns `SHIFT_NOT_FINISHED`).
+        XP and pay are derived from the scores and the level's pay formula.
+      x-phase: 1
+      parameters:
+        - name: shiftId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [results]
+              properties:
+                results:
+                  type: array
+                  items:
+                    type: object
+                    required: [miniGameId, score]
+                    properties:
+                      miniGameId: { type: string }
+                      score: { type: integer, minimum: 0 }
+            example:
+              results:
+                - { miniGameId: "discord_mod_ban", score: 8 }
+      responses:
+        "200":
+          description: Pay and XP
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payCents, xp, promoted]
+                properties:
+                  payCents: { type: integer }
+                  xp: { type: integer }
+                  promoted: { type: boolean }
+              example:
+                payCents: 5500
+                xp: 120
+                promoted: false
+        "400":
+          description: Shift not finished or score invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "SHIFT_NOT_FINISHED", message: "Shift cannot be completed before durationSec has elapsed.", details: { "endsAt": "2026-10-05T12:01:00.000Z" } } }
+
+  /gigs:
+    get:
+      tags: [work]
+      operationId: getGigs
+      summary: All gigs available to the current user.
+      x-phase: 4
+      responses:
+        "200":
+          description: Gigs
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Gig" }
+
+  /gigs/{gigId}/run:
+    post:
+      tags: [work]
+      operationId: postGigsGigIdRun
+      summary: Run a gig.
+      x-phase: 4
+      parameters:
+        - name: gigId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Gig result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [payCents, outcomeId]
+                properties:
+                  payCents: { type: integer }
+                  outcomeId: { type: string }
+        "429":
+          description: Cooldown not elapsed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "RATE_LIMITED", message: "Rate limit exceeded; try again later.", details: { "retryAfterMs": 30000 } } }
+
+  /daily-clue:
+    get:
+      tags: [work]
+      operationId: getDailyClue
+      summary: Today's clue.
+      x-phase: 4
+      responses:
+        "200":
+          description: Clue
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [clueText, expiresAt]
+                properties:
+                  clueText: { type: string }
+                  expiresAt: { type: string, format: date-time }
+
+  /daily-clue/answer:
+    post:
+      tags: [work]
+      operationId: postDailyClueAnswer
+      summary: Submit the daily clue answer.
+      x-phase: 4
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [answer]
+              properties:
+                answer: { type: string }
+      responses:
+        "200":
+          description: Result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [correct, prizeCents]
+                properties:
+                  correct: { type: boolean }
+                  prizeCents: { type: integer }
+              example: { correct: true, prizeCents: 5000 }
+
+  /market/coins:
+    get:
+      tags: [markets]
+      operationId: getMarketCoins
+      summary: List live coins filtered by stage.
+      x-phase: 2
+      parameters:
+        - name: stage
+          in: query
+          required: false
+          schema: { type: string, enum: [new, final, graduated, dead] }
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Coins
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [coins, nextCursor]
+                properties:
+                  coins:
+                    type: array
+                    items: { $ref: "#/components/schemas/Coin" }
+                  nextCursor: { type: string, nullable: true }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /market/coins/{coinId}:
+    get:
+      tags: [markets]
+      operationId: getMarketCoin
+      summary: Coin detail with candles and top holders.
+      description: |
+        `riskHint` is gated by the player's `security` skill. Low-skill
+        players get a generic "do your own research" string; high-skill
+        players get a more detailed rug-risk estimate.
+      x-phase: 2
+      parameters:
+        - name: coinId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Coin detail
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [coin, candles1m, topHolders, riskHint]
+                properties:
+                  coin: { $ref: "#/components/schemas/Coin" }
+                  candles1m:
+                    type: array
+                    items: { $ref: "#/components/schemas/Candle" }
+                  topHolders:
+                    type: array
+                    items: { $ref: "#/components/schemas/Holder" }
+                  riskHint: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /market/trades:
+    post:
+      tags: [markets]
+      operationId: postMarketTrades
+      summary: Buy or sell a coin.
+      description: |
+        Buy with `cashCents`, sell with `units`. The price is computed from
+        the constant-product curve plus the buy/sell fee. If the executed
+        price is worse than `maxSlippageBps` from the quote price, returns
+        `SLIPPAGE_EXCEEDED`.
+      x-phase: 2
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coinId, side]
+              properties:
+                coinId: { type: string, format: uuid }
+                side: { type: string, enum: [buy, sell] }
+                cashCents: { type: integer, minimum: 0 }
+                units: { type: string, description: "Base units as a string." }
+                maxSlippageBps: { type: integer, minimum: 0, maximum: 10000 }
+            example:
+              coinId: "0192a1c2-..."
+              side: "buy"
+              cashCents: 100000
+              maxSlippageBps: 200
+      responses:
+        "200":
+          description: Trade
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Trade" }
+              example:
+                tradeId: "trade_0192a1c2-..."
+                units: "1000000"
+                priceMicros: 15000
+                feeCents: 100
+                cashCents: 100000
+        "400":
+          description: Slippage exceeded or insufficient cash
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              examples:
+                SLIPPAGE_EXCEEDED:
+                  value: { error: { code: "SLIPPAGE_EXCEEDED", message: "Trade would execute at a worse price than your maxSlippageBps.", details: { "executedBps": 350 } } }
+                INSUFFICIENT_CASH:
+                  value: { error: { code: "INSUFFICIENT_CASH", message: "Cash balance is insufficient.", details: { "shortfallCents": 100000 } } }
+
+  /market/positions:
+    get:
+      tags: [markets]
+      operationId: getMarketPositions
+      summary: My positions with unrealized PnL.
+      x-phase: 2
+      responses:
+        "200":
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Position" }
+
+  /perps:
+    get:
+      tags: [markets]
+      operationId: getPerps
+      summary: My perps filtered by status.
+      x-phase: 2
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [open, closed] }
+      responses:
+        "200":
+          description: Perps
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Perp" }
+    post:
+      tags: [markets]
+      operationId: postPerps
+      summary: Open a perp.
+      x-phase: 2
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coinId, side, leverage, marginCents]
+              properties:
+                coinId: { type: string, format: uuid }
+                side: { type: string, enum: [long, short] }
+                leverage: { type: integer, minimum: 1, maximum: 20 }
+                marginCents: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Perp
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Perp" }
+        "400":
+          description: Leverage exceeds the cap from Trading skill + tribe
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "LEVERAGE_NOT_ALLOWED", message: "Leverage exceeds the cap from your Trading skill and tribe.", details: { "requested": 5, "max": 2 } } }
+        "402":
+          description: Insufficient cash
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "INSUFFICIENT_CASH", message: "Cash balance is insufficient.", details: { "shortfallCents": 50000 } } }
+
+  /perps/{perpId}/close:
+    post:
+      tags: [markets]
+      operationId: postPerpsPerpIdClose
+      summary: Close a perp.
+      x-phase: 2
+      parameters:
+        - name: perpId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Closed perp with realized PnL
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Perp" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /predictions:
+    get:
+      tags: [markets]
+      operationId: getPredictions
+      summary: Open prediction markets.
+      x-phase: 2
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [open, closed] }
+      responses:
+        "200":
+          description: Predictions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PredictionMarket" }
+
+  /predictions/{id}/bets:
+    post:
+      tags: [markets]
+      operationId: postPredictionsIdBets
+      summary: Bet on a prediction market.
+      x-phase: 2
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [outcomeId, stakeCents]
+              properties:
+                outcomeId: { type: string }
+                stakeCents: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Bet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bet" }
+        "402":
+          description: Insufficient cash
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /alpha-calls:
+    get:
+      tags: [markets]
+      operationId: getAlphaCalls
+      summary: Alpha calls by user.
+      x-phase: 2
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Calls and trust score
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [calls, trustScore]
+                properties:
+                  calls:
+                    type: array
+                    items: { $ref: "#/components/schemas/AlphaCall" }
+                  trustScore: { $ref: "#/components/schemas/TrustScore" }
+    post:
+      tags: [markets]
+      operationId: postAlphaCalls
+      summary: Post an alpha call.
+      description: Calls are immutable; there is no delete endpoint.
+      x-phase: 2
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coinId, entryMicros, targetMicros, stopMicros]
+              properties:
+                coinId: { type: string, format: uuid }
+                entryMicros: { type: integer }
+                targetMicros: { type: integer }
+                stopMicros: { type: integer }
+      responses:
+        "200":
+          description: Call
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AlphaCall" }
+        "400": { $ref: "#/components/responses/ValidationFailed" }
+
+  /smart-money:
+    get:
+      tags: [markets]
+      operationId: getSmartMoney
+      summary: Recent trades of opted-in top traders.
+      x-phase: 2
+      responses:
+        "200":
+          description: Trades
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SmartMoneyTrade" }
+
+  /users/{id}:
+    get:
+      tags: [social]
+      operationId: getUser
+      summary: Public profile of a user.
+      x-phase: 1
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Public profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicProfile" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /blocks/{userId}:
+    post:
+      tags: [social]
+      operationId: postBlocksUserId
+      summary: Block a user.
+      x-phase: 1
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Blocked }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [social]
+      operationId: deleteBlocksUserId
+      summary: Unblock a user.
+      x-phase: 1
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Unblocked }
+
+  /reports:
+    post:
+      tags: [social]
+      operationId: postReports
+      summary: Report content.
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targetType, targetId, reasonId]
+              properties:
+                targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                targetId: { type: string }
+                reasonId: { type: string, enum: [spam, scam, harassment, impersonation, nsfw] }
+                note: { type: string, maxLength: 500 }
+            example:
+              targetType: "user"
+              targetId: "0192a1c2-..."
+              reasonId: "harassment"
+              note: "harassing me in DMs"
+      responses:
+        "204": { description: Reported }
+
+  /leaderboards/{boardId}:
+    get:
+      tags: [social]
+      operationId: getLeaderboard
+      summary: A board, optionally scoped to friends or a league.
+      x-phase: 1
+      parameters:
+        - name: boardId
+          in: path
+          required: true
+          schema: { type: string, enum: [net_worth, weekly_pnl, weekly_return, clout, trust_score] }
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [global, friends, league] }
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Board entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [entries, me]
+                properties:
+                  entries:
+                    type: array
+                    items: { $ref: "#/components/schemas/BoardEntry" }
+                  me:
+                    nullable: true
+                    $ref: "#/components/schemas/BoardEntry"
+              example:
+                entries:
+                  - { rank: 1, userId: "0192a1c2-...", alias: "anon", value: 150000000 }
+                  - { rank: 2, userId: "0192a1c3-...", alias: "trencher", value: 95000000 }
+                me: { rank: 17, userId: "0192a1c2-...", alias: "anon", value: 1500000 }
+
+  /rekt/tombstones:
+    get:
+      tags: [social]
+      operationId: getRektTombstones
+      summary: Recent liquidations, newest first.
+      x-phase: 2
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 50 }
+      responses:
+        "200":
+          description: Tombstones
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Tombstone" }
+
+  /feed:
+    get:
+      tags: [social]
+      operationId: getFeed
+      summary: In-game Timeline feed.
+      x-phase: 3
+      parameters:
+        - name: scope
+          in: query
+          required: false
+          schema: { type: string, enum: [global, following] }
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Feed posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FeedPost" }
+    post:
+      tags: [social]
+      operationId: postFeedPosts
+      summary: Post to the in-game feed. (Not X; never awards real money for posting.)
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, maxLength: 280 }
+      responses:
+        "200":
+          description: Posted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedPost" }
+
+  /follows/{userId}:
+    post:
+      tags: [social]
+      operationId: postFollowsUserId
+      summary: Follow a user.
+      x-phase: 3
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Followed }
+    delete:
+      tags: [social]
+      operationId: deleteFollowsUserId
+      summary: Unfollow.
+      x-phase: 3
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Unfollowed }
+
+  /dms:
+    get:
+      tags: [social]
+      operationId: getDms
+      summary: Threads I have open, newest first.
+      x-phase: 3
+      responses:
+        "200":
+          description: Threads
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DmThread" }
+
+  /dms/{userId}:
+    get:
+      tags: [social]
+      operationId: getDmsUserId
+      summary: Messages with a user, newest last.
+      x-phase: 3
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: before
+          in: query
+          required: false
+          schema: { type: string, description: "Cursor returned by a previous call." }
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/DmMessage" }
+    post:
+      tags: [social]
+      operationId: postDmsUserId
+      summary: Send a DM. 500 char cap. Blocked by the receiver returns 403.
+      x-phase: 3
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        "200":
+          description: Sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DmMessage" }
+        "403":
+          description: Blocked by this user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "BLOCKED", message: "You are blocked by this user.", details: {} } }
+
+  /tips:
+    post:
+      tags: [social]
+      operationId: postTips
+      summary: Send a Cash tip to another player.
+      description: |
+        Daily cap comes from `economy.json`. The recipient is credited the
+        Cash on a SERIALIZABLE ledger entry. Cross-checked against the
+        sender's tip-out total for the UTC day.
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [toUserId, cashCents]
+              properties:
+                toUserId: { type: string, format: uuid }
+                cashCents: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Tipped
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [cashCents]
+                properties:
+                  cashCents: { type: integer, description: "The new balance of the sender." }
+        "402":
+          description: Insufficient cash
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /tips/onchain:
+    post:
+      tags: [social]
+      operationId: postTipsOnchain
+      summary: Record an on-chain wallet-to-wallet tip.
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [toUserId, signature]
+              properties:
+                toUserId: { type: string, format: uuid }
+                signature: { type: string, description: "Solana transaction signature." }
+      responses:
+        "204": { description: Recorded }
+
+  /rtc/token:
+    post:
+      tags: [voice]
+      operationId: postRtcToken
+      summary: Mint a LiveKit access token.
+      description: |
+        Returns a token scoped to the room `{kind}:{id}`. `canPublish` is
+        true only for hosts and promoted speakers.
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, id]
+              properties:
+                kind: { type: string, enum: [venue, space, call] }
+                id: { type: string }
+      responses:
+        "200":
+          description: Token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, token, expiresAt, canPublish]
+                properties:
+                  url: { type: string }
+                  token: { type: string }
+                  expiresAt: { type: string, format: date-time }
+                  canPublish: { type: boolean }
+
+  /spaces:
+    get:
+      tags: [voice]
+      operationId: getSpaces
+      summary: List live spaces.
+      x-phase: 3
+      parameters:
+        - name: live
+          in: query
+          required: false
+          schema: { type: boolean }
+      responses:
+        "200":
+          description: Spaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Space" }
+    post:
+      tags: [voice]
+      operationId: postSpaces
+      summary: Host a new space.
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+      responses:
+        "200":
+          description: Space
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Space" }
+
+  /spaces/{id}:
+    get:
+      tags: [voice]
+      operationId: getSpace
+      summary: Space detail.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Space
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [spaceId, title, hostId, speakerIds, handIds, listenerCount]
+                properties:
+                  spaceId: { type: string, format: uuid }
+                  title: { type: string }
+                  hostId: { type: string, format: uuid }
+                  speakerIds:
+                    type: array
+                    items: { type: string, format: uuid }
+                  handIds:
+                    type: array
+                    items: { type: string, format: uuid }
+                  listenerCount: { type: integer }
+
+  /spaces/{id}/hand:
+    post:
+      tags: [voice]
+      operationId: postSpacesIdHand
+      summary: Raise my hand.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Hand raised }
+    delete:
+      tags: [voice]
+      operationId: deleteSpacesIdHand
+      summary: Lower my hand.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Hand lowered }
+
+  /spaces/{id}/speakers:
+    post:
+      tags: [voice]
+      operationId: postSpacesIdSpeakers
+      summary: Promote a speaker. Host only.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string, format: uuid }
+      responses:
+        "204": { description: Promoted }
+        "403":
+          description: Not the host
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "NOT_SPACE_HOST", message: "Only the space host can do this.", details: {} } }
+
+  /spaces/{id}/speakers/{userId}:
+    delete:
+      tags: [voice]
+      operationId: deleteSpacesIdSpeakersUserId
+      summary: Demote a speaker. Host only.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Demoted }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /spaces/{id}/end:
+    post:
+      tags: [voice]
+      operationId: postSpacesIdEnd
+      summary: End a space. Host only.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "204": { description: Ended }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /video-calls:
+    post:
+      tags: [voice]
+      operationId: postVideoCalls
+      summary: Free video call (up to 8).
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userIds]
+              properties:
+                userIds:
+                  type: array
+                  minItems: 1
+                  maxItems: 7
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Call
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [callId]
+                properties:
+                  callId: { type: string, format: uuid }
+
+  /creator:
+    put:
+      tags: [voice]
+      operationId: putCreator
+      summary: Set the creator profile (paid-call rate and max minutes).
+      description: |
+        `ratePerMinUsdc` is a string of base units, between 250000 and
+        50000000 (0.25 to 50 USDC). `maxMinutes` is 1 to 60.
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled, ratePerMinUsdc, maxMinutes]
+              properties:
+                enabled: { type: boolean }
+                ratePerMinUsdc: { type: string, pattern: "^[0-9]+$" }
+                maxMinutes: { type: integer, minimum: 1, maximum: 60 }
+            example:
+              enabled: true
+              ratePerMinUsdc: "2000000"
+              maxMinutes: 10
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreatorProfile" }
+        "400":
+          description: Rate out of range
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "VALIDATION_FAILED", message: "ratePerMinUsdc must be between 250000 and 50000000.", details: {} } }
+
+  /paid-calls:
+    post:
+      tags: [voice]
+      operationId: postPaidCalls
+      summary: Open a paid call (builds the open_session transaction).
+      description: |
+        Returns `{ callId, sessionPda, tx }` where `tx` is an unsigned v0
+        base64 transaction to be signed with MWA `sign_and_send_transactions`.
+      x-phase: 3
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [creatorId, minutes]
+              properties:
+                creatorId: { type: string, format: uuid }
+                minutes: { type: integer, minimum: 1, maximum: 60 }
+      responses:
+        "200":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [callId, sessionPda, tx]
+                properties:
+                  callId: { type: string, format: uuid }
+                  sessionPda: { type: string }
+                  tx: { type: string, description: "base64 v0 transaction." }
+
+  /paid-calls/{id}/submitted:
+    post:
+      tags: [voice]
+      operationId: postPaidCallsIdSubmitted
+      summary: Report the open_session signature.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signature]
+              properties:
+                signature: { type: string }
+      responses:
+        "200":
+          description: Submitted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaidCall" }
+
+  /paid-calls/{id}/accept:
+    post:
+      tags: [voice]
+      operationId: postPaidCallsIdAccept
+      summary: Creator accepts the call.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaidCall" }
+
+  /paid-calls/{id}/decline:
+    post:
+      tags: [voice]
+      operationId: postPaidCallsIdDecline
+      summary: Creator declines the call.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Declined
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaidCall" }
+
+  /paid-calls/{id}/end:
+    post:
+      tags: [voice]
+      operationId: postPaidCallsIdEnd
+      summary: End the call early.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Ended
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaidCall" }
+
+  /paid-calls/{id}:
+    get:
+      tags: [voice]
+      operationId: getPaidCall
+      summary: Paid-call status.
+      x-phase: 3
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Paid call
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaidCall" }
+              example:
+                callId: "0192a1c2-..."
+                status: "live"
+                minutesUsed: 5
+                creatorAmount: "10000000"
+                refundAmount: "0"
+
+  /payments/intents:
+    post:
+      tags: [payments]
+      operationId: postPaymentsIntents
+      summary: Build a payment intent.
+      description: |
+        The intent locks in the live quote and the bonus bps at the time
+        of creation. The client signs `tx` with MWA, polls
+        `GET /payments/intents/{id}`, and the city room emits
+        `payment_confirmed` once the on-chain transfer is verified.
+      x-phase: 2
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, sku, currency]
+              properties:
+                kind: { type: string, enum: [topup, cosmetic, ad, season_pass] }
+                sku: { type: string }
+                currency: { type: string, enum: [USDC, SOL, SKR, ORE] }
+            example:
+              kind: "topup"
+              sku: "whale"
+              currency: "USDC"
+      responses:
+        "200":
+          description: Intent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaymentIntent" }
+              example:
+                intentId: "0192a1c2-..."
+                currency: "USDC"
+                recipient: "Dgw3c4GbQ..."
+                mint: "EPjFWdd5..."
+                amount: "10000000"
+                cashCents: 700000
+                bonusBps: 0
+                reference: "ref_..."
+                memo: "0192a1c2-..."
+                tx: "base64..."
+                solanaPayUrl: "solana:..."
+                expiresAt: "2026-10-05T12:10:00.000Z"
+        "429":
+          description: Top-up cap reached
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "TOPUP_CAP_REACHED", message: "100 USDC of top-ups per wallet per day exceeded.", details: { "dayTotalCents": 1000000 } } }
+        "503":
+          description: Price feed down
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "SERVER_BUSY", message: "Server is at capacity. Retry-After header carries the wait time.", details: {} } }
+
+  /payments/intents/{id}:
+    get:
+      tags: [payments]
+      operationId: getPaymentsIntentsId
+      summary: Poll the intent status.
+      x-phase: 2
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Intent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [pending, confirmed, expired, failed] }
+                  signature: { type: string, nullable: true }
+        "410":
+          description: Intent expired before confirmation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example: { error: { code: "PAYMENT_EXPIRED", message: "Payment intent expired before it was confirmed.", details: {} } }
+
+  /shop:
+    get:
+      tags: [shop]
+      operationId: getShop
+      summary: Shop listings (Cash items only).
+      x-phase: 4
+      responses:
+        "200":
+          description: Items
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ShopItem" }
+
+  /shop/purchase:
+    post:
+      tags: [shop]
+      operationId: postShopPurchase
+      summary: Buy a Cash item.
+      x-phase: 4
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemId]
+              properties:
+                itemId: { type: string }
+      responses:
+        "200":
+          description: Inventory
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Inventory" }
+        "402":
+          description: Insufficient cash
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /inventory:
+    get:
+      tags: [shop]
+      operationId: getInventory
+      summary: My inventory.
+      x-phase: 4
+      responses:
+        "200":
+          description: Inventory
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Inventory" }
+
+  /ads/live:
+    get:
+      tags: [ads]
+      operationId: getAdsLive
+      summary: Active creatives by slot. Cache for 5 minutes.
+      x-phase: 5
+      responses:
+        "200":
+          description: Live ads
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              example: "public, max-age=300"
+            ETag:
+              schema: { type: string }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: object
+                  properties:
+                    slotId: { type: string }
+                    imageUrl: { type: string }
+                    link: { type: string, nullable: true }
+                    sponsored: { type: boolean }
+
+  /ads/slots:
+    get:
+      tags: [ads]
+      operationId: getAdsSlots
+      summary: Ad slot kinds, terms, USDC prices.
+      x-phase: 5
+      responses:
+        "200":
+          description: Slots
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AdSlot" }
+
+  /uploads:
+    post:
+      tags: [ads]
+      operationId: postUploads
+      summary: Upload an ad creative (PNG/JPG <= 1 MB). EXIF is stripped.
+      x-phase: 5
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uploadId, url]
+                properties:
+                  uploadId: { type: string, format: uuid }
+                  url: { type: string }
+
+  /ads/bookings:
+    post:
+      tags: [ads]
+      operationId: postAdsBookings
+      summary: Book an ad slot (builds the payment intent).
+      x-phase: 5
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slotId, termId, uploadId]
+              properties:
+                slotId: { type: string }
+                termId: { type: string }
+                uploadId: { type: string, format: uuid }
+                link: { type: string, description: "Stored only; never fetched (SSRF safety)." }
+      responses:
+        "200":
+          description: Booking
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bookingId, intent]
+                properties:
+                  bookingId: { type: string, format: uuid }
+                  intent: { $ref: "#/components/schemas/PaymentIntent" }
+
+  /ore/board:
+    get:
+      tags: [ore]
+      operationId: getOreBoard
+      summary: Current ORE board state (cached 2s).
+      x-phase: 2
+      responses:
+        "200":
+          description: Board
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OreBoard" }
+              example:
+                roundId: 1
+                endsAt: "2026-10-05T12:05:00.000Z"
+                endsAtSlot: 350000000
+                squares: [{ deployedLamports: "1000000000" }, { deployedLamports: "0" }]
+                motherlodeOre: "55000000000"
+                cityStakedOre: "120000000000"
+                priceUsd: "135.20"
+
+  /ore/me:
+    get:
+      tags: [ore]
+      operationId: getOreMe
+      summary: My ORE position.
+      x-phase: 2
+      responses:
+        "200":
+          description: My ORE
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OreMe" }
+              example:
+                balance: "0"
+                staked: "0"
+                stOre: "0"
+                minerTier: "none"
+
+  /ore/stake/tx:
+    post:
+      tags: [ore]
+      operationId: postOreStakeTx
+      summary: Build an unsigned stake transaction for MWA.
+      x-phase: 2
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              properties:
+                action: { type: string, enum: [deposit, withdraw, claim, compound] }
+                amount: { type: string, description: "Base units. Required for deposit/withdraw." }
+            example:
+              action: "deposit"
+              amount: "1000000000"
+      responses:
+        "200":
+          description: Built
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tx]
+                properties:
+                  tx: { type: string, description: "base64 v0 transaction" }
+
+  /events/active:
+    get:
+      tags: [liveops]
+      operationId: getEventsActive
+      summary: Server events currently active.
+      x-phase: 1
+      responses:
+        "200":
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ServerEvent" }
+
+  /meta/current:
+    get:
+      tags: [liveops]
+      operationId: getMetaCurrent
+      summary: The Weekly Meta bonus for this week.
+      x-phase: 4
+      responses:
+        "200":
+          description: Meta
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WeeklyMeta" }
+
+  /push/register:
+    post:
+      tags: [liveops]
+      operationId: postPushRegister
+      summary: Register a push token. Behind PUSH_ENABLED.
+      x-phase: 4
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "204": { description: Registered }
+
+  /admin/moderation/queue:
+    get:
+      tags: [admin]
+      operationId: getAdminModerationQueue
+      summary: Reports and pending actions.
+      x-phase: 1
+      responses:
+        "200":
+          description: Queue
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ModerationItem" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/bans:
+    post:
+      tags: [admin]
+      operationId: postAdminBans
+      summary: Ban a user.
+      x-phase: 1
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, reasonId, until]
+              properties:
+                userId: { type: string, format: uuid }
+                reasonId: { type: string }
+                until: { type: string, format: date-time }
+      responses:
+        "204": { description: Banned }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/ads/approve:
+    post:
+      tags: [admin]
+      operationId: postAdminAdsApprove
+      summary: Approve a pending ad booking.
+      x-phase: 5
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bookingId]
+              properties:
+                bookingId: { type: string, format: uuid }
+      responses:
+        "204": { description: Approved }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /admin/market/force-price:
+    post:
+      tags: [admin]
+      operationId: postAdminMarketForcePrice
+      summary: Force a coin's price (staging only).
+      x-phase: 2
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [coinId, priceMicros]
+              properties:
+                coinId: { type: string, format: uuid }
+                priceMicros: { type: integer, minimum: 1 }
+      responses:
+        "204": { description: Forced }
+        "403":
+          description: Disabled in prod
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /admin/users/{id}/skills:
+    post:
+      tags: [admin]
+      operationId: postAdminUsersIdSkills
+      summary: Override a user's skills (staging only).
+      x-phase: 2
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                clout: { type: integer, minimum: 1, maximum: 10 }
+                coding: { type: integer, minimum: 1, maximum: 10 }
+                trading: { type: integer, minimum: 1, maximum: 10 }
+                writing: { type: integer, minimum: 1, maximum: 10 }
+                design: { type: integer, minimum: 1, maximum: 10 }
+                security: { type: integer, minimum: 1, maximum: 10 }
+      responses:
+        "204": { description: Updated }
+        "403":
+          description: Disabled in prod
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /webhooks/helius:
+    post:
+      tags: [webhooks]
+      operationId: postWebhooksHelius
+      summary: Helius webhook (HMAC verified).
+      x-phase: 2
+      responses:
+        "200": { description: Acknowledged }
+        "401":
+          description: HMAC invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /webhooks/livekit:
+    post:
+      tags: [webhooks]
+      operationId: postWebhooksLivekit
+      summary: LiveKit webhook (JWT verified).
+      x-phase: 3
+      responses:
+        "200": { description: Acknowledged }
+        "401":
+          description: JWT invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        UUIDv4 generated by the client. The server dedupes for 24 h and
+        replays the first response and status. Same key with a different
+        body hash returns `VALIDATION_FAILED`. Concurrent requests with
+        the same key are serialized.
+      schema: { type: string, format: uuid }
+    XClientVersion:
+      name: X-Client-Version
+      in: header
+      required: false
+      description: Client version. Below `minClientVersion` returns `CLIENT_OUTDATED`.
+      schema: { type: string }
+    XContractVersion:
+      name: X-Contract-Version
+      in: header
+      required: false
+      description: Optional override; defaults to the latest signed contract.
+      schema: { type: string }
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor returned by the previous call.
+      schema: { type: string }
+  responses:
+    Unauthorized:
+      description: Missing or invalid access token
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: "TOKEN_EXPIRED", message: "Access token expired; refresh.", details: {} } }
+    Forbidden:
+      description: Authenticated but not allowed
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: "FORBIDDEN", message: "Caller is not allowed to perform this action.", details: {} } }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: "NOT_FOUND", message: "Resource not found.", details: {} } }
+    ValidationFailed:
+      description: Body or params failed validation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: "VALIDATION_FAILED", message: "Request body or params failed validation.", details: { "field": "ageConfirmed" } } }
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          schema: { type: integer, description: "Seconds until retry." }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: "RATE_LIMITED", message: "Rate limit exceeded; try again later.", details: { "retryAfterMs": 1000 } } }
+    ServerError:
+      description: Server is at capacity or temporarily unavailable
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: "SERVER_BUSY", message: "Server is at capacity. Retry-After header carries the wait time.", details: {} } }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, description: "One of the codes in contract/ids/errors.json." }
+            message: { type: string }
+            details: { type: object, additionalProperties: true }
+    AuthChallenge:
+      type: object
+      required: [nonce, domain, statement, uri, version, chainId, issuedAt, expirationTime]
+      properties:
+        nonce: { type: string }
+        domain: { type: string }
+        statement: { type: string }
+        uri: { type: string, format: uri }
+        version: { type: string }
+        chainId: { type: string }
+        issuedAt: { type: string, format: date-time }
+        expirationTime: { type: string, format: date-time }
+    AuthVerifyRequest:
+      type: object
+      required: [address, signedMessage, signature, nonce]
+      properties:
+        address: { type: string }
+        signedMessage: { type: string }
+        signature: { type: string, description: "base64" }
+        nonce: { type: string }
+    AuthVerifyResponse:
+      type: object
+      required: [accessToken, refreshToken, user]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string }
+        user: { $ref: "#/components/schemas/User" }
+    User:
+      type: object
+      required: [id, wallet, isSeeker, hasCharacter]
+      properties:
+        id: { type: string, format: uuid }
+        wallet: { type: string }
+        isSeeker: { type: boolean }
+        hasCharacter: { type: boolean }
+        skrName: { type: string, nullable: true }
+    Me:
+      type: object
+      required: [user, character, needs, skills, cashCents, debtCents, homeId, minerTier, flags]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+        character: { $ref: "#/components/schemas/Character" }
+        needs: { $ref: "#/components/schemas/Needs" }
+        skills: { $ref: "#/components/schemas/Skills" }
+        cashCents: { type: integer }
+        debtCents: { type: integer }
+        homeId: { type: string }
+        minerTier: { type: string, enum: [none, prospector, miner, refiner] }
+        flags: { type: "object", additionalProperties: true }
+    Character:
+      type: object
+      required: [alias, look, tribeId, traitIds, dreamId]
+      properties:
+        alias: { type: string }
+        look: { $ref: "#/components/schemas/Look" }
+        tribeId: { type: string }
+        traitIds: { type: array, items: { type: string }, minItems: 2, maxItems: 2 }
+        dreamId: { type: string }
+    Look:
+      type: object
+      required: [skinTone, headId, hairId, topId, bottomId, shoesId, accId]
+      properties:
+        skinTone: { type: string }
+        headId: { type: string }
+        hairId: { type: string }
+        topId: { type: string }
+        bottomId: { type: string }
+        shoesId: { type: string }
+        accId: { type: string }
+    CreateCharacterRequest:
+      allOf:
+        - $ref: "#/components/schemas/Character"
+        - type: object
+          required: [ageConfirmed]
+          properties:
+            ageConfirmed: { type: boolean, const: true }
+    Needs:
+      type: object
+      required: [energy, hunger, fun, hygiene, sanity]
+      properties:
+        energy: { type: integer, minimum: 0, maximum: 100 }
+        hunger: { type: integer, minimum: 0, maximum: 100 }
+        fun: { type: integer, minimum: 0, maximum: 100 }
+        hygiene: { type: integer, minimum: 0, maximum: 100 }
+        sanity: { type: integer, minimum: 0, maximum: 100 }
+    Skills:
+      type: object
+      required: [clout, coding, trading, writing, design, security]
+      properties:
+        clout: { type: integer, minimum: 1, maximum: 10 }
+        coding: { type: integer, minimum: 1, maximum: 10 }
+        trading: { type: integer, minimum: 1, maximum: 10 }
+        writing: { type: integer, minimum: 1, maximum: 10 }
+        design: { type: integer, minimum: 1, maximum: 10 }
+        security: { type: integer, minimum: 1, maximum: 10 }
+    Home:
+      type: object
+      required: [id, name, rentCents, nextDueAt]
+      properties:
+        id: { type: string }
+        name: { type: string }
+      allOf:
+        - properties:
+            rentCents: { type: integer }
+            nextDueAt: { type: string, format: date-time }
+    Job:
+      type: object
+      required: [careerId, level, xp]
+      properties:
+        careerId: { type: string }
+        level: { type: integer, minimum: 1, maximum: 5 }
+        xp: { type: integer, minimum: 0 }
+    Shift:
+      type: object
+      required: [shiftId, miniGameIds, endsAt]
+      properties:
+        shiftId: { type: string }
+        miniGameIds: { type: array, items: { type: string } }
+        endsAt: { type: string, format: date-time }
+    Gig:
+      type: object
+      required: [id, name, durationSec, payCents, cooldownSec]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        durationSec: { type: integer }
+        payCents: { type: integer }
+        cooldownSec: { type: integer }
+    ConfigResponse:
+      type: object
+      required: [version, minClientVersion, degraded]
+      properties:
+        version: { type: string }
+        minClientVersion: { type: string }
+        degraded:
+          type: array
+          description: |
+            List of features currently in degraded mode. Read on every
+            `/config` response and disable those surfaces. Possible values:
+            `voice`, `llm`, `feed`, `npc_density`, `venue_cap`, `board_refresh`,
+            `smart_money`, `dms`, `ore_reader`, `signup`, `rate_limit`,
+            `login`, `price_feed`, `helius`, `ledger_freeze`, `login_ip_only`.
+          items: { type: string }
+        venues: { type: object, additionalProperties: true }
+        archetypes: { type: object, additionalProperties: true }
+        tribes: { type: object, additionalProperties: true }
+        careers: { type: object, additionalProperties: true }
+        market: { type: object, additionalProperties: true }
+        events: { type: object, additionalProperties: true }
+        npc_lines: { type: object, additionalProperties: true }
+        ads: { type: object, additionalProperties: true }
+        ore: { type: object, additionalProperties: true }
+        meta: { type: object, additionalProperties: true }
+    PublicProfile:
+      type: object
+      required: [id, alias, skrName, isSeeker, tribeId, minerTier, look, netWorthCents]
+      properties:
+        id: { type: string, format: uuid }
+        alias: { type: string }
+        skrName: { type: string, nullable: true }
+        isSeeker: { type: boolean }
+        tribeId: { type: string }
+        minerTier: { type: string, enum: [none, prospector, miner, refiner] }
+        look: { $ref: "#/components/schemas/Look" }
+        netWorthCents: { type: integer }
+    Coin:
+      type: object
+      required: [coinId, ticker, name, stage, priceMicros, mcapCents, vol5mCents, change5mBps, holders, launchedAt]
+      properties:
+        coinId: { type: string, format: uuid }
+        ticker: { type: string }
+        name: { type: string }
+        stage: { type: string, enum: [new, final, graduated, dead] }
+        priceMicros: { type: integer }
+        mcapCents: { type: integer }
+        vol5mCents: { type: integer }
+        change5mBps: { type: integer }
+        holders: { type: integer }
+        launchedAt: { type: string, format: date-time }
+    Candle:
+      type: object
+      required: [openTime, open, high, low, close, volume]
+      properties:
+        openTime: { type: string, format: date-time }
+        open: { type: integer }
+        high: { type: integer }
+        low: { type: integer }
+        close: { type: integer }
+        volume: { type: integer }
+    Holder:
+      type: object
+      required: [userId, alias, units, pct]
+      properties:
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        units: { type: string }
+        pct: { type: integer, description: "Billionths of total supply." }
+    Trade:
+      type: object
+      required: [tradeId, units, priceMicros, feeCents, cashCents]
+      properties:
+        tradeId: { type: string }
+        units: { type: string }
+        priceMicros: { type: integer }
+        feeCents: { type: integer }
+        cashCents: { type: integer }
+    Position:
+      type: object
+      required: [positionId, coinId, units, costBasisCents, unrealizedCents]
+      properties:
+        positionId: { type: string, format: uuid }
+        coinId: { type: string, format: uuid }
+        units: { type: string }
+        costBasisCents: { type: integer }
+        unrealizedCents: { type: integer }
+    Perp:
+      type: object
+      required: [perpId, coinId, side, leverage, marginCents, entryMicros, liqMicros, status]
+      properties:
+        perpId: { type: string, format: uuid }
+        coinId: { type: string, format: uuid }
+        side: { type: string, enum: [long, short] }
+        leverage: { type: integer }
+        marginCents: { type: integer }
+        entryMicros: { type: integer }
+        liqMicros: { type: integer }
+        status: { type: string, enum: [open, closed, liquidated] }
+        realizedCents: { type: integer }
+        closedAt: { type: string, format: date-time, nullable: true }
+    PredictionMarket:
+      type: object
+      required: [id, question, outcomes, closesAt, status]
+      properties:
+        id: { type: string, format: uuid }
+        question: { type: string }
+        outcomes: { type: array, items: { type: object, properties: { id: { type: string }, label: { type: string } } } }
+        closesAt: { type: string, format: date-time }
+        status: { type: string, enum: [open, closed] }
+    Bet:
+      type: object
+      required: [betId, predictionId, outcomeId, stakeCents]
+      properties:
+        betId: { type: string }
+        predictionId: { type: string, format: uuid }
+        outcomeId: { type: string }
+        stakeCents: { type: integer }
+    AlphaCall:
+      type: object
+      required: [callId, userId, coinId, entryMicros, targetMicros, stopMicros, at]
+      properties:
+        callId: { type: string }
+        userId: { type: string, format: uuid }
+        coinId: { type: string, format: uuid }
+        entryMicros: { type: integer }
+        targetMicros: { type: integer }
+        stopMicros: { type: integer }
+        at: { type: string, format: date-time }
+    TrustScore:
+      type: object
+      required: [hitRate, avgReturnBps, maxDrawdownBps, heldBagPct]
+      properties:
+        hitRate: { type: number }
+        avgReturnBps: { type: integer }
+        maxDrawdownBps: { type: integer }
+        heldBagPct: { type: integer }
+    SmartMoneyTrade:
+      type: object
+      required: [userId, alias, coinId, side, cashCents, at]
+      properties:
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        coinId: { type: string, format: uuid }
+        side: { type: string, enum: [buy, sell] }
+        cashCents: { type: integer }
+        at: { type: string, format: date-time }
+    BoardEntry:
+      type: object
+      required: [rank, userId, alias, value]
+      properties:
+        rank: { type: integer, minimum: 1 }
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        value: { type: integer }
+    Tombstone:
+      type: object
+      required: [userId, alias, lossCents, coinId, at]
+      properties:
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        lossCents: { type: integer }
+        coinId: { type: string, format: uuid }
+        at: { type: string, format: date-time }
+    FeedPost:
+      type: object
+      required: [postId, userId, alias, text, at]
+      properties:
+        postId: { type: string }
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        text: { type: string, maxLength: 280 }
+        at: { type: string, format: date-time }
+    DmThread:
+      type: object
+      required: [userId, alias, lastMessage, lastAt]
+      properties:
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        lastMessage: { type: string }
+        lastAt: { type: string, format: date-time }
+    DmMessage:
+      type: object
+      required: [messageId, fromUserId, toUserId, text, at]
+      properties:
+        messageId: { type: string }
+        fromUserId: { type: string, format: uuid }
+        toUserId: { type: string, format: uuid }
+        text: { type: string, maxLength: 500 }
+        at: { type: string, format: date-time }
+    Space:
+      type: object
+      required: [spaceId, title, hostId, speakerIds, handIds, listenerCount]
+      properties:
+        spaceId: { type: string, format: uuid }
+        title: { type: string }
+        hostId: { type: string, format: uuid }
+        speakerIds: { type: array, items: { type: string, format: uuid } } }
+        handIds: { type: array, items: { type: string, format: uuid } } }
+        listenerCount: { type: integer }
+    CreatorProfile:
+      type: object
+      required: [enabled, ratePerMinUsdc, maxMinutes]
+      properties:
+        enabled: { type: boolean }
+        ratePerMinUsdc: { type: string }
+        maxMinutes: { type: integer }
+    PaidCall:
+      type: object
+      required: [callId, status]
+      properties:
+        callId: { type: string, format: uuid }
+        status: { type: string, enum: [awaiting_payment, ringing, live, settled, refunded] }
+        minutesUsed: { type: integer }
+        creatorAmount: { type: string, nullable: true }
+        refundAmount: { type: string, nullable: true }
+    PaymentIntent:
+      type: object
+      required: [intentId, currency, recipient, amount, reference, memo, tx, expiresAt]
+      properties:
+        intentId: { type: string, format: uuid }
+        currency: { type: string, enum: [USDC, SOL, SKR, ORE] }
+        recipient: { type: string }
+        mint: { type: string, nullable: true }
+        amount: { type: string }
+        cashCents: { type: integer, description: "For top-ups; null for cosmetic/ad/season_pass." }
+        bonusBps: { type: integer }
+        reference: { type: string }
+        memo: { type: string }
+        tx: { type: string }
+        solanaPayUrl: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time }
+    ShopItem:
+      type: object
+      required: [id, slot, name, priceCents]
+      properties:
+        id: { type: string }
+        slot: { type: string, enum: [skin, head, hair, top, bottom, shoes, acc] }
+        name: { type: string }
+        priceCents: { type: integer }
+    Inventory:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/InventoryItem" }
+    InventoryItem:
+      type: object
+      required: [itemId, slot, acquiredAt]
+      properties:
+        itemId: { type: string }
+        slot: { type: string, enum: [skin, head, hair, top, bottom, shoes, acc] }
+        acquiredAt: { type: string, format: date-time }
+    AdSlot:
+      type: object
+      required: [slotId, kind, terms]
+      properties:
+        slotId: { type: string }
+        kind: { type: string }
+        terms:
+          type: array
+          items:
+            type: object
+            required: [termId, priceUsdc]
+            properties:
+              termId: { type: string }
+              priceUsdc: { type: number }
+        nextFreeAt: { type: string, format: date-time, nullable: true }
+    OreBoard:
+      type: object
+      required: [roundId, endsAt, endsAtSlot, squares, motherlodeOre, cityStakedOre, priceUsd]
+      properties:
+        roundId: { type: integer }
+        endsAt: { type: string, format: date-time }
+        endsAtSlot: { type: integer }
+        squares:
+          type: array
+          minItems: 25
+          maxItems: 25
+          items:
+            type: object
+            required: [deployedLamports]
+            properties:
+              deployedLamports: { type: string }
+        motherlodeOre: { type: string }
+        cityStakedOre: { type: string }
+        priceUsd: { type: string }
+    OreMe:
+      type: object
+      required: [balance, staked, stOre, minerTier]
+      properties:
+        balance: { type: string }
+        staked: { type: string }
+        stOre: { type: string }
+        minerTier: { type: string, enum: [none, prospector, miner, refiner] }
+    ServerEvent:
+      type: object
+      required: [eventId, at]
+      properties:
+        eventId: { type: string, enum: [evt_liquidation, evt_rug, evt_coin_launch, evt_mood_change, evt_exploit, evt_ore_motherlode] }
+        params: { type: object, additionalProperties: true }
+        at: { type: string, format: date-time }
+    WeeklyMeta:
+      type: object
+      required: [weekday, bonus]
+      properties:
+        weekday: { type: integer, minimum: 0, maximum: 6 }
+        bonus: { type: string }
+    ModerationItem:
+      type: object
+      required: [id, targetType, targetId, reasonId, createdAt]
+      properties:
+        id: { type: string }
+        targetType: { type: string }
+        targetId: { type: string }
+        reasonId: { type: string }
+        createdAt: { type: string, format: date-time }

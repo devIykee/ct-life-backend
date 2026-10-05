@@ -1,0 +1,63 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "tribes": [
+    {
+      "id": "trencher",
+      "name": "Trencher",
+      "homeTurf": "the_trenches",
+      "perk": "Sees new launches 3 seconds earlier",
+      "emoteId": "emote_send_it_slam",
+      "phase": 1
+    },
+    {
+      "id": "perp_degen",
+      "name": "Perp Degen",
+      "homeTurf": "perp_pit",
+      "perk": "Leverage cap +5x (Trading skill)",
+      "emoteId": "emote_max_long",
+      "phase": 1
+    },
+    {
+      "id": "prediction_shark",
+      "name": "Prediction Shark",
+      "homeTurf": "prediction_pit",
+      "perk": "Prediction fee -50%",
+      "emoteId": "emote_coin_flip",
+      "phase": 2
+    },
+    {
+      "id": "airdrop_farmer",
+      "name": "Airdrop Farmer",
+      "homeTurf": "airdrop_farm",
+      "perk": "Farm yield +15%",
+      "emoteId": "emote_watering_can",
+      "phase": 2
+    },
+    {
+      "id": "caller",
+      "name": "Caller",
+      "homeTurf": "spaces_studio",
+      "perk": "Calls reach 2x NPC followers",
+      "emoteId": "emote_ring_light_pose",
+      "phase": 2
+    },
+    {
+      "id": "builder",
+      "name": "Builder",
+      "homeTurf": "builder_hills",
+      "perk": "Project launch cost -30%",
+      "emoteId": "emote_frantic_typing",
+      "phase": 2
+    },
+    {
+      "id": "anon",
+      "name": "Anon",
+      "homeTurf": "anywhere",
+      "perk": "Hidden from rich list; immune to Doxx events",
+      "emoteId": "emote_hood_up",
+      "phase": 1
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0-rc1",
+  "weights": {
+    "seeker": 0,
+    "insider": 20,
+    "exit_liquidity": 80
+  },
+  "_note": "The 'seeker' weight is applied only to wallets with a verified Seeker Genesis Token; non-Seeker wallets never roll 'seeker'. The remaining weight is split between insider and exit_liquidity according to the values above.",
+  "outcomes": {
+    "seeker": { "cashCents": 150000, "homeId": "hacker_house", "isSeeker": true },
+    "insider": { "cashCents": 300000, "homeId": "studio", "isSeeker": false },
+    "exit_liquidity": {
+      "cashCents": 30000,
+      "homeId": "parents_basement",
+      "debtCents": 72000,
+      "weeklyDueCents": 12000,
+      "missedPenaltyBps": 1000,
+      "isSeeker": false
+    }
+  },
+  "debtRepayment": {
+    "currency": "cashCents",
+    "weeklyDueCents": 12000,
+    "totalCents": 72000,
+    "missedPenaltyBps": 1000,
+    "maxMissedWeeks": 6
+  }
+}

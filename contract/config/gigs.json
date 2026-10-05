@@ -1,0 +1,33 @@
+{
+  "version": "1.0.0-rc1",
+  "gigs": [
+    {
+      "id": "doot_feed",
+      "name": "Doot the Feed",
+      "durationSec": 30,
+      "payCentsFormula": "1000 + clout * 50",
+      "cooldownSec": 60
+    },
+    {
+      "id": "drop_alpha",
+      "name": "Drop Alpha",
+      "durationSec": 60,
+      "payCentsFormula": "2000 + trading * 100",
+      "cooldownSec": 300
+    },
+    {
+      "id": "write_thread",
+      "name": "Write a Thread",
+      "durationSec": 90,
+      "payCentsFormula": "3000 + writing * 150",
+      "cooldownSec": 600
+    },
+    {
+      "id": "audit_token",
+      "name": "Audit a Token",
+      "durationSec": 180,
+      "payCentsFormula": "5000 + security * 200",
+      "cooldownSec": 1800
+    }
+  ]
+}

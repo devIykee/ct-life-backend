@@ -1,0 +1,37 @@
+{
+  "title": "economy.json",
+  "type": "object",
+  "required": ["version", "topUpPacks", "currencies", "rentCentsPerWeek", "taxBrackets", "lottery"],
+  "properties": {
+    "version": { "type": "string" },
+    "topUpCapCentsPerDay": {
+      "type": "integer",
+      "description": "Per-wallet cap, in USDC cents, before topups return TOPUP_CAP_REACHED."
+    },
+    "topUpPacks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "priceUsdc", "cashCents"],
+        "properties": {
+          "id": { "type": "string" },
+          "label": { "type": "string" },
+          "priceUsdc": { "type": "number", "minimum": 0 },
+          "cashCents": { "type": "integer", "minimum": 0 },
+          "bestValue": { "type": "boolean" }
+        }
+      }
+    },
+    "currencyBonusBps": {
+      "type": "object",
+      "additionalProperties": { "type": "integer" }
+    },
+    "currencies": { "type": "object" },
+    "rentCentsPerWeek": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "taxBrackets": { "type": "array" },
+    "lottery": { "type": "object" }
+  }
+}

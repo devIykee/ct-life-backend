@@ -1,0 +1,58 @@
+{
+  "version": "1.0.0-rc1",
+  "decayPerHour": {
+    "energy": 4,
+    "hunger": 5,
+    "fun": 6,
+    "hygiene": 3,
+    "sanity": 2
+  },
+  "minValue": 0,
+  "maxValue": 100,
+  "startValue": 50,
+  "actions": [
+    {
+      "id": "eat",
+      "raises": "hunger",
+      "amount": 30,
+      "where": "anywhere",
+      "cooldownSec": 0,
+      "costCents": 0
+    },
+    {
+      "id": "sleep",
+      "raises": "energy",
+      "amount": 60,
+      "where": "anywhere",
+      "cooldownSec": 0,
+      "costCents": 0,
+      "durationSec": 60
+    },
+    {
+      "id": "shower",
+      "raises": "hygiene",
+      "amount": 50,
+      "where": "anywhere",
+      "cooldownSec": 0,
+      "costCents": 0
+    },
+    {
+      "id": "touch_grass",
+      "raises": "sanity",
+      "amount": 25,
+      "where": "anywhere",
+      "cooldownSec": 0,
+      "costCents": 0
+    },
+    {
+      "id": "party",
+      "raises": "fun",
+      "amount": 35,
+      "where": "club_venues",
+      "clubVenueIds": ["spaces_studio", "cabal_lounge", "dubai_marina"],
+      "cooldownSec": 0,
+      "costCents": 0
+    }
+  ],
+  "clubVenues": ["spaces_studio", "cabal_lounge", "dubai_marina"]
+}

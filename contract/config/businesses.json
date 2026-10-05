@@ -1,0 +1,37 @@
+{
+  "version": "1.0.0-rc1",
+  "businesses": [
+    {
+      "id": "kols_agency",
+      "name": "KOLs Agency",
+      "costCents": 5000000,
+      "incomeRangeCents": [200000, 600000],
+      "badDayChanceBps": 200,
+      "badDayMultiplier": 0.2
+    },
+    {
+      "id": "audit_firm",
+      "name": "Audit Firm",
+      "costCents": 12000000,
+      "incomeRangeCents": [400000, 1500000],
+      "badDayChanceBps": 100,
+      "badDayMultiplier": 0.1
+    },
+    {
+      "id": "memecoin_lab",
+      "name": "Memecoin Lab",
+      "costCents": 30000000,
+      "incomeRangeCents": [500000, 3000000],
+      "badDayChanceBps": 350,
+      "badDayMultiplier": 0.05
+    },
+    {
+      "id": "lounge",
+      "name": "Lounge",
+      "costCents": 80000000,
+      "incomeRangeCents": [1000000, 6000000],
+      "badDayChanceBps": 150,
+      "badDayMultiplier": 0.15
+    }
+  ]
+}

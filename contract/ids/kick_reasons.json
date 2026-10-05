@@ -1,0 +1,10 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "kickReasons": [
+    { "id": "banned", "label": "Banned" },
+    { "id": "duplicate_login", "label": "Duplicate login" },
+    { "id": "client_outdated", "label": "Client outdated" }
+  ]
+}

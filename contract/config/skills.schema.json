@@ -1,0 +1,26 @@
+{
+  "title": "skills.json",
+  "type": "object",
+  "required": ["version", "skills", "leverageByTradingLevel"],
+  "properties": {
+    "version": { "type": "string" },
+    "skills": { "type": "array", "items": { "type": "string" } },
+    "minValue": { "type": "integer" },
+    "maxValue": { "type": "integer" },
+    "startValue": { "type": "integer" },
+    "xpPerShiftLevel": { "type": "integer" },
+    "leverageByTradingLevel": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["level", "leverage"],
+        "properties": {
+          "level": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "leverage": { "type": "integer", "minimum": 1, "maximum": 20 }
+        }
+      }
+    },
+    "tribeBonusLeverage": { "type": "object", "additionalProperties": { "type": "integer" } },
+    "skillGates": { "type": "object" }
+  }
+}

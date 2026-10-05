@@ -1,0 +1,18 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "1.0.0-rc1",
+  "_note": "FE replaces this file. BE only references IDs from it. Additions only after publication; never renames.",
+  "anims": [
+    "loco_idle",
+    "loco_walk",
+    "loco_run",
+    "act_sit",
+    "act_type",
+    "act_frantic_type",
+    "emote_wave",
+    "emote_facepalm",
+    "react_liquidated",
+    "react_moon_jump"
+  ]
+}

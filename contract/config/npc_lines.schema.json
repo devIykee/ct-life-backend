@@ -1,0 +1,10 @@
+{
+  "title": "npc_lines.json",
+  "type": "object",
+  "required": ["version"],
+  "properties": {
+    "version": { "type": "string" },
+    "_note": { "type": "string" }
+  },
+  "additionalProperties": { "type": "array", "items": { "type": "string" } }
+}

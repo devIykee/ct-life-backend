@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctlife.dev/contract/ids/ids.schema.json",
+  "title": "CT Life ID registry",
+  "type": "object",
+  "required": ["_owner", "_provisional", "version"],
+  "properties": {
+    "_owner": { "type": "string", "description": "BE or FE; whoever adds new entries first." },
+    "_provisional": {
+      "type": "boolean",
+      "description": "If true, the file ships with placeholder values and is replaced before v1.0.0 signs."
+    },
+    "_note": { "type": "string" },
+    "version": { "type": "string", "description": "Semver of the registry." }
+  },
+  "additionalProperties": true
+}

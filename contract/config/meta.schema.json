@@ -1,0 +1,21 @@
+{
+  "title": "meta.json",
+  "type": "object",
+  "required": ["version", "weekly"],
+  "properties": {
+    "version": { "type": "string" },
+    "weekly": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "required": ["weekday", "bonus"],
+        "properties": {
+          "weekday": { "type": "integer", "minimum": 0, "maximum": 6 },
+          "bonus": { "type": "string" }
+        }
+      }
+    }
+  }
+}

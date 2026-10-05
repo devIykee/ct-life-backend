@@ -1,0 +1,7 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "1.0.0-rc1",
+  "_note": "FE replaces this file. BE only references IDs from it. Additions only after publication; never renames.",
+  "sfx": ["sfx_buy", "sfx_sell", "sfx_liquidation", "sfx_rug", "sfx_call_ring"]
+}

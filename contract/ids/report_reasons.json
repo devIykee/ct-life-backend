@@ -1,0 +1,12 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "reportReasons": [
+    { "id": "spam", "label": "Spam" },
+    { "id": "scam", "label": "Scam" },
+    { "id": "harassment", "label": "Harassment" },
+    { "id": "impersonation", "label": "Impersonation" },
+    { "id": "nsfw", "label": "NSFW" }
+  ]
+}

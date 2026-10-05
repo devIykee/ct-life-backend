@@ -1,0 +1,25 @@
+{
+  "title": "gigs.json",
+  "type": "object",
+  "required": ["version", "gigs"],
+  "properties": {
+    "version": { "type": "string" },
+    "gigs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "durationSec", "payCentsFormula", "cooldownSec"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "durationSec": { "type": "integer", "minimum": 1 },
+          "payCentsFormula": {
+            "type": "string",
+            "description": "Arithmetic expression; see ECONOMY.md for variables."
+          },
+          "cooldownSec": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

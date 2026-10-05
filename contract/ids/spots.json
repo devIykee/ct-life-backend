@@ -1,0 +1,79 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "1.0.0-rc1",
+  "_note": "FE replaces this file. BE only references IDs from it. Additions only after publication; never renames.",
+  "venues": {
+    "timeline_square": {
+      "walkable": [{ "x0": -25, "z0": -25, "x1": 25, "z1": 25 }],
+      "spots": [
+        { "id": "timeline_square.center", "kind": "stage" },
+        { "id": "timeline_square.crier_1", "kind": "standing" },
+        { "id": "timeline_square.crier_2", "kind": "standing" },
+        { "id": "timeline_square.crier_3", "kind": "standing" }
+      ]
+    },
+    "spaces_studio": {
+      "walkable": [{ "x0": -20, "z0": -20, "x1": 20, "z1": 20 }],
+      "spots": [
+        { "id": "spaces_studio.stage_host", "kind": "stage" },
+        { "id": "spaces_studio.stage_1", "kind": "stage" },
+        { "id": "spaces_studio.stage_2", "kind": "stage" },
+        { "id": "spaces_studio.stage_3", "kind": "stage" },
+        { "id": "spaces_studio.stage_4", "kind": "stage" },
+        { "id": "spaces_studio.stage_5", "kind": "stage" },
+        { "id": "spaces_studio.stage_6", "kind": "stage" },
+        { "id": "spaces_studio.stage_7", "kind": "stage" },
+        { "id": "spaces_studio.stage_8", "kind": "stage" },
+        { "id": "spaces_studio.stage_9", "kind": "stage" },
+        { "id": "spaces_studio.stage_10", "kind": "stage" }
+      ]
+    },
+    "terminal_cafe": {
+      "walkable": [{ "x0": -20, "z0": -15, "x1": 20, "z1": 15 }],
+      "spots": [
+        { "id": "terminal_cafe.terminal_1", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_2", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_3", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_4", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_5", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_6", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_7", "kind": "terminal" },
+        { "id": "terminal_cafe.terminal_8", "kind": "terminal" }
+      ]
+    },
+    "perp_pit": {
+      "walkable": [{ "x0": -20, "z0": -15, "x1": 20, "z1": 15 }],
+      "spots": [
+        { "id": "perp_pit.terminal_1", "kind": "terminal" },
+        { "id": "perp_pit.terminal_2", "kind": "terminal" },
+        { "id": "perp_pit.terminal_3", "kind": "terminal" },
+        { "id": "perp_pit.terminal_4", "kind": "terminal" }
+      ]
+    },
+    "rekt_clinic": {
+      "walkable": [{ "x0": -15, "z0": -15, "x1": 15, "z1": 15 }],
+      "spots": [
+        { "id": "rekt_clinic.bed_1", "kind": "lying" },
+        { "id": "rekt_clinic.bed_2", "kind": "lying" },
+        { "id": "rekt_clinic.bed_3", "kind": "lying" },
+        { "id": "rekt_clinic.bed_4", "kind": "lying" },
+        { "id": "rekt_clinic.bed_5", "kind": "lying" },
+        { "id": "rekt_clinic.bed_6", "kind": "lying" }
+      ]
+    },
+    "ore_refinery": {
+      "walkable": [{ "x0": -20, "z0": -20, "x1": 20, "z1": 20 }],
+      "spots": [
+        { "id": "ore_refinery.terminal_1", "kind": "terminal" },
+        { "id": "ore_refinery.terminal_2", "kind": "terminal" },
+        { "id": "ore_refinery.terminal_3", "kind": "terminal" },
+        { "id": "ore_refinery.terminal_4", "kind": "terminal" }
+      ]
+    },
+    "launchpad_tower": {
+      "walkable": [{ "x0": -15, "z0": -15, "x1": 15, "z1": 15 }],
+      "spots": [{ "id": "launchpad_tower.launch_desk", "kind": "stage" }]
+    }
+  }
+}
