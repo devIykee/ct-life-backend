@@ -6,19 +6,12 @@
   "include": [
     "tools/scripts/*.ts",
     "tools/contract-check/**/*.ts",
+    "tools/bots/**/*.ts",
+    "tools/econ-sim/**/*.ts",
     "server/**/*.ts",
     "packages/**/*.ts",
     "programs/ct_escrow/**/*.ts",
     "vitest.config.ts"
   ],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "build",
-    "coverage",
-    "**/target",
-    "contract",
-    "tools/bots",
-    "tools/econ-sim"
-  ]
+  "exclude": ["node_modules", "dist", "build", "coverage", "**/target", "contract"]
 }

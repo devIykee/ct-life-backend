@@ -48,6 +48,7 @@
     "@metaplex-foundation/umi": "^1.6.0",
     "@solana/kit": "8.4.0",
     "@solana/web3.js": "^1.99.0",
+    "bullmq": "6.3.11",
     "colyseus": "0.18.9",
     "dotenv": "^16.4.7",
     "fastify": "5.12.5",

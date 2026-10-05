@@ -13,7 +13,7 @@ loadEnv({ path: resolve(__dirname, '.env') });
 
 export default defineConfig({
   test: {
-    include: ['server/**/*.test.ts', 'packages/**/*.test.ts'],
+    include: ['server/**/*.test.ts', 'packages/**/*.test.ts', 'tools/**/*.test.ts'],
     testTimeout: 15_000,
     hookTimeout: 15_000,
     pool: 'forks',
