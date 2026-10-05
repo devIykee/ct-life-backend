@@ -399,10 +399,7 @@ async function main(): Promise<void> {
     {
       const cs = await checks('voice_speakers');
       const all = cs.join('\n');
-      record(
-        'voice_speakers.role in allowed set',
-        /host.*speaker.*listener/is.test(all),
-      );
+      record('voice_speakers.role in allowed set', /host.*speaker.*listener/is.test(all));
     }
 
     // (24) paid_call_escrow.status CHECK.
@@ -462,10 +459,7 @@ async function main(): Promise<void> {
     {
       const cs = await checks('push_devices');
       const all = cs.join('\n');
-      record(
-        'push_devices.platform in allowed set',
-        /ios.*android.*web/is.test(all),
-      );
+      record('push_devices.platform in allowed set', /ios.*android.*web/is.test(all));
     }
 
     // (30) tips.signature UNIQUE.

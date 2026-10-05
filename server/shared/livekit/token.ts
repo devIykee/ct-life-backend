@@ -15,7 +15,7 @@
 import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
 import { loadConfig } from '../config/config.js';
 
-export type RtcKind = 'venue' | 'space' | 'call';
+export type RtcKind = 'venue' | 'space' | 'video' | 'paid_call';
 
 export interface MintOptions {
   readonly kind: RtcKind;
