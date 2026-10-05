@@ -242,3 +242,11 @@ export class ClientOutdatedError extends DomainError {
     this.minClientVersion = minClientVersion;
   }
 }
+
+export class ConflictError extends DomainError {
+  readonly code = 'CONFLICT';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Resource conflict.', details);
+    this.httpStatus = 409;
+  }
+}
