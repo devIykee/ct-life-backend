@@ -155,7 +155,7 @@ async function selectHomeRequired(ctx: AppContext, homeId: string): Promise<Home
 
 /** Owner pays rent manually (e.g. mid-week). */
 export async function payRent(
-  ctx: AppContext,
+  _ctx: AppContext,
   homeId: string,
   callerUserId: string,
 ): Promise<HomeRow> {

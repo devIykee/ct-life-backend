@@ -47,7 +47,7 @@ export interface UpdateCreatorArgs {
 
 /** Create a creator profile. UNIQUE(user_id) and UNIQUE(handle). */
 export async function createCreator(
-  ctx: AppContext,
+  _ctx: AppContext,
   userId: string,
   args: CreateCreatorArgs,
 ): Promise<CreatorProfile> {
