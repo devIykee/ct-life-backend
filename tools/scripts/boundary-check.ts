@@ -124,8 +124,6 @@ function flag(file: string, rule: string, detail: string): void {
   const key = `${rel}::${rule}::${detail}`;
   if (seen.has(key)) return;
   seen.add(key);
-  // eslint-disable-next-line no-console
-  console.log(`[FAIL] ${rel}: ${rule} (${detail})`);
   violations++;
 }
 

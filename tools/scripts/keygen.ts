@@ -66,20 +66,12 @@ async function main(): Promise<void> {
       secretKeyBytes: Array.from(fullSecret),
       cluster: env.APP_ENV === 'prod' ? 'mainnet' : 'devnet',
     };
-    // eslint-disable-next-line no-console
-    console.log(JSON.stringify(out, null, 2));
     return;
   }
 
   const file = resolve(process.cwd(), 'keypairs', `${kind}-devnet.json`);
   const arr = Array.from(fullSecret);
   writeFileEnsured(file, JSON.stringify(arr));
-  // eslint-disable-next-line no-console
-  console.log(`Wrote ${file}`);
-  // eslint-disable-next-line no-console
-  console.log(`Public key (hex): ${publicHex}`);
-  // eslint-disable-next-line no-console
-  console.log(
     `Convert to base58 with: solana-keygen pubkey ${file}  (or use the seed .private JSON; see set -e TREASURY_PUBKEY in .env)`,
   );
 }

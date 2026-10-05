@@ -126,6 +126,13 @@ async function main(): Promise<void> {
     }
   }
   void publicKey; // keep umi import in case future checks need it
+  if (failed === 0) {
+    // eslint-disable-next-line no-console
+    console.log(`verify-onchain: all ${checks.length} addresses OK.`);
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`verify-onchain: ${failed} of ${checks.length} failed.`);
+  }
   process.exit(failed === 0 ? 0 : 1);
 }
 

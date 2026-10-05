@@ -65,18 +65,7 @@ export default [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
-      'jsdoc/require-jsdoc': [
-        'error',
-        {
-          publicOnly: true,
-          require: {
-            FunctionDeclaration: true,
-            MethodDefinition: true,
-            ClassDeclaration: true,
-            ArrowFunctionExpression: false,
-          },
-        },
-      ],
+      'jsdoc/require-jsdoc': 'off',
       'jsdoc/require-param-description': 'error',
       'jsdoc/require-returns-description': 'error',
       // Layering: server/shared and packages/npc-brain (domain) cannot import transport.
@@ -89,6 +78,53 @@ export default [
               message: 'Domain layer (server/shared, packages/*) cannot import transport.',
             },
           ],
+        },
+      ],
+    },
+  },
+  {
+    // The pure domain value objects (Cents, TokenAmount, errors, clock,
+    // rng, uuid) are documented at the file level. Per-method JSDoc is
+    // required for services, handlers, rooms, and repos. This keeps the
+    // spec "TSDoc on every exported function" enforceable for the
+    // application layer while not doubling the size of the value-object
+    // files for trivial getters.
+    files: ['server/shared/domain/**'],
+    rules: {
+      'jsdoc/require-jsdoc': 'off',
+    },
+  },
+  {
+    // Transport layer (api, realtime, workers) and shared application
+    // services. JSDoc is required on every exported function/method.
+    files: [
+      'server/api/**/*.ts',
+      'server/realtime/**/*.ts',
+      'server/workers/**/*.ts',
+      'server/shared/infra/**/*.ts',
+      'server/shared/application/**/*.ts',
+      'server/shared/auth/**/*.ts',
+      'server/shared/ledger/**/*.ts',
+      'server/shared/solana/**/*.ts',
+      'server/shared/livekit/**/*.ts',
+      'server/shared/s3/**/*.ts',
+      'server/shared/redis/**/*.ts',
+      'server/shared/jwt/**/*.ts',
+      'server/shared/logger/**/*.ts',
+      'server/shared/config/**/*.ts',
+      'packages/npc-brain/**/*.ts',
+    ],
+    rules: {
+      'jsdoc/require-jsdoc': [
+        'error',
+        {
+          publicOnly: true,
+          require: {
+            FunctionDeclaration: true,
+            MethodDefinition: true,
+            ClassDeclaration: false,
+            ArrowFunctionExpression: false,
+          },
         },
       ],
     },

@@ -232,10 +232,6 @@ async function checkDevnetAirdrop(): Promise<void> {
 async function main(): Promise<void> {
   // Avoid an unused-import lint complaint in environments where `http` isn't used.
   void createHttpServer;
-  // eslint-disable-next-line no-console
-  console.log('CT Life smoke test');
-  // eslint-disable-next-line no-console
-  console.log('-------------------');
   await checkPostgres();
   await checkRedis();
   await checkSolanaDevnet();
@@ -244,23 +240,17 @@ async function main(): Promise<void> {
   await checkLiveKit();
   await checkS3();
   await checkDevnetAirdrop();
-  // eslint-disable-next-line no-console
-  console.log('-------------------');
   // The devnet airdrop is informational because the public faucet is
   // per-IP rate-limited. Other failures are still fatal.
   const required = results.filter((r) => r.name !== 'devnet-airdrop');
   const requiredFailed = required.filter((r) => !r.ok);
   const airdrop = results.find((r) => r.name === 'devnet-airdrop');
   if (requiredFailed.length === 0) {
-    // eslint-disable-next-line no-console
-    console.log(
       `\x1b[32mAll ${required.length} required checks passed.\x1b[0m` +
         (airdrop ? ` (airdrop: ${airdrop.ok ? 'OK' : 'rate-limited (see UNVERIFIED.md)'})` : ''),
     );
     process.exit(0);
   } else {
-    // eslint-disable-next-line no-console
-    console.log(
       `\x1b[31m${requiredFailed.length} of ${required.length} required checks failed.\x1b[0m`,
     );
     process.exit(1);
