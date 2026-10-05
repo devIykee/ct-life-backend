@@ -267,12 +267,13 @@ Every variable the backend reads is documented in `.env.example`. The `docs:chec
 
 ### Test safe-mode
 
-| Variable                       | Purpose                                                 | Required | Example |
-| ------------------------------ | ------------------------------------------------------- | -------- | ------- |
-| `RUN_MAINNET_TESTS`            | Enable tests that move mainnet value. Default `0`.      | optional | `0`     |
-| `ENABLE_E2E`                   | Enable E2E that hits external services.                 | optional | `0`     |
-| `SGT_OVERRIDE`                 | Dev only; force `isSeeker=true`. Never in staging/prod. | optional | —       |
-| `ORE_DEVNET_USE_MAINNET_CACHE` | Dev only; ORE on devnet uses cached mainnet values.     | optional | `false` |
+| Variable                       | Purpose                                                                 | Required | Example |
+| ------------------------------ | ----------------------------------------------------------------------- | -------- | ------- |
+| `RUN_MAINNET_TESTS`            | Enable tests that move mainnet value. Default `0`.                      | optional | `0`     |
+| `ENABLE_E2E`                   | Enable E2E that hits external services.                                 | optional | `0`     |
+| `SGT_OVERRIDE`                 | Dev only; force `isSeeker=true`. Never in staging/prod.                 | optional | —       |
+| `ORE_DEVNET_USE_MAINNET_CACHE` | Dev only; ORE on devnet uses cached mainnet values.                     | optional | `false` |
+| `ORE_READER_ENABLED`           | When `1`, ORE board reader hits mainnet (gated by `RUN_MAINNET_TESTS`). | optional | `0`     |
 
 ## Documentation
 

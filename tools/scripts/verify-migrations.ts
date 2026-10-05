@@ -33,6 +33,23 @@
  *   19. `tombstones` exists with `lost_cents > 0` CHECK.
  *   20. `users.is_opted_in_smart_money` and `miner_tier` exist.
  *
+ * Checks (M4):
+ *
+ *  21. M4 tables exist: voice_rooms, voice_speakers, paid_call_escrow,
+ *      creator_profiles, homes, home_visits, tips, push_devices, meta.
+ *  22. voice_rooms.kind CHECK contains 'space', 'video', 'paid_call'.
+ *  23. voice_speakers.role CHECK contains 'host', 'speaker', 'listener'.
+ *  24. paid_call_escrow.status CHECK contains 'pending', 'active',
+ *      'settled', 'refunded', 'disputed'.
+ *  25. creator_profiles.handle is UNIQUE.
+ *  26. homes.kind CHECK contains parents_basement, hacker_house,
+ *      studio, penthouse, marina_villa.
+ *  27. tips.kind CHECK contains 'cash', 'onchain'.
+ *  28. tips has the (kind = cash AND amount_cents > 0) OR
+ *      (kind = onchain AND amount_lamports > 0) CHECK.
+ *  29. push_devices.platform CHECK contains 'ios', 'android', 'web'.
+ *  30. tips has signature UNIQUE.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -339,6 +356,130 @@ async function main(): Promise<void> {
        ORDER BY attname`,
     );
     record('users.is_opted_in_smart_money and miner_tier exist', smartCol.rows.length === 2);
+
+    // --- M4 invariants ----------------------------------------------
+
+    // (21) M4 tables exist.
+    for (const t of [
+      'voice_rooms',
+      'voice_speakers',
+      'paid_call_escrow',
+      'creator_profiles',
+      'homes',
+      'home_visits',
+      'tips',
+      'push_devices',
+      'meta',
+    ]) {
+      record(`table ${t} exists`, await tableExists(client, t));
+    }
+
+    // Helper: read all CHECK constraints on a table.
+    async function checks(table: string): Promise<string[]> {
+      const r = await client.query<{ consrc: string }>(
+        `SELECT pg_get_constraintdef(oid) AS consrc
+         FROM pg_constraint
+         WHERE conrelid = $1::regclass AND contype = 'c'`,
+        [`public.${table}`],
+      );
+      return r.rows.map((row) => row.consrc);
+    }
+
+    // (22) voice_rooms.kind CHECK contains space/video/paid_call.
+    {
+      const cs = await checks('voice_rooms');
+      const all = cs.join('\n');
+      record(
+        'voice_rooms.kind in allowed set',
+        /kind.*space.*video.*paid_call/is.test(all) || /space.*video.*paid_call/is.test(all),
+      );
+    }
+
+    // (23) voice_speakers.role CHECK.
+    {
+      const cs = await checks('voice_speakers');
+      const all = cs.join('\n');
+      record(
+        'voice_speakers.role in allowed set',
+        /host.*speaker.*listener/is.test(all),
+      );
+    }
+
+    // (24) paid_call_escrow.status CHECK.
+    {
+      const cs = await checks('paid_call_escrow');
+      const all = cs.join('\n');
+      record(
+        'paid_call_escrow.status in allowed set',
+        /pending.*active.*settled.*refunded.*disputed/is.test(all),
+      );
+    }
+
+    // (25) creator_profiles.handle UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.creator_profiles'::regclass
+           AND i.indisunique
+           AND a.attname = 'handle'`,
+      );
+      record('creator_profiles.handle UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (26) homes.kind CHECK.
+    {
+      const cs = await checks('homes');
+      const all = cs.join('\n');
+      record(
+        'homes.kind in allowed set',
+        /parents_basement.*hacker_house.*studio.*penthouse.*marina_villa/is.test(all),
+      );
+    }
+
+    // (27) tips.kind CHECK.
+    {
+      const cs = await checks('tips');
+      const all = cs.join('\n');
+      record('tips.kind in allowed set', /cash.*onchain/is.test(all));
+    }
+
+    // (28) tips amount invariant CHECK.
+    {
+      const cs = await checks('tips');
+      const all = cs.join('\n');
+      record(
+        'tips amount invariant CHECK',
+        /kind\s*=\s*'cash'/i.test(all) &&
+          /kind\s*=\s*'onchain'/i.test(all) &&
+          /amount_cents\s*IS NOT NULL/i.test(all) &&
+          /amount_lamports\s*IS NOT NULL/i.test(all),
+      );
+    }
+
+    // (29) push_devices.platform CHECK.
+    {
+      const cs = await checks('push_devices');
+      const all = cs.join('\n');
+      record(
+        'push_devices.platform in allowed set',
+        /ios.*android.*web/is.test(all),
+      );
+    }
+
+    // (30) tips.signature UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.tips'::regclass
+           AND i.indisunique
+           AND a.attname = 'signature'`,
+      );
+      record('tips.signature UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
   } finally {
     await client.end();
   }
