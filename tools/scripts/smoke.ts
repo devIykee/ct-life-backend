@@ -22,7 +22,7 @@ const results: CheckResult[] = [];
 function record(name: string, ok: boolean, detail: string): void {
   results.push({ name, ok, detail });
   const tag = ok ? '\x1b[32mPASS\x1b[0m' : '\x1b[31mFAIL\x1b[0m';
-  // eslint-disable-next-line no-console
+
   console.log(`[${tag}] ${name}: ${detail}`);
 }
 
@@ -246,14 +246,12 @@ async function main(): Promise<void> {
   const requiredFailed = required.filter((r) => !r.ok);
   const airdrop = results.find((r) => r.name === 'devnet-airdrop');
   if (requiredFailed.length === 0) {
-    // eslint-disable-next-line no-console
     console.log(
       `\x1b[32mAll ${required.length} required checks passed.\x1b[0m` +
         (airdrop ? ` (airdrop: ${airdrop.ok ? 'OK' : 'rate-limited (see UNVERIFIED.md)'})` : ''),
     );
     process.exit(0);
   } else {
-    // eslint-disable-next-line no-console
     console.log(
       `\x1b[31m${requiredFailed.length} of ${required.length} required checks failed.\x1b[0m`,
     );

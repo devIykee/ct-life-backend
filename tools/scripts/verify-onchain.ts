@@ -100,7 +100,6 @@ async function main(): Promise<void> {
     try {
       const info = await fetchInfo(url, address(c.addr));
       if (!info) {
-        // eslint-disable-next-line no-console
         console.log(`[FAIL] ${c.name} (${c.cluster}): account not found at ${c.addr}`);
         failed++;
         continue;
@@ -108,29 +107,25 @@ async function main(): Promise<void> {
       const execMismatch =
         c.expectedExecutable !== undefined && info.executable !== c.expectedExecutable;
       if (execMismatch) {
-        // eslint-disable-next-line no-console
         console.log(
           `[FAIL] ${c.name}: expected executable=${String(c.expectedExecutable)} got ${String(info.executable)}`,
         );
         failed++;
         continue;
       }
-      // eslint-disable-next-line no-console
+
       console.log(
         `[ OK ] ${c.name}: owner=${info.owner} exec=${String(info.executable)} dataLen=${String(info.data.length)}`,
       );
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.log(`[FAIL] ${c.name}: ${(e as Error).message}`);
       failed++;
     }
   }
   void publicKey; // keep umi import in case future checks need it
   if (failed === 0) {
-    // eslint-disable-next-line no-console
     console.log(`verify-onchain: all ${checks.length} addresses OK.`);
   } else {
-    // eslint-disable-next-line no-console
     console.log(`verify-onchain: ${failed} of ${checks.length} failed.`);
   }
   process.exit(failed === 0 ? 0 : 1);

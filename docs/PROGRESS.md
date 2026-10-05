@@ -81,3 +81,68 @@ Optional (logged in `UNVERIFIED.md` if absent, gate does not block):
 ## M2..M8
 
 See `README.md` for the milestone list and `docs/adr/` for decisions made along the way.
+
+## M2 — DB migrations (#27)
+
+**Status:** DONE
+**Last command:** `pnpm db:verify` → 15 check(s) passed
+**Last commit:** pending (this session)
+
+### Done in this slice
+
+- [x] `node-pg-migrate@8.0.2` chosen and installed.
+- [x] `.pgmigrate.json` config; `pnpm db:migrate`, `pnpm db:rollback`, `pnpm db:status` scripts.
+- [x] 9 SQL migrations in `db/migrations/` (1700000001xxx_*_users → 1700000009xxx_indexes). Each has `-- Up Migration` and `-- Down Migration` markers per the node-pg-migrate SQL template.
+- [x] Append-only `ledger_entries` with BEFORE UPDATE OR DELETE trigger that raises `check_violation` (SQLSTATE 23514).
+- [x] `blocks` has `UNIQUE (blocker_user_id, blocked_user_id)`.
+- [x] `ledger_entries.idempotency_ref` is `UNIQUE`.
+- [x] `users.wallet` is `UNIQUE`; `users.sgt_mint` has a `UNIQUE` partial index.
+- [x] `balances.cash_cents` and `balances.debt_cents` are `bigint` with `CHECK (… >= 0)`.
+- [x] `tools/scripts/verify-migrations.ts` — 15 invariant checks against a running Postgres. Run with `pnpm db:verify`.
+
+### Static gate this slice
+
+```
+$ pnpm typecheck    → no errors
+$ pnpm lint         → no errors
+$ pnpm format:check → all files match
+$ pnpm docs:check   → OK (12 env vars, 23 error codes, 0 realtime messages, links resolve)
+$ pnpm boundary:check → layering OK
+$ pnpm contract:check  → all steps green
+```
+
+### Migration verification (real output, trimmed)
+
+```
+$ pnpm db:migrate
+Migrations complete!
+$ pnpm db:verify
+[OK] table users exists
+[OK] table characters exists
+[OK] table balances exists
+[OK] table ledger_entries exists
+[OK] table needs exists
+[OK] table skills exists
+[OK] table blocks exists
+[OK] table reports exists
+[OK] ledger_entries has append-only trigger
+[OK] ledger_entries UPDATE is blocked
+[OK] ledger_entries DELETE is blocked
+[OK] blocks UNIQUE (blocker, blocked)
+[OK] ledger_entries.idempotency_ref UNIQUE
+[OK] users.wallet UNIQUE
+[OK] balances.cash_cents has non-negative CHECK
+verify-migrations: 15 check(s) passed.
+```
+
+### Next
+
+- [ ] #28 server/shared infrastructure (pg pool with SERIALIZABLE + statement_timeout, Unit of Work, ioredis, JWT, Helius, LiveKit, S3, Solana keypairs, pino, config, idempotency, rate limiter, error handler).
+- [ ] #29 REST API composition root.
+- [ ] #30 packages/npc-brain.
+- [ ] #31 server/realtime.
+- [ ] #32 server/workers.
+- [ ] #33 tools/bots.
+- [ ] #34 tools/econ-sim.
+- [ ] #35 tests + load + bot e2e.
+

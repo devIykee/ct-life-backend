@@ -21,7 +21,6 @@ const OUT = join(REPO, 'contract/openapi/generated');
 
 function main(): void {
   if (!existsSync(SRC)) {
-    // eslint-disable-next-line no-console
     console.log(`openapi-docs: ${SRC} not found.`);
     process.exit(1);
   }
@@ -35,7 +34,6 @@ function main(): void {
     { stdio: 'inherit' },
   );
   if (result.status === 0) {
-    // eslint-disable-next-line no-console
     console.log(`openapi-docs: wrote ${join(OUT, 'index.html')}`);
     process.exit(0);
   }
@@ -60,7 +58,7 @@ function main(): void {
 `;
   writeFileSync(join(OUT, 'index.html'), html, 'utf8');
   writeFileSync(join(OUT, 'openapi.yaml'), yaml, 'utf8');
-  // eslint-disable-next-line no-console
+
   console.log(
     `openapi-docs: redocly unavailable, wrote a CDN-based fallback to ${join(OUT, 'index.html')}.`,
   );

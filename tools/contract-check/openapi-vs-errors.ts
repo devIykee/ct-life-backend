@@ -39,17 +39,14 @@ function main(): void {
   }
 
   if (missing.length === 0) {
-    // eslint-disable-next-line no-console
     console.log(
       `openapi-vs-errors: OK (every code in errors.json is referenced in openapi.yaml or contract/realtime/messages.ts).`,
     );
     process.exit(0);
   }
-  // eslint-disable-next-line no-console
+
   console.log('openapi-vs-errors: not referenced anywhere:');
-  for (const c of missing)
-    // eslint-disable-next-line no-console
-    console.log(`  - ${c}`);
+  for (const c of missing) console.log(`  - ${c}`);
   process.exit(1);
 }
 

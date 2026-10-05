@@ -25,16 +25,14 @@ const STEPS: Array<{ name: string; cmd: string; args: string[] }> = [
 
 let failed = 0;
 for (const step of STEPS) {
-  // eslint-disable-next-line no-console
   console.log(`\n=== ${step.name} ===`);
   const r = spawnSync(step.cmd, step.args, { cwd: REPO, stdio: 'inherit' });
   if (r.status !== 0) failed++;
 }
 
 if (failed > 0) {
-  // eslint-disable-next-line no-console
   console.log(`\ncontract-check: ${failed} step(s) failed.`);
   process.exit(1);
 }
-// eslint-disable-next-line no-console
+
 console.log(`\ncontract-check: all steps green.`);

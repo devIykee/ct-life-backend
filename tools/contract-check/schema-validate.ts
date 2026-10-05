@@ -49,11 +49,8 @@ function main(): void {
   for (const file of walk(ID_DIR)) {
     const data = readJson(file);
     if (!idSchema(data)) {
-      // eslint-disable-next-line no-console
       console.log(`[FAIL] ${file.replace(`${REPO}/`, '')}: ids envelope invalid`);
-      for (const err of idSchema.errors ?? [])
-        // eslint-disable-next-line no-console
-        console.log(`    - ${err.message}`);
+      for (const err of idSchema.errors ?? []) console.log(`    - ${err.message}`);
       failed++;
     }
   }
@@ -66,7 +63,6 @@ function main(): void {
     try {
       schemaData = readJson(schemaPath);
     } catch {
-      // eslint-disable-next-line no-console
       console.log(`[FAIL] ${file.replace(`${REPO}/`, '')}: missing schema ${schemaPath}`);
       failed++;
       continue;
@@ -74,23 +70,20 @@ function main(): void {
     const validate = ajv.compile(schemaData as Parameters<typeof ajv.compile>[0]);
     const data = readJson(file);
     if (!validate(data)) {
-      // eslint-disable-next-line no-console
       console.log(`[FAIL] ${file.replace(`${REPO}/`, '')}: failed validation`);
       for (const err of validate.errors ?? [])
-        // eslint-disable-next-line no-console
         console.log(`    - ${err.instancePath || '<root>'}: ${err.message}`);
       failed++;
     }
   }
 
   if (failed === 0) {
-    // eslint-disable-next-line no-console
     console.log(
       `schema-validate: OK (${walk(ID_DIR).length} ids, ${walk(CONFIG_DIR).filter((f) => !f.endsWith('.schema.json')).length} config).`,
     );
     process.exit(0);
   }
-  // eslint-disable-next-line no-console
+
   console.log(`schema-validate: ${failed} failure(s).`);
   process.exit(1);
 }

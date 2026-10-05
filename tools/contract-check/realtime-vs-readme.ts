@@ -37,15 +37,12 @@ function main(): void {
   const md = readFileSync(README_PATH, 'utf8');
   const missing = types.filter((t) => !md.includes(`\`${t}\``));
   if (missing.length === 0) {
-    // eslint-disable-next-line no-console
     console.log(`realtime-vs-readme: OK (${types.length} messages documented).`);
     process.exit(0);
   }
-  // eslint-disable-next-line no-console
+
   console.log('realtime-vs-readme: not documented in docs/REALTIME.md:');
-  for (const t of missing)
-    // eslint-disable-next-line no-console
-    console.log(`  - ${t}`);
+  for (const t of missing) console.log(`  - ${t}`);
   process.exit(1);
 }
 

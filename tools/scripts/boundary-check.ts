@@ -200,11 +200,9 @@ function main(): void {
   }
 
   if (violations === 0) {
-    // eslint-disable-next-line no-console
     console.log('boundary-check: layering OK.');
     process.exit(0);
   } else {
-    // eslint-disable-next-line no-console
     console.log(`boundary-check: ${violations} violation(s).`);
     process.exit(1);
   }

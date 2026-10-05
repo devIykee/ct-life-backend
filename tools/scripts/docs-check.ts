@@ -275,9 +275,13 @@ function main(): void {
   const missingReadme = [...referenced].filter((v) => !declaredReadme.has(v));
   if (missingExample.length > 0 || missingReadme.length > 0) {
     failed = true;
+
+    console.log('docs-check: env var coverage');
     for (const v of missingExample) {
+      console.log(`  env var ${v} referenced in code but missing from .env.example`);
     }
     for (const v of missingReadme) {
+      console.log(`  env var ${v} referenced in code but missing from README.md`);
     }
   }
 
@@ -292,10 +296,9 @@ function main(): void {
     );
     if (missingFromAnywhere.length > 0) {
       failed = true;
-      // eslint-disable-next-line no-console
+
       console.log('docs-check: error code coverage');
       for (const c of missingFromAnywhere) {
-        // eslint-disable-next-line no-console
         console.log(
           `  error code ${c} from contract/ids/errors.json not in openapi.yaml or contract/realtime/messages.ts`,
         );
@@ -310,7 +313,12 @@ function main(): void {
     const missingFromMd = [...messages].filter((m) => !mdMessages.has(m));
     if (missingFromMd.length > 0) {
       failed = true;
+
+      console.log('docs-check: realtime message coverage');
       for (const m of missingFromMd) {
+        console.log(
+          `  realtime message ${m} from contract/realtime not documented in docs/REALTIME.md`,
+        );
       }
     }
   }
@@ -319,12 +327,14 @@ function main(): void {
   const brokenLinks = checkMarkdownLinks();
   if (brokenLinks.length > 0) {
     failed = true;
+
+    console.log('docs-check: broken markdown links');
     for (const l of brokenLinks) {
+      console.log(`  ${l}`);
     }
   }
 
   if (!failed) {
-    // eslint-disable-next-line no-console
     console.log(
       `docs-check: OK (${referenced.size} env vars in code, ${errorCodes.size} error codes, ${messages.size} realtime messages, ${brokenLinks.length === 0 ? 'all links resolve' : 'all links resolve'}).`,
     );

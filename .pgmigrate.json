@@ -1,0 +1,13 @@
+{
+  "databaseUrl": "postgres://ctlife:ctlife@localhost:5434/ctlife",
+  "dir": "db/migrations",
+  "migrationsTable": "pgmigrations",
+  "migrationFileLanguage": "sql",
+  "count": 1,
+  "createSchema": false,
+  "createMigrationsSchema": false,
+  "noLock": false,
+  "singleTransaction": true,
+  "checkOrder": true,
+  "verbose": true
+}
