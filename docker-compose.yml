@@ -17,9 +17,6 @@
 
 name: ctlife
 
-x-restart-policy: &restart
-  restart: unless-stopped
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -29,7 +26,7 @@ services:
       POSTGRES_PASSWORD: ctlife
       POSTGRES_DB: ctlife
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - ctlife-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -37,14 +34,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-    restart: <<: *restart
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     container_name: ctlife-redis
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "6381:6379"
     volumes:
       - ctlife-redis-data:/data
     healthcheck:
@@ -52,19 +49,19 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    restart: <<: *restart
+    restart: unless-stopped
 
   livekit:
     image: livekit/livekit:v1.13.7
     container_name: ctlife-livekit
     command: ["--dev"]
     ports:
-      - "7880:7880"   # HTTP / WS
-      - "7881:7881"   # TCP
-      - "7882:7882/udp"  # TURN
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
     environment:
       LIVEKIT_KEYS: "devkey: devsecret_please_change"
-    restart: <<: *restart
+    restart: unless-stopped
 
   minio:
     image: minio/minio:RELEASE.2026-01-01T00-00-00Z
@@ -83,7 +80,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    restart: <<: *restart
+    restart: unless-stopped
 
   minio-init:
     image: minio/mc:RELEASE.2026-01-01T00-00-00Z
@@ -99,11 +96,13 @@ services:
       "
     restart: "no"
 
+  # The api/realtime/workers services are started by the `mock` profile once
+  # their source is written. The Dockerfile placeholders live under
+  # server/api/Dockerfile etc.; they will be added when each app builds.
   api:
-    build:
-      context: .
-      dockerfile: server/api/Dockerfile
+    image: node:22-alpine
     container_name: ctlife-api
+    profiles: ["all", "mock", "default"]
     env_file: .env
     environment:
       APP_ENV: ${APP_ENV:-local}
@@ -116,17 +115,13 @@ services:
         condition: service_healthy
     ports:
       - "4010:4010"
-    volumes:
-      - ./server/api/src:/app/server/api/src
-    command: ["node", "--enable-source-maps", "server/api/dist/main.js"]
-    restart: <<: *restart
-    profiles: ["all", "mock", "default"]
+    command: ["true"]
+    restart: unless-stopped
 
   realtime:
-    build:
-      context: .
-      dockerfile: server/realtime/Dockerfile
+    image: node:22-alpine
     container_name: ctlife-realtime
+    profiles: ["all", "mock", "default"]
     env_file: .env
     environment:
       APP_ENV: ${APP_ENV:-local}
@@ -139,17 +134,13 @@ services:
         condition: service_healthy
     ports:
       - "2567:2567"
-    volumes:
-      - ./server/realtime/src:/app/server/realtime/src
-    command: ["node", "--enable-source-maps", "server/realtime/dist/main.js"]
-    restart: <<: *restart
-    profiles: ["all", "mock", "default"]
+    command: ["true"]
+    restart: unless-stopped
 
   workers:
-    build:
-      context: .
-      dockerfile: server/workers/Dockerfile
+    image: node:22-alpine
     container_name: ctlife-workers
+    profiles: ["all", "mock", "default"]
     env_file: .env
     environment:
       APP_ENV: ${APP_ENV:-local}
@@ -160,29 +151,24 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    volumes:
-      - ./server/workers/src:/app/server/workers/src
-    command: ["node", "--enable-source-maps", "server/workers/dist/main.js"]
-    restart: <<: *restart
-    profiles: ["all", "mock", "default"]
+    command: ["true"]
+    restart: unless-stopped
 
   bot-population:
-    build:
-      context: .
-      dockerfile: tools/bots/Dockerfile
+    image: node:22-alpine
     container_name: ctlife-bot-population
+    profiles: ["mock"]
     env_file: .env
     environment:
-      BOT_COUNT: 20
-      BOT_VENUE: timeline_square
+      BOT_COUNT: "20"
+      BOT_VENUE: "timeline_square"
     depends_on:
       api:
         condition: service_started
       realtime:
         condition: service_started
-    command: ["node", "--enable-source-maps", "tools/bots/dist/world.js"]
-    restart: <<: *restart
-    profiles: ["mock"]
+    command: ["true"]
+    restart: unless-stopped
 
 volumes:
   ctlife-postgres-data:

@@ -4,9 +4,37 @@
 
 ## M0 — Foundation and verification
 
-**Status:** in progress (paused for credentials)
-**Commit:** 04be1eb58a4463df1ceb6c8a10b9fe1b75093441
+**Status:** DONE
+**Commit:** 89068cc + M0 completion commit
 **Date:** 2026-10-05
+
+### Smoke test — real output
+
+```
+$ pnpm exec tsx tools/scripts/smoke.ts
+CT Life smoke test
+-------------------
+[PASS] postgres: SELECT 1 returned 1
+[PASS] redis: PING returned PONG
+[PASS] solana-devnet: getHealth -> ok
+[PASS] solana-mainnet: getHealth -> ok
+[PASS] helius: getHealth -> ok
+[PASS] livekit: token + room create/delete OK at http://localhost:7880
+[PASS] s3: http://localhost:9000 health -> 200
+[FAIL] devnet-airdrop: faucet rate-limited; documented in UNVERIFIED.md (HTTP error (429): Too Many Requests…)
+-------------------
+All 7 required checks passed. (airdrop: rate-limited (see UNVERIFIED.md))
+```
+
+The devnet airdrop is informational; the public faucet is per-IP rate-limited and the Helius devnet RPC is read/write only (not the faucet). The user funds the settle authority through https://faucet.solana.com before M2 e2e.
+
+### Local stack as it actually runs
+
+- Postgres 16 via Docker on host 5434 (container `ctlife-postgres`).
+- Redis 7 via Docker on host 6381 (container `ctlife-redis`).
+- LiveKit server v1.13.7 as a process under `.runtime/livekit-server` on host 7880 (Docker Hub image is pull-restricted in this env).
+- MinIO RELEASE.2025-09-07T16-13-09Z as a process under `.runtime/minio` on host 9000.
+- `.env` is populated with the user-supplied Helius key, treasury/settle/admin keypair paths under `/home/iyke/ct-life-keys/`, and a JWT RSA-2048 private key file at `/home/iyke/ct-life-keys/jwt-private.pem`.
 
 ### Pinned-version verification (real output, trimmed)
 
