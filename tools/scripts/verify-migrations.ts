@@ -50,6 +50,42 @@
  *  29. push_devices.platform CHECK contains 'ios', 'android', 'web'.
  *  30. tips has signature UNIQUE.
  *
+ * Checks (M5):
+ *
+ *  31. M5 tables exist: daily_clue, daily_clue_attempts, season_pass,
+ *      cosmetic_items, cosmetic_inventory, businesses, business_days,
+ *      gig_runs, ad_slots, ad_bookings, ad_creatives, projects,
+ *      project_hires, nft_mints, meta_jobs.
+ *  32. daily_clue.date UNIQUE.
+ *  33. daily_clue_attempts UNIQUE (user_id, clue_id).
+ *  34. daily_clue.prize_cents > 0.
+ *  35. season_pass.user_id UNIQUE.
+ *  36. season_pass.tier CHECK contains 'free', 'season'.
+ *  37. cosmetic_items.item_key UNIQUE.
+ *  38. cosmetic_items.slot CHECK contains skin/head/hair/top/bottom/shoes/acc.
+ *  39. cosmetic_inventory UNIQUE (user_id, item_id).
+ *  40. cosmetic_inventory.source CHECK contains shop/mint/grant.
+ *  41. businesses.kind CHECK contains the 5 kinds.
+ *  42. business_days.kind CHECK contains normal/bad_day/great_day.
+ *  43. business_days UNIQUE (business_id, day_date).
+ *  44. gig_runs.pay_cents >= 0.
+ *  45. ad_slots has terms jsonb.
+ *  46. ad_bookings.status CHECK contains pending_review/live/rejected.
+ *  47. ad_creatives UNIQUE booking_id.
+ *  48. ad_creatives.mime_type CHECK contains image/png, image/jpeg.
+ *  49. projects.status CHECK contains founded/launching/live/paused/rugged.
+ *  50. projects.kind CHECK contains memecoin/dex/nft_studio/perps_venue/l2.
+ *  51. project_hires.role CHECK contains dev/mod/kol/auditor.
+ *  52. project_hires UNIQUE (project_id, user_id).
+ *  53. nft_mints.mint_address UNIQUE.
+ *  54. nft_mints.signature UNIQUE.
+ *  55. nft_mints.network CHECK contains devnet/mainnet.
+ *  56. meta_jobs UNIQUE (kind, week_iso).
+ *  57. meta_jobs.kind CHECK contains weekly_meta/sunday_unlock.
+ *  58. cosmetic_items.price_cents >= 0.
+ *  59. businesses.income_min_cents <= income_max_cents.
+ *  60. daily_clue.answer_hash length 64.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -473,6 +509,329 @@ async function main(): Promise<void> {
            AND a.attname = 'signature'`,
       );
       record('tips.signature UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // --- M5 invariants ----------------------------------------------
+
+    // (31) M5 tables exist.
+    for (const t of [
+      'daily_clue',
+      'daily_clue_attempts',
+      'season_pass',
+      'cosmetic_items',
+      'cosmetic_inventory',
+      'businesses',
+      'business_days',
+      'gig_runs',
+      'ad_slots',
+      'ad_bookings',
+      'ad_creatives',
+      'projects',
+      'project_hires',
+      'nft_mints',
+      'meta_jobs',
+    ]) {
+      record(`table ${t} exists`, await tableExists(client, t));
+    }
+
+    // (32) daily_clue.date UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.daily_clue'::regclass
+           AND i.indisunique
+           AND a.attname = 'date'`,
+      );
+      record('daily_clue.date UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (33) daily_clue_attempts UNIQUE (user_id, clue_id).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.daily_clue_attempts'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['user_id','clue_id']::name[]`,
+      );
+      record('daily_clue_attempts UNIQUE (user_id, clue_id)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (34) daily_clue.prize_cents > 0.
+    {
+      const cs = await checks('daily_clue');
+      const all = cs.join('\n');
+      record('daily_clue.prize_cents > 0', /prize_cents\s*>\s*0/i.test(all));
+    }
+
+    // (35) season_pass.user_id UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.season_pass'::regclass
+           AND i.indisunique
+           AND a.attname = 'user_id'`,
+      );
+      record('season_pass.user_id UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (36) season_pass.tier CHECK contains 'free', 'season'.
+    {
+      const cs = await checks('season_pass');
+      const all = cs.join('\n');
+      record('season_pass.tier in allowed set', /free.*season/is.test(all));
+    }
+
+    // (37) cosmetic_items.item_key UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.cosmetic_items'::regclass
+           AND i.indisunique
+           AND a.attname = 'item_key'`,
+      );
+      record('cosmetic_items.item_key UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (38) cosmetic_items.slot CHECK.
+    {
+      const cs = await checks('cosmetic_items');
+      const all = cs.join('\n');
+      record(
+        'cosmetic_items.slot in allowed set',
+        /skin.*head.*hair.*top.*bottom.*shoes.*acc/is.test(all),
+      );
+    }
+
+    // (39) cosmetic_inventory UNIQUE (user_id, item_id).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.cosmetic_inventory'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['user_id','item_id']::name[]`,
+      );
+      record('cosmetic_inventory UNIQUE (user_id, item_id)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (40) cosmetic_inventory.source CHECK.
+    {
+      const cs = await checks('cosmetic_inventory');
+      const all = cs.join('\n');
+      record('cosmetic_inventory.source in allowed set', /shop.*mint.*grant/is.test(all));
+    }
+
+    // (41) businesses.kind CHECK.
+    {
+      const cs = await checks('businesses');
+      const all = cs.join('\n');
+      record(
+        'businesses.kind in allowed set',
+        /lemonade_stand.*laundromat.*cafe.*shop.*arcade/is.test(all),
+      );
+    }
+
+    // (42) business_days.kind CHECK.
+    {
+      const cs = await checks('business_days');
+      const all = cs.join('\n');
+      record('business_days.kind in allowed set', /normal.*bad_day.*great_day/is.test(all));
+    }
+
+    // (43) business_days UNIQUE (business_id, day_date).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.business_days'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['business_id','day_date']::name[]`,
+      );
+      record('business_days UNIQUE (business_id, day_date)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (44) gig_runs.pay_cents >= 0.
+    {
+      const cs = await checks('gig_runs');
+      const all = cs.join('\n');
+      record('gig_runs.pay_cents >= 0', />=\s*0/i.test(all) && /pay_cents/i.test(all));
+    }
+
+    // (45) ad_slots has terms jsonb.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_attribute
+         WHERE attrelid = 'public.ad_slots'::regclass
+           AND attname = 'terms'
+           AND atttypid = 'jsonb'::regtype`,
+      );
+      record('ad_slots.terms is jsonb', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (46) ad_bookings.status CHECK.
+    {
+      const cs = await checks('ad_bookings');
+      const all = cs.join('\n');
+      record('ad_bookings.status in allowed set', /pending_review.*live.*rejected/is.test(all));
+    }
+
+    // (47) ad_creatives UNIQUE booking_id.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.ad_creatives'::regclass
+           AND i.indisunique
+           AND a.attname = 'booking_id'`,
+      );
+      record('ad_creatives.booking_id UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (48) ad_creatives.mime_type CHECK.
+    {
+      const cs = await checks('ad_creatives');
+      const all = cs.join('\n');
+      record('ad_creatives.mime_type in allowed set', /image\/png.*image\/jpeg/is.test(all));
+    }
+
+    // (49) projects.status CHECK.
+    {
+      const cs = await checks('projects');
+      const all = cs.join('\n');
+      record(
+        'projects.status in allowed set',
+        /founded.*launching.*live.*paused.*rugged/is.test(all),
+      );
+    }
+
+    // (50) projects.kind CHECK.
+    {
+      const cs = await checks('projects');
+      const all = cs.join('\n');
+      record(
+        'projects.kind in allowed set',
+        /memecoin.*dex.*nft_studio.*perps_venue.*l2/is.test(all),
+      );
+    }
+
+    // (51) project_hires.role CHECK.
+    {
+      const cs = await checks('project_hires');
+      const all = cs.join('\n');
+      record('project_hires.role in allowed set', /dev.*mod.*kol.*auditor/is.test(all));
+    }
+
+    // (52) project_hires UNIQUE (project_id, user_id).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.project_hires'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['project_id','user_id']::name[]`,
+      );
+      record('project_hires UNIQUE (project_id, user_id)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (53) nft_mints.mint_address UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.nft_mints'::regclass
+           AND i.indisunique
+           AND a.attname = 'mint_address'`,
+      );
+      record('nft_mints.mint_address UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (54) nft_mints.signature UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.nft_mints'::regclass
+           AND i.indisunique
+           AND a.attname = 'signature'`,
+      );
+      record('nft_mints.signature UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (55) nft_mints.network CHECK.
+    {
+      const cs = await checks('nft_mints');
+      const all = cs.join('\n');
+      record('nft_mints.network in allowed set', /devnet.*mainnet/is.test(all));
+    }
+
+    // (56) meta_jobs UNIQUE (kind, week_iso).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.meta_jobs'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['kind','week_iso']::name[]`,
+      );
+      record('meta_jobs UNIQUE (kind, week_iso)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (57) meta_jobs.kind CHECK.
+    {
+      const cs = await checks('meta_jobs');
+      const all = cs.join('\n');
+      record('meta_jobs.kind in allowed set', /weekly_meta.*sunday_unlock/is.test(all));
+    }
+
+    // (58) cosmetic_items.price_cents >= 0.
+    {
+      const cs = await checks('cosmetic_items');
+      const all = cs.join('\n');
+      record('cosmetic_items.price_cents >= 0', />=\s*0/i.test(all) && /price_cents/i.test(all));
+    }
+
+    // (59) businesses.income_min_cents <= income_max_cents.
+    {
+      const cs = await checks('businesses');
+      const all = cs.join('\n');
+      record(
+        'businesses.income_min <= income_max',
+        /income_min_cents\s*>=\s*0/i.test(all) &&
+          /income_max_cents\s*>=\s*income_min_cents/i.test(all),
+      );
+    }
+
+    // (60) daily_clue.answer_hash length 64.
+    {
+      const cs = await checks('daily_clue');
+      const all = cs.join('\n');
+      record('daily_clue.answer_hash length 64', /length\(answer_hash\)\s*=\s*64/i.test(all));
     }
   } finally {
     await client.end();

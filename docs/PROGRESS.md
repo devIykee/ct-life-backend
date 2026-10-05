@@ -551,7 +551,7 @@ M4 (voice, spaces, paid calls).
 - [x] #55 Spaces + Video Room realtime integration.
       `contract/realtime/states.ts` adds `SpeakerState`,
       `SpaceState`, `VideoCallState`. `server/realtime/rooms/
-    space.ts` and `video-call.ts` mirror the application
+  space.ts` and `video-call.ts` mirror the application
       state; the realtime main registers both room names.
 - [x] #56 Webhooks (LiveKit + ORE). HS256 JWT verification with
       timing-safe compare. Idempotent on (source, signature).
@@ -597,3 +597,29 @@ $ pnpm db:verify       → 55/55 schema invariants passed
 
 M5 (Phase 4: city life, Sunday Unlock, businesses, gigs,
 daily clue, cosmetics shop, cosmetic NFTs, season pass).
+
+## M5 — City life, businesses, projects, ads, NFTs
+
+**Status:** in progress
+**Last command:** `pnpm db:verify` → 99/99 schema invariants passed
+**Last commit:** pending (M5 #58)
+
+### M5 #58 — Migrations for the city-life layer
+
+- [x] 15 SQL migrations (`db/migrations/1700000031xxx_*.sql`
+      through `1700000045xxx_*.sql`):
+      `daily_clue`, `daily_clue_attempts`, `season_pass`,
+      `cosmetic_items`, `cosmetic_inventory`, `businesses`,
+      `business_days`, `gig_runs`, `ad_slots`, `ad_bookings`,
+      `ad_creatives`, `projects`, `project_hires`, `nft_mints`,
+      `meta_jobs`. Append-only ledger trigger unchanged.
+- [x] Every M5 table has the CHECKs and UNIQUE indices the M5
+      services depend on (one-attempt-per-day, one-item-per-user,
+      one-booking-per-creative, one-hire-per-(project,user),
+      one-mint-per-(address,signature), one-meta-job-per-week).
+- [x] `pnpm db:verify` extended with 30 M5 invariants (32..60);
+      total invariants now 99/99.
+
+### Next
+
+M5 #59 (cosmetics shop + inventory).
