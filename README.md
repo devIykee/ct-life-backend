@@ -295,4 +295,4 @@ Every variable the backend reads is documented in `.env.example`. The `docs:chec
 
 ## License
 
-Internal project. No public license.
+[MIT](./LICENSE) — Copyright (c) 2026 deviykee. See [LICENSE](./LICENSE) for the full text.

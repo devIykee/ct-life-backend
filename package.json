@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "CT Life backend: REST, realtime, workers, and on-chain escrow for the Solana Seeker Crypto Twitter life-sim.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22.0.0"
   },
