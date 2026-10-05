@@ -203,13 +203,19 @@ describe('sunday-unlock + weekly-meta worker', () => {
     const fakeHash = createHash('sha256').update('test').digest('hex');
     await pool.query(
       `INSERT INTO daily_clue (clue_id, date, clue_text, answer_hash, prize_cents, expires_at)
-       VALUES ($1, '2099-09-01', 'test', $2, 100, now() + interval '1 day')`,
+       VALUES ($1, '2099-09-01', 'test', $2, 100, now() + interval '1 day')
+       ON CONFLICT (date) DO NOTHING`,
       [clueId, fakeHash],
     );
+    // Re-fetch a clue_id in case the row was pre-existing.
+    const clueR = await pool.query<{ clue_id: string }>(
+      `SELECT clue_id FROM daily_clue WHERE date = '2099-09-01'`,
+    );
+    const realClueId = clueR.rows[0]?.clue_id ?? clueId;
     await pool.query(
       `INSERT INTO daily_clue_attempts (attempt_id, user_id, clue_id, attempt_text, correct, attempted_at)
        VALUES ($1, $2, $3, 'yes', true, now() - interval '3 days')`,
-      [uuidv7(), userId, clueId],
+      [uuidv7(), userId, realClueId],
     );
     // Force a unique weekIso by nuking any existing meta_jobs row.
     const wk = weekIso(new Date());
