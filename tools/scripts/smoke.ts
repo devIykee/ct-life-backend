@@ -82,7 +82,7 @@ async function checkSolanaDevnet(): Promise<void> {
     const conn = createConnection(env.SOLANA_RPC_URL_DEVNET);
     // @solana/kit 8.4: the RPC methods are on the returned object directly,
     // not on `.rpc`. Each method returns a builder; call .send() to await.
-    const health = await withTimeout(conn.getHealth().send(), 5000, 'devnet getHealth');
+    const health = await withTimeout(conn.getHealth().send(), 15000, 'devnet getHealth');
     record('solana-devnet', health === 'ok', `getHealth -> ${health}`);
   } catch (e) {
     record('solana-devnet', false, `error: ${(e as Error).message}`);
@@ -96,7 +96,7 @@ async function checkSolanaMainnet(): Promise<void> {
   }
   try {
     const conn = createConnection(env.SOLANA_RPC_URL_MAINNET);
-    const health = await withTimeout(conn.getHealth().send(), 5000, 'mainnet getHealth');
+    const health = await withTimeout(conn.getHealth().send(), 15000, 'mainnet getHealth');
     record('solana-mainnet', health === 'ok', `getHealth -> ${health}`);
   } catch (e) {
     record('solana-mainnet', false, `error: ${(e as Error).message}`);
@@ -111,7 +111,7 @@ async function checkHelius(): Promise<void> {
   const heliusUrl = env.HELIUS_RPC_URL_DEVNET ?? 'https://devnet.helius-rpc.com';
   try {
     const conn = createConnection(heliusUrl);
-    const health = await withTimeout(conn.getHealth().send(), 5000, 'helius getHealth');
+    const health = await withTimeout(conn.getHealth().send(), 10000, 'helius getHealth');
     record('helius', health === 'ok', `getHealth -> ${health}`);
   } catch (e) {
     record('helius', false, `error: ${(e as Error).message}`);
