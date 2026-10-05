@@ -551,7 +551,7 @@ M4 (voice, spaces, paid calls).
 - [x] #55 Spaces + Video Room realtime integration.
       `contract/realtime/states.ts` adds `SpeakerState`,
       `SpaceState`, `VideoCallState`. `server/realtime/rooms/
-      space.ts` and `video-call.ts` mirror the application
+    space.ts` and `video-call.ts` mirror the application
       state; the realtime main registers both room names.
 - [x] #56 Webhooks (LiveKit + ORE). HS256 JWT verification with
       timing-safe compare. Idempotent on (source, signature).
