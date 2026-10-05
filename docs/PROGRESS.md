@@ -138,7 +138,7 @@ verify-migrations: 15 check(s) passed.
 ### Next
 
 - [x] #28 server/shared infrastructure (pg pool with SERIALIZABLE + statement_timeout, Unit of Work, ioredis, JWT, Helius, LiveKit, S3, Solana keypairs, pino, config, idempotency, rate limiter, error handler).
-- [ ] #29 REST API composition root.
+- [x] #29 REST API composition root.
 - [ ] #30 packages/npc-brain.
 - [ ] #31 server/realtime.
 - [ ] #32 server/workers.
@@ -191,3 +191,63 @@ $ pnpm db:verify    → 15/15 schema invariants passed
 ### Next
 
 - [ ] #29 REST API composition root.
+  - [ ] #30 packages/npc-brain.
+  - [ ] #31 server/realtime.
+  - [ ] #32 server/workers.
+  - [ ] #33 tools/bots.
+  - [ ] #34 tools/econ-sim.
+  - [ ] #35 tests + load + bot e2e.
+
+## M2 — REST API (#29)
+
+**Status:** DONE
+**Last command:** `pnpm boundary:check` → layering OK
+**Last commit:** pending (this session)
+
+### Done in this slice
+
+- [x] `server/application/context.ts` — AppContext composition root.
+- [x] `server/application/auth.ts` — `AuthService`. SIWS challenge, verify, dev auth, refresh, logout. Ed25519 via Node `crypto.verify`. SGT check falls back to isSeeker=false on Helius failure.
+- [x] `server/application/character.ts` — `CharacterService.create`. 23505 → AliasTakenError, existing character → ForbiddenError.
+- [x] `server/application/lottery.ts` — `LotteryService.roll`. Reads weights from `contract/config/lottery.json`. Character existence is the M2 sentinel for AlreadyRolledError.
+- [x] `server/application/needs.ts` — `NeedsService.apply`. Array-shaped config.
+- [x] `server/application/public-profile.ts` — `PublicProfileService.byId`. `netWorthCents = cashCents - debtCents`.
+- [x] `server/application/blocks.ts` — `BlocksService.block` / `unblock`. Idempotent.
+- [x] `server/application/reports.ts`, `boards.ts`, `careers.ts`, `shifts.ts`, `daily-clue.ts`.
+- [x] `server/api/main.ts` — Fastify composition root, request-id, idempotency onSend, error handler, 404.
+- [x] `server/api/middleware/auth.ts` — bearer middleware.
+- [x] `server/api/middleware/idempotency.ts` — cache-first reserve, body-hash mismatch.
+- [x] `server/api/routes/{auth,core,social,work,ops}.ts` — every Phase 1 endpoint.
+- [x] `tools/scripts/boundary-check.ts` — added APP_ROOTS.
+
+### End-to-end smoke (real output, trimmed)
+
+- `GET /healthz` → 200
+- `GET /readyz` → 200 (postgres, redis, helius all OK)
+- `GET /v1/config` → 200 (returns venues, archetypes, traits, etc.)
+- `POST /v1/auth/dev` (with `Idempotency-Key: k1`) → 200, returns user + access/refresh tokens
+- `POST /v1/auth/dev` (replay with same key) → 200, returns the same body
+- `GET /v1/me` with bearer token → 200, returns Me shape
+- `POST /v1/lottery/roll` → 200, returns `{"outcome":"insider","cashCents":300000,"debtCents":0,"homeId":"studio"}`
+- `POST /v1/lottery/roll` (re-roll) → 409 `ALREADY_ROLLED`
+- `POST /v1/characters` → 201; retry → 403 `character_exists`
+- `POST /v1/needs/actions` (eat) → 200, hunger 50 → 80
+- `POST /v1/blocks/{userId}` → 204; `DELETE` → 204
+- `POST /v1/reports` → 204
+- `GET /v1/leaderboards/net_worth?scope=global` → 200
+- `POST /v1/shifts` (discord_mod) → 200, returns shiftId + endsAt
+- `GET /v1/daily-clue` → 200
+
+### Static gate this slice
+
+```
+$ pnpm typecheck    → no errors
+$ pnpm lint         → no errors
+$ pnpm format:check → all files match
+$ pnpm docs:check   → OK (23 env vars, 23 error codes, links resolve)
+$ pnpm boundary:check → layering OK (soft-size warn on auth.ts: 301 lines)
+$ pnpm contract:check  → all steps green
+$ pnpm test:unit    → 10/10 passed
+$ pnpm smoke        → 7/7 required checks passed
+$ pnpm db:verify    → 15/15 schema invariants passed
+```

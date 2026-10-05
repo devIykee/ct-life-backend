@@ -99,6 +99,7 @@ export default [
     // services. JSDoc is required on every exported function/method.
     files: [
       'server/api/**/*.ts',
+      'server/application/**/*.ts',
       'server/realtime/**/*.ts',
       'server/workers/**/*.ts',
       'server/shared/infra/**/*.ts',

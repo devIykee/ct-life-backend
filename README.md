@@ -1,4 +1,4 @@
-# CT Life — backend
+# CT Life - backend
 
 CT Life is a 3D multiplayer Crypto Twitter life-sim on Solana, built native for the Solana Seeker phone. This repository contains everything server-side: REST API, realtime rooms, background workers, the on-chain `ct_escrow` program, the cross-team contract, headless test bots, and deployment config. The Unity client lives in a separate repo and pulls `contract/` from here.
 

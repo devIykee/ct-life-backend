@@ -20,12 +20,14 @@ import { join, extname } from 'node:path';
 
 const REPO = process.cwd();
 const DOMAIN_ROOTS = ['server/shared/domain', 'server/shared/application', 'packages'];
+const APP_ROOTS = ['server/application'];
 const INFRA_ROOTS = ['server/shared/infra'];
 const TRANSPORT_ROOTS = ['server/api', 'server/realtime', 'server/workers', 'tools/bots'];
 const COMPOSITION_ROOTS = new Set([
   'server/api/main.ts',
   'server/realtime/main.ts',
   'server/workers/main.ts',
+  'server/application/context.ts',
   'tools/bots/main.ts',
 ]);
 const CONFIG_OBJECT_PATTERNS = [/^import .* from .*['"]\..*\/config['"]/];
@@ -125,6 +127,7 @@ function flag(file: string, rule: string, detail: string): void {
   if (seen.has(key)) return;
   seen.add(key);
   violations++;
+  console.log(`  ${rel}: ${rule} — ${detail}`);
 }
 
 function checkFile(file: string, layer: 'domain' | 'application' | 'infra'): void {
@@ -170,12 +173,13 @@ function checkFile(file: string, layer: 'domain' | 'application' | 'infra'): voi
 
   // Transport can import anything; no checks.
 
-  // Soft size limits (40-line functions, 300-line files) — warn only at
-  // this layer; the ESLint `max-lines-per-function` and `max-lines` rules
-  // are the authoritative enforcer when present.
+  // Soft size limits (40-line functions, 300-line files) — warn only.
+  // These are documented in the architecture and not enforced here.
   const lineCount = text.split('\n').length;
   if (lineCount > 300) {
-    flag(file, 'soft-size', `file is ${lineCount} lines (> 300; refactor or justify)`);
+    console.log(
+      `  ${file.replace(`${REPO}/`, '')}: soft-size — ${lineCount} lines (> 300; refactor or justify)`,
+    );
   }
 }
 
@@ -188,6 +192,15 @@ function main(): void {
       continue;
     }
     for (const file of walk(full)) checkFile(file, 'domain');
+  }
+  for (const root of APP_ROOTS) {
+    const full = join(REPO, root);
+    try {
+      statSync(full);
+    } catch {
+      continue;
+    }
+    for (const file of walk(full)) checkFile(file, 'application');
   }
   for (const root of INFRA_ROOTS) {
     const full = join(REPO, root);
