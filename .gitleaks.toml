@@ -1,0 +1,50 @@
+# Gitleaks config — CI runs this on every push to scan history and uncommitted
+# changes. The backend stores keypairs as env vars; keypair files in
+# `keypairs/` and any `*.private.json` should never be committed.
+
+title = "CT Life secrets"
+
+[allowlist]
+  description = "Allowlist for files that should not be scanned"
+  paths = [
+    '''^\.git/''',
+    '''^node_modules/''',
+    '''^dist/''',
+    '''^build/''',
+    '''^coverage/''',
+    '''^target/''',
+    '''^contract/openapi/generated/''',
+    '''^contract/realtime/generated/''',
+    '''^docs/spec/''',
+    '''^docs/adr/''',
+  ]
+
+[[rules]]
+  id = "ctlife-keypair-private-key"
+  description = "Solana keypair base58 private key (88 chars, base58 alphabet)"
+  regex = '''[1-9A-HJ-NP-Za-km-z]{86,88}'''
+  tags = ["solana", "keypair"]
+
+[[rules]]
+  id = "ctlife-jwt-private-key"
+  description = "PEM private key"
+  regex = '''-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----'''
+  tags = ["key", "jwt"]
+
+[[rules]]
+  id = "ctlife-helius-api-key"
+  description = "Helius API key"
+  regex = '''(?i)helius[_-]?api[_-]?key.{0,20}["']?([a-f0-9-]{32,})["']?'''
+  tags = ["helius", "api-key"]
+
+[[rules]]
+  id = "ctlife-livekit-secret"
+  description = "LiveKit API secret"
+  regex = '''(?i)livekit[_-]?api[_-]?secret.{0,20}["']?([A-Za-z0-9]{20,})["']?'''
+  tags = ["livekit"]
+
+[[rules]]
+  id = "ctlife-anthropic-api-key"
+  description = "Anthropic API key"
+  regex = '''sk-ant-[A-Za-z0-9_-]{20,}'''
+  tags = ["anthropic", "api-key"]

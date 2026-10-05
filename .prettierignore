@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+coverage/
+target/
+*.lock
+pnpm-lock.yaml
+package-lock.json
+CHANGELOG.md
+contract/idl/
+contract/openapi/generated/
+contract/realtime/generated/
+docs/spec/
+docs/adr/
+docker-compose.yml

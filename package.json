@@ -1,0 +1,59 @@
+{
+  "name": "ct-life-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CT Life backend: REST, realtime, workers, and on-chain escrow for the Solana Seeker Crypto Twitter life-sim.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --parallel run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "pnpm -r --parallel run test",
+    "test:unit": "pnpm -r --parallel run test:unit",
+    "test:integration": "pnpm -r --parallel run test:integration",
+    "test:e2e": "pnpm -r --parallel run test:e2e",
+    "smoke": "tsx tools/scripts/smoke.ts",
+    "contract:check": "tsx tools/contract-check/index.ts",
+    "contract:codegen": "tsx tools/contract-check/codegen.ts",
+    "docs:check": "tsx tools/scripts/docs-check.ts",
+    "boundary:check": "tsx tools/scripts/boundary-check.ts",
+    "dev:up": "docker compose --profile mock up -d",
+    "dev:down": "docker compose --profile mock down",
+    "dev:logs": "docker compose --profile mock logs -f",
+    "keygen": "tsx tools/scripts/keygen.ts",
+    "anchor:build": "anchor build --program-name ct_escrow",
+    "anchor:test": "cd programs/ct_escrow && anchor test"
+  },
+  "dependencies": {
+    "@metaplex-foundation/umi": "^1.6.0",
+    "@solana/kit": "8.4.0",
+    "dotenv": "^16.4.7",
+    "livekit-server-sdk": "2.19.1",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "eslint-import-resolver-typescript": "^3.7.0",
+    "eslint-plugin-import": "^2.31.0",
+    "eslint-plugin-jsdoc": "^50.6.1",
+    "ioredis": "^5.4.1",
+    "prettier": "^3.4.2",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^2.1.8"
+  }
+}
