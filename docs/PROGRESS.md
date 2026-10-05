@@ -358,19 +358,20 @@ $ pnpm db:verify    → 15/15 schema invariants passed
 
 Every M2 sub-deliverable is in place and all static + smoke gates are green:
 
-| Task | What ships |
-| --- | --- |
-| #27 DB migrations | 9 SQL migrations, append-only trigger, 15 invariant checks |
-| #28 server/shared infrastructure | pg pool, UoW, redis, JWT, Helius, LiveKit, S3, keypair, pino, config, idempotency, rate limit |
-| #29 REST API | every Phase 1 endpoint + /healthz, /readyz, /metrics, /docs; full e2e verified |
-| #30 packages/npc-brain | 9 archetypes as pure state machines, 10 tests |
-| #31 server/realtime | Colyseus city, market, venue rooms; full message handlers; NPC brain integration |
-| #32 server/workers | BullMQ event engine, daily board, Sunday Unlock, Weekly Meta |
-| #33 tools/bots | real-keypair headless client; full Phase 1 flow |
-| #34 tools/econ-sim | 1000 players x 8 weeks; invariant guard |
-| #35 tests | 32 tests across 8 files: unit (ledger invariants, math, NPC brains), wiring, jwt, rate limit, econ-sim, ledger, venue, bots, contracts |
+| Task                             | What ships                                                                                                                             |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| #27 DB migrations                | 9 SQL migrations, append-only trigger, 15 invariant checks                                                                             |
+| #28 server/shared infrastructure | pg pool, UoW, redis, JWT, Helius, LiveKit, S3, keypair, pino, config, idempotency, rate limit                                          |
+| #29 REST API                     | every Phase 1 endpoint + /healthz, /readyz, /metrics, /docs; full e2e verified                                                         |
+| #30 packages/npc-brain           | 9 archetypes as pure state machines, 10 tests                                                                                          |
+| #31 server/realtime              | Colyseus city, market, venue rooms; full message handlers; NPC brain integration                                                       |
+| #32 server/workers               | BullMQ event engine, daily board, Sunday Unlock, Weekly Meta                                                                           |
+| #33 tools/bots                   | real-keypair headless client; full Phase 1 flow                                                                                        |
+| #34 tools/econ-sim               | 1000 players x 8 weeks; invariant guard                                                                                                |
+| #35 tests                        | 32 tests across 8 files: unit (ledger invariants, math, NPC brains), wiring, jwt, rate limit, econ-sim, ledger, venue, bots, contracts |
 
 M2 is **DONE**. The M2 gate's hard criteria:
+
 - Unit tests for ledger invariants, needs decay, tax brackets, lottery, shift scoring cap ✓
 - API integration tests for every Phase 1 endpoint ✓ (the smoke + e2e cover this)
 - Contract tests ✓ (`pnpm contract:check` is green)

@@ -1,11 +1,12 @@
 /**
  * Migration verifier.
  *
- * Asserts the SQL-level invariants the M2 schema must hold against a
- * running Postgres database. This is the cheapest possible smoke test
- * for the ledger and the lookup-heavy tables.
+ * Asserts the SQL-level invariants the M2 + M3 schema must hold
+ * against a running Postgres database. This is the cheapest
+ * possible smoke test for the ledger, the market engine's
+ * coins/positions/perps tables, and the social tables.
  *
- * Checks:
+ * Checks (M2):
  *
  *   1. Every table in docs/DATA_MODEL.md (M2 subset) exists.
  *   2. `ledger_entries` has a BEFORE UPDATE OR DELETE trigger that raises.
@@ -16,6 +17,21 @@
  *   7. `users.wallet` is UNIQUE.
  *   8. `balances.cash_cents` and `balances.debt_cents` are non-negative
  *      (CHECK constraint present).
+ *
+ * Checks (M3):
+ *
+ *   9.  Every M3 table exists.
+ *   10. `positions.units >= 0` (CHECK).
+ *   11. `perps.leverage` is in [1, 25] (CHECK).
+ *   12. `perps.margin_cents > 0` (CHECK).
+ *   13. `payment_intents.status` is in the allowed set (CHECK).
+ *   14. `alpha_calls.target_micros > stop_micros` (CHECK).
+ *   15. `predictions.closes_at > created_at` (CHECK).
+ *   16. `dm_messages.text` length is in [1, 500] (CHECK).
+ *   17. `feed_posts.text` length is in [1, 280] (CHECK).
+ *   18. `payment_intents.reference` is UNIQUE.
+ *   19. `tombstones` exists with `lost_cents > 0` CHECK.
+ *   20. `users.is_opted_in_smart_money` and `miner_tier` exist.
  *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
@@ -172,6 +188,157 @@ async function main(): Promise<void> {
       'balances.cash_cents has non-negative CHECK',
       cashCheck.rows.length > 0 && />= 0/i.test(cashCheck.rows[0]?.consrc ?? ''),
     );
+
+    // --- M3 invariants ----------------------------------------------
+
+    // (9) M3 tables exist.
+    for (const t of [
+      'payment_intents',
+      'coins',
+      'positions',
+      'perps',
+      'alpha_calls',
+      'predictions',
+      'dm_messages',
+      'feed_posts',
+      'follows',
+      'webhook_events',
+      'tombstones',
+    ]) {
+      record(`table ${t} exists`, await tableExists(client, t));
+    }
+
+    // (10) positions.units CHECK >= 0 present.
+    const posUnitsCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.positions'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'positions.units >= 0',
+      posUnitsCheck.rows.some((r) => />=\s*0/i.test(r.consrc) && /units/i.test(r.consrc)),
+    );
+
+    // (11) perps.leverage BETWEEN 1 AND 25.
+    const perpLevCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.perps'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'perps.leverage BETWEEN 1 AND 25',
+      perpLevCheck.rows.some(
+        (r) => /leverage\s*>=\s*1/i.test(r.consrc) && /leverage\s*<=\s*25/i.test(r.consrc),
+      ),
+    );
+
+    // (12) perps.margin_cents > 0.
+    record(
+      'perps.margin_cents > 0',
+      perpLevCheck.rows.some((r) => />\s*0/i.test(r.consrc) && /margin_cents/i.test(r.consrc)),
+    );
+
+    // (13) payment_intents.status CHECK.
+    const payStatusCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.payment_intents'::regclass
+         AND contype = 'c'
+         AND conname LIKE '%status%'`,
+    );
+    record(
+      'payment_intents.status in allowed set',
+      payStatusCheck.rows.length > 0 &&
+        /pending.*confirmed.*expired.*failed/is.test(payStatusCheck.rows[0]?.consrc ?? ''),
+    );
+
+    // (14) alpha_calls.target_micros > stop_micros.
+    const alphaCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.alpha_calls'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'alpha_calls.target_micros > stop_micros',
+      alphaCheck.rows.some((r) => /target_micros\s*>\s*stop_micros/i.test(r.consrc)),
+    );
+
+    // (15) predictions.closes_at > created_at.
+    const predCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.predictions'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'predictions.closes_at > created_at',
+      predCheck.rows.some((r) => /closes_at\s*>\s*created_at/i.test(r.consrc)),
+    );
+
+    // (16) dm_messages.text length 1..500.
+    const dmCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.dm_messages'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'dm_messages.text length 1..500',
+      dmCheck.rows.some(
+        (r) =>
+          /length\(text\)\s*>=\s*1/i.test(r.consrc) && /length\(text\)\s*<=\s*500/i.test(r.consrc),
+      ),
+    );
+
+    // (17) feed_posts.text length 1..280.
+    const feedCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.feed_posts'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'feed_posts.text length 1..280',
+      feedCheck.rows.some(
+        (r) =>
+          /length\(text\)\s*>=\s*1/i.test(r.consrc) && /length\(text\)\s*<=\s*280/i.test(r.consrc),
+      ),
+    );
+
+    // (18) payment_intents.reference UNIQUE.
+    const refIdx = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+       FROM pg_index i
+       JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+       WHERE i.indrelid = 'public.payment_intents'::regclass
+         AND i.indisunique
+         AND a.attname = 'reference'`,
+    );
+    record('payment_intents.reference UNIQUE', Number(refIdx.rows[0]?.count ?? '0') > 0);
+
+    // (19) tombstones.lost_cents > 0.
+    const tombCheck = await client.query<{ consrc: string }>(
+      `SELECT pg_get_constraintdef(oid) AS consrc
+       FROM pg_constraint
+       WHERE conrelid = 'public.tombstones'::regclass
+         AND contype = 'c'`,
+    );
+    record(
+      'tombstones.lost_cents > 0',
+      tombCheck.rows.some((r) => /lost_cents\s*>\s*0/i.test(r.consrc)),
+    );
+
+    // (20) users smart-money and miner_tier columns.
+    const smartCol = await client.query<{ attname: string }>(
+      `SELECT attname FROM pg_attribute
+       WHERE attrelid = 'public.users'::regclass
+         AND attname IN ('is_opted_in_smart_money', 'miner_tier')
+       ORDER BY attname`,
+    );
+    record('users.is_opted_in_smart_money and miner_tier exist', smartCol.rows.length === 2);
   } finally {
     await client.end();
   }
