@@ -16,6 +16,7 @@ export interface PublicProfile {
   readonly minerTier: 'none' | 'prospector' | 'miner' | 'refiner';
   readonly look: unknown | null;
   readonly netWorthCents: number;
+  readonly isOptedInSmartMoney: boolean;
 }
 
 export class PublicProfileService {
@@ -42,8 +43,10 @@ export class PublicProfileService {
         alias: string | null;
         cash_cents: string;
         debt_cents: string;
+        is_opted_in_smart_money: boolean;
+        miner_tier: 'none' | 'prospector' | 'miner' | 'refiner';
       }>(
-        `SELECT u.id, u.is_seeker, u.skr_name,
+        `SELECT u.id, u.is_seeker, u.skr_name, u.is_opted_in_smart_money, u.miner_tier,
                 c.tribe_id, c.look, c.alias,
                 COALESCE(b.cash_cents, 0) AS cash_cents,
                 COALESCE(b.debt_cents, 0) AS debt_cents
@@ -63,9 +66,10 @@ export class PublicProfileService {
         skrName: row.skr_name,
         isSeeker: row.is_seeker,
         tribeId: row.tribe_id,
-        minerTier: 'none',
+        minerTier: row.miner_tier,
         look: row.look,
         netWorthCents: cash - debt,
+        isOptedInSmartMoney: row.is_opted_in_smart_money,
       };
     });
   }
