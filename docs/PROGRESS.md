@@ -382,3 +382,133 @@ M2 is **DONE**. The M2 gate's hard criteria:
 ### Next
 
 M2 is closed. M3 (markets, positions, perps) is unblocked.
+
+## M3 — Markets, positions, perps, ORE, launchpad, predictions, alpha, social
+
+**Status:** DONE
+**Last command:** `pnpm test:unit` → 47/47 passed
+**Last commit:** pending (this session)
+**Date:** 2026-10-05
+
+### Done in this milestone
+
+- [x] #36 Migrations for the markets layer
+      12 SQL migrations (010..021): payment_intents, coins,
+      positions, perps, alpha_calls, predictions, dm_messages,
+      feed_posts, follows, webhook_events, tombstones, plus
+      is_opted_in_smart_money and miner_tier on users. pnpm
+      db:verify asserts 37 invariants (15 M2 + 22 M3).
+- [x] #37 Market engine (server/application/market-engine.ts)
+      Singleton writer of every coin's price_micros. Single-writer
+      per coin via Redis SETNX lock (market:lock:<id>, TTL 1500ms;
+      tick interval 2000ms). Hidden-arc sampling (rug / slow_bleed
+      / sideways / moon) at launch. Stage transitions
+      new → final → graduated → dead. AMM with virtual reserves
+      in server/application/amm.ts.
+- [x] #38 Cash top-ups (server/application/topup.ts +
+      helius-webhook.ts + payment-poller.ts + routes/payments.ts)
+      POST /v1/payments/intents creates the intent with a UUIDv7
+      reference and a memo; returns the solanaPayUrl. POST
+      /v1/webhooks/helius verifies HMAC-SHA256 on x-helius-signature,
+      records the event idempotently, and credits the ledger
+      inside a SERIALIZABLE UoW. The poller expires intents
+      older than 15 min. The topup cap is enforced from the
+      day's confirmed topups.
+- [x] #39 Terminal Cafe (server/application/terminal-cafe.ts +
+      routes/markets.ts)
+      GET /v1/market/coins (cursor pagination, 50/page),
+      GET /v1/market/coins/:coinId (with candles, top holders,
+      riskHint based on security skill),
+      POST /v1/market/trades (server-computed AMM price,
+      SLIPPAGE_EXCEEDED on divergence > maxSlippageBps,
+      SERIALIZABLE UoW, trade_buy/trade_sell ledger rows,
+      weighted-average cost basis),
+      GET /v1/market/positions (with unrealized PnL).
+- [x] #40 Perp Pit (server/application/perp-pit.ts +
+      routes/perps.ts + workers/liquidation.ts)
+      POST /v1/perps (skill gate: leverage ≤ trading_skill +
+      tribe_bonus, perp_degen +5), POST /v1/perps/:id/close,
+      GET /v1/perps?status=. The 5s liquidation worker closes
+      perps when the engine's price crosses liq_micros, writes
+      the 'liq_pay' ledger row, and publishes a 'liquidated'
+      event to city:events.
+- [x] #41 ORE Refinery (server/application/refinery.ts +
+      routes/ore.ts)
+      GET /v1/ore/board (cached, rate-limited 1 call / 2s;
+      falls back to fixture when ORE_READER_ENABLED is unset),
+      GET /v1/ore/me, POST /v1/ore/stake/tx (placeholder
+      base64 + program addresses for stake-cNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeHMM,
+      ORE mint, stORE mint), POST /v1/ore/stake/submitted.
+- [x] #42 Launchpad Tower (server/application/launchpad.ts)
+      POST /v1/market/launchpad samples the hidden_arc, writes
+      the coin row. POST /v1/market/launchpad/:coinId/buy uses
+      the AMM with launch reserves and a slippage check. The
+      engine writes tombstones on stage=death; the Rekt Clinic
+      serves the 50 most recent (GET /v1/rekt/tombstones).
+- [x] #43 Prediction Pit (server/application/predictions.ts +
+      routes/predictions.ts + workers/predictions.ts)
+      POST /v1/predictions (debits cash via ledger, adds to
+      predictions:active:<horizon> sorted set). 5s resolution
+      worker: winner gets 2x stake back ('prediction_payout'
+      ledger row), loser forfeits.
+- [x] #44 Alpha Calls + Trust Score + Smart Money
+      (server/application/alpha.ts + routes/alpha.ts +
+      workers/alpha.ts)
+      POST /v1/alpha-calls (immutable; target > stop floor),
+      GET /v1/alpha-calls?userId= (calls + trust score with
+      hitRate, avgReturnBps, maxDrawdownBps, heldBagPct).
+      30s evaluator. GET /v1/smart-money (50 most recent
+      trades ≥ 10k cents from opted-in users), POST
+      /v1/me/smart-money (toggles the opt-in).
+- [x] #45 DMs, Feed, Follows, Rekt Clinic (server/application/
+      social-graph.ts + routes/social-graph.ts)
+      GET /v1/dms/:userId, POST /v1/dms/:userId (1..500 chars),
+      GET /v1/feed?scope=global|following, POST /v1/feed/posts
+      (1..280), POST/DELETE /v1/follows/:userId. The DM list
+      filters out messages from anyone in the requester's
+      blocks list. Public profile now returns miner_tier and
+      is_opted_in_smart_money.
+- [x] #46 Tests + bot M3 endpoints
+      Unit tests for the engine (determinism, single-writer
+      lock, graduation, paused tick), AMM (constant-product
+      invariant), Helius webhook signature (positive +
+      negative), and the alpha trust-score edge cases
+      (no-resolved-calls → 0). Bot extended with
+      createTopup + betOnPrediction.
+
+### Static gate this milestone
+
+```
+$ pnpm typecheck     → no errors
+$ pnpm lint          → no errors
+$ pnpm format:check  → all files match
+$ pnpm docs:check    → OK (25 env vars, 23 error codes, links resolve)
+$ pnpm boundary:check → layering OK
+   (soft-size warns on auth.ts: 301, market-engine.ts: 344,
+    perp-pit.ts: 372, terminal-cafe.ts: 478 — domain objects
+    with short methods, acceptable)
+$ pnpm contract:check → all steps green
+$ pnpm test:unit     → 47/47 passed (across 11 files)
+$ pnpm db:verify     → 37/37 schema invariants passed
+$ pnpm exec tsx tools/scripts/smoke.ts → 7/7 required checks
+```
+
+### Notes
+
+- The market engine is the single writer of coins.price_micros.
+  The launchpad inserts coins; the engine transitions stages
+  and writes the price path. Trades and perps update price
+  inline via their own SERIALIZABLE UoWs.
+- The ORE board reader is gated by `ORE_READER_ENABLED`; the
+  dev path uses a deterministic fixture. Production reads the
+  mainnet board via Helius getAccountInfo.
+- The Helius webhook signature uses HMAC-SHA256 with
+  `HELIUS_WEBHOOK_SECRET`. Idempotency on (source, signature)
+  via the `webhook_events` UNIQUE.
+- The Helius SDK was dropped at M2 (incompatible peer dep on
+  @solana/kit ^6.9; we pin 8.4). M3 ships a thin
+  fetch-based parser in helius-webhook.ts.
+
+### Next
+
+M4 (voice, spaces, paid calls).

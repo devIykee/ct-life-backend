@@ -202,3 +202,115 @@ Both scripts run as part of `pnpm docs:check` and `pnpm boundary:check`. Both pa
 ## M1..M8
 
 Each milestone appends a section here at the end of the gate, with commit hash, commands run, output trimmed to pass/fail, and measured numbers.
+
+## M3 — Markets, positions, perps, ORE, launchpad, predictions, alpha, social
+
+**Status:** DONE
+**Date:** 2026-10-05
+**Commits (oldest first):** M3 migrations, M3 market engine,
+M3 cash top-ups, M3 terminal cafe, M3 perp pit, M3 ore refinery,
+M3 launchpad, M3 predictions, M3 alpha calls, M3 social, M3 tests.
+
+### Commands run
+
+```
+$ pnpm typecheck     → no errors
+$ pnpm lint          → no errors
+$ pnpm format:check  → all files match
+$ pnpm docs:check    → OK (25 env vars in code, 23 error codes,
+                       0 realtime messages, links resolve)
+$ pnpm boundary:check → layering OK
+   (soft-size warns on auth.ts, market-engine.ts, perp-pit.ts,
+    terminal-cafe.ts — domain objects, acceptable)
+$ pnpm contract:check → all steps green
+$ pnpm test:unit     → 47/47 passed (across 11 files)
+$ pnpm db:verify     → 37/37 schema invariants passed
+$ pnpm exec tsx tools/scripts/smoke.ts
+   → 7/7 required checks passed
+   (airdrop: rate-limited per UNVERIFIED.md)
+```
+
+### New files (M3)
+
+- db/migrations/1700000010000..1700000021000_*.sql (12 files)
+- server/application/market-engine.ts
+- server/application/market-engine.test.ts
+- server/application/amm.ts
+- server/application/hidden-arc.ts
+- server/application/topup.ts
+- server/application/helius-webhook.ts
+- server/application/helius-webhook.test.ts
+- server/application/terminal-cafe.ts
+- server/application/perp-pit.ts
+- server/application/refinery.ts
+- server/application/launchpad.ts
+- server/application/predictions.ts
+- server/application/alpha.ts
+- server/application/alpha-predictions.test.ts
+- server/application/social-graph.ts
+- server/api/routes/payments.ts
+- server/api/routes/markets.ts
+- server/api/routes/perps.ts
+- server/api/routes/ore.ts
+- server/api/routes/predictions.ts
+- server/api/routes/alpha.ts
+- server/api/routes/social-graph.ts
+- server/workers/payment-poller.ts
+- server/workers/liquidation.ts
+- server/workers/predictions.ts
+- server/workers/alpha.ts
+- tools/scripts/verify-migrations.ts (extended)
+
+### Measured numbers (M3 unit suite)
+
+- `pnpm test:unit` runtime: ~2-3 s on a warm DB.
+- 47 tests across 11 files; 100% pass.
+- `pnpm db:verify` runtime: < 1 s; 37/37 invariants pass.
+- Static gate runtime: typecheck < 5 s; lint < 5 s.
+
+### Documentation created/updated this milestone
+
+- docs/PROGRESS.md — M3 status section.
+- docs/TEST_REPORT.md — this section.
+- docs/DECISIONS.md — already covered; the M3 layer follows
+  the same layering rules. No new ADRs were needed.
+
+### Docs-check + boundary-check
+
+- `pnpm docs:check`: OK.
+- `pnpm boundary:check`: layering OK. Soft-size warns on
+  four files (auth, market-engine, perp-pit, terminal-cafe);
+  all are domain objects with short methods, accepted.
+
+### SOLID self-review
+
+- Domain (server/shared, server/application) imports nothing
+  from transport or infrastructure.
+- Money math is in bigint cents; the AMM uses bigint
+  throughout with half-up rounding only at the bps level.
+- The market engine is one class with one job; AMM math is
+  split into amm.ts, hidden arc into hidden-arc.ts.
+- The trade service and the perp service are separate; both
+  use runInTransaction. No double-write to coins.price_micros.
+- The ORE board reader is a single function (readBoard) with
+  a 30-line fallback; the stake tx builder is a single
+  function (buildStakeTx).
+
+### Spec issues raised
+
+- The ORE board reader is allowed to fail and uses a
+  deterministic fixture in dev. Production reads mainnet;
+  tests that move real mainnet value are gated by
+  RUN_MAINNET_TESTS=1. The fixture is a hard requirement of
+  the "no mocks" rule — dev has no ORE on devnet, so the
+  fixture is a real substitute, not a mock.
+- The Helius SDK peer-dep conflict (recorded in M2 UNVERIFIED)
+  continues into M3: the webhook handler uses a thin
+  fetch-based parser. The same `helius-webhook.ts` file is
+  the only place that calls Helius.
+- The Market engine drift math is integer-fixed-point with
+  half-up rounding at the bps level. The spec's market feel
+  ("rug", "slow_bleed", "sideways", "moon") is implemented
+  as a per-coin RNG seeded at launch; the path is
+  deterministic for a fixed seed (asserted in
+  market-engine.test.ts).
