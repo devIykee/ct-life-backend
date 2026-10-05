@@ -57,3 +57,6 @@ treasury-keypair.json
 admin-keypair.json
 settle-authority-keypair.json
 *.private.json
+
+# Runtime data and binaries (downloaded to satisfy local smoke; not source)
+.runtime/

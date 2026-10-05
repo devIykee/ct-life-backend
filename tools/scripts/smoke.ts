@@ -190,7 +190,14 @@ async function checkDevnetAirdrop(): Promise<void> {
   try {
     const conn = createConnection(url);
     const sig = await withTimeout(
-      (conn as unknown as { requestAirdrop: (a: ReturnType<typeof address>, b: bigint) => { send: () => Promise<string> } })
+      (
+        conn as unknown as {
+          requestAirdrop: (
+            a: ReturnType<typeof address>,
+            b: bigint,
+          ) => { send: () => Promise<string> };
+        }
+      )
         .requestAirdrop(address(target), 1_000_000_000n)
         .send(),
       10000,
@@ -203,8 +210,16 @@ async function checkDevnetAirdrop(): Promise<void> {
     );
   } catch (e) {
     const msg = (e as Error).message;
-    if (msg.includes('429') || msg.toLowerCase().includes('rate limit') || msg.toLowerCase().includes('limit')) {
-      record('devnet-airdrop', false, `faucet rate-limited; documented in UNVERIFIED.md (${msg.slice(0, 80)}…)`);
+    if (
+      msg.includes('429') ||
+      msg.toLowerCase().includes('rate limit') ||
+      msg.toLowerCase().includes('limit')
+    ) {
+      record(
+        'devnet-airdrop',
+        false,
+        `faucet rate-limited; documented in UNVERIFIED.md (${msg.slice(0, 80)}…)`,
+      );
     } else {
       record('devnet-airdrop', false, `error: ${msg}`);
     }
@@ -242,7 +257,9 @@ async function main(): Promise<void> {
     process.exit(0);
   } else {
     // eslint-disable-next-line no-console
-    console.log(`\x1b[31m${requiredFailed.length} of ${required.length} required checks failed.\x1b[0m`);
+    console.log(
+      `\x1b[31m${requiredFailed.length} of ${required.length} required checks failed.\x1b[0m`,
+    );
     process.exit(1);
   }
 }

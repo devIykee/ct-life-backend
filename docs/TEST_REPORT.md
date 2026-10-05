@@ -38,29 +38,29 @@ The devnet airdrop is informational; the public faucet is per-IP rate-limited an
 
 ### Pinned-version verification (real output, trimmed)
 
-| Pin | Where checked | Result |
-| --- | --- | --- |
-| Node 22+ | `node --version` | 22.22.3 OK |
-| pnpm 9 | `corepack` | 9.15.0 OK |
-| Fastify 5.12.5 | `npm view fastify@5.12.5` | OK |
-| Colyseus 0.18.9 | `npm view colyseus@0.18.9` | OK |
-| @colyseus/redis-presence 0.18.5 | `npm view ...` | OK |
-| @colyseus/redis-driver 0.18.4 | `npm view ...` | OK |
-| @colyseus/schema 5.0.36 | `npm view ...` | OK |
-| @colyseus/sdk 0.18.5 | `npm view ...` | OK |
-| @colyseus/testing 0.18.6 | `npm view ...` | OK |
-| BullMQ 6.3.11 | `npm view ...` | OK |
-| @solana/kit 8.4.0 | `npm view ...` | OK |
-| @anchor-lang/core 1.2.0 | `npm view ...` | OK |
-| livekit-server-sdk 2.19.1 | `npm view ...` | OK |
-| openapi-generator 7.25.0 | `GET /repos/OpenAPITools/openapi-generator/releases` | OK (release tag 2026-08-24) |
-| ore-api 3.8.25 | `cargo search ore-api` | OK |
-| ore-stake-api 0.3.0 | `cargo search ore-stake-api` | OK |
-| Anchor CLI 1.2.0 | `anchor --version`; `npm view @coral-xyz/anchor@1.2.0`; `cargo search anchor-cli` | **Deviation** — does not exist; installed is 1.1.2 |
-| Solana CLI 4.1.2 | `solana --version`; agave GitHub releases | **Deviation** — does not exist; installed is 3.1.10; latest 4.x stable is 4.3.0 |
-| @coral-xyz/anchor (npm) | `npm view @coral-xyz/anchor` | **Deviation** — npm package goes only to 0.32.1 |
-| Helius SDK | `npm search helius` | **Deviation** — official is `helius-sdk@3.2.0` (built on @solana/kit) |
-| TypeScript | spec says "5 or 6" (colyseus schema 5.0.36) | **Choice** — pin 5.9.3 (latest 5.x) |
+| Pin                             | Where checked                                                                     | Result                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Node 22+                        | `node --version`                                                                  | 22.22.3 OK                                                                      |
+| pnpm 9                          | `corepack`                                                                        | 9.15.0 OK                                                                       |
+| Fastify 5.12.5                  | `npm view fastify@5.12.5`                                                         | OK                                                                              |
+| Colyseus 0.18.9                 | `npm view colyseus@0.18.9`                                                        | OK                                                                              |
+| @colyseus/redis-presence 0.18.5 | `npm view ...`                                                                    | OK                                                                              |
+| @colyseus/redis-driver 0.18.4   | `npm view ...`                                                                    | OK                                                                              |
+| @colyseus/schema 5.0.36         | `npm view ...`                                                                    | OK                                                                              |
+| @colyseus/sdk 0.18.5            | `npm view ...`                                                                    | OK                                                                              |
+| @colyseus/testing 0.18.6        | `npm view ...`                                                                    | OK                                                                              |
+| BullMQ 6.3.11                   | `npm view ...`                                                                    | OK                                                                              |
+| @solana/kit 8.4.0               | `npm view ...`                                                                    | OK                                                                              |
+| @anchor-lang/core 1.2.0         | `npm view ...`                                                                    | OK                                                                              |
+| livekit-server-sdk 2.19.1       | `npm view ...`                                                                    | OK                                                                              |
+| openapi-generator 7.25.0        | `GET /repos/OpenAPITools/openapi-generator/releases`                              | OK (release tag 2026-08-24)                                                     |
+| ore-api 3.8.25                  | `cargo search ore-api`                                                            | OK                                                                              |
+| ore-stake-api 0.3.0             | `cargo search ore-stake-api`                                                      | OK                                                                              |
+| Anchor CLI 1.2.0                | `anchor --version`; `npm view @coral-xyz/anchor@1.2.0`; `cargo search anchor-cli` | **Deviation** — does not exist; installed is 1.1.2                              |
+| Solana CLI 4.1.2                | `solana --version`; agave GitHub releases                                         | **Deviation** — does not exist; installed is 3.1.10; latest 4.x stable is 4.3.0 |
+| @coral-xyz/anchor (npm)         | `npm view @coral-xyz/anchor`                                                      | **Deviation** — npm package goes only to 0.32.1                                 |
+| Helius SDK                      | `npm search helius`                                                               | **Deviation** — official is `helius-sdk@3.2.0` (built on @solana/kit)           |
+| TypeScript                      | spec says "5 or 6" (colyseus schema 5.0.36)                                       | **Choice** — pin 5.9.3 (latest 5.x)                                             |
 
 ### Environment readiness (real output, trimmed)
 
@@ -182,6 +182,7 @@ $ APP_ENV=local NODE_ENV=development pnpm exec tsx tools/scripts/smoke.ts
 ### Docs-check + boundary-check
 
 Both scripts run as part of `pnpm docs:check` and `pnpm boundary:check`. Both pass:
+
 - `docs-check`: all 11 env vars referenced in code are declared in `.env.example`. 52 declared-for-future-milestones (informational).
 - `boundary-check`: layering OK. Domain (`server/shared`, `packages/*`) does not import transport (`server/api`, `server/realtime`, `server/workers`).
 
