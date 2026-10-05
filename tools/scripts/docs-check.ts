@@ -1,28 +1,30 @@
 /**
- * Verify that every env var referenced in code also appears in .env.example
- * and the README. Fails the build if a referenced var is missing from either
- * place, or if .env.example lists a var that no code references (drift).
+ * Docs-check.
  *
- * The check is heuristic: it greps code for SCREAMING_SNAKE_CASE identifiers
- * and matches them against a known allowlist plus the .env.example file.
+ * Verifies the documentation invariants required by the amendment:
+ *
+ *   1. Every env var referenced in code (server/, packages/, tools/) is
+ *      declared in .env.example and the README.
+ *   2. Every error code in contract/ids/errors.json appears in
+ *      contract/openapi.yaml (when M1 publishes the IDL).
+ *   3. Every realtime message in contract/realtime/*.ts is referenced in
+ *      docs/REALTIME.md (when M1 publishes the schemas).
+ *   4. Every relative Markdown link in docs/*.md resolves to a real file.
  *
  * Run: pnpm docs:check
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, extname } from 'node:path';
 
-const root = process.cwd();
-const codeRoots = ['server', 'packages', 'tools', 'programs'];
-const docRoots = ['docs', 'README.md', '.env.example', 'CONTRIBUTING.md'];
+const REPO = process.cwd();
+const CODE_ROOTS = ['server', 'packages', 'tools'];
 
-const VAR_PATTERNS: readonly RegExp[] = [
+const ENV_VAR_PATTERNS: readonly RegExp[] = [
   /process\.env\.([A-Z][A-Z0-9_]+)/g,
   /\benv\.([A-Z][A-Z0-9_]+)/g,
   /import\.meta\.env\.([A-Z][A-Z0-9_]+)/g,
 ];
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage', 'target', '.git']);
 
-// Allowlist of constants that look like env vars but aren't (e.g. error codes).
 const ALLOWLIST = new Set([
   'CONTRACT_V1_0_0',
   'HTTP_BAD_REQUEST',
@@ -43,13 +45,31 @@ const ALLOWLIST = new Set([
   'IDEMPOTENCY_KEY',
 ]);
 
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  'target',
+  '.git',
+  '.runtime',
+]);
+const SOURCE_EXT = new Set(['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs']);
+const MD_EXT = new Set(['.md']);
+
 function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
     if (SKIP_DIRS.has(entry)) continue;
     const p = join(dir, entry);
     const st = statSync(p);
     if (st.isDirectory()) walk(p, out);
-    else if (['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs'].includes(extname(p))) out.push(p);
+    else if (SOURCE_EXT.has(extname(p)) || MD_EXT.has(extname(p))) out.push(p);
   }
   return out;
 }
@@ -60,25 +80,18 @@ function readText(p: string): string {
 
 function extractEnvRefs(): Set<string> {
   const found = new Set<string>();
-  // Match only env-var-style usage, not local SCREAMING_SNAKE identifiers.
-  // Patterns we accept:
-  //   process.env.MY_VAR
-  //   env.MY_VAR           (where `env` is the imported loader)
-  //   import.meta.env.MY_VAR
-  // VAR_PATTERNS lives at module scope so it is easy to extend.
-  for (const root of codeRoots) {
-    const full = join(process.cwd(), root);
+  for (const root of CODE_ROOTS) {
+    const full = join(REPO, root);
     try {
       statSync(full);
     } catch {
       continue;
     }
     for (const file of walk(full)) {
-      // Skip the script that defines the pattern itself; otherwise its JSDoc
-      // comments are matched as env var references.
+      // The script itself defines patterns; skip it to avoid self-match.
       if (file.endsWith('docs-check.ts')) continue;
       const text = readText(file);
-      for (const re of VAR_PATTERNS) {
+      for (const re of ENV_VAR_PATTERNS) {
         for (const m of text.matchAll(re)) {
           const v = m[1];
           if (!v) continue;
@@ -94,66 +107,215 @@ function extractEnvRefs(): Set<string> {
 }
 
 function extractEnvExampleVars(): Set<string> {
-  const text = readText(join(root, '.env.example'));
+  const text = readText(join(REPO, '.env.example'));
   const out = new Set<string>();
   for (const line of text.split('\n')) {
     const m = line.match(/^([A-Z][A-Z0-9_]+)\s*=/);
-    const v: string | undefined = m ? m[1] : undefined;
+    const v = m ? m[1] : undefined;
     if (v !== undefined) out.add(v);
   }
   return out;
 }
 
-function main(): void {
-  const referenced = extractEnvRefs();
-  const declared = extractEnvExampleVars();
-  // The check is one-way: any var referenced in code MUST be declared in
-  // .env.example. The reverse is informational: a var in .env.example that no
-  // code references is fine because future milestones will use it (M5+ push,
-  // M7 X link, M8 Sentry, etc.). We only warn for those.
-  const missing = [...referenced].filter((v) => v !== undefined && !declared.has(v));
-  const orphan = [...declared].filter((v) => v !== undefined && !referenced.has(v));
-  const docText: string[] = [];
-  for (const d of docRoots) {
-    const full = join(root, d);
-    try {
-      if (statSync(full).isFile()) docText.push(readText(full));
-    } catch {
-      /* missing */
+function extractReadmeVars(): Set<string> {
+  // README mentions env vars either in code spans (like `HELIUS_API_KEY`)
+  // or as bare tokens inside a table cell. We collect both.
+  const text = readText(join(REPO, 'README.md'));
+  const out = new Set<string>();
+  for (const re of [/`([A-Z][A-Z0-9_]+)`/g, /\b([A-Z][A-Z0-9_]{3,})\b/g]) {
+    for (const m of text.matchAll(re)) {
+      const v = m[1];
+      if (!v) continue;
+      if (v.length < 4) continue;
+      if (v.length > 40) continue;
+      if (ALLOWLIST.has(v)) continue;
+      out.add(v);
     }
   }
-  const docBlob = docText.join('\n');
-  const undocumented: string[] = [];
-  for (const v of declared) {
-    if (!docBlob.includes(v)) undocumented.push(v);
+  return out;
+}
+
+function extractErrorCodes(): Set<string> {
+  const path = join(REPO, 'contract/ids/errors.json');
+  try {
+    const text = readText(path);
+    const parsed = JSON.parse(text) as {
+      codes?: Array<{ code: string }> | Record<string, unknown>;
+    };
+    const codes = new Set<string>();
+    if (Array.isArray(parsed.codes)) {
+      for (const c of parsed.codes) {
+        if (typeof c.code === 'string') codes.add(c.code);
+      }
+    } else if (parsed.codes && typeof parsed.codes === 'object') {
+      for (const k of Object.keys(parsed.codes)) codes.add(k);
+    }
+    return codes;
+  } catch {
+    return new Set();
   }
-  if (missing.length === 0) {
+}
+
+function extractOpenapiErrors(): Set<string> {
+  const path = join(REPO, 'contract/openapi.yaml');
+  try {
+    const text = readText(path);
+    const out = new Set<string>();
+    // YAML match for `code: SOME_ERROR` lines.
+    for (const m of text.matchAll(/^\s*code:\s*([A-Z][A-Z0-9_]+)\s*$/gm)) {
+      const v = m[1];
+      if (v) out.add(v);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+function extractRealtimeMessages(): Set<string> {
+  // The M1 file contract/realtime/messages.ts (or similar) will export a
+  // list of message types. Until M1, the set is empty. The check is a
+  // no-op until M1.
+  const candidates = [
+    join(REPO, 'contract/realtime/messages.ts'),
+    join(REPO, 'contract/realtime/index.ts'),
+  ];
+  const out = new Set<string>();
+  for (const file of candidates) {
+    try {
+      const text = readText(file);
+      // Match `name: 'move' | 'sit' | ...` style and `export const X = 'Y'`.
+      for (const m of text.matchAll(/name:\s*['"]([a-z_]+)['"]/g)) {
+        const v = m[1];
+        if (v) out.add(v);
+      }
+      for (const m of text.matchAll(/export const (\w+)\s*=\s*['"]([a-z_]+)['"]/g)) {
+        const v = m[2];
+        if (v) out.add(v);
+      }
+    } catch {
+      /* missing is fine until M1 */
+    }
+  }
+  return out;
+}
+
+function extractRealtimeMdMessages(): Set<string> {
+  const path = join(REPO, 'docs/REALTIME.md');
+  try {
+    const text = readText(path);
+    const out = new Set<string>();
+    for (const m of text.matchAll(/`([a-z_]+)`/g)) {
+      const v = m[1];
+      if (v && /^[a-z][a-z0-9_]*$/.test(v)) out.add(v);
+    }
+    return out;
+  } catch {
+    return new Set();
+  }
+}
+
+function checkMarkdownLinks(): string[] {
+  const out: string[] = [];
+  const docsRoot = join(REPO, 'docs');
+  for (const file of walk(docsRoot)) {
+    if (!MD_EXT.has(extname(file))) continue;
+    const text = readText(file);
+    // Match [text](relative-path) — skip absolute URLs and in-page anchors.
+    for (const m of text.matchAll(/\[[^\]]*\]\((?!https?:\/\/|#)([^)]+)\)/g)) {
+      const spec = m[1];
+      if (!spec) continue;
+      // Strip in-page anchor and query.
+      const [pathPart] = spec.split('#');
+      const [pathOnly] = pathPart?.split('?') ?? [];
+      if (!pathOnly) continue;
+      // Resolve relative to the file.
+      const fileDir = file.split('/').slice(0, -1).join('/');
+      const target = pathOnly.startsWith('/') ? join(REPO, pathOnly) : join(fileDir, pathOnly);
+      try {
+        statSync(target);
+      } catch {
+        out.push(`${file.replace(`${REPO}/`, '')}: broken link ${spec} -> ${target}`);
+      }
+    }
+  }
+  return out;
+}
+
+function main(): void {
+  let failed = false;
+
+  // (1) env vars referenced in code appear in .env.example AND README.
+  const referenced = extractEnvRefs();
+  const declaredExample = extractEnvExampleVars();
+  const declaredReadme = extractReadmeVars();
+  const missingExample = [...referenced].filter((v) => !declaredExample.has(v));
+  const missingReadme = [...referenced].filter((v) => !declaredReadme.has(v));
+  if (missingExample.length > 0 || missingReadme.length > 0) {
+    failed = true;
+    // eslint-disable-next-line no-console
+    console.log('docs-check: env-var coverage');
+    for (const v of missingExample) {
+      // eslint-disable-next-line no-console
+      console.log(`  referenced in code but not in .env.example: ${v}`);
+    }
+    for (const v of missingReadme) {
+      // eslint-disable-next-line no-console
+      console.log(`  referenced in code but not in README.md: ${v}`);
+    }
+  }
+
+  // (2) every error code in errors.json appears in openapi.yaml.
+  const errorCodes = extractErrorCodes();
+  const openapiCodes = extractOpenapiErrors();
+  if (errorCodes.size > 0) {
+    const missingFromOpenapi = [...errorCodes].filter((c) => !openapiCodes.has(c));
+    if (missingFromOpenapi.length > 0) {
+      failed = true;
+      // eslint-disable-next-line no-console
+      console.log('docs-check: error code coverage');
+      for (const c of missingFromOpenapi) {
+        // eslint-disable-next-line no-console
+        console.log(`  error code ${c} from contract/ids/errors.json not in contract/openapi.yaml`);
+      }
+    }
+  }
+
+  // (3) every realtime message appears in docs/REALTIME.md.
+  const messages = extractRealtimeMessages();
+  const mdMessages = extractRealtimeMdMessages();
+  if (messages.size > 0) {
+    const missingFromMd = [...messages].filter((m) => !mdMessages.has(m));
+    if (missingFromMd.length > 0) {
+      failed = true;
+      // eslint-disable-next-line no-console
+      console.log('docs-check: realtime message coverage');
+      for (const m of missingFromMd) {
+        // eslint-disable-next-line no-console
+        console.log(`  realtime message ${m} not in docs/REALTIME.md`);
+      }
+    }
+  }
+
+  // (4) every relative Markdown link in docs/*.md resolves.
+  const brokenLinks = checkMarkdownLinks();
+  if (brokenLinks.length > 0) {
+    failed = true;
+    // eslint-disable-next-line no-console
+    console.log('docs-check: broken links');
+    for (const l of brokenLinks) {
+      // eslint-disable-next-line no-console
+      console.log(`  ${l}`);
+    }
+  }
+
+  if (!failed) {
     // eslint-disable-next-line no-console
     console.log(
-      `docs-check: all ${referenced.size} referenced env vars are declared in .env.example.` +
-        (orphan.length > 0
-          ? ` ${orphan.length} declared but not yet used in code (informational).`
-          : ''),
+      `docs-check: OK (${referenced.size} env vars in code, ${errorCodes.size} error codes, ${messages.size} realtime messages, ${brokenLinks.length === 0 ? 'all links resolve' : 'all links resolve'}).`,
     );
-    if (undocumented.length > 0) {
-      // eslint-disable-next-line no-console
-      console.log(
-        `docs-check: ${undocumented.length} declared env vars are not mentioned in any doc (informational).`,
-      );
-    }
-    return;
+    process.exit(0);
   }
-  // eslint-disable-next-line no-console
-  console.log('docs-check:');
-  for (const v of missing)
-    // eslint-disable-next-line no-console
-    console.log(`  referenced in code but not in .env.example: ${String(v)}`);
-  for (const v of orphan)
-    // eslint-disable-next-line no-console
-    console.log(`  in .env.example but not referenced in code (informational): ${String(v)}`);
-  for (const v of undocumented)
-    // eslint-disable-next-line no-console
-    console.log(`  in .env.example but not mentioned in any doc (informational): ${v}`);
   process.exit(1);
 }
 
