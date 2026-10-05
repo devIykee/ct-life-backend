@@ -45,6 +45,6 @@ title = "CT Life secrets"
 
 [[rules]]
   id = "ctlife-skant-api-key"
-  description = "API key with the `sk-ant-` vendor prefix (Anthropic SDK). Detect at scan time so a leaked key is caught before the secret scanner on the host."
+  description = "API key with the `sk-ant-` vendor prefix. Detect at scan time so a leaked key is caught before the secret scanner on the host."
   regex = '''sk-ant-[A-Za-z0-9_-]{20,}'''
   tags = ["secret", "api-key", "vendor-prefix:sk-ant"]
