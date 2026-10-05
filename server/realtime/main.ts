@@ -17,6 +17,8 @@ import { loadConfig } from '../shared/config/config.js';
 import { CityRoom } from './rooms/city.js';
 import { MarketRoom } from './rooms/market.js';
 import { VenueRoom } from './rooms/venue.js';
+import { SpaceRoom } from './rooms/space.js';
+import { VideoCallRoom } from './rooms/video-call.js';
 import { createRedis } from '../shared/redis/client.js';
 
 export interface RealtimeHandle {
@@ -43,6 +45,14 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   gameServer.define('venue', VenueRoom, {
     maxClients: 50,
     patchRate: 100, // 10 Hz
+  });
+  gameServer.define('space', SpaceRoom, {
+    maxClients: 50,
+    filterBy: () => true, // every space is its own instance
+  });
+  gameServer.define('video_call', VideoCallRoom, {
+    maxClients: 8,
+    filterBy: () => true,
   });
   await gameServer.listen(port);
   return {

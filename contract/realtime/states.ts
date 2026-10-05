@@ -83,3 +83,34 @@ export class HomeState extends Schema {
   @type('string') homeId = '';
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
 }
+
+/** M4: audio-room state. One per live Space. */
+export class SpeakerState extends Schema {
+  @type('string') userId = '';
+  /** host | speaker | listener */
+  @type('string') role = 'listener';
+  @type('boolean') canPublish = false;
+  @type('boolean') handRaised = false;
+  @type('number') handRaisedAt = 0;
+}
+
+export class SpaceState extends Schema {
+  @type('string') spaceId = '';
+  @type('string') hostUserId = '';
+  @type('string') title = '';
+  @type('string') status = 'live';
+  @type({ map: SpeakerState }) speakers = new MapSchema<SpeakerState>();
+  /** userIds in hand-queue order (oldest first). */
+  @type(['string']) handQueue: string[] = [];
+  @type('number') listenerCount = 0;
+}
+
+/** M4: video-call state. One per live video or paid call. */
+export class VideoCallState extends Schema {
+  @type('string') callId = '';
+  @type('string') hostUserId = '';
+  /** 'video' | 'paid_call' */
+  @type('string') kind = 'video';
+  @type('string') status = 'live';
+  @type(['string']) participantUserIds: string[] = [];
+}
