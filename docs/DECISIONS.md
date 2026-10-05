@@ -63,4 +63,3 @@ These are recorded here; the ADRs go deeper.
 6. **No real-money columns in any M2 table.** `payment_intents`, `coins`, `positions`, `perps`, `paid_calls` are M3+ and not in M2.
 7. **Range partitioning is deferred.** `docs/DATA_MODEL.md` calls for monthly partitioning of `ledger_entries`. The trigger and the indexes make that a future migration; we do not need to ship the partitions on day one because no Phase 1 query is hot enough to need them. The 8.23-series pg supports `PARTITION BY RANGE (created_at)` and a child-partition per month when we want to add it.
 8. **No Drizzle schemas generated yet.** The chosen `node-pg-migrate` runner does not generate a typed client. The M2 repositories hand-write SQL with parameterised queries (no string concatenation) and cast to TypeScript types at the row boundary. If we add Drizzle later, the migration files stay the source of truth; the schema is a generated view.
-
