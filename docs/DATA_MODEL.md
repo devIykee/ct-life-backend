@@ -1,0 +1,211 @@
+# Data model
+
+> Every table, column, index, and constraint, with a plain-language description, an ER diagram, and the ledger invariants spelled out.
+
+This file will be filled in as migrations land (M2+). M0 ships the migration framework and the first migration for `users`. The full schema is described here as a target; M2 starts implementing it.
+
+## Tables (target)
+
+### `users`
+
+- `id uuid PRIMARY KEY` — UUIDv7, server-generated.
+- `wallet text UNIQUE NOT NULL` — base58 Solana public key.
+- `is_seeker boolean NOT NULL DEFAULT false` — Seeker Genesis Token verified.
+- `sgt_mint text` — the specific Seeker Genesis Token mint that was verified, so one phone cannot verify two accounts.
+- `skr_name text` — `.skr` name if linked.
+- `created_at timestamptz NOT NULL DEFAULT now()`.
+
+### `characters`
+
+- `id uuid PRIMARY KEY`
+- `user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+- `alias text UNIQUE NOT NULL`
+- `look jsonb NOT NULL` — `{ skinTone, headId, hairId, topId, bottomId, shoesId, accId }`
+- `tribe_id text NOT NULL`
+- `trait_ids text[] NOT NULL`
+- `dream_id text NOT NULL`
+- `age_confirmed_at timestamptz`
+- `home_id text NOT NULL`
+- `tribe_changed_at timestamptz` — one tribe change per season
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+### `balances` (M2)
+
+- `user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE`
+- `cash_cents bigint NOT NULL DEFAULT 0` — Cash in cents. Cached; reconciled from `ledger_entries`.
+- `debt_cents bigint NOT NULL DEFAULT 0` — Cash owed, in cents.
+
+### `ledger_entries` (M2, append-only)
+
+- `id bigserial PRIMARY KEY`
+- `user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT`
+- `delta_cents bigint NOT NULL`
+- `account text NOT NULL` — `cash` | `debt` | future accounts
+- `reason text NOT NULL` — `topup`, `shift_pay`, `rent`, `tax`, `tip`, `trade_buy`, `trade_sell`, etc.
+- `ref_type text` — `intent`, `trade`, `shift`, `tip`, `tombstone`, etc.
+- `ref_id text` — the entity ID
+- `idempotency_ref text UNIQUE` — for replay protection on payments, dedup
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+Append-only is enforced by a trigger that raises an exception on `UPDATE` or `DELETE`. The table is range-partitioned monthly by `created_at` to keep individual partitions small. Indexes:
+
+- `(user_id, created_at DESC)` — per-user history
+- `(ref_type, ref_id)` — find a ledger entry for an entity
+- `(idempotency_ref)` — replay protection
+
+### `needs` (M2, computed)
+
+- `user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE`
+- `energy smallint NOT NULL DEFAULT 50`
+- `hunger smallint NOT NULL DEFAULT 50`
+- `fun smallint NOT NULL DEFAULT 50`
+- `hygiene smallint NOT NULL DEFAULT 50`
+- `sanity smallint NOT NULL DEFAULT 50`
+
+Decay is computed on read from `last_action_at` against `needs.json`. The row stores the last write. Reads are cheap because decay is a small arithmetic on integers, no joins.
+
+### `skills` (M2)
+
+- `user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE`
+- `clout smallint NOT NULL DEFAULT 1` — 1 to 10
+- `coding smallint NOT NULL DEFAULT 1`
+- `trading smallint NOT NULL DEFAULT 1` — drives the leverage cap
+- `writing smallint NOT NULL DEFAULT 1`
+- `design smallint NOT NULL DEFAULT 1`
+- `security smallint NOT NULL DEFAULT 1`
+
+### `payment_intents` (M3)
+
+- `intent_id uuid PRIMARY KEY`
+- `user_id uuid NOT NULL REFERENCES users(id)`
+- `kind text NOT NULL` — `topup` | `cosmetic` | `ad` | `season_pass`
+- `currency text NOT NULL` — `USDC` | `SOL` | `SKR` | `ORE`
+- `amount text NOT NULL` — base units as a string
+- `recipient text NOT NULL` — treasury pubkey
+- `mint text` — null for SOL
+- `reference text UNIQUE NOT NULL`
+- `memo text NOT NULL` — the intent ID
+- `cash_cents bigint` — for top-ups
+- `bonus_bps smallint`
+- `status text NOT NULL` — `pending` | `confirmed` | `expired` | `failed`
+- `signature text` — set when confirmed
+- `expires_at timestamptz NOT NULL`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+`signature` is `UNIQUE` once set. Idempotency on crediting: a unique index on `signature` plus the webhook/poller path uses `ON CONFLICT DO NOTHING` to prevent double-credit.
+
+### `coins` (M3)
+
+- `coin_id uuid PRIMARY KEY`
+- `ticker text UNIQUE NOT NULL`
+- `name text NOT NULL`
+- `stage text NOT NULL` — `new` | `final` | `graduated` | `dead`
+- `price_micros bigint NOT NULL` — millionths of a Cash dollar per whole coin
+- `mcap_cents bigint NOT NULL`
+- `vol_5m_cents bigint NOT NULL DEFAULT 0`
+- `change_5m_bps integer NOT NULL DEFAULT 0`
+- `holders integer NOT NULL DEFAULT 0`
+- `launched_at timestamptz NOT NULL`
+- `hidden_arc jsonb NOT NULL` — `stealth`, `hype`, `peak`, `outcome`; never sent to the client
+- `seed bigint NOT NULL` — deterministic seed for replay
+
+### `positions` (M3)
+
+- `position_id uuid PRIMARY KEY`
+- `user_id uuid NOT NULL REFERENCES users(id)`
+- `coin_id uuid NOT NULL REFERENCES coins(coin_id)`
+- `units bigint NOT NULL`
+- `cost_basis_cents bigint NOT NULL`
+- `realized_cents bigint NOT NULL DEFAULT 0`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+### `perps` (M3)
+
+- `perp_id uuid PRIMARY KEY`
+- `user_id uuid NOT NULL REFERENCES users(id)`
+- `coin_id uuid NOT NULL REFERENCES coins(coin_id)`
+- `side text NOT NULL` — `long` | `short`
+- `leverage smallint NOT NULL`
+- `margin_cents bigint NOT NULL`
+- `entry_micros bigint NOT NULL`
+- `liq_micros bigint NOT NULL`
+- `status text NOT NULL` — `open` | `closed` | `liquidated`
+- `realized_cents bigint`
+- `closed_at timestamptz`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+### `paid_calls` (M4)
+
+- `call_id uuid PRIMARY KEY`
+- `fan_user_id uuid NOT NULL REFERENCES users(id)`
+- `creator_user_id uuid NOT NULL REFERENCES users(id)`
+- `session_pda text NOT NULL`
+- `status text NOT NULL` — `awaiting_payment` | `ringing` | `live` | `settled` | `refunded`
+- `rate_per_min_usdc text NOT NULL`
+- `max_minutes smallint NOT NULL`
+- `started_at timestamptz`
+- `ended_at timestamptz`
+- `minutes_used smallint`
+- `creator_amount text`
+- `fee text`
+- `refund_amount text`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+### `dm_messages` (M3)
+
+- `message_id uuid PRIMARY KEY`
+- `from_user_id uuid NOT NULL REFERENCES users(id)`
+- `to_user_id uuid NOT NULL REFERENCES users(id)`
+- `text text NOT NULL` — 500 char cap, validated
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+### `reports` and `blocks` (M1/M2)
+
+- `report_id`, `reporter_user_id`, `target_type`, `target_id`, `reason_id`, `note`, `created_at`, `resolved_by`, `resolved_at`.
+- `block_id`, `blocker_user_id`, `blocked_user_id`, `created_at`. `UNIQUE (blocker_user_id, blocked_user_id)`.
+
+### `webhook_events` (M3)
+
+- `event_id uuid PRIMARY KEY`
+- `source text NOT NULL` — `helius` | `livekit` | `ore`
+- `payload jsonb NOT NULL`
+- `received_at timestamptz NOT NULL DEFAULT now()`
+- `processed_at timestamptz`
+- `signature text` — for dedup; UNIQUE per (source, signature)
+
+## ER diagram
+
+```mermaid
+erDiagram
+  USERS ||--o{ CHARACTERS : has
+  USERS ||--|| BALANCES : has
+  USERS ||--|| NEEDS : has
+  USERS ||--|| SKILLS : has
+  USERS ||--o{ LEDGER_ENTRIES : owns
+  USERS ||--o{ POSITIONS : holds
+  USERS ||--o{ PERPS : opens
+  USERS ||--o{ PAYMENT_INTENTS : requests
+  USERS ||--o{ PAID_CALLS : "fan/creator"
+  USERS ||--o{ DM_MESSAGES : "from/to"
+  USERS ||--o{ REPORTS : files
+  USERS ||--o{ BLOCKS : "blocker/blocked"
+  COINS ||--o{ POSITIONS : held_in
+  COINS ||--o{ PERPS : on
+  PAID_CALLS }o--|| USERS : creator
+  PAID_CALLS }o--|| USERS : fan
+```
+
+## Ledger invariants
+
+These are the hard rules the ledger must always satisfy. Tests assert each one. A violation is a P0 incident.
+
+1. **Append-only.** `ledger_entries` cannot be `UPDATE`-d or `DELETE`-d. Enforced by a `BEFORE UPDATE OR DELETE` trigger that raises an exception. The `id` is `bigserial` and never reused.
+2. **Conservation.** `sum(delta_cents WHERE account='cash') == sum(balances.cash_cents)`. A nightly reconciliation job asserts this and alerts on any mismatch.
+3. **No negative cash.** After every transaction, `balances.cash_cents >= 0`. A debit that would push it negative must fail with `INSUFFICIENT_CASH` and roll back.
+4. **Idempotency.** Crediting a payment is idempotent on `(source, signature)`. The webhook handler and the polling reconciler both use `INSERT ... ON CONFLICT (signature) DO NOTHING`. A unique index on `(source, signature)` enforces it.
+5. **Money unit.** `cash_cents` is `bigint` cents, never `number` floats. Token amounts are `text` base units (decimal-aware).
+6. **Per-transaction integrity.** Every money-mutating service runs in a `SERIALIZABLE` transaction (or with explicit row locks) and retries on `40001` (serialization failure) with jittered backoff. The Unit of Work pattern is the only way to commit.
+7. **No hot rows.** No global row is updated on every transaction. Global aggregates (treasury balance, total burned, total paid) are derived from append-only entries on a schedule and cached in Redis. Source of truth is the entries.
+8. **No reliance on Redis for money.** Money is only in Postgres. Losing Redis loses no money; presence and rate limits are lost instead.
+9. **Bounded growth.** `ledger_entries` is monthly-partitioned; old partitions are detached and archived per the retention policy. Hot indexes are `(user_id, created_at DESC)` and `(ref_type, ref_id)`.
+10. **Statement timeout.** Every transaction sets `statement_timeout` and `lock_timeout`. No query holds a lock for more than a few seconds.

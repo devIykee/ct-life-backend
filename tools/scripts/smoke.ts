@@ -182,9 +182,12 @@ async function checkDevnetAirdrop(): Promise<void> {
   // returns 429. We log the result but do not fail the smoke. The airdrop is
   // needed for the bot e2e (M2) and the paid-call e2e (M4), not for M0.
   const url = 'https://api.devnet.solana.com';
-  const target = process.env.SETTLE_AUTHORITY_PUBKEY_OVERRIDE ?? '';
+  // The settle authority pubkey is read from TREASURY_PUBKEY_DEVNET as a
+  // proxy at the smoke stage; we read it from process.env directly because
+  // the smoke test is the first consumer.
+  const target = process.env.TREASURY_PUBKEY_DEVNET ?? '';
   if (!target) {
-    record('devnet-airdrop', false, 'no settle authority pubkey set; skipping (informational)');
+    record('devnet-airdrop', false, 'TREASURY_PUBKEY_DEVNET not set; skipping (informational)');
     return;
   }
   try {
