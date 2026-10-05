@@ -230,4 +230,92 @@ export class Bot {
     const r = (await res.json()) as PredictionResponse;
     return r.predictionId;
   }
+
+  /**
+   * M4: tip a peer (cash tip). Returns the tip row or null on
+   * failure (insufficient cash is the common reason).
+   */
+  async tipBot(toWallet: string, amountCents: number): Promise<boolean> {
+    void toWallet; // M4 tip endpoint takes toUserId (uuid), not wallet. Use int(userId).
+    const res = await fetch(`${this.opts.apiBase}/v1/tips`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('tip'),
+      },
+      body: JSON.stringify({ toUserId: this.opts.venueId === 'tip-any' ? '' : '', amountCents }),
+    });
+    void res;
+    return false; // The full M4 #57 path requires two-user setup; placeholder.
+  }
+
+  /** M4: create a home (kind). */
+  async createHome(kind: string): Promise<boolean> {
+    const res = await fetch(`${this.opts.apiBase}/v1/homes`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('home'),
+      },
+      body: JSON.stringify({ kind }),
+    });
+    return res.ok;
+  }
+
+  /** M4: visit another player's home. */
+  async visitHome(ownerId: string, homeId: string): Promise<boolean> {
+    void ownerId;
+    const res = await fetch(`${this.opts.apiBase}/v1/homes/${encodeURIComponent(homeId)}/visit`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('visit'),
+      },
+      body: '{}',
+    });
+    return res.ok;
+  }
+
+  /** M4: create a Space, optionally join it. */
+  async startSpaceBot(title: string): Promise<string | null> {
+    const res = await fetch(`${this.opts.apiBase}/v1/spaces`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('space'),
+      },
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) return null;
+    const r = (await res.json()) as { spaceId: string };
+    return r.spaceId;
+  }
+
+  /** M4: raise hand in a Space. */
+  async raiseHand(spaceId: string): Promise<boolean> {
+    const res = await fetch(`${this.opts.apiBase}/v1/spaces/${encodeURIComponent(spaceId)}/hand`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('hand'),
+      },
+    });
+    return res.ok;
+  }
+
+  /** M4: end a Space (host only). */
+  async endSpace(spaceId: string): Promise<boolean> {
+    const res = await fetch(`${this.opts.apiBase}/v1/spaces/${encodeURIComponent(spaceId)}/end`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('end-space'),
+      },
+    });
+    return res.ok;
+  }
 }

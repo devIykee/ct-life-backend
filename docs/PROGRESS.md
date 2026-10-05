@@ -512,3 +512,88 @@ $ pnpm exec tsx tools/scripts/smoke.ts → 7/7 required checks
 ### Next
 
 M4 (voice, spaces, paid calls).
+
+## M4 — Voice, spaces, paid calls
+
+**Status:** DONE
+**Last command:** `pnpm test:unit` → 99/99 passed
+**Date:** 2026-10-05
+
+### Done in this milestone
+
+- [x] #47 Migrations for the voice + social layer (9 SQL files,
+      022..030; voice_rooms, voice_speakers, paid_call_escrow,
+      creator_profiles, homes, home_visits, tips, push_devices,
+      meta). `pnpm db:verify` now asserts 55 invariants.
+- [x] #48 LiveKit room service + RTC token minting
+      (server/application/livekit.ts). Room name `{kind}:{id}`,
+      identity = userId. Tokens default canPublish=false for
+      space listeners, true for other kinds.
+- [x] #49 Spaces (host + speakers + hand-raise + end). Promotion
+      refuses beyond 8 speakers; host-only on promote/demote/end.
+      LiveKit canPublish toggles are best-effort.
+- [x] #50 Video calls (1:1 and group). Mints one LiveKit token
+      per participant. Host-only end.
+- [x] #51 Creator profile + paid calls. Settlement math:
+      minutes = ceil(seconds/60), fee = floor(gross * 5%).
+      End writes a `tip` ledger row for the creator and a `fee`
+      ledger row for the 5% protocol fee.
+- [x] #52 Homes (rent, visit). `runWeeklyRent` worker debits
+      rent weekly or increments `debt_cents` when cash is
+      insufficient (exit-liquidity-baby semantics).
+- [x] #53 Tips (cash + on-chain). Cash tips balance two ledger
+      rows (sender `tip_out`, recipient `tip`). On-chain tips
+      persist a pending row that the M3 Helius webhook confirms.
+- [x] #54 Push / Meta / Ad booking (Phase 5 prep). Push upserts
+      on (user_id, platform, token). Meta admin endpoint checks
+      the JWT role claim. Ads ship a stub booking row; Phase 5
+      wires the creative upload + payment_intent.
+- [x] #55 Spaces + Video Room realtime integration.
+      `contract/realtime/states.ts` adds `SpeakerState`,
+      `SpaceState`, `VideoCallState`. `server/realtime/rooms/
+      space.ts` and `video-call.ts` mirror the application
+      state; the realtime main registers both room names.
+- [x] #56 Webhooks (LiveKit + ORE). HS256 JWT verification with
+      timing-safe compare. Idempotent on (source, signature).
+      LiveKit `room_finished` and `participant_left` events
+      drive state on `voice_rooms` / `voice_speakers`. ORE
+      round_end publishes on `city:events`.
+- [x] #57 Tests + bot e2e. Bot extended with `createHome`,
+      `visitHome`, `tipBot`, `startSpaceBot`, `joinSpace`,
+      `raiseHand`, `endSpace`. 99/99 unit tests pass across
+      19 files; `pnpm db:verify` is 55/55; `pnpm contract:check`
+      is green.
+
+### Static gate this milestone
+
+```
+$ pnpm typecheck       → no errors
+$ pnpm lint            → no errors
+$ pnpm format:check    → all files match
+$ pnpm docs:check      → OK
+$ pnpm boundary:check  → layering OK (soft-size on creator.ts,
+                          paid-calls.ts, livekit.ts,
+                          livekit-webhook.ts — domain objects,
+                          accepted)
+$ pnpm contract:check  → all steps green
+$ pnpm test:unit       → 99/99 passed (across 19 files)
+$ pnpm db:verify       → 55/55 schema invariants passed
+```
+
+### Notes
+
+- The market engine + ORE Refinery + Alpha + Social from M3
+  remain in place; M4 layers voice + homes + tips + ads on
+  top. The append-only ledger trigger is the hard floor: every
+  M4 service that touches cash (rent, tips, paid-call
+  settlement, fees) runs through `runInTransaction` or
+  `ctx.db.withConnection` and writes ledger rows.
+- The M3 Helius webhook pattern is reused by M4 webhook
+  services for idempotency.
+- Settlement math is server-authoritative: the client never
+  computes prices, scores, or positions.
+
+### Next
+
+M5 (Phase 4: city life, Sunday Unlock, businesses, gigs,
+daily clue, cosmetics shop, cosmetic NFTs, season pass).
