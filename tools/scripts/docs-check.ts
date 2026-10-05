@@ -292,7 +292,11 @@ function main(): void {
     );
     if (missingFromAnywhere.length > 0) {
       failed = true;
+      // eslint-disable-next-line no-console
+      console.log('docs-check: error code coverage');
       for (const c of missingFromAnywhere) {
+        // eslint-disable-next-line no-console
+        console.log(
           `  error code ${c} from contract/ids/errors.json not in openapi.yaml or contract/realtime/messages.ts`,
         );
       }
