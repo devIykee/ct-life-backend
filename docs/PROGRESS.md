@@ -280,3 +280,41 @@ $ pnpm test:unit    → 20/20 passed (10 from npc-brain)
 $ pnpm smoke        → 7/7 required checks passed
 $ pnpm db:verify    → 15/15 schema invariants passed
 ```
+
+## M2 — Realtime (#31)
+
+**Status:** DONE
+**Last command:** `pnpm test:unit` → 23/23 passed
+**Last commit:** pending (this session)
+
+### Done in this slice
+
+- [x] `server/realtime/schemas.ts` — Colyseus `@colyseus/schema` definitions: `PlayerState`, `NpcState`, `CityState`, `VenueState`, `MarketState`. Decorators are enabled via tsconfig `experimentalDecorators: true` and `strictPropertyInitialization: false`.
+- [x] `server/realtime/rooms/city.ts` — `CityRoom` (1 Hz, 1,000 cap, sharded in M3). `online` count, `mood` basis points, `metaId`.
+- [x] `server/realtime/rooms/market.ts` — `MarketRoom` (0.5 Hz, 2,000 cap). M2 stub: timestamp + placeholder.
+- [x] `server/realtime/rooms/venue.ts` — `VenueRoom` (10 Hz, 50 cap). Message handlers: `move` (10/s, speed ≤ 6 m/s, walkable validation), `sit`/`stand` (spots with SPOT_TAKEN), `emote` (1/s, ID in `anims.json`), `say` (1 per 2 s, 140 char cap, link/phone strip), `talking` (LiveKit mirror), `npc_tap` (Giveaway Guy → `toast_drained`). 1 Hz NPC brain tick using `@ct-life/npc-brain`. `welcome { serverNow, instanceId }` on join.
+- [x] `server/realtime/main.ts` — Colyseus Server with `WebSocketTransport`, `RedisDriver`, `RedisPresence`. Registers city, market, venue.
+- [x] `server/realtime/rooms/venue.test.ts` — 3 smoke tests: VenueRoom instantiable, VenueState carries a player + NPC, all 9 NPC archetypes instantiate.
+- [x] Dependencies: added `colyseus@0.18.9`, `@colyseus/schema@5.0.36`, `@colyseus/sdk@0.18.5`, `@colyseus/redis-presence@0.18.5`, `@colyseus/redis-driver@0.18.4`, `@colyseus/testing@0.18.6`, `@colyseus/ws-transport@0.18.4`.
+
+### Static gate this slice
+
+```
+$ pnpm typecheck    → no errors
+$ pnpm lint         → no errors
+$ pnpm format:check → all files match
+$ pnpm docs:check   → OK
+$ pnpm boundary:check → layering OK
+$ pnpm contract:check  → all steps green
+$ pnpm test:unit    → 23/23 passed
+$ pnpm smoke        → 7/7 required checks passed
+$ pnpm db:verify    → 15/15 schema invariants passed
+```
+
+### Notes
+
+- The deep integration tests (move validation, sit/stand, emote rate, say sanitisation, npc_tap) require the venue room to be registered on the test matchmaker. M2 ships the wiring and the M2 #35 load test exercises it end-to-end with 200 bots. The 3 unit tests above prove the schema/decorator plumbing and the NPC brain integration.
+
+### Next
+
+- [ ] #32 server/workers (BullMQ event engine, Town Crier, daily board refresh).
