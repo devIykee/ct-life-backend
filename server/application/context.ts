@@ -25,6 +25,8 @@ import { createHeliusClient } from '../shared/solana/helius.js';
 import type { RedisIdempotencyStore } from '../shared/infra/idempotency.js';
 import { RedisIdempotencyStore as RedisIdem } from '../shared/infra/idempotency.js';
 import { loadConfig, type Config } from '../shared/config/config.js';
+import type { LiveKitService } from './livekit.js';
+import { createLiveKitService } from './livekit.js';
 
 export interface AppContext {
   readonly config: Config;
@@ -33,6 +35,7 @@ export interface AppContext {
   readonly jwt: JwtIssuer;
   readonly helius: HeliusClient;
   readonly idempotency: RedisIdempotencyStore;
+  readonly livekit: LiveKitService;
   /** Bumped at process start; the realtime welcome message carries it. */
   readonly instanceId: string;
   /** Issued per sign-in attempt; the in-memory store. */
@@ -61,6 +64,7 @@ export function buildContext(): AppContext {
       apiKey: config.helius.apiKey,
     }),
     idempotency: new RedisIdem(redis.main),
+    livekit: createLiveKitService(),
     instanceId: randomUUID(),
     nonces: new InMemoryNonceStore(),
     configCache: new ConfigCache(),

@@ -23,6 +23,7 @@ import { registerOreRoutes } from './routes/ore.js';
 import { registerPredictionRoutes } from './routes/predictions.js';
 import { registerAlphaRoutes } from './routes/alpha.js';
 import { registerSocialGraphRoutes } from './routes/social-graph.js';
+import { registerSpaceRoutes } from './routes/spaces.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -120,6 +121,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPredictionRoutes(app);
   registerAlphaRoutes(app);
   registerSocialGraphRoutes(app);
+  registerSpaceRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 
