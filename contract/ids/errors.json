@@ -1,0 +1,95 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "_note": "Every error code used in the API or realtime protocol. The contract:check tool asserts every code here is referenced in openapi.yaml and every realtime message documents the codes it can return. Add codes here first, then use them.",
+  "codes": [
+    {
+      "code": "NONCE_INVALID",
+      "httpStatus": 401,
+      "message": "Nonce is missing, used, or expired."
+    },
+    {
+      "code": "SIGNATURE_INVALID",
+      "httpStatus": 401,
+      "message": "Ed25519 signature did not verify."
+    },
+    { "code": "TOKEN_EXPIRED", "httpStatus": 401, "message": "Access token expired; refresh." },
+    {
+      "code": "SGT_ALREADY_LINKED",
+      "httpStatus": 409,
+      "message": "This Seeker Genesis Token is already linked to another account."
+    },
+    { "code": "ALIAS_TAKEN", "httpStatus": 409, "message": "Alias is taken." },
+    {
+      "code": "ALREADY_ROLLED",
+      "httpStatus": 409,
+      "message": "Birth lottery has already been rolled for this account."
+    },
+    {
+      "code": "CLIENT_OUTDATED",
+      "httpStatus": 426,
+      "message": "Update required. X-Client-Version is below minClientVersion."
+    },
+    {
+      "code": "VALIDATION_FAILED",
+      "httpStatus": 400,
+      "message": "Request body or params failed validation."
+    },
+    { "code": "NOT_FOUND", "httpStatus": 404, "message": "Resource not found." },
+    {
+      "code": "FORBIDDEN",
+      "httpStatus": 403,
+      "message": "Caller is not allowed to perform this action."
+    },
+    { "code": "BLOCKED", "httpStatus": 403, "message": "You are blocked by this user." },
+    {
+      "code": "RATE_LIMITED",
+      "httpStatus": 429,
+      "message": "Rate limit exceeded; try again later."
+    },
+    { "code": "INSUFFICIENT_CASH", "httpStatus": 402, "message": "Cash balance is insufficient." },
+    {
+      "code": "LEVERAGE_NOT_ALLOWED",
+      "httpStatus": 400,
+      "message": "Leverage exceeds the cap from your Trading skill and tribe."
+    },
+    {
+      "code": "SLIPPAGE_EXCEEDED",
+      "httpStatus": 400,
+      "message": "Trade would execute at a worse price than your maxSlippageBps."
+    },
+    {
+      "code": "SHIFT_NOT_FINISHED",
+      "httpStatus": 400,
+      "message": "Shift cannot be completed before durationSec has elapsed."
+    },
+    {
+      "code": "VENUE_FULL",
+      "httpStatus": 503,
+      "message": "All venue instances are at capacity; try again shortly."
+    },
+    { "code": "SPOT_TAKEN", "httpStatus": 409, "message": "Spot is taken." },
+    { "code": "NOT_SPACE_HOST", "httpStatus": 403, "message": "Only the space host can do this." },
+    {
+      "code": "TOPUP_CAP_REACHED",
+      "httpStatus": 429,
+      "message": "100 USDC of top-ups per wallet per day exceeded."
+    },
+    {
+      "code": "PAYMENT_EXPIRED",
+      "httpStatus": 410,
+      "message": "Payment intent expired before it was confirmed."
+    },
+    {
+      "code": "PAYMENT_UNDERPAID",
+      "httpStatus": 402,
+      "message": "On-chain transfer was below the intent amount."
+    },
+    {
+      "code": "SERVER_BUSY",
+      "httpStatus": 503,
+      "message": "Server is at capacity. Retry-After header carries the wait time."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "title": "businesses.json",
+  "type": "object",
+  "required": ["version", "businesses"],
+  "properties": {
+    "version": { "type": "string" },
+    "businesses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "costCents",
+          "incomeRangeCents",
+          "badDayChanceBps",
+          "badDayMultiplier"
+        ],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "costCents": { "type": "integer", "minimum": 0 },
+          "incomeRangeCents": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": { "type": "integer" }
+          },
+          "badDayChanceBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "badDayMultiplier": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

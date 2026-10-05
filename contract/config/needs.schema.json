@@ -1,0 +1,33 @@
+{
+  "title": "needs.json",
+  "type": "object",
+  "required": ["version", "decayPerHour", "actions"],
+  "properties": {
+    "version": { "type": "string" },
+    "decayPerHour": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 100 }
+    },
+    "minValue": { "type": "integer" },
+    "maxValue": { "type": "integer" },
+    "startValue": { "type": "integer" },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "raises", "amount"],
+        "properties": {
+          "id": { "type": "string" },
+          "raises": { "type": "string" },
+          "amount": { "type": "integer" },
+          "where": { "type": "string" },
+          "clubVenueIds": { "type": "array", "items": { "type": "string" } },
+          "cooldownSec": { "type": "integer" },
+          "durationSec": { "type": "integer" },
+          "costCents": { "type": "integer" }
+        }
+      }
+    },
+    "clubVenues": { "type": "array", "items": { "type": "string" } }
+  }
+}

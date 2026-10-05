@@ -1,0 +1,11 @@
+{
+  "title": "ore.json",
+  "type": "object",
+  "required": ["version", "minerTiers"],
+  "properties": {
+    "version": { "type": "string" },
+    "minerTiers": { "type": "array" },
+    "boardCacheSec": { "type": "integer" },
+    "maxRoundAgeSec": { "type": "integer" }
+  }
+}

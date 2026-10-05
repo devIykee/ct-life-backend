@@ -1,0 +1,11 @@
+{
+  "title": "leagues.json",
+  "type": "object",
+  "required": ["version", "leagues"],
+  "properties": {
+    "version": { "type": "string" },
+    "leagues": { "type": "array" },
+    "seasonLengthDays": { "type": "integer" },
+    "seasonResetCron": { "type": "string" }
+  }
+}

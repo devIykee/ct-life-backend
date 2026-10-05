@@ -1,0 +1,47 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "adSlots": [
+    {
+      "id": "billboard_01",
+      "kind": "billboard",
+      "venueId": "timeline_square",
+      "terms": ["term_7d", "term_30d"]
+    },
+    {
+      "id": "billboard_02",
+      "kind": "billboard",
+      "venueId": "timeline_square",
+      "terms": ["term_7d", "term_30d"]
+    },
+    {
+      "id": "billboard_03",
+      "kind": "billboard",
+      "venueId": "spaces_studio",
+      "terms": ["term_7d", "term_30d"]
+    },
+    {
+      "id": "pixel_tile_001",
+      "kind": "pixel_tile",
+      "venueId": "timeline_square",
+      "terms": ["term_7d", "term_30d"]
+    },
+    {
+      "id": "pixel_tile_002",
+      "kind": "pixel_tile",
+      "venueId": "timeline_square",
+      "terms": ["term_7d", "term_30d"]
+    },
+    { "id": "phone_app_01", "kind": "phone_app", "venueId": null, "terms": ["term_30d"] },
+    { "id": "phone_app_02", "kind": "phone_app", "venueId": null, "terms": ["term_30d"] },
+    { "id": "term_7d", "kind": "term", "days": 7 },
+    { "id": "term_30d", "kind": "term", "days": 30 },
+    {
+      "id": "term_event",
+      "kind": "term",
+      "days": 7,
+      "note": "Conference Week booth; price per event"
+    }
+  ]
+}

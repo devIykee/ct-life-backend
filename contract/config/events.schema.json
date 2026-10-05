@@ -1,0 +1,9 @@
+{
+  "title": "events.json",
+  "type": "object",
+  "required": ["version", "events"],
+  "properties": {
+    "version": { "type": "string" },
+    "events": { "type": "array" }
+  }
+}

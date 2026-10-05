@@ -1,0 +1,101 @@
+{
+  "_owner": "BE (FE adds scene_key)",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "venues": [
+    {
+      "id": "timeline_square",
+      "name": "Timeline Square",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "spaces_studio",
+      "name": "Spaces Studio",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "stage"
+    },
+    {
+      "id": "terminal_cafe",
+      "name": "Terminal Café",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "trade"
+    },
+    { "id": "perp_pit", "name": "Perp Pit", "maxClients": 50, "patchHz": 10, "kind": "leverage" },
+    {
+      "id": "rekt_clinic",
+      "name": "Rekt Clinic",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "shrine"
+    },
+    {
+      "id": "ore_refinery",
+      "name": "ORE Refinery",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "stake"
+    },
+    {
+      "id": "launchpad_tower",
+      "name": "Launchpad Tower",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "trade"
+    },
+    {
+      "id": "prediction_pit",
+      "name": "Prediction Pit",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "bet"
+    },
+    {
+      "id": "builder_hills",
+      "name": "Builder Hills",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "build"
+    },
+    { "id": "audit_row", "name": "Audit Row", "maxClients": 50, "patchHz": 10, "kind": "social" },
+    { "id": "vc_row", "name": "VC Row", "maxClients": 50, "patchHz": 10, "kind": "social" },
+    {
+      "id": "ratio_arena",
+      "name": "Ratio Arena",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "airdrop_farm",
+      "name": "Airdrop Farm",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "dubai_marina",
+      "name": "Dubai Marina",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "cabal_lounge",
+      "name": "Cabal Lounge",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "discord_heights",
+      "name": "Discord Heights",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    }
+  ]
+}

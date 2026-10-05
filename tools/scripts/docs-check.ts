@@ -200,6 +200,28 @@ function extractRealtimeMessages(): Set<string> {
   return out;
 }
 
+function extractRealtimeRejections(): Set<string> {
+  // Codes listed in the RejectedMessage z.enum in contract/realtime/messages.ts.
+  const out = new Set<string>();
+  try {
+    const text = readText(join(REPO, 'contract/realtime/messages.ts'));
+    // Find the z.enum([ ... ]) inside RejectedMessage and capture every
+    // single-quoted string.
+    const re = /z\.enum\(\[\s*([^\]]+)\s*\]\)/g;
+    for (const m of text.matchAll(re)) {
+      const list = m[1];
+      if (!list) continue;
+      for (const c of list.matchAll(/'([A-Z][A-Z0-9_]+)'/g)) {
+        const v = c[1];
+        if (v) out.add(v);
+      }
+    }
+  } catch {
+    /* missing is fine until M1 */
+  }
+  return out;
+}
+
 function extractRealtimeMdMessages(): Set<string> {
   const path = join(REPO, 'docs/REALTIME.md');
   try {
@@ -265,18 +287,24 @@ function main(): void {
     }
   }
 
-  // (2) every error code in errors.json appears in openapi.yaml.
+  // (2) every error code in errors.json appears in openapi.yaml OR in
+  // the realtime RejectedMessage enum.
   const errorCodes = extractErrorCodes();
   const openapiCodes = extractOpenapiErrors();
   if (errorCodes.size > 0) {
-    const missingFromOpenapi = [...errorCodes].filter((c) => !openapiCodes.has(c));
-    if (missingFromOpenapi.length > 0) {
+    const realtimeRej = extractRealtimeRejections();
+    const missingFromAnywhere = [...errorCodes].filter(
+      (c) => !openapiCodes.has(c) && !realtimeRej.has(c),
+    );
+    if (missingFromAnywhere.length > 0) {
       failed = true;
       // eslint-disable-next-line no-console
       console.log('docs-check: error code coverage');
-      for (const c of missingFromOpenapi) {
+      for (const c of missingFromAnywhere) {
         // eslint-disable-next-line no-console
-        console.log(`  error code ${c} from contract/ids/errors.json not in contract/openapi.yaml`);
+        console.log(
+          `  error code ${c} from contract/ids/errors.json not in openapi.yaml or contract/realtime/messages.ts`,
+        );
       }
     }
   }

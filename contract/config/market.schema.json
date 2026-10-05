@@ -1,0 +1,20 @@
+{
+  "title": "market.json",
+  "type": "object",
+  "required": ["version", "tickLengthSec", "curve", "outcomeMix", "feesBps"],
+  "properties": {
+    "version": { "type": "string" },
+    "tickLengthSec": { "type": "integer" },
+    "launchIntervalSec": { "type": "integer" },
+    "maxActiveCoins": { "type": "integer" },
+    "curve": { "type": "object" },
+    "outcomeMix": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 100 }
+    },
+    "feesBps": { "type": "object" },
+    "minTradeCents": { "type": "integer" },
+    "tapeThresholdCents": { "type": "integer" },
+    "evAfterFeesNegativeToleranceBps": { "type": "integer" }
+  }
+}

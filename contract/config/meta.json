@@ -1,0 +1,13 @@
+{
+  "version": "1.0.0-rc1",
+  "_note": "The Weekly Meta rotates Sun 20:00 UTC. Each entry is one of the seven slots in a week.",
+  "weekly": [
+    { "weekday": 0, "bonus": "rent_half" },
+    { "weekday": 1, "bonus": "trading_fee_half" },
+    { "weekday": 2, "bonus": "double_tip" },
+    { "weekday": 3, "bonus": "npc_density_double" },
+    { "weekday": 4, "bonus": "leverage_cap_plus_2x" },
+    { "weekday": 5, "bonus": "cosmetics_sale" },
+    { "weekday": 6, "bonus": "alpha_clue_prize_x3" }
+  ]
+}

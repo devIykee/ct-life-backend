@@ -1,0 +1,64 @@
+{
+  "version": "1.0.0-rc1",
+  "topUpCapCentsPerDay": 1000000,
+  "topUpCapCurrency": "USDC",
+  "topUpPacks": [
+    { "id": "ramen", "label": "Ramen", "priceUsdc": 1, "cashCents": 50000 },
+    { "id": "bag", "label": "Bag", "priceUsdc": 5, "cashCents": 300000 },
+    { "id": "whale", "label": "Whale", "priceUsdc": 10, "cashCents": 700000, "bestValue": true },
+    { "id": "cabal", "label": "Cabal", "priceUsdc": 20, "cashCents": 1600000 }
+  ],
+  "currencyBonusBps": {
+    "USDC": 0,
+    "SOL": 0,
+    "SKR": 1000,
+    "ORE": 1500
+  },
+  "currencies": {
+    "USDC": {
+      "decimals": 6,
+      "mint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+      "devnetMint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+    },
+    "SOL": { "decimals": 9, "mint": null, "devnetMint": null },
+    "SKR": {
+      "decimals": 5,
+      "mint": "SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3",
+      "devnetMint": null,
+      "_note": "Devnet mint unverified; SKR top-up is prod-only until verified."
+    },
+    "ORE": {
+      "decimals": 11,
+      "mint": "oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp",
+      "devnetMint": null,
+      "mainnetOnly": true
+    }
+  },
+  "rentCentsPerWeek": {
+    "parents_basement": 2000,
+    "hacker_house": 6000,
+    "studio": 18000,
+    "penthouse": 150000,
+    "marina_villa": 500000
+  },
+  "taxBrackets": [
+    { "upToCents": 500000, "rateBps": 0 },
+    { "upToCents": 1500000, "rateBps": 2000 },
+    { "upToCents": 5000000, "rateBps": 4000 },
+    { "upToCents": null, "rateBps": 4500 }
+  ],
+  "taxResetCron": "Mon 00:00 UTC",
+  "lottery": {
+    "seeker": { "cashCents": 150000, "homeId": "hacker_house" },
+    "insider": { "cashCents": 300000, "homeId": "studio" },
+    "exit_liquidity": {
+      "cashCents": 30000,
+      "homeId": "parents_basement",
+      "debtCents": 72000,
+      "weeklyDueCents": 12000,
+      "missedPenaltyBps": 1000
+    }
+  },
+  "sundayUnlockCron": "Sun 20:00 UTC",
+  "mondayResetCron": "Mon 00:00 UTC"
+}

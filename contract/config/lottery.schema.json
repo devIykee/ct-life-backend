@@ -1,0 +1,14 @@
+{
+  "title": "lottery.json",
+  "type": "object",
+  "required": ["version", "weights", "outcomes"],
+  "properties": {
+    "version": { "type": "string" },
+    "weights": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 100 }
+    },
+    "outcomes": { "type": "object" },
+    "debtRepayment": { "type": "object" }
+  }
+}

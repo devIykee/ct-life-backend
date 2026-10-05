@@ -1,0 +1,375 @@
+{
+  "version": "1.0.0-rc1",
+  "careers": [
+    {
+      "id": "discord_mod",
+      "name": "Discord Mod",
+      "active": true,
+      "phase": 1,
+      "skillGates": {},
+      "levels": [
+        {
+          "level": 1,
+          "payCents": 4000,
+          "shiftSec": 45,
+          "xp": 100,
+          "miniGameId": "discord_mod_ban"
+        },
+        {
+          "level": 2,
+          "payCents": 5500,
+          "shiftSec": 50,
+          "xp": 120,
+          "miniGameId": "discord_mod_ban"
+        },
+        {
+          "level": 3,
+          "payCents": 7500,
+          "shiftSec": 50,
+          "xp": 140,
+          "miniGameId": "discord_mod_ban"
+        },
+        {
+          "level": 4,
+          "payCents": 10000,
+          "shiftSec": 55,
+          "xp": 160,
+          "miniGameId": "discord_mod_ban"
+        },
+        {
+          "level": 5,
+          "payCents": 13000,
+          "shiftSec": 55,
+          "xp": 180,
+          "miniGameId": "discord_mod_ban"
+        }
+      ]
+    },
+    {
+      "id": "junior_analyst",
+      "name": "Junior Analyst",
+      "active": true,
+      "phase": 1,
+      "skillGates": { "skill": "coding", "level": 1 },
+      "levels": [
+        {
+          "level": 1,
+          "payCents": 5000,
+          "shiftSec": 60,
+          "xp": 100,
+          "miniGameId": "junior_analyst_earnings"
+        },
+        {
+          "level": 2,
+          "payCents": 7000,
+          "shiftSec": 60,
+          "xp": 120,
+          "miniGameId": "junior_analyst_earnings"
+        },
+        {
+          "level": 3,
+          "payCents": 9500,
+          "shiftSec": 65,
+          "xp": 140,
+          "miniGameId": "junior_analyst_earnings"
+        },
+        {
+          "level": 4,
+          "payCents": 12000,
+          "shiftSec": 65,
+          "xp": 160,
+          "miniGameId": "junior_analyst_earnings"
+        },
+        {
+          "level": 5,
+          "payCents": 16000,
+          "shiftSec": 70,
+          "xp": 180,
+          "miniGameId": "junior_analyst_earnings"
+        }
+      ]
+    },
+    {
+      "id": "kol_engagement",
+      "name": "KOL Engagement",
+      "active": true,
+      "phase": 1,
+      "skillGates": { "skill": "writing", "level": 2 },
+      "levels": [
+        {
+          "level": 1,
+          "payCents": 4500,
+          "shiftSec": 50,
+          "xp": 100,
+          "miniGameId": "kols_engagement"
+        },
+        {
+          "level": 2,
+          "payCents": 6000,
+          "shiftSec": 50,
+          "xp": 120,
+          "miniGameId": "kols_engagement"
+        },
+        {
+          "level": 3,
+          "payCents": 8000,
+          "shiftSec": 55,
+          "xp": 140,
+          "miniGameId": "kols_engagement"
+        },
+        {
+          "level": 4,
+          "payCents": 11000,
+          "shiftSec": 55,
+          "xp": 160,
+          "miniGameId": "kols_engagement"
+        },
+        {
+          "level": 5,
+          "payCents": 15000,
+          "shiftSec": 60,
+          "xp": 180,
+          "miniGameId": "kols_engagement"
+        }
+      ]
+    },
+    {
+      "id": "copywriter",
+      "name": "Copywriter",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "writing", "level": 1 },
+      "levels": [
+        {
+          "level": 1,
+          "payCents": 4000,
+          "shiftSec": 50,
+          "xp": 100,
+          "miniGameId": "copywriter_rewrite"
+        },
+        {
+          "level": 2,
+          "payCents": 5500,
+          "shiftSec": 50,
+          "xp": 120,
+          "miniGameId": "copywriter_rewrite"
+        },
+        {
+          "level": 3,
+          "payCents": 7500,
+          "shiftSec": 55,
+          "xp": 140,
+          "miniGameId": "copywriter_rewrite"
+        },
+        {
+          "level": 4,
+          "payCents": 10000,
+          "shiftSec": 55,
+          "xp": 160,
+          "miniGameId": "copywriter_rewrite"
+        },
+        {
+          "level": 5,
+          "payCents": 13000,
+          "shiftSec": 60,
+          "xp": 180,
+          "miniGameId": "copywriter_rewrite"
+        }
+      ]
+    },
+    {
+      "id": "graphic_designer",
+      "name": "Graphic Designer",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "design", "level": 1 },
+      "levels": [
+        {
+          "level": 1,
+          "payCents": 4500,
+          "shiftSec": 50,
+          "xp": 100,
+          "miniGameId": "designer_canvas"
+        },
+        {
+          "level": 2,
+          "payCents": 6000,
+          "shiftSec": 50,
+          "xp": 120,
+          "miniGameId": "designer_canvas"
+        },
+        {
+          "level": 3,
+          "payCents": 8000,
+          "shiftSec": 55,
+          "xp": 140,
+          "miniGameId": "designer_canvas"
+        },
+        {
+          "level": 4,
+          "payCents": 10500,
+          "shiftSec": 55,
+          "xp": 160,
+          "miniGameId": "designer_canvas"
+        },
+        {
+          "level": 5,
+          "payCents": 14000,
+          "shiftSec": 60,
+          "xp": 180,
+          "miniGameId": "designer_canvas"
+        }
+      ]
+    },
+    {
+      "id": "smart_contract_auditor",
+      "name": "Smart Contract Auditor",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "security", "level": 3 },
+      "levels": [
+        { "level": 1, "payCents": 8000, "shiftSec": 70, "xp": 150, "miniGameId": "auditor_report" },
+        {
+          "level": 2,
+          "payCents": 11000,
+          "shiftSec": 70,
+          "xp": 175,
+          "miniGameId": "auditor_report"
+        },
+        {
+          "level": 3,
+          "payCents": 15000,
+          "shiftSec": 75,
+          "xp": 200,
+          "miniGameId": "auditor_report"
+        },
+        {
+          "level": 4,
+          "payCents": 20000,
+          "shiftSec": 75,
+          "xp": 225,
+          "miniGameId": "auditor_report"
+        },
+        { "level": 5, "payCents": 28000, "shiftSec": 80, "xp": 250, "miniGameId": "auditor_report" }
+      ]
+    },
+    {
+      "id": "yield_farmer",
+      "name": "Yield Farmer",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "coding", "level": 2 },
+      "levels": [
+        { "level": 1, "payCents": 5000, "shiftSec": 50, "xp": 110, "miniGameId": "yield_farm_apy" },
+        { "level": 2, "payCents": 7000, "shiftSec": 55, "xp": 130, "miniGameId": "yield_farm_apy" },
+        { "level": 3, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "yield_farm_apy" },
+        {
+          "level": 4,
+          "payCents": 12000,
+          "shiftSec": 60,
+          "xp": 170,
+          "miniGameId": "yield_farm_apy"
+        },
+        { "level": 5, "payCents": 16000, "shiftSec": 65, "xp": 200, "miniGameId": "yield_farm_apy" }
+      ]
+    },
+    {
+      "id": "shill_runner",
+      "name": "Shill Runner",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "clout", "level": 1 },
+      "levels": [
+        { "level": 1, "payCents": 3500, "shiftSec": 45, "xp": 80, "miniGameId": "shill_post" },
+        { "level": 2, "payCents": 5000, "shiftSec": 45, "xp": 100, "miniGameId": "shill_post" },
+        { "level": 3, "payCents": 7000, "shiftSec": 50, "xp": 120, "miniGameId": "shill_post" },
+        { "level": 4, "payCents": 9500, "shiftSec": 50, "xp": 140, "miniGameId": "shill_post" },
+        { "level": 5, "payCents": 12500, "shiftSec": 55, "xp": 160, "miniGameId": "shill_post" }
+      ]
+    },
+    {
+      "id": "doxx_researcher",
+      "name": "Doxx Researcher",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "clout", "level": 2 },
+      "levels": [
+        { "level": 1, "payCents": 5000, "shiftSec": 55, "xp": 110, "miniGameId": "doxx_thread" },
+        { "level": 2, "payCents": 7000, "shiftSec": 55, "xp": 130, "miniGameId": "doxx_thread" },
+        { "level": 3, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "doxx_thread" },
+        { "level": 4, "payCents": 12500, "shiftSec": 60, "xp": 170, "miniGameId": "doxx_thread" },
+        { "level": 5, "payCents": 17000, "shiftSec": 65, "xp": 200, "miniGameId": "doxx_thread" }
+      ]
+    },
+    {
+      "id": "trend_hunter",
+      "name": "Trend Hunter",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "clout", "level": 3 },
+      "levels": [
+        { "level": 1, "payCents": 6000, "shiftSec": 50, "xp": 120, "miniGameId": "trend_call" },
+        { "level": 2, "payCents": 8000, "shiftSec": 55, "xp": 140, "miniGameId": "trend_call" },
+        { "level": 3, "payCents": 11000, "shiftSec": 55, "xp": 160, "miniGameId": "trend_call" },
+        { "level": 4, "payCents": 14500, "shiftSec": 60, "xp": 180, "miniGameId": "trend_call" },
+        { "level": 5, "payCents": 19500, "shiftSec": 60, "xp": 200, "miniGameId": "trend_call" }
+      ]
+    },
+    {
+      "id": "kol_manager",
+      "name": "KOL Manager",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "clout", "level": 4 },
+      "levels": [
+        { "level": 1, "payCents": 7000, "shiftSec": 60, "xp": 130, "miniGameId": "kol_negotiate" },
+        { "level": 2, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "kol_negotiate" },
+        { "level": 3, "payCents": 13000, "shiftSec": 65, "xp": 170, "miniGameId": "kol_negotiate" },
+        { "level": 4, "payCents": 17500, "shiftSec": 65, "xp": 190, "miniGameId": "kol_negotiate" },
+        { "level": 5, "payCents": 23000, "shiftSec": 70, "xp": 220, "miniGameId": "kol_negotiate" }
+      ]
+    },
+    {
+      "id": "dev_rel",
+      "name": "DevRel",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "writing", "level": 3 },
+      "levels": [
+        { "level": 1, "payCents": 6000, "shiftSec": 55, "xp": 120, "miniGameId": "devrel_ama" },
+        { "level": 2, "payCents": 8000, "shiftSec": 55, "xp": 140, "miniGameId": "devrel_ama" },
+        { "level": 3, "payCents": 11000, "shiftSec": 60, "xp": 160, "miniGameId": "devrel_ama" },
+        { "level": 4, "payCents": 14500, "shiftSec": 60, "xp": 180, "miniGameId": "devrel_ama" },
+        { "level": 5, "payCents": 19500, "shiftSec": 65, "xp": 200, "miniGameId": "devrel_ama" }
+      ]
+    },
+    {
+      "id": "alpha_lead",
+      "name": "Alpha Lead",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "trading", "level": 3 },
+      "levels": [
+        { "level": 1, "payCents": 7000, "shiftSec": 55, "xp": 130, "miniGameId": "alpha_call" },
+        { "level": 2, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "alpha_call" },
+        { "level": 3, "payCents": 13000, "shiftSec": 60, "xp": 170, "miniGameId": "alpha_call" },
+        { "level": 4, "payCents": 17500, "shiftSec": 65, "xp": 190, "miniGameId": "alpha_call" },
+        { "level": 5, "payCents": 23000, "shiftSec": 65, "xp": 220, "miniGameId": "alpha_call" }
+      ]
+    },
+    {
+      "id": "rug_sleuth",
+      "name": "Rug Sleuth",
+      "active": false,
+      "phase": 4,
+      "skillGates": { "skill": "security", "level": 4 },
+      "levels": [
+        { "level": 1, "payCents": 8000, "shiftSec": 60, "xp": 150, "miniGameId": "sleuth_thread" },
+        { "level": 2, "payCents": 11000, "shiftSec": 60, "xp": 175, "miniGameId": "sleuth_thread" },
+        { "level": 3, "payCents": 15000, "shiftSec": 65, "xp": 200, "miniGameId": "sleuth_thread" },
+        { "level": 4, "payCents": 20000, "shiftSec": 70, "xp": 225, "miniGameId": "sleuth_thread" },
+        { "level": 5, "payCents": 28000, "shiftSec": 75, "xp": 250, "miniGameId": "sleuth_thread" }
+      ]
+    }
+  ]
+}

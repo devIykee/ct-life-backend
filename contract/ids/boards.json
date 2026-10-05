@@ -1,0 +1,43 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "boards": [
+    {
+      "id": "net_worth",
+      "label": "Net Worth",
+      "unit": "cents",
+      "scope": "global|friends|league",
+      "redisKey": "board:net_worth"
+    },
+    {
+      "id": "weekly_pnl",
+      "label": "Weekly PnL",
+      "unit": "cents",
+      "scope": "global|friends|league",
+      "redisKey": "board:weekly_pnl"
+    },
+    {
+      "id": "weekly_return",
+      "label": "Weekly Return",
+      "unit": "bps",
+      "scope": "global|friends|league",
+      "redisKey": "board:weekly_return"
+    },
+    {
+      "id": "clout",
+      "label": "Clout",
+      "unit": "int",
+      "scope": "global",
+      "redisKey": "board:clout"
+    },
+    {
+      "id": "trust_score",
+      "label": "Trust Score",
+      "unit": "basis_points",
+      "scope": "global",
+      "redisKey": "board:trust_score",
+      "phase": 2
+    }
+  ]
+}

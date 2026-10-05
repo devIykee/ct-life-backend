@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0-rc1",
+  "tickLengthSec": 2,
+  "launchIntervalSec": 300,
+  "maxActiveCoins": 40,
+  "curve": {
+    "type": "constant_product",
+    "virtualReservesX": 1000000,
+    "virtualReservesY": 30000000,
+    "graduateMcapCents": 500000000
+  },
+  "outcomeMix": {
+    "rug": 25,
+    "slow_bleed": 40,
+    "sideways": 20,
+    "moon": 15
+  },
+  "feesBps": {
+    "buy": 100,
+    "sell": 100
+  },
+  "minTradeCents": 100,
+  "tapeThresholdCents": 100000,
+  "evAfterFeesNegativeToleranceBps": 5
+}

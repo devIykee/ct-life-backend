@@ -1,0 +1,6 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "states": ["idle", "wander", "goto", "act", "talk", "react", "follow", "leave"]
+}

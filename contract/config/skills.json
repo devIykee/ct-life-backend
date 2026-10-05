@@ -1,0 +1,28 @@
+{
+  "version": "1.0.0-rc1",
+  "skills": ["clout", "coding", "trading", "writing", "design", "security"],
+  "minValue": 1,
+  "maxValue": 10,
+  "startValue": 1,
+  "xpPerShiftLevel": 100,
+  "leverageByTradingLevel": [
+    { "level": 1, "leverage": 1 },
+    { "level": 2, "leverage": 1 },
+    { "level": 3, "leverage": 1 },
+    { "level": 4, "leverage": 1 },
+    { "level": 5, "leverage": 2 },
+    { "level": 6, "leverage": 3 },
+    { "level": 7, "leverage": 5 },
+    { "level": 8, "leverage": 7 },
+    { "level": 9, "leverage": 9 },
+    { "level": 10, "leverage": 10 }
+  ],
+  "tribeBonusLeverage": {
+    "perp_degen": 5
+  },
+  "skillGates": {
+    "junior_analyst_earnings": { "skill": "coding", "level": 1 },
+    "kols_engagement": { "skill": "writing", "level": 2 },
+    "auditor": { "skill": "security", "level": 5 }
+  }
+}

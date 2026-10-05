@@ -1,0 +1,29 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "events": [
+    {
+      "id": "evt_liquidation",
+      "label": "Liquidation",
+      "effect": "city event; player REKT card; perp tombstones++"
+    },
+    { "id": "evt_rug", "label": "Rug", "effect": "city event; Town Crier line; Sleuth exposé" },
+    {
+      "id": "evt_coin_launch",
+      "label": "Coin Launch",
+      "effect": "market event; Rug Dev & Sniper Bots react"
+    },
+    {
+      "id": "evt_mood_change",
+      "label": "Market Mood Change",
+      "effect": "city state; Doomposter spawn/despawn"
+    },
+    { "id": "evt_exploit", "label": "Exploit", "effect": "city event; Sleuth exposé" },
+    {
+      "id": "evt_ore_motherlode",
+      "label": "ORE Motherlode",
+      "effect": "city event; Town Crier shouts the number"
+    }
+  ]
+}

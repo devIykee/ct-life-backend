@@ -1,0 +1,10 @@
+{
+  "title": "ads.json",
+  "type": "object",
+  "required": ["version", "placements"],
+  "properties": {
+    "version": { "type": "string" },
+    "placements": { "type": "array" },
+    "creative": { "type": "object" }
+  }
+}

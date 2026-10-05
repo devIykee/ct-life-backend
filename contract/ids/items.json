@@ -1,0 +1,104 @@
+{
+  "_owner": "BE (FE adds prefab_key)",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "items": [
+    {
+      "id": "top_hoodie_black",
+      "slot": "top",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "top_hoodie_white",
+      "slot": "top",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "top_suit_black",
+      "slot": "top",
+      "rarity": "rare",
+      "cashCents": 50000,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "acc_hard_hat",
+      "slot": "acc",
+      "rarity": "rare",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1,
+      "note": "ORE Miner tier visual"
+    },
+    {
+      "id": "acc_aviators",
+      "slot": "acc",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "hair_mohawk_pink",
+      "slot": "hair",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "hair_villa_blonde",
+      "slot": "hair",
+      "rarity": "epic",
+      "cashCents": 200000,
+      "prefab_key": null,
+      "phase": 2
+    },
+    {
+      "id": "head_skull_visor",
+      "slot": "head",
+      "rarity": "rare",
+      "cashCents": 80000,
+      "prefab_key": null,
+      "phase": 2
+    },
+    {
+      "id": "bottom_jeans_indigo",
+      "slot": "bottom",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "bottom_cargo_olive",
+      "slot": "bottom",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "shoes_sneakers_white",
+      "slot": "shoes",
+      "rarity": "common",
+      "cashCents": 0,
+      "prefab_key": null,
+      "phase": 1
+    },
+    {
+      "id": "shoes_boots_black",
+      "slot": "shoes",
+      "rarity": "rare",
+      "cashCents": 30000,
+      "prefab_key": null,
+      "phase": 1
+    }
+  ]
+}

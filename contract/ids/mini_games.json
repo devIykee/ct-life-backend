@@ -1,0 +1,37 @@
+{
+  "_owner": "FE builds, BE validates",
+  "_provisional": true,
+  "version": "1.0.0-rc1",
+  "_note": "FE owns the build per spec. The shape is fixed; FE replaces values, BE validates.",
+  "miniGames": [
+    {
+      "id": "discord_mod_ban",
+      "careerId": "discord_mod",
+      "maxScore": 10,
+      "durationSec": 45,
+      "phase": 1
+    },
+    {
+      "id": "junior_analyst_earnings",
+      "careerId": "junior_analyst",
+      "maxScore": 100,
+      "durationSec": 60,
+      "phase": 1
+    },
+    {
+      "id": "kols_engagement",
+      "careerId": "kol_engagement",
+      "maxScore": 50,
+      "durationSec": 50,
+      "phase": 1
+    },
+    {
+      "id": "thirty_more_career_games",
+      "careerId": "*",
+      "maxScore": 0,
+      "durationSec": 0,
+      "phase": 4,
+      "_note": "remaining 11 careers x 3 games each = 33; FE ships per career in M5"
+    }
+  ]
+}

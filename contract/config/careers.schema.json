@@ -1,0 +1,41 @@
+{
+  "title": "careers.json",
+  "type": "object",
+  "required": ["version", "careers"],
+  "properties": {
+    "version": { "type": "string" },
+    "careers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "active", "phase", "levels"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "active": {
+            "type": "boolean",
+            "description": "Whether the career is in the active Phase 1 set (true) or reserved for a later phase (false)."
+          },
+          "phase": { "type": "integer", "minimum": 1, "maximum": 6 },
+          "skillGates": { "type": "object" },
+          "levels": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": {
+              "type": "object",
+              "required": ["level", "payCents", "shiftSec", "xp", "miniGameId"],
+              "properties": {
+                "level": { "type": "integer", "minimum": 1, "maximum": 5 },
+                "payCents": { "type": "integer", "minimum": 0 },
+                "shiftSec": { "type": "integer", "minimum": 1 },
+                "xp": { "type": "integer", "minimum": 0 },
+                "miniGameId": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

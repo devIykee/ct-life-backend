@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0-rc1",
+  "placements": [
+    { "id": "billboard_7d", "termDays": 7, "priceUsdc": 20 },
+    { "id": "billboard_30d", "termDays": 30, "priceUsdc": 70 },
+    { "id": "pixel_tile_7d", "termDays": 7, "priceUsdc": 2 },
+    { "id": "pixel_tile_30d", "termDays": 30, "priceUsdc": 7 },
+    { "id": "phone_app_30d", "termDays": 30, "priceUsdc": 150 },
+    { "id": "booth_event", "termDays": 7, "priceUsdc": 300 },
+    { "id": "venue_branding_30d", "termDays": 30, "priceUsdc": 1000 }
+  ],
+  "creative": {
+    "maxSizeMB": 1,
+    "acceptMime": ["image/png", "image/jpeg"],
+    "stripExif": true
+  }
+}

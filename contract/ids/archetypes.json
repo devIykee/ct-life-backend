@@ -1,0 +1,204 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "archetypes": [
+    {
+      "id": "town_crier",
+      "name": "Town Crier",
+      "venueId": "timeline_square",
+      "phase": 1,
+      "lines": "npc_lines.town_crier"
+    },
+    {
+      "id": "giveaway_guy",
+      "name": "Giveaway Guy",
+      "venueId": "timeline_square",
+      "phase": 1,
+      "lines": "npc_lines.giveaway_guy"
+    },
+    {
+      "id": "reply_guy",
+      "name": "Reply Guy",
+      "venueId": "timeline_square",
+      "phase": 1,
+      "lines": "npc_lines.reply_guy"
+    },
+    {
+      "id": "perp_degen_npc",
+      "name": "Perp Degen",
+      "venueId": "perp_pit",
+      "phase": 1,
+      "lines": "npc_lines.perp_degen_npc"
+    },
+    {
+      "id": "rekt_guy",
+      "name": "Rekt Guy",
+      "venueId": "rekt_clinic",
+      "phase": 1,
+      "lines": "npc_lines.rekt_guy"
+    },
+    {
+      "id": "wallet_tracker",
+      "name": "Wallet Tracker",
+      "venueId": "terminal_cafe",
+      "phase": 1,
+      "lines": "npc_lines.wallet_tracker"
+    },
+    {
+      "id": "doomposter",
+      "name": "Doomposter",
+      "venueId": "timeline_square",
+      "phase": 1,
+      "lines": "npc_lines.doomposter"
+    },
+    {
+      "id": "spaces_host",
+      "name": "Spaces Host",
+      "venueId": "spaces_studio",
+      "phase": 1,
+      "lines": "npc_lines.spaces_host"
+    },
+    {
+      "id": "ore_miner",
+      "name": "ORE Miner",
+      "venueId": "ore_refinery",
+      "phase": 1,
+      "lines": "npc_lines.ore_miner"
+    },
+    {
+      "id": "alpha_caller",
+      "name": "Alpha Caller",
+      "venueId": "cabal_lounge",
+      "phase": 2,
+      "lines": "npc_lines.alpha_caller"
+    },
+    {
+      "id": "cabal_insider",
+      "name": "Cabal Insider",
+      "venueId": "cabal_lounge",
+      "phase": 2,
+      "lines": "npc_lines.cabal_insider"
+    },
+    {
+      "id": "rug_dev",
+      "name": "Rug Dev",
+      "venueId": "launchpad_tower",
+      "phase": 2,
+      "lines": "npc_lines.rug_dev"
+    },
+    {
+      "id": "sniper_bot",
+      "name": "Sniper Bot",
+      "venueId": "launchpad_tower",
+      "phase": 2,
+      "lines": "npc_lines.sniper_bot"
+    },
+    {
+      "id": "sleuth",
+      "name": "Sleuth",
+      "venueId": "audit_row",
+      "phase": 2,
+      "lines": "npc_lines.sleuth"
+    },
+    {
+      "id": "auditor",
+      "name": "Auditor",
+      "venueId": "audit_row",
+      "phase": 2,
+      "lines": "npc_lines.auditor"
+    },
+    { "id": "vc", "name": "VC", "venueId": "vc_row", "phase": 2, "lines": "npc_lines.vc" },
+    {
+      "id": "farmer",
+      "name": "Farmer",
+      "venueId": "airdrop_farm",
+      "phase": 2,
+      "lines": "npc_lines.farmer"
+    },
+    {
+      "id": "sybil_farmer",
+      "name": "Sybil Farmer",
+      "venueId": "airdrop_farm",
+      "phase": 2,
+      "lines": "npc_lines.sybil_farmer"
+    },
+    {
+      "id": "spaces_host",
+      "name": "Spaces Host (alt)",
+      "venueId": "spaces_studio",
+      "phase": 2,
+      "lines": "npc_lines.spaces_host"
+    },
+    {
+      "id": "fake_rich_larp",
+      "name": "Fake-Rich LARP",
+      "venueId": "dubai_marina",
+      "phase": 2,
+      "lines": "npc_lines.fake_rich_larp"
+    },
+    {
+      "id": "dubai_relocator",
+      "name": "Dubai Relocator",
+      "venueId": "dubai_marina",
+      "phase": 2,
+      "lines": "npc_lines.dubai_relocator"
+    },
+    {
+      "id": "ai_agent",
+      "name": "AI Agent",
+      "venueId": "terminal_cafe",
+      "phase": 2,
+      "lines": "npc_lines.ai_agent"
+    },
+    {
+      "id": "drainer",
+      "name": "Drainer",
+      "venueId": "discord_heights",
+      "phase": 2,
+      "lines": "npc_lines.drainer"
+    },
+    {
+      "id": "community_mod",
+      "name": "Community Mod",
+      "venueId": "discord_heights",
+      "phase": 2,
+      "lines": "npc_lines.community_mod"
+    },
+    {
+      "id": "thread_boy",
+      "name": "Thread Boy",
+      "venueId": "timeline_square",
+      "phase": 2,
+      "lines": "npc_lines.thread_boy"
+    },
+    {
+      "id": "engagement_farmer",
+      "name": "Engagement Farmer",
+      "venueId": "timeline_square",
+      "phase": 2,
+      "lines": "npc_lines.engagement_farmer"
+    },
+    {
+      "id": "normie",
+      "name": "Normie",
+      "venueId": "market_room",
+      "phase": 2,
+      "lines": "npc_lines.normie"
+    },
+    {
+      "id": "doxxed_founder",
+      "name": "Doxxed Founder",
+      "venueId": "builder_hills",
+      "phase": 2,
+      "lines": "npc_lines.doxxed_founder"
+    },
+    {
+      "id": "prediction_shark_npc",
+      "name": "Prediction Shark",
+      "venueId": "prediction_pit",
+      "phase": 2,
+      "lines": "npc_lines.prediction_shark_npc"
+    }
+  ]
+}

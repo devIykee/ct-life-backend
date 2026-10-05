@@ -16,6 +16,7 @@ export default [
       '**/target/**',
       'contract/openapi/generated/**',
       'contract/realtime/generated/**',
+      'contract/**/*.ts',
       'docs/spec/**',
       '.github/**',
     ],
@@ -39,7 +40,14 @@ export default [
     },
     settings: {
       'import/resolver': {
-        typescript: { ...tsImportResolver, project: './tsconfig.json' },
+        typescript: {
+          ...tsImportResolver,
+          project: './tsconfig.json',
+          // The contract/ directory is excluded from tsconfig.json but is
+          // imported by tools/contract-check/*.ts. Tell the resolver to
+          // still resolve from node_modules and from sibling files.
+          alwaysTryTypes: true,
+        },
         node: { extensions: ['.ts', '.js'] },
       },
     },
@@ -91,17 +99,21 @@ export default [
     rules: {},
   },
   {
-    // Tests are allowed to use any, console.log, etc.
+    // Tools (scripts, contract-check, bots, econ-sim) are allowed to use
+    // `any`, `console.log`, and to skip JSDoc on small utility scripts.
     files: [
       '**/*.test.ts',
       '**/*.spec.ts',
       '**/test/**/*.ts',
       '**/tests/**/*.ts',
       'tools/**/index.ts',
+      'tools/scripts/**',
+      'tools/contract-check/**',
     ],
     rules: {
       'no-console': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
+      'jsdoc/require-jsdoc': 'off',
     },
   },
 ];

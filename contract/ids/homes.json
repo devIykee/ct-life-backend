@@ -1,0 +1,18 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0-rc1",
+  "homes": [
+    {
+      "id": "parents_basement",
+      "name": "Parent's Basement",
+      "rentCents": 2000,
+      "rooms": 4,
+      "phase": 1
+    },
+    { "id": "hacker_house", "name": "Hacker House", "rentCents": 6000, "rooms": 6, "phase": 1 },
+    { "id": "studio", "name": "Studio", "rentCents": 18000, "rooms": 3, "phase": 1 },
+    { "id": "penthouse", "name": "Penthouse", "rentCents": 150000, "rooms": 8, "phase": 2 },
+    { "id": "marina_villa", "name": "Marina Villa", "rentCents": 500000, "rooms": 12, "phase": 2 }
+  ]
+}

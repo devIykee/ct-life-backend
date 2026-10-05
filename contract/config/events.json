@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0-rc1",
+  "events": [
+    {
+      "id": "evt_liquidation",
+      "minIntervalSec": 5,
+      "maxConcurrent": 1,
+      "effects": [{ "type": "cityBroadcast", "param": "liquidation" }]
+    },
+    {
+      "id": "evt_rug",
+      "minIntervalSec": 60,
+      "maxConcurrent": 1,
+      "effects": [{ "type": "cityBroadcast", "param": "rug" }]
+    },
+    {
+      "id": "evt_coin_launch",
+      "minIntervalSec": 300,
+      "maxConcurrent": 1,
+      "effects": [{ "type": "marketState", "param": "launch" }]
+    },
+    {
+      "id": "evt_mood_change",
+      "minIntervalSec": 60,
+      "maxConcurrent": 1,
+      "effects": [{ "type": "cityState", "param": "mood" }]
+    },
+    {
+      "id": "evt_exploit",
+      "minIntervalSec": 600,
+      "maxConcurrent": 1,
+      "effects": [{ "type": "cityBroadcast", "param": "exploit" }]
+    },
+    {
+      "id": "evt_ore_motherlode",
+      "minIntervalSec": 0,
+      "maxConcurrent": 1,
+      "effects": [{ "type": "cityBroadcast", "param": "ore_motherlode" }]
+    }
+  ]
+}
