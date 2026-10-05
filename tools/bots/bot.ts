@@ -50,6 +50,15 @@ interface ShiftResponse {
   readonly endsAt: string;
 }
 
+interface IntentResponse {
+  readonly intentId: string;
+  readonly reference: string;
+}
+
+interface PredictionResponse {
+  readonly predictionId: string;
+}
+
 function idempotencyKey(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 }
@@ -188,5 +197,37 @@ export class Bot {
     if (!res.ok) return false;
     const r = (await res.json()) as ShiftResponse;
     return Boolean(r.shiftId);
+  }
+
+  /** M3: create a topup intent. Returns the intentId (no on-chain leg in dev). */
+  async createTopup(): Promise<string | null> {
+    const res = await fetch(`${this.opts.apiBase}/v1/payments/intents`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('topup'),
+      },
+      body: JSON.stringify({ kind: 'topup', currency: 'USDC', sku: 'ramen' }),
+    });
+    if (!res.ok) return null;
+    const r = (await res.json()) as IntentResponse;
+    return r.intentId;
+  }
+
+  /** M3: place a binary prediction. */
+  async betOnPrediction(stakeCents: number): Promise<string | null> {
+    const res = await fetch(`${this.opts.apiBase}/v1/predictions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('pred'),
+      },
+      body: JSON.stringify({ outcomeId: 'btc-24h-up', stakeCents, horizon: '5m' }),
+    });
+    if (!res.ok) return null;
+    const r = (await res.json()) as PredictionResponse;
+    return r.predictionId;
   }
 }

@@ -170,7 +170,11 @@ export async function listFeed(
  * Post to the feed. Length 1..280, enforced by the application
  * and the DB CHECK.
  */
-export async function createPost(_ctx: AppContext, userId: string, text: string): Promise<FeedPost> {
+export async function createPost(
+  _ctx: AppContext,
+  userId: string,
+  text: string,
+): Promise<FeedPost> {
   if (text.length < 1 || text.length > POST_TEXT_MAX) {
     throw new ValidationFailedError({ reason: 'text length 1..280' });
   }
