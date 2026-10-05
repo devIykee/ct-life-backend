@@ -620,6 +620,62 @@ daily clue, cosmetics shop, cosmetic NFTs, season pass).
 - [x] `pnpm db:verify` extended with 30 M5 invariants (32..60);
       total invariants now 99/99.
 
+### M5 #59 — Cosmetics shop + inventory
+
+- [x] `server/application/cosmetics.ts`:
+      `ensureCatalog` (idempotent seed of 16 default items,
+      including 3 ORE-only items with `onchain_only=true`),
+      `listShop(ctx, slot?)`, `listInventory(ctx, userId)`,
+      `purchase(ctx, userId, itemId)`.
+- [x] `server/api/routes/cosmetics.ts`:
+      `GET /v1/shop`, `POST /v1/shop/purchase`,
+      `GET /v1/inventory`. Routes registered in `server/api/main.ts`.
+- [x] `purchase` runs in a SERIALIZABLE UoW: - `SELECT … FOR UPDATE` on the item row - refuse if `onchain_only` (M5 #66 NFT path) - daily cap of 5 shop-source acquisitions per user per UTC day - `SELECT … FOR UPDATE` on the user's balance; refuse if
+      cash < price - write a `cosmetic` ledger row (-price) - insert a `cosmetic_inventory` row (UNIQUE on
+      (user_id, item_id) is the idempotency floor) - replay-safe: if the user already owns the item, return
+      the existing row without debiting
+- [x] 8 unit tests added (catalog seed, slot filter, purchase
+      happy path with ledger row, inventory listing, replay
+      idempotency, onchain-only refusal, insufficient-cash
+      refusal, daily cap, unknown item NotFound). 107/107
+      tests pass across 20 files.
+
 ### Next
 
-M5 #59 (cosmetics shop + inventory).
+M5 #61 (season pass).
+
+## M5 #60 — Daily clue + Sunday Unlock worker
+
+- [x] `server/application/daily-clue.ts` refactored from
+      in-memory pool to the M5 `daily_clue` table. The pool
+      rotates 8 clues deterministically by UTC date;
+      `seedClue` idempotently inserts the row. The public
+      response never carries `answer_hash`.
+- [x] `server/api/routes/daily-clue.ts`:
+      `GET /v1/daily-clue` returns clue text + expiresAt +
+      prizeCents. `POST /v1/daily-clue/answer` records the
+      attempt; correct first try credits `prize_cents` via
+      a `daily_clue` ledger row inside a SERIALIZABLE UoW.
+      The UNIQUE (user_id, clue_id) index translates a
+      second attempt to 409.
+- [x] `server/workers/sunday-unlock.ts` rewritten:
+      `runSundayUnlock(db, now)` credits `weekly_perk` to
+      season-pass holders who solved at least one clue in
+      the prior 7-day window. Idempotent on
+      `(kind='sunday_unlock', week_iso)`.
+      `runWeeklyMeta(db, now)` derives the new WeeklyMeta
+      shape and upserts the `meta` `current` row, plus a
+      `meta_jobs` row. Both are wired to the existing
+      BullMQ queues at Sun 20:00 / 20:05 UTC.
+- [x] The M2 `routes/work.ts` daily-clue endpoints were
+      removed in favour of `routes/daily-clue.ts`.
+- [x] 7 unit tests added (getToday shape, answer correct,
+      answer wrong, double-answer refused, weekIso format,
+      runSundayUnlock credits + idempotency, runWeeklyMeta
+      upserts + idempotency). 114/114 tests pass across
+      21 files.
+
+### Next
+
+M5 #61 (season pass).
+

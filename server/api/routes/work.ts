@@ -6,14 +6,10 @@
  *   POST /v1/shifts
  *   POST /v1/shifts/{shiftId}/complete
  *
- *   GET  /v1/daily-clue
- *   POST /v1/daily-clue/answer
- *
- * M2 supports the first three careers (Discord Mod, Reply Guy,
- * Spaces Host) by reading contract/config/careers.json. Shifts
- * are scored against contract/ids/mini_games.json. The complete
- * endpoint enforces the SHIFT_NOT_FINISHED contract: the shift's
- * endsAt must be in the past.
+ * The daily-clue routes live in `routes/daily-clue.ts`
+ * (M5 #60). They were split out of this file when the
+ * `DailyClueService` class was replaced with the M5 table-
+ * backed free functions (`getToday`, `answer`, `seedClue`).
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -22,7 +18,6 @@ import { withIdempotency } from '../middleware/idempotency.js';
 import { ShiftNotFinishedError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { CareersService } from '../../application/careers.js';
 import { ShiftsService } from '../../application/shifts.js';
-import { DailyClueService } from '../../application/daily-clue.js';
 
 const ApplyBody = z.object({}).optional();
 
@@ -36,8 +31,6 @@ const ShiftCompleteBody = z.object({
     }),
   ),
 });
-
-const DailyClueAnswerBody = z.object({ answer: z.string().min(1).max(80) });
 
 /**
  *
@@ -82,26 +75,6 @@ export function registerWorkRoutes(app: FastifyInstance): void {
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       const svc = new ShiftsService(req.ctx);
       const result = await svc.complete(req.user!.sub, shiftId, body.data.results);
-      return reply.send(result);
-    },
-  );
-
-  // GET /v1/daily-clue
-  app.get('/v1/daily-clue', { preHandler: requireAuth }, async (req, reply) => {
-    const svc = new DailyClueService(req.ctx);
-    const clue = await svc.getToday(req.user!.sub);
-    return reply.send(clue);
-  });
-
-  // POST /v1/daily-clue/answer
-  app.post(
-    '/v1/daily-clue/answer',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const body = DailyClueAnswerBody.safeParse(req.body);
-      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const svc = new DailyClueService(req.ctx);
-      const result = await svc.answer(req.user!.sub, body.data.answer);
       return reply.send(result);
     },
   );
