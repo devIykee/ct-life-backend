@@ -21,6 +21,7 @@ import { registerMarketRoutes } from './routes/markets.js';
 import { registerPerpRoutes } from './routes/perps.js';
 import { registerOreRoutes } from './routes/ore.js';
 import { registerPredictionRoutes } from './routes/predictions.js';
+import { registerAlphaRoutes } from './routes/alpha.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -116,6 +117,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPerpRoutes(app);
   registerOreRoutes(app);
   registerPredictionRoutes(app);
+  registerAlphaRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 
