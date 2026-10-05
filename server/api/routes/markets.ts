@@ -5,6 +5,8 @@
  *   GET  /v1/market/coins/:coinId
  *   POST /v1/market/trades
  *   GET  /v1/market/positions
+ *   POST /v1/market/launchpad             — create a new coin
+ *   POST /v1/market/launchpad/:coinId/buy — buy on the bonding curve
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -19,6 +21,7 @@ import {
   type Stage,
   type TradeSide,
 } from '../../application/terminal-cafe.js';
+import { launchCoin, launchpadBuy } from '../../application/launchpad.js';
 
 const ListCoinsQuery = z.object({
   stage: z.enum(['new', 'final', 'graduated']).optional(),
@@ -30,6 +33,17 @@ const TradeBody = z.object({
   side: z.enum(['buy', 'sell']),
   cashCents: z.number().int().positive().optional(),
   units: z.string().optional(),
+  maxSlippageBps: z.number().int().min(0).max(10_000),
+});
+
+const LaunchBody = z.object({
+  name: z.string().min(1).max(64),
+  ticker: z.string().min(2).max(8),
+  supply: z.string().optional(),
+});
+
+const LaunchpadBuyBody = z.object({
+  cashCents: z.number().int().positive(),
   maxSlippageBps: z.number().int().min(0).max(10_000),
 });
 
@@ -77,4 +91,38 @@ export function registerMarketRoutes(app: FastifyInstance): void {
     const positions = await listPositions(req.ctx, req.user!.sub);
     return reply.send({ positions });
   });
+
+  app.post(
+    '/v1/market/launchpad',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const body = LaunchBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const result = await launchCoin(req.ctx, {
+        userId: req.user!.sub,
+        name: body.data.name,
+        ticker: body.data.ticker,
+        supply: body.data.supply,
+      });
+      return reply.status(201).send(result);
+    },
+  );
+
+  app.post(
+    '/v1/market/launchpad/:coinId/buy',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { coinId } = req.params as { coinId: string };
+      const body = LaunchpadBuyBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const result = await launchpadBuy(
+        req.ctx,
+        req.user!.sub,
+        coinId,
+        body.data.cashCents,
+        body.data.maxSlippageBps,
+      );
+      return reply.send(result);
+    },
+  );
 }

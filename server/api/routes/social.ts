@@ -5,6 +5,7 @@
  *   POST /v1/blocks/{userId}
  *   DELETE /v1/blocks/{userId}
  *   POST /v1/reports
+ *   GET  /v1/rekt/tombstones
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -14,6 +15,7 @@ import { ValidationFailedError } from '../../shared/domain/errors.js';
 import { BoardsService } from '../../application/boards.js';
 import { BlocksService } from '../../application/blocks.js';
 import { ReportsService } from '../../application/reports.js';
+import { listTombstones } from '../../application/launchpad.js';
 
 const LeaderboardQuery = z.object({
   scope: z.enum(['global', 'friends', 'league']).default('global'),
@@ -72,5 +74,12 @@ export function registerSocialRoutes(app: FastifyInstance): void {
     const svc = new ReportsService(req.ctx);
     await svc.submit(req.user!.sub, body.data);
     return reply.status(204).send();
+  });
+
+  // GET /v1/rekt/tombstones
+  app.get('/v1/rekt/tombstones', { preHandler: requireAuth }, async (req, reply) => {
+    const limit = Number((req.query as { limit?: string }).limit ?? '50');
+    const tombstones = await listTombstones(req.ctx, limit);
+    return reply.send({ tombstones });
   });
 }
