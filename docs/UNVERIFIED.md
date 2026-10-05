@@ -17,6 +17,7 @@
 11. **Solana CLI 4.1.2 not present.** Installed is 3.1.10. Latest 4.x stable is 4.3.0. We will install 4.3.0 at M3 if `anchor build` against `solana-program 5.x` is required.
 12. **Docker Hub pull restrictions in this dev environment.** `minio/minio`, `minio/mc`, and `livekit/livekit` images cannot be pulled (registry returns 401). Workaround: download MinIO and LiveKit binaries from their GitHub releases and run as processes under `.runtime/`. The compose file still references the docker images so CI (which has unblocked Docker Hub) and the user's host (which presumably has the same restrictions lifted) work the standard way. Postgres and Redis pull fine.
 13. **Compose port conflicts.** Existing containers `nairastock-postgres` (5433) and `nairastock-redis` (6380) plus unnamed `postgres` and `redis` containers on 5432/6379 meant the CT Life compose had to use 5434/6381. `.env` and `docker-compose.yml` are aligned.
+14. **Helius SDK dropped at M2.** `helius-sdk@3.2.0` has an incompatible peer dep on `@solana/kit ^6.9` but we pin 8.4. Replaced with a thin fetch-based client in `server/shared/solana/helius.ts` that supports `getHealth`, generic `rpc()`, and `sgtMintsFor` (the SGT check via `getTokenAccountsByOwnerV2`). M3 webhook helpers (parsed transactions, signature verification, Enhanced Webhooks) will need either a `@solana/kit ^6.x` downgrade branch or a port. Recorded here so M3 picks it up.
 
 ## M3 and beyond (anticipated)
 

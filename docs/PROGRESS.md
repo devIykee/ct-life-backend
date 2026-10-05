@@ -137,7 +137,7 @@ verify-migrations: 15 check(s) passed.
 
 ### Next
 
-- [ ] #28 server/shared infrastructure (pg pool with SERIALIZABLE + statement_timeout, Unit of Work, ioredis, JWT, Helius, LiveKit, S3, Solana keypairs, pino, config, idempotency, rate limiter, error handler).
+- [x] #28 server/shared infrastructure (pg pool with SERIALIZABLE + statement_timeout, Unit of Work, ioredis, JWT, Helius, LiveKit, S3, Solana keypairs, pino, config, idempotency, rate limiter, error handler).
 - [ ] #29 REST API composition root.
 - [ ] #30 packages/npc-brain.
 - [ ] #31 server/realtime.
@@ -145,3 +145,49 @@ verify-migrations: 15 check(s) passed.
 - [ ] #33 tools/bots.
 - [ ] #34 tools/econ-sim.
 - [ ] #35 tests + load + bot e2e.
+
+## M2 — Server/shared infrastructure (#28)
+
+**Status:** DONE
+**Last command:** `pnpm test:unit` → 10/10 passed
+**Last commit:** pending (this session)
+
+### Done in this slice
+
+- [x] `server/shared/config/config.ts` — typed env loader. Reads the M0 env names (TREASURY_PUBKEY_DEVNET, etc.), resolves the cluster from `APP_ENV` (local → devnet, prod → mainnet), and exposes a single `Config` object. No module reads `process.env` directly except this one.
+- [x] `server/shared/logger/logger.ts` — pino with secret-redacting paths.
+- [x] `server/shared/db/pool.ts` — pg.Pool with `statement_timeout` and `lock_timeout` set on every new connection; `withConnection` and `connect` helpers; `close` on shutdown.
+- [x] `server/shared/db/uow.ts` — `runInTransaction(fn)` is the only module that calls BEGIN/COMMIT/ROLLBACK. Sets `ISOLATION LEVEL SERIALIZABLE` per transaction. Retries SQLSTATE 40001 with exponential backoff + jitter (max 3 retries by default).
+- [x] `server/shared/redis/client.ts` — ioredis with two clients (`main` and `subscriber`) so pub/sub doesn't break regular commands.
+- [x] `server/shared/auth/jwt.ts` — RS256 signer/verifier via `jose`. Access token (15 min) and refresh token (30 d). Derives the public key from the private key when `JWT_PUBLIC_KEY` is absent, so M0's single-`JWT_PRIVATE_KEY` setup is enough. Publishes JWKS for `/v1/auth/jwks`.
+- [x] `server/shared/solana/helius.ts` — fetch-based Helius RPC client (we dropped the official helius-sdk because of an incompatible peer dep on `@solana/kit ^6.9`; the M2 SGT check only needs `getTokenAccountsByOwnerV2` and the SDK's webhook helpers are M3).
+- [x] `server/shared/solana/keypair.ts` — file path or base58 → `Keypair` loader + base58 decoder + wallet hash helper.
+- [x] `server/shared/livekit/token.ts` — wraps `livekit-server-sdk` AccessToken. Room name `{kind}:{id}`, identity = userId. `canPublish` defaults to true; spaces start listeners at false and the host promotes them.
+- [x] `server/shared/s3/client.ts` — `@aws-sdk/client-s3` wrapper. `put`, `presignGet`, `presignPut`, `ensureBucket`. Path-style for MinIO.
+- [x] `server/shared/infra/error-envelope.ts` — single mapper from `DomainError` to the contract error envelope `{ code, message, details }`. Adds `Retry-After` for `RATE_LIMITED` and `SERVER_BUSY`; `WWW-Authenticate: Bearer` for `TOKEN_EXPIRED`/`SIGNATURE_INVALID`.
+- [x] `server/shared/infra/idempotency.ts` — `RedisIdempotencyStore` with `reserve` / `complete` / `abort` / `peek`. Cache check first (so replays work even after the lock is released), then SET-NX lock for in-flight serialization. Body-hash mismatch returns `bodyHashMismatch: true` so the transport returns `VALIDATION_FAILED`.
+- [x] `server/shared/infra/rate-limit.ts` — Lua-scripted token bucket (per-user REST), per-IP login counter, and a global login semaphore (counter-based, with release). Returns the wait time so the transport can set `Retry-After`.
+- [x] `server/shared/index.ts` — barrel.
+- [x] Tests against the real local Postgres and Redis: 10 tests across `wiring.test.ts`, `jwt.test.ts`, `rate-limit.test.ts` — all pass.
+
+### Static gate this slice
+
+```
+$ pnpm typecheck    → no errors
+$ pnpm lint         → no errors
+$ pnpm format:check → all files match
+$ pnpm docs:check   → OK (23 env vars, 23 error codes, 0 realtime messages, links resolve)
+$ pnpm boundary:check → layering OK
+$ pnpm contract:check  → all steps green
+$ pnpm test:unit    → 10/10 passed
+$ pnpm smoke        → 7/7 required checks passed
+$ pnpm db:verify    → 15/15 schema invariants passed
+```
+
+### Spec issues raised
+
+- **Helius SDK is unusable at the pinned @solana/kit 8.4.0.** The official `helius-sdk@3.2.0` requires `@solana/kit ^6.9`; we pin 8.4. We dropped the SDK and wrote a thin fetch client in `server/shared/solana/helius.ts`. M3 webhook helpers (signing, parsed transactions) may need a different approach; recorded in UNVERIFIED.md.
+
+### Next
+
+- [ ] #29 REST API composition root.
