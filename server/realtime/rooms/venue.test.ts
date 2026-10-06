@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { VenueRoom } from './venue.js';
-import { VenueState, NpcState, PlayerState } from '../schemas.js';
+import { VenueState, NpcState, PlayerState } from '../../../contract/realtime/states.js';
 import { createBrain } from '../../../packages/npc-brain/src/index.js';
 
 describe('venue room (M2 stub)', () => {
@@ -27,9 +27,9 @@ describe('venue room (M2 stub)', () => {
     player.userId = 'u1';
     state.players.set('sess-1', player);
     const npc = new NpcState();
-    npc.npcId = 'npc-0-town_crier';
-    npc.archetype = 'town_crier';
-    state.npcs.set('npc-0-town_crier', npc);
+    const npcId = 'npc-0-town_crier';
+    npc.archetypeId = 'town_crier';
+    state.npcs.set(npcId, npc);
     expect(state.players.size).toBe(1);
     expect(state.npcs.size).toBe(1);
   });

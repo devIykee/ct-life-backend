@@ -41,7 +41,7 @@ import {
 } from '../../../packages/npc-brain/src/index.js';
 import { SeededRng } from '../../../packages/npc-brain/src/rng.js';
 import { SimulatedClock } from '../../../packages/npc-brain/src/clock.js';
-import { VenueState, NpcState, PlayerState } from '../schemas.js';
+import { VenueState, NpcState, PlayerState } from '../../../contract/realtime/states.js';
 import { z } from 'zod';
 
 const MoveMessage = z.object({
@@ -128,9 +128,7 @@ export class VenueRoom extends Room {
     const opts = _options as { venueId?: string } | undefined;
     this.state.venueId = String(opts?.venueId ?? 'unknown');
     this.state.instanceId = this.roomId ? this.roomId : 'inst-' + Date.now().toString(36);
-    // Server-authoritative welcome. The client uses serverNow to
-    // align its clock and emoteAt timing.
-    this.onMessage('welcome', () => undefined);
+    // Message handlers. 'welcome' is server-to-client only (sent in onJoin).
     this.onMessage('move', (client, msg) => this.handleMove(client, msg));
     this.onMessage('sit', (client, msg) => this.handleSit(client, msg));
     this.onMessage('stand', (client, _msg) => this.handleStand(client));
@@ -157,6 +155,10 @@ export class VenueRoom extends Room {
     player.isSeeker = Boolean((options as { isSeeker?: boolean })?.isSeeker);
     player.tribeId = String((options as { tribeId?: string })?.tribeId ?? '');
     player.minerTier = String((options as { minerTier?: string })?.minerTier ?? 'none');
+    const lookArr = (options as { look?: string[] })?.look;
+    if (Array.isArray(lookArr) && lookArr.length === 7) {
+      player.look = lookArr;
+    }
     this.state.players.set(client.sessionId, player);
     // Welcome the joiner.
     client.send('welcome', {
@@ -351,7 +353,7 @@ export class VenueRoom extends Room {
       client.send('rejected', { type: 'npc_tap', code: 'NPC_NOT_FOUND' });
       return;
     }
-    if (npc.archetype === 'giveaway_guy') {
+    if (npc.archetypeId === 'giveaway_guy') {
       // Costs $50 cash. The M2 wiring just toasts; the ledger
       // debit is wired in the REST endpoint POST /v1/needs/actions
       // extension (M3) and arrives as a 'toast_drained' on the
@@ -373,10 +375,10 @@ export class VenueRoom extends Room {
     for (let i = 0; i < archetypes.length; i++) {
       const archetype = archetypes[i]!;
       const npc = new NpcState();
-      npc.npcId = `npc-${i}-${archetype}`;
-      npc.archetype = archetype;
-      this.state.npcs.set(npc.npcId, npc);
-      this.brains.set(npc.npcId, createBrain(archetype));
+      const npcId = `npc-${i}-${archetype}`;
+      npc.archetypeId = archetype;
+      this.state.npcs.set(npcId, npc);
+      this.brains.set(npcId, createBrain(archetype));
     }
   }
 

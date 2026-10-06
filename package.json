@@ -29,6 +29,7 @@
     "contract:codegen": "tsx tools/contract-check/codegen.ts",
     "docs:check": "tsx tools/scripts/docs-check.ts",
     "boundary:check": "tsx tools/scripts/boundary-check.ts",
+    "schema:check": "tsx tools/scripts/schema-check.ts",
     "dev:up": "docker compose --profile mock up -d",
     "dev:down": "docker compose --profile mock down",
     "dev:logs": "docker compose --profile mock logs -f",
