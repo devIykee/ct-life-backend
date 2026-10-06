@@ -96,11 +96,18 @@ services:
       "
     restart: "no"
 
-  # The api/realtime/workers services are started by the `mock` profile once
-  # their source is written. The Dockerfile placeholders live under
-  # server/api/Dockerfile etc.; they will be added when each app builds.
+  # The api/realtime/workers services use the per-process Dockerfiles
+  # (Dockerfile.api, Dockerfile.realtime, Dockerfile.workers). On
+  # Docker Hub, node:22-alpine pulls fine; on this dev host the
+  # Docker Hub registry is restricted, so we point at a local
+  # `node:22-alpine` tarball if one has been preloaded. The local
+  # processes under `.runtime/` (livekit + minio) substitute when the
+  # hub images cannot be pulled.
   api:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: ctlife-api:dev
     container_name: ctlife-api
     profiles: ["all", "mock", "default"]
     env_file: .env
@@ -115,11 +122,13 @@ services:
         condition: service_healthy
     ports:
       - "4010:4010"
-    command: ["true"]
     restart: unless-stopped
 
   realtime:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.realtime
+    image: ctlife-realtime:dev
     container_name: ctlife-realtime
     profiles: ["all", "mock", "default"]
     env_file: .env
@@ -134,28 +143,34 @@ services:
         condition: service_healthy
     ports:
       - "2567:2567"
-    command: ["true"]
     restart: unless-stopped
 
   workers:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.workers
+    image: ctlife-workers:dev
     container_name: ctlife-workers
     profiles: ["all", "mock", "default"]
     env_file: .env
     environment:
       APP_ENV: ${APP_ENV:-local}
       NODE_ENV: ${NODE_ENV:-development}
-      PORT_WORKERS: 0
+      PORT_WORKERS: 8080
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["true"]
+    ports:
+      - "8080:8080"
     restart: unless-stopped
 
   bot-population:
-    image: node:22-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: ctlife-api:dev
     container_name: ctlife-bot-population
     profiles: ["mock"]
     env_file: .env
@@ -167,7 +182,7 @@ services:
         condition: service_started
       realtime:
         condition: service_started
-    command: ["true"]
+    command: ["node", "--import", "tsx", "tools/bots/world.ts"]
     restart: unless-stopped
 
 volumes:

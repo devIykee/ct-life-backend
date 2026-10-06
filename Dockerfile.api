@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.7
+# CT Life REST API image. Used by both docker-compose (api service)
+# and the Railway `api` service.
+#
+# Build context is the repo root. Run with:
+#   docker build -f Dockerfile.api -t ctlife-api .
+#
+# Production stage: install only prod deps and run with tsx (no build
+# step). Railway overrides CMD via railway.json; docker-compose runs
+# the same entrypoint.
+FROM node:22-alpine AS base
+WORKDIR /app
+RUN apk add --no-cache libc6-compat curl \
+    && corepack enable \
+    && corepack prepare pnpm@9.15.0 --activate
+
+# ---- deps stage: install everything (including devDeps for build).
+FROM base AS deps
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json tsconfig.json ./
+COPY eslint.config.mjs .prettierrc.json .prettierignore .editorconfig ./
+COPY server/ ./server/
+COPY packages/ ./packages/
+COPY tools/ ./tools/
+COPY programs/ ./programs/
+COPY db/ ./db/
+RUN pnpm install --frozen-lockfile
+
+# ---- runtime stage: keep prod deps only.
+FROM deps AS runtime
+ENV NODE_ENV=production \
+    PORT_API=4010 \
+    LOG_LEVEL=info
+EXPOSE 4010
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:4010/healthz || exit 1
+CMD ["node", "--import", "tsx", "server/api/main.ts"]
