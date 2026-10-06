@@ -1,0 +1,19 @@
+{
+  "name": "ct-escrow-tests",
+  "version": "0.1.0",
+  "license": "MIT",
+  "dependencies": {
+    "@coral-xyz/anchor": "0.31.1",
+    "@solana/spl-token": "0.4.6",
+    "@solana/web3.js": "1.95.3",
+    "bn.js": "5.2.1",
+    "ts-mocha": "10.0.0",
+    "typescript": "5.4.5",
+    "mocha": "10.2.0",
+    "chai": "4.3.10",
+    "chai-as-promised": "7.1.1"
+  },
+  "scripts": {
+    "test": "anchor test"
+  }
+}

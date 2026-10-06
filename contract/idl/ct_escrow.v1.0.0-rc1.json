@@ -1,0 +1,780 @@
+{
+  "address": "FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz",
+  "metadata": {
+    "name": "ct_escrow",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "CT Life paid-call escrow program"
+  },
+  "instructions": [
+    {
+      "name": "accept",
+      "docs": [
+        "Creator accepts the call. Must be called before",
+        "opened_at + ACCEPT_WINDOW_SECS."
+      ],
+      "discriminator": [
+        65,
+        150,
+        70,
+        216,
+        133,
+        6,
+        107,
+        4
+      ],
+      "accounts": [
+        {
+          "name": "session",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "session.fan",
+                "account": "Session"
+              },
+              {
+                "kind": "account",
+                "path": "session.session_id",
+                "account": "Session"
+              }
+            ]
+          }
+        },
+        {
+          "name": "creator",
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "init_config",
+      "docs": [
+        "One-time setup. The admin becomes the settle authority; the",
+        "treasury becomes the fee destination; fee_bps is the",
+        "protocol cut."
+      ],
+      "discriminator": [
+        23,
+        235,
+        115,
+        232,
+        168,
+        96,
+        1,
+        231
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault"
+        },
+        {
+          "name": "usdc_mint"
+        },
+        {
+          "name": "treasury",
+          "docs": [
+            "The treasury USDC token account (the protocol's fee destination)."
+          ]
+        },
+        {
+          "name": "admin",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "fee_bps",
+          "type": "u16"
+        }
+      ]
+    },
+    {
+      "name": "open_session",
+      "docs": [
+        "Fan opens a paid-call session. Pulls the call's max value",
+        "(rate * max_minutes) from the fan's USDC ATA into the",
+        "program's vault. Records the agreed terms + a 120s accept",
+        "window. The session PDA is the on-chain receipt."
+      ],
+      "discriminator": [
+        130,
+        54,
+        124,
+        7,
+        236,
+        20,
+        104,
+        104
+      ],
+      "accounts": [
+        {
+          "name": "session",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "fan"
+              },
+              {
+                "kind": "arg",
+                "path": "session_id"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "fan_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "fan",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "rent",
+          "address": "SysvarRent111111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "session_id",
+          "type": "u64"
+        },
+        {
+          "name": "creator",
+          "type": "pubkey"
+        },
+        {
+          "name": "rate_base_units_per_min",
+          "type": "u64"
+        },
+        {
+          "name": "max_minutes",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "refund",
+      "docs": [
+        "Fan-initiated refund. Allowed at any time before settle, plus",
+        "after the post-accept grace if active."
+      ],
+      "discriminator": [
+        2,
+        96,
+        183,
+        251,
+        63,
+        208,
+        46,
+        46
+      ],
+      "accounts": [
+        {
+          "name": "session",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "session.fan",
+                "account": "Session"
+              },
+              {
+                "kind": "account",
+                "path": "session.session_id",
+                "account": "Session"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "fan_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "fan",
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "settle",
+      "docs": [
+        "Settle the call. The settle_authority is the program's",
+        "admin key (the backend). It supplies seconds_used. Math:",
+        "",
+        "minutes = ceil(seconds_used / 60)        (cap by max_minutes)",
+        "gross   = minutes * rate",
+        "fee     = floor(gross * fee_bps / 10_000)",
+        "creator_payout = gross - fee",
+        "refund  = cap - gross                    (back to fan)",
+        "",
+        "The fan receives the refund, the creator receives",
+        "creator_payout, the treasury receives fee. The vault must",
+        "have enough; if seconds_used > max_minutes * 60, the",
+        "call has overrun and we cap to max_minutes. If the creator",
+        "or fan ATA is missing, we still allow the call to settle",
+        "by leaving their portion in the vault (the off-chain",
+        "ledger handles accounting)."
+      ],
+      "discriminator": [
+        175,
+        42,
+        185,
+        87,
+        144,
+        131,
+        102,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "session",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  115,
+                  101,
+                  115,
+                  115,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "session.fan",
+                "account": "Session"
+              },
+              {
+                "kind": "account",
+                "path": "session.session_id",
+                "account": "Session"
+              }
+            ]
+          }
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true
+        },
+        {
+          "name": "creator_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "fan_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "treasury_usdc_ata",
+          "writable": true
+        },
+        {
+          "name": "settle_authority",
+          "docs": [
+            "The settle authority (the backend). Constraint: must equal",
+            "config.admin."
+          ],
+          "signer": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        }
+      ],
+      "args": [
+        {
+          "name": "seconds_used",
+          "type": "u64"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "Session",
+      "discriminator": [
+        243,
+        81,
+        72,
+        115,
+        214,
+        188,
+        72,
+        144
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Refunded",
+      "discriminator": [
+        35,
+        103,
+        149,
+        246,
+        196,
+        123,
+        221,
+        99
+      ]
+    },
+    {
+      "name": "Settled",
+      "discriminator": [
+        232,
+        210,
+        40,
+        17,
+        142,
+        124,
+        145,
+        238
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidFeeBps",
+      "msg": "fee_bps must be in 0..=10_000"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidRate",
+      "msg": "rate must be in [MIN_RATE_BASE_UNITS, MAX_RATE_BASE_UNITS]"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidMinutes",
+      "msg": "max_minutes must be in [MIN_MINUTES, MAX_MINUTES]"
+    },
+    {
+      "code": 6003,
+      "name": "MathOverflow",
+      "msg": "Math overflow in escrow math"
+    },
+    {
+      "code": 6004,
+      "name": "NotPending",
+      "msg": "Session is not pending"
+    },
+    {
+      "code": 6005,
+      "name": "NotActive",
+      "msg": "Session is not active"
+    },
+    {
+      "code": 6006,
+      "name": "NotCreator",
+      "msg": "Caller is not the session creator"
+    },
+    {
+      "code": 6007,
+      "name": "NotFan",
+      "msg": "Caller is not the session fan"
+    },
+    {
+      "code": 6008,
+      "name": "AcceptWindowExpired",
+      "msg": "Accept window has expired; fan can refund"
+    },
+    {
+      "code": 6009,
+      "name": "AlreadySettled",
+      "msg": "Already settled"
+    },
+    {
+      "code": 6010,
+      "name": "CannotRefund",
+      "msg": "Cannot refund (active session within grace window)"
+    },
+    {
+      "code": 6011,
+      "name": "InvalidMint",
+      "msg": "Vault token account mint does not match expected USDC"
+    },
+    {
+      "code": 6012,
+      "name": "InvalidVaultOwner",
+      "msg": "Vault token account owner is not the config PDA"
+    },
+    {
+      "code": 6013,
+      "name": "InvalidVault",
+      "msg": "Provided vault does not match config.vault"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidTokenOwner",
+      "msg": "Token account owner is not the expected signer"
+    },
+    {
+      "code": 6015,
+      "name": "ClockMath",
+      "msg": "Clock math failed"
+    }
+  ],
+  "types": [
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "admin",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "vault",
+            "type": "pubkey"
+          },
+          {
+            "name": "fee_bps",
+            "type": "u16"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Refunded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "session",
+            "type": "pubkey"
+          },
+          {
+            "name": "fan",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "refund_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "refunded_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Session",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "session_id",
+            "type": "u64"
+          },
+          {
+            "name": "fan",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rate_base_units_per_min",
+            "type": "u64"
+          },
+          {
+            "name": "max_minutes",
+            "type": "u8"
+          },
+          {
+            "name": "cap_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "opened_at",
+            "type": "i64"
+          },
+          {
+            "name": "accepted_at",
+            "type": "i64"
+          },
+          {
+            "name": "settled_at",
+            "type": "i64"
+          },
+          {
+            "name": "seconds_used",
+            "type": "u64"
+          },
+          {
+            "name": "gross_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "fee_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "creator_payout_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "refund_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "status",
+            "type": {
+              "defined": {
+                "name": "SessionStatus"
+              }
+            }
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "SessionStatus",
+      "type": {
+        "kind": "enum",
+        "variants": [
+          {
+            "name": "Pending"
+          },
+          {
+            "name": "Active"
+          },
+          {
+            "name": "Settled"
+          },
+          {
+            "name": "Refunded"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Settled",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "session",
+            "type": "pubkey"
+          },
+          {
+            "name": "fan",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "seconds_used",
+            "type": "u64"
+          },
+          {
+            "name": "gross_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "fee_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "creator_payout_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "refund_base_units",
+            "type": "u64"
+          },
+          {
+            "name": "settled_at",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}
