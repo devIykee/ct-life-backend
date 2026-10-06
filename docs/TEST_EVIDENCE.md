@@ -63,6 +63,45 @@ $ pnpm exec vitest run server/application/program-webhook.test.ts
    Duration  712ms
 ```
 
+**Commit**: f090f64
+
+---
+
+## F9: Dev auth guard (FIXED)
+
+**Lead verified**: YES - `ENABLE_DEV_AUTH` was only checking the default value calculation, not enforcing a startup failure if explicitly enabled in unsafe environments.
+
+**Changes**:
+- `server/shared/config/config.ts:203-220` — Added startup guard that throws FATAL error if `ENABLE_DEV_AUTH=true` when `APP_ENV` is `staging` or `prod`, or when `NODE_ENV=production`
+- Updated comment to clarify: "only safe when APP_ENV=local or APP_ENV=mock"
+
+**Security enforcement**:
+```typescript
+if (devAuthEnabled) {
+  if (appEnv === 'staging' || appEnv === 'prod') {
+    throw new Error(
+      'FATAL: ENABLE_DEV_AUTH=true is not allowed when APP_ENV is staging or prod. ' +
+      'Dev auth bypasses signature verification and must only run in local or mock environments.',
+    );
+  }
+  if (nodeEnv === 'production') {
+    throw new Error(
+      'FATAL: ENABLE_DEV_AUTH=true is not allowed when NODE_ENV=production. ' +
+      'Dev auth bypasses signature verification and must only run in development.',
+    );
+  }
+}
+```
+
+**Verification**:
+The guard is structurally correct:
+1. Throws FATAL error on startup (config load) if `ENABLE_DEV_AUTH=true` and `APP_ENV` is `staging` or `prod`
+2. Throws FATAL error on startup if `ENABLE_DEV_AUTH=true` and `NODE_ENV=production`
+3. Only allows dev auth in `local` or `mock` with `NODE_ENV=development`
+4. Process crashes immediately, no API routes are registered
+
+The config module is loaded at startup before any routes or handlers, so this is a hard fail-closed guarantee.
+
 **Commit**: (next)
 
 ---

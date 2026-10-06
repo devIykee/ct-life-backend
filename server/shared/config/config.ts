@@ -200,8 +200,24 @@ export function loadConfig(): Config {
 
   const cluster: 'devnet' | 'mainnet' = appEnv === 'prod' ? 'mainnet' : 'devnet';
 
-  // Dev auth is only safe when APP_ENV=local AND NODE_ENV=development.
+  // Dev auth is only safe when APP_ENV=local or APP_ENV=mock.
+  // Hard-fail at startup if enabled in staging/prod or when NODE_ENV=production.
   const devAuthEnabled = asBool('ENABLE_DEV_AUTH', appEnv === 'local' && nodeEnv === 'development');
+
+  if (devAuthEnabled) {
+    if (appEnv === 'staging' || appEnv === 'prod') {
+      throw new Error(
+        'FATAL: ENABLE_DEV_AUTH=true is not allowed when APP_ENV is staging or prod. ' +
+        'Dev auth bypasses signature verification and must only run in local or mock environments.',
+      );
+    }
+    if (nodeEnv === 'production') {
+      throw new Error(
+        'FATAL: ENABLE_DEV_AUTH=true is not allowed when NODE_ENV=production. ' +
+        'Dev auth bypasses signature verification and must only run in development.',
+      );
+    }
+  }
 
   const cfg: Config = {
     appEnv,
