@@ -192,7 +192,9 @@ export function loadConfig(): Config {
 
   const appEnv = parseAppEnv(process.env.APP_ENV);
   const nodeEnv =
-    process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'development'
+    process.env.NODE_ENV === 'production' ||
+    process.env.NODE_ENV === 'development' ||
+    process.env.NODE_ENV === 'test'
       ? process.env.NODE_ENV
       : 'development';
 

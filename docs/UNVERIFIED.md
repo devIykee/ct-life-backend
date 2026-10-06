@@ -32,6 +32,8 @@
 The user correctly flagged that `programs/ct_escrow/` was empty.
 The current state as of `0d86ec3`:
 
+- `init_config` admin pinning is not enforced against the program's upgrade authority. The standard Anchor pattern requires a `program_data` account and a checked upgrade-authority address; this is a mainnet deployment blocker unless the program is reworked to read that account during config setup. The repository intentionally leaves the current layout alone to avoid an unsafe migration and because the existing devnet config is already live.
+
 | Item                                          | Status   |
 | --------------------------------------------- | -------- |
 | `programs/ct_escrow/` Rust source             | DONE (committed) |

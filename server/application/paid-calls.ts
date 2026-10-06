@@ -471,10 +471,12 @@ async function submitOnChainSettle(args: {
     args.settleAuthority.publicKey,
   );
   const vault = (await readConfigVault(connection, config)) ?? treasuryAta;
-  return sendSettle(connection, {
+  return sendSettle({
+    connection,
     settleAuthority: args.settleAuthority.publicKey,
     settleAuthorityKeypair: args.settleAuthority,
     fan: payerPk,
+    creator: payeePk,
     sessionId: args.sessionId,
     secondsUsed: BigInt(args.secondsUsed),
     vault,

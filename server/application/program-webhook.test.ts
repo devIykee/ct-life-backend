@@ -5,7 +5,6 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
-import { runInTransaction } from '../shared/db/uow.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { createDb } from '../shared/db/pool.js';
 import {
@@ -68,24 +67,41 @@ function buildCtx() {
 }
 
 describe('program-webhook: signature verification', () => {
-  it('accepts a valid HMAC-SHA256 signature', () => {
+  it('accepts a valid Authorization header', () => {
     const ctx = buildCtx();
     const body = '{"signature":"abc"}';
-    const expected = require('node:crypto')
-      .createHmac('sha256', 'fake-helius-secret')
-      .update(body, 'utf8')
-      .digest('base64');
-    expect(() => verifyProgramWebhookSignature(ctx, expected, body)).not.toThrow();
+    expect(() => verifyProgramWebhookSignature(ctx, 'fake-helius-secret', body)).not.toThrow();
   });
 
-  it('rejects a missing signature header', () => {
+  it('rejects a missing Authorization header', () => {
     const ctx = buildCtx();
-    expect(() => verifyProgramWebhookSignature(ctx, undefined, '{}')).toThrow();
+    expect(() => verifyProgramWebhookSignature(ctx, undefined, '{}')).toThrow(/Request body or params failed validation/);
   });
 
-  it('rejects a wrong signature', () => {
+  it('rejects a wrong Authorization header', () => {
     const ctx = buildCtx();
-    expect(() => verifyProgramWebhookSignature(ctx, 'wrong', expected)).toThrow();
+    expect(() => verifyProgramWebhookSignature(ctx, 'wrong-secret', 'body')).toThrow(/Caller is not allowed to perform this action/);
+  });
+
+  it('rejects empty Authorization header', () => {
+    const ctx = buildCtx();
+    expect(() => verifyProgramWebhookSignature(ctx, '', 'body')).toThrow(/Request body or params failed validation/);
+  });
+
+  it('fails closed when secret is unset in staging', () => {
+    const ctx = {
+      ...buildCtx(),
+      config: { helius: { webhookSecret: '' }, appEnv: 'staging' as const },
+    } as unknown as Parameters<typeof verifyProgramWebhookSignature>[0];
+    expect(() => verifyProgramWebhookSignature(ctx, 'any', 'body')).toThrow(/Caller is not allowed to perform this action/);
+  });
+
+  it('allows missing secret in local for development', () => {
+    const ctx = {
+      ...buildCtx(),
+      config: { helius: { webhookSecret: '' }, appEnv: 'local' as const },
+    } as unknown as Parameters<typeof verifyProgramWebhookSignature>[0];
+    expect(() => verifyProgramWebhookSignature(ctx, undefined, 'body')).not.toThrow();
   });
 });
 
@@ -98,18 +114,17 @@ describe('program-webhook: idempotent ingest', () => {
       accountKeys: [],
       logMessages: ['Program log: ignore'],
     };
-    // First delivery with no signature header is rejected (signature required).
+    // First delivery with no Authorization header is rejected.
     await expect(
       handleProgramWebhook(ctx, undefined, JSON.stringify(payload), payload),
-    ).rejects.toThrow();
+    ).rejects.toThrow(/Request body or params failed validation/);
 
-    // Now replay with a valid signature.
+    // Now replay with valid Authorization header.
     const body = JSON.stringify(payload);
-    const crypto = await import('node:crypto');
-    const sigHeader = crypto.createHmac('sha256', 'fake-helius-secret').update(body).digest('base64');
-    const ok = await handleProgramWebhook(ctx, sigHeader, body, payload);
+    const authHeader = 'fake-helius-secret';
+    const ok = await handleProgramWebhook(ctx, authHeader, body, payload);
     expect(ok.status).toBe('ignored');
-    const dup = await handleProgramWebhook(ctx, sigHeader, body, payload);
+    const dup = await handleProgramWebhook(ctx, authHeader, body, payload);
     expect(dup.status).toBe('duplicate');
   });
 });

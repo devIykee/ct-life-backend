@@ -64,9 +64,10 @@ import {
   buildOpenSessionIx,
   buildAcceptIx,
   buildSettleIx,
-  PublicKey as _Ignored,
+  PublicKey as _PublicKeyUnused,
 } from '../../server/shared/solana/ct-escrow.js';
-void _Ignored;
+void CT_ESCROW_PROGRAM_ID;
+void _PublicKeyUnused;
 
 interface Args {
   mode: 'local' | 'devnet';
@@ -132,8 +133,8 @@ function loadKeypair(path: string): Keypair {
 }
 
 function logExplorer(sig: string, cluster: 'devnet' | 'mainnet' | 'localnet'): string {
-  const host = cluster === 'devnet' ? 'devnet' : cluster === 'mainnet' ? '' : 'explorer';
-  return `https://solscan.io/${sig}?cluster=${cluster}`;
+  void cluster;
+  return `https://solscan.io/${sig}`;
 }
 
 async function airdropTo(
@@ -233,10 +234,12 @@ async function main(): Promise<void> {
       const tx = new Transaction().add(
         buildInitConfigIx({
           admin: admin.publicKey,
+          settleAuthority: admin.publicKey,
           treasury: treasury.publicKey,
           vault,
           usdcMint,
-          feeBps: 500,
+          feeBps: 1_000,
+          acceptWindowSecs: 120,
         }),
       );
       const sig = await sendAndConfirmTransaction(conn, tx, [admin]);
@@ -253,38 +256,45 @@ async function main(): Promise<void> {
           fan: fan.publicKey,
           fanUsdcAta,
           creator: creator.publicKey,
-          vault,
           sessionId,
           rateBaseUnitsPerMin: rate,
           maxMinutes: minutes,
+          feeBps: 1_000,
         }),
       );
       const sig = await sendAndConfirmTransaction(conn, tx, [fan]);
       console.log('[e2e] open_session:', logExplorer(sig, cluster));
     }
 
-    const session = sessionPda(fan.publicKey, sessionId);
+    const session = sessionPda(fan.publicKey, creator.publicKey, sessionId);
     const vaultBeforeSettle = (await getAccount(conn, vault)).amount;
     const fanBefore = (await getAccount(conn, fanUsdcAta)).amount;
     const creatorBefore = (await getAccount(conn, creatorUsdcAta)).amount;
     const treasuryBefore = (await getAccount(conn, treasuryUsdcAta)).amount;
 
-    // 3) accept: creator accepts the call.
+    // 3) accept: settle_authority signs (per spec, the backend
+    // calls accept after the creator taps Accept in the client).
     {
       const tx = new Transaction().add(
-        buildAcceptIx({ creator: creator.publicKey, fan: fan.publicKey, sessionId }),
+        buildAcceptIx({
+          settleAuthority: admin.publicKey,
+          fan: fan.publicKey,
+          creator: creator.publicKey,
+          sessionId,
+        }),
       );
-      const sig = await sendAndConfirmTransaction(conn, tx, [creator]);
+      const sig = await sendAndConfirmTransaction(conn, tx, [admin]);
       console.log('[e2e] accept:', logExplorer(sig, cluster));
     }
 
-    // 4) settle: 60-second call (1 minute). Admin signs.
+    // 4) settle: 60-second call (1 minute). Settle authority signs.
     const secondsUsed = 60;
     {
       const tx = new Transaction().add(
         buildSettleIx({
           settleAuthority: admin.publicKey,
           fan: fan.publicKey,
+          creator: creator.publicKey,
           sessionId,
           secondsUsed: BigInt(secondsUsed),
           vault,
@@ -304,17 +314,29 @@ async function main(): Promise<void> {
     const creatorAfter = (await getAccount(conn, creatorUsdcAta)).amount;
     const treasuryAfter = (await getAccount(conn, treasuryUsdcAta)).amount;
 
+    // Spec: deposit = rate × max_minutes × (1 + fee_bps/10000) with fee_bps=1000
+    //       creator receives rate × minutes_used in full
+    //       treasury receives 10% of that
+    //       fan receives the remainder
+    // At 1 minute used: gross = rate × 1, creator = rate × 1, treasury = rate × 1 × 0.1
+    // Total payout = creator + treasury = rate × 1.1
+    // Refund = deposit - total_payout = rate × max × 1.1 - rate × used × 1.1
+    const expectedDeposit = (rate * BigInt(minutes) * 11_000n) / 10_000n;
     const expectedGross = rate * 1n; // 1 minute
-    const expectedFee = (expectedGross * 500n) / 10_000n; // 5%
-    const expectedCreator = expectedGross - expectedFee;
-    const expectedRefund = rate * BigInt(minutes - 1); // 4 minutes back to fan
+    const expectedFee = (expectedGross * 1_000n) / 10_000n; // 10% of gross
+    const expectedCreator = expectedGross; // creator receives gross in full
+    const expectedRefund = expectedDeposit - expectedGross - expectedFee;
 
     console.log('[e2e] === balances on console ===');
+    console.log(`[e2e] deposit   =${expectedDeposit}  (rate × max × 1.1)`);
+    console.log(`[e2e] gross     =${expectedGross}`);
+    console.log(`[e2e] fee       =${expectedFee}`);
+    console.log(`[e2e] creator   =${expectedCreator}`);
+    console.log(`[e2e] refund    =${expectedRefund}`);
     console.log(`[e2e] vault     before=${vaultBeforeSettle}  after=${vaultAfterSettle}  delta=${vaultAfterSettle - vaultBeforeSettle}`);
     console.log(`[e2e] fan       before=${fanBefore}        after=${fanAfter}        delta=${fanAfter - fanBefore}`);
     console.log(`[e2e] creator   before=${creatorBefore}    after=${creatorAfter}    delta=${creatorAfter - creatorBefore}`);
     console.log(`[e2e] treasury  before=${treasuryBefore}   after=${treasuryAfter}   delta=${treasuryAfter - treasuryBefore}`);
-    console.log(`[e2e] expected: gross=${expectedGross}  fee=${expectedFee}  creator=${expectedCreator}  refund=${expectedRefund}`);
 
     // Program-derived address assertion.
     console.log('[e2e] session PDA:', session.toBase58());
