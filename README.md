@@ -13,7 +13,7 @@ CT Life is a 3D multiplayer Crypto Twitter life-sim on Solana, built native for 
 | M4        | Phase 3: Voice and calls          | not started |
 | M5        | Phase 4: City life                | not started |
 | M6        | Phase 5: Projects and ads         | not started |
-| M7        | Phase 6: Competition              | not started |
+| M7        | Phase 6: Competition              | DONE        |
 | M8        | Hardening, deployment, handover   | not started |
 
 See `docs/PROGRESS.md` for live status and `docs/TEST_REPORT.md` for per-milestone proof.
@@ -243,21 +243,21 @@ Every variable the backend reads is documented in `.env.example`. The `docs:chec
 
 ### Optional M5+
 
-| Variable            | Purpose                                                                 | Required      | Example |
-| ------------------- | ----------------------------------------------------------------------- | ------------- | ------- |
-| `PUSH_ENABLED`      | Push notifications. Off until Seeker Google Play services is confirmed. | optional      | `false` |
-| `PUSH_PROVIDER`     | `fcm` \| `apns`.                                                        | optional      | `fcm`   |
-| `FCM_SERVER_KEY`    | FCM server key.                                                         | optional      | —       |
-| `LLM_ENABLED`       | Enable LLM NPCs.                                                        | optional      | `false` |
-| `ANTHROPIC_API_KEY` | API key for LLM NPCs (M7).                                              | optional (M7) | —       |
-| `LLM_MODEL`         | LLM provider's flagship model id.                                       | optional (M7) | —       |
-| `X_LINK_ENABLED`    | Verified X (Twitter) link.                                              | optional (M7) | `false` |
-| `X_CLIENT_ID`       | X OAuth client id.                                                      | optional      | —       |
-| `X_CLIENT_SECRET`   | X OAuth client secret.                                                  | optional      | —       |
-| `X_REDIRECT_URI`    | X OAuth redirect URI.                                                   | optional      | —       |
-| `X_AUTHORIZE_URL`    | X OAuth authorize URL (override for tests).                            | optional      | `https://x.com/i/oauth2/authorize` |
-| `X_TOKEN_URL`        | X OAuth token URL (override for tests).                                | optional      | `https://api.x.com/2/oauth2/token`     |
-| `X_ME_URL`           | X users/me URL (override for tests).                                   | optional      | `https://api.x.com/2/users/me`          |
+| Variable            | Purpose                                                                 | Required      | Example                            |
+| ------------------- | ----------------------------------------------------------------------- | ------------- | ---------------------------------- |
+| `PUSH_ENABLED`      | Push notifications. Off until Seeker Google Play services is confirmed. | optional      | `false`                            |
+| `PUSH_PROVIDER`     | `fcm` \| `apns`.                                                        | optional      | `fcm`                              |
+| `FCM_SERVER_KEY`    | FCM server key.                                                         | optional      | —                                  |
+| `LLM_ENABLED`       | Enable LLM NPCs.                                                        | optional      | `false`                            |
+| `ANTHROPIC_API_KEY` | API key for LLM NPCs (M7).                                              | optional (M7) | —                                  |
+| `LLM_MODEL`         | LLM provider's flagship model id.                                       | optional (M7) | —                                  |
+| `X_LINK_ENABLED`    | Verified X (Twitter) link.                                              | optional (M7) | `false`                            |
+| `X_CLIENT_ID`       | X OAuth client id.                                                      | optional      | —                                  |
+| `X_CLIENT_SECRET`   | X OAuth client secret.                                                  | optional      | —                                  |
+| `X_REDIRECT_URI`    | X OAuth redirect URI.                                                   | optional      | —                                  |
+| `X_AUTHORIZE_URL`   | X OAuth authorize URL (override for tests).                             | optional      | `https://x.com/i/oauth2/authorize` |
+| `X_TOKEN_URL`       | X OAuth token URL (override for tests).                                 | optional      | `https://api.x.com/2/oauth2/token` |
+| `X_ME_URL`          | X users/me URL (override for tests).                                    | optional      | `https://api.x.com/2/users/me`     |
 
 ### Optional M8
 
