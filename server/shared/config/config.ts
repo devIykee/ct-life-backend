@@ -99,6 +99,9 @@ export interface Config {
     readonly xLinkEnabled: boolean;
     readonly mainnetTests: boolean;
   };
+
+  readonly llmModel: string;
+  readonly anthropicApiKey: string;
 }
 
 class ConfigError extends Error {
@@ -274,6 +277,9 @@ export function loadConfig(): Config {
       xLinkEnabled: asBool('X_LINK_ENABLED', false),
       mainnetTests: asBool('RUN_MAINNET_TESTS', false),
     },
+
+    llmModel: process.env.LLM_MODEL ?? 'claude-opus-4-6',
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   };
 
   cached = cfg;

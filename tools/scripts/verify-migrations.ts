@@ -135,6 +135,14 @@
  *  89. cabal_invites.code UNIQUE.
  *  90. cabal_invites.code length 16..64.
  *
+ * Checks (M7 #8):
+ *
+ *  91. llm_npc_interactions table exists.
+ *  92. llm_npc_interactions.archetype CHECK contains
+ *      'ai_agent','sleuth'.
+ *  93. llm_npc_interactions.prompt_tokens >= 0.
+ *  94. llm_npc_interactions.completion_tokens >= 0.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -1198,6 +1206,43 @@ async function main(): Promise<void> {
         'cabal_invites.code length 16..64',
         /length\(code\)\s+BETWEEN\s+16\s+AND\s+64/i.test(all) ||
           (/length\(code\)\s*>=\s*16/i.test(all) && /length\(code\)\s*<=\s*64/i.test(all)),
+      );
+    }
+
+    // --- M7 #8 invariants -------------------------------------------
+
+    // (91) llm_npc_interactions table exists.
+    {
+      record(
+        'table llm_npc_interactions exists',
+        await tableExists(client, 'llm_npc_interactions'),
+      );
+    }
+
+    // (92) llm_npc_interactions.archetype CHECK.
+    {
+      const cs = await checks('llm_npc_interactions');
+      const all = cs.join('\n');
+      record(
+        'llm_npc_interactions.archetype in allowed set',
+        /ai_agent.*sleuth/is.test(all) || /sleuth.*ai_agent/is.test(all),
+      );
+    }
+
+    // (93) llm_npc_interactions.prompt_tokens >= 0.
+    {
+      const cs = await checks('llm_npc_interactions');
+      const all = cs.join('\n');
+      record('llm_npc_interactions.prompt_tokens >= 0', /prompt_tokens\s*>=\s*0/i.test(all));
+    }
+
+    // (94) llm_npc_interactions.completion_tokens >= 0.
+    {
+      const cs = await checks('llm_npc_interactions');
+      const all = cs.join('\n');
+      record(
+        'llm_npc_interactions.completion_tokens >= 0',
+        /completion_tokens\s*>=\s*0/i.test(all),
       );
     }
   } finally {
