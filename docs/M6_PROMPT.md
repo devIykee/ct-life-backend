@@ -7,19 +7,18 @@ server/shared infrastructure, REST API, npc-brain, server/realtime,
 server/workers, tools/bots, tools/econ-sim, and the M2 test layer),
 M3 (markets migrations, market engine, cash top-ups, Terminal Cafe,
 Perp Pit, ORE Refinery, Launchpad Tower, Prediction Pit, Alpha Calls
-
-- Trust Score + Smart Money, DMs/Feed/Follows, and the M3 test layer),
-  M4 (voice + social migrations, LiveKit room service + RTC tokens,
-  Spaces, free video calls, creator profile + paid calls + escrow +
-  settlement, homes + rent, tips cash + on-chain, push/meta/ads Phase 5
-  prep, Spaces + Video Room realtime integration, LiveKit + ORE
-  webhooks, and the M4 test + bot slice), and M5 (Phase 4 + Phase 5:
-  cosmetics shop + inventory, daily clue + Sunday Unlock worker, season
-  pass, player businesses + bad days, gigs, ads full + creative uploads,
-  player projects, cosmetic NFTs, VC Row + Builder Hills venues, weekly
-  meta rotation, tests + load + bot e2e + closing slice). M5 closed at
-  commit M5 #69 (tests + load + bot e2e + closing slice) plus M5 #70
-  (FE-owned registry entries pulled in clean). M6 has not started.
++ Trust Score + Smart Money, DMs/Feed/Follows, and the M3 test layer),
+M4 (voice + social migrations, LiveKit room service + RTC tokens,
+Spaces, free video calls, creator profile + paid calls + escrow +
+settlement, homes + rent, tips cash + on-chain, push/meta/ads Phase 5
+prep, Spaces + Video Room realtime integration, LiveKit + ORE
+webhooks, and the M4 test + bot slice), and M5 (Phase 4 + Phase 5:
+cosmetics shop + inventory, daily clue + Sunday Unlock worker, season
+pass, player businesses + bad days, gigs, ads full + creative uploads,
+player projects, cosmetic NFTs, VC Row + Builder Hills venues, weekly
+meta rotation, tests + load + bot e2e + closing slice). M5 closed at
+commit M5 #69 (tests + load + bot e2e + closing slice) plus M5 #70
+(FE-owned registry entries pulled in clean). M6 has not started.
 
 ## Where to start
 
@@ -60,7 +59,7 @@ Perp Pit, ORE Refinery, Launchpad Tower, Prediction Pit, Alpha Calls
   its test gate passes and you have pasted the real command
   output into `docs/TEST_REPORT.md`.
 - Verify every pinned version before using it. Run `npm view <pkg>
-versions`. The spec's versions may be wrong; log deviations in
+  versions`. The spec's versions may be wrong; log deviations in
   `docs/DECISIONS.md`.
 - Server-authoritative, append-only money ledger from day one. The
   client is never trusted for amounts, prices, scores, positions,
@@ -115,17 +114,17 @@ versions`. The spec's versions may be wrong; log deviations in
 - Work resumably. Update `docs/PROGRESS.md` after every command.
   After every milestone, commit with `M6: <area>` (e.g. M6: vc-trading,
   M6: project-hq, M6: live-trades). Close M6 with `milestone M6:
-<name>`. The closing commit must include the test report
+  <name>`. The closing commit must include the test report
   append and the `docs/PROGRESS.md` M6 = DONE update.
 
 ## M5 status (already done, don't redo)
 
 - 14 M5 commits, in order: migrations, cosmetics shop + inventory,
   daily clue + Sunday Unlock worker, season pass, player businesses
-  - bad days, gigs, ads full + creative uploads, player projects,
-    cosmetic NFTs, VC Row + Builder Hills venues (NPCs), tests + load
-  - bot e2e + closing slice, plus the FE-registry additive pull
-    (clean re-import of the FE-side anim/sfx/spots).
+  + bad days, gigs, ads full + creative uploads, player projects,
+  cosmetic NFTs, VC Row + Builder Hills venues (NPCs), tests + load
+  + bot e2e + closing slice, plus the FE-registry additive pull
+  (clean re-import of the FE-side anim/sfx/spots).
 - 36 SQL migrations (001..045), 99/99 invariants in `pnpm db:verify`.
   Append-only trigger on `ledger_entries`, idempotency UNIQUE on
   `webhook_events(source, signature)`. The new M5 tables (daily_clue,
@@ -204,7 +203,7 @@ Done:
   LiveKit dev server on 7880 (binary from .runtime/), MinIO on
   9000 (binary from .runtime/). `.env` populated.
 - M1: the contract at `contract-v1.0.0-rc1` (tagged). `contract/
-openapi.yaml` declares every M2-M5 endpoint. Realtime
+  openapi.yaml` declares every M2-M5 endpoint. Realtime
   `contract/realtime/*` carries the `SpaceState`, `VideoCallState`,
   `BusinessState`, `HomeState` schemas. `pnpm contract:check` is
   green.
@@ -317,19 +316,18 @@ Extends the M3 alpha-calls surface with multi-horizon
 signals: 5m / 15m / 1h / 1d. Endpoints:
 POST /v1/market-signals — publish a signal (coin + horizon +
 direction + confidence + entry price); the M3 trust score
-
-- smart-money path applies on top.
-  POST /v1/market-signals/{id}/resolve — resolve on price tick
-  or expiry; status='hit' / 'missed' / 'expired'.
-  POST /v1/market-signals/{id}/follow — follow (copy or watch);
-  copy = the engine mirrors the caller's buy/sell into the
-  follower's account.
-  GET /v1/market-signals?coin=&horizon=&status= — list active
-  signals.
-  Tests: signal publish + resolve, copy follow places the
-  mirror trade, watch follow records without moving money,
-  signal expiry sets status='expired', confidence_bps range
-  enforced.
++ smart-money path applies on top.
+POST /v1/market-signals/{id}/resolve — resolve on price tick
+or expiry; status='hit' / 'missed' / 'expired'.
+POST /v1/market-signals/{id}/follow — follow (copy or watch);
+copy = the engine mirrors the caller's buy/sell into the
+follower's account.
+GET /v1/market-signals?coin=&horizon=&status= — list active
+signals.
+Tests: signal publish + resolve, copy follow places the
+mirror trade, watch follow records without moving money,
+signal expiry sets status='expired', confidence_bps range
+enforced.
 
 #:
 Task: 75
@@ -378,12 +376,11 @@ within the collection; the M5 deterministic mint_address
 extends with a per-item counter so multiple mints of the
 same item are possible (mint_address is sha256 of
 userId+itemKey+counter). max_supply enforced.
-GET /v1/nft/collections/{id} — read the collection + items
-
-- minted counts.
-  Tests: create + add item + mint within cap, mint past
-  max_supply refused, mint counter is monotonic per item,
-  mints UNIQUE on (collection_id, item_key, counter).
+GET  /v1/nft/collections/{id} — read the collection + items
++ minted counts.
+Tests: create + add item + mint within cap, mint past
+max_supply refused, mint counter is monotonic per item,
+mints UNIQUE on (collection_id, item_key, counter).
 
 #:
 Task: 78
@@ -425,9 +422,8 @@ name. The Colyseus state for project-hq mirrors the
 voice_rooms state + an hq_specific field set (project_id,
 kind, capacity).
 Tests: room init, brain tick with vc_npc + builder_npc
-
-- project-hq archetype, message handlers, capacity
-  enforced.
++ project-hq archetype, message handlers, capacity
+enforced.
 
 #:
 Task: 81
@@ -452,7 +448,7 @@ principal). For ORE the route builds the on-chain
 transferChecked transaction (gated by RUN_MAINNET_TESTS=1).
 POST /v1/liquid-stake/{id}/close — close a position;
 credits principal + accrued yield.
-GET /v1/liquid-stake — list the user's positions.
+GET  /v1/liquid-stake — list the user's positions.
 Tests: open + accrue + close with yield > 0, close
 before any tick returns principal only, double-close
 is idempotent, on-chain leg (when RUN_MAINNET_TESTS=1)
@@ -522,8 +518,8 @@ pnpm db:verify is green with the new M6 invariants
    bytes/s per client.
 4. Helius-slow: a synthetic delay in the Helius client
    still results in successful vc-trading + liquid-stake
-   - nft-collection-mint (the on-chain legs are async
-     via webhook + reconciler).
+   + nft-collection-mint (the on-chain legs are async
+   via webhook + reconciler).
 5. The M2/M3/M4/M5 deep integration tests still pass
    (full list in #83).
 6. pnpm db:verify is green with the new M6 invariants
@@ -635,7 +631,7 @@ Both are gitignored.
   runInTransaction can itself abort the transaction when the
   cached DB has a stale snapshot. The M6 webhook paths
   (LiveKit, ORE, Helius on-chain confirmation for vc-trading
-  - liquid-stake) all follow this rule.
+  + liquid-stake) all follow this rule.
 - The Metaplex Core SDK version must be verified on npm before
   installing. mpl-core@1.10.0 is the current pin; the official
   SDK was renamed from @metaplex-foundation/mpl-core to
@@ -657,10 +653,9 @@ M6 #78 (Push polish + mobile deep links), M6 #79 (Homes
 decoration v2), M6 #80 (Realtime venue: project HQ + builder
 hills), M6 #81 (Liquid staking + yield features), M6 #82 (Bot
 world v2 + economy sim v2), M6 #83 (Tests + load + bot e2e
-
-- closing slice). Close M6 with milestone M6: <name> after
-  the M6 gate passes and the test report append and the
-  PROGRESS.md M6 = DONE update are committed.
++ closing slice). Close M6 with milestone M6: <name> after
+the M6 gate passes and the test report append and the
+PROGRESS.md M6 = DONE update are committed.
 
 Update docs/PROGRESS.md after every command. Commit each
 milestone group with M6: <area> (e.g. M6: vc-trading, M6:
@@ -684,10 +679,10 @@ append and the PROGRESS.md M6 = DONE update.
   either via the same token API.
 - The M3 Helius webhook pattern is reused by M5 + M6 webhook
   services for idempotency. The on-chain leg (vc-trading
-  - liquid-stake + nft-collection-mint) is async via the M3
-    webhook path; the application writes the row, the Helius
-    webhook confirms the credit, the M6 reconciler ticks
-    daily to close any open confirmations.
+  + liquid-stake + nft-collection-mint) is async via the M3
+  webhook path; the application writes the row, the Helius
+  webhook confirms the credit, the M6 reconciler ticks
+  daily to close any open confirmations.
 - The M3 append-only ledger trigger is the hard floor. Every
   M5 + M6 service that touches cash (cosmetic purchase,
   season pass buy, season pass perk, business pay, gig pay,
@@ -702,7 +697,7 @@ append and the PROGRESS.md M6 = DONE update.
   M6 load test (200 bots across 4 venue instances for 5
   minutes) is the new gate. Use
   `pnpm tsx tools/bots/world.ts --bots 200 --venue
-timeline_square` for the venue regression, and a parallel
+  timeline_square` for the venue regression, and a parallel
   `pnpm tsx tools/bots/world.ts --bots 100 --venue <venueId>`
   for the M5 baseline.
 - The Metaplex Core dev path is the M5 ad creative upload
