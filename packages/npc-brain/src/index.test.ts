@@ -196,3 +196,51 @@ describe('reproducibility', () => {
     }
   });
 });
+
+describe('vc_npc', () => {
+  it('starts by hunting the richest player', () => {
+    const { brain, ctx } = setup('vc_npc');
+    // Provide a richest player so the brain has someone to follow.
+    const ctx2 = (): TickCtx => ({
+      ...ctx(),
+      venue: { ...ctx().venue, richest: [{ userId: 'rich-1', netWorthCents: 1_000_000_00 }] },
+    });
+    const out = brain.tick(ctx2());
+    expect(out.lineId).toBe('vc_pitch');
+    expect(out.followUserId).toBe('rich-1');
+  });
+
+  it('falls back to vc_idle when nobody is around', () => {
+    const { brain, ctx } = setup('vc_npc');
+    const out = brain.tick(ctx());
+    expect(out.lineId).toBe('vc_idle');
+  });
+
+  it('queues a vc_dibs line on a launch notify', () => {
+    const { brain, ctx } = setup('vc_npc');
+    brain.notify({ kind: 'launch', coin: 'X', spotId: 'vc_row' }, ctx());
+    const out = brain.tick(ctx());
+    expect(out.state).toBe('talk');
+    expect(out.lineId).toBe('vc_dibs');
+  });
+});
+
+describe('builder_npc', () => {
+  it('alternates between wander and talk in its tick loop', () => {
+    const { brain, ctx } = setup('builder_npc');
+    const first = brain.tick(ctx());
+    expect(['wander', 'talk']).toContain(first.state);
+    // After the first tick, dwellUntilMs is set; subsequent ticks
+    // return a steady-state output until the dwell elapses.
+    const second = brain.tick(ctx());
+    expect(['wander', 'talk', 'idle']).toContain(second.state);
+  });
+
+  it('reacts with a wave emote on a launch notify', () => {
+    const { brain, ctx } = setup('builder_npc');
+    const out = brain.notify({ kind: 'launch', coin: 'X', spotId: 'bh' }, ctx());
+    expect(out.state).toBe('react');
+    expect(out.emoteId).toBe('emote_wave');
+    expect(out.lineId).toBe('builder_ship');
+  });
+});

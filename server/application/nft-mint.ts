@@ -135,6 +135,9 @@ export async function mint(
   return rowToMint(inserted);
 }
 
+/**
+ *
+ */
 export async function listInventory(ctx: AppContext, userId: string): Promise<NftMintRow[]> {
   return ctx.db.withConnection(async (c) => {
     const r = await c.query<NftMintDbRow>(

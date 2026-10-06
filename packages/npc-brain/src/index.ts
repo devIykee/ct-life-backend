@@ -32,7 +32,9 @@ export type NpcArchetype =
   | 'wallet_tracker'
   | 'doomposter'
   | 'spaces_host'
-  | 'ore_miner';
+  | 'ore_miner'
+  | 'vc_npc'
+  | 'builder_npc';
 
 export interface VenueCtx {
   /** The venue instance id. */
@@ -131,6 +133,10 @@ export function createBrain(archetype: NpcArchetype): NpcBrain {
       return new SpacesHostBrain();
     case 'ore_miner':
       return new OreMinerBrain();
+    case 'vc_npc':
+      return new VcNpcBrain();
+    case 'builder_npc':
+      return new BuilderNpcBrain();
   }
 }
 
@@ -902,6 +908,161 @@ class OreMinerBrain implements NpcBrain {
       emoteId: null,
       animId: 'loco_idle',
       dwellMs: 1000,
+      followUserId: null,
+    };
+  }
+}
+
+// --- VC NPC (M5 #67) --------------------------------------------------
+//
+// Lives in VC Row. The VC trades between investors and project
+// founders: every 30-90 s the VC will "hunt" a project owner
+// (random richest player) and pitch a line. On a launch event
+// the VC immediately calls dibs.
+
+class VcNpcBrain implements NpcBrain {
+  readonly archetype = 'vc_npc' as const;
+  state: NpcState = 'idle';
+  dwellUntilMs = 0;
+  followUserId: string | null = null;
+  private pendingEvent: NpcEvent | null = null;
+
+  reset(): void {
+    this.state = 'idle';
+    this.dwellUntilMs = 0;
+    this.followUserId = null;
+    this.pendingEvent = null;
+  }
+
+  tick(ctx: TickCtx): BrainOutput {
+    if (this.pendingEvent) {
+      this.pendingEvent = null;
+      this.state = 'talk';
+      this.dwellUntilMs = ctx.nowMs + 4_000;
+      return {
+        state: 'talk',
+        targetSpotId: 'vc_row',
+        lineId: 'vc_dibs',
+        emoteId: null,
+        animId: 'loco_idle',
+        dwellMs: 4_000,
+        followUserId: null,
+      };
+    }
+    if (ctx.nowMs >= this.dwellUntilMs) {
+      // Hunt the richest project owner.
+      const target = ctx.venue.richest[0]?.userId ?? null;
+      this.followUserId = target;
+      this.state = target ? 'follow' : 'idle';
+      this.dwellUntilMs = ctx.nowMs + 30_000 + ctx.rng.int(60_000);
+      const line = target ? 'vc_pitch' : 'vc_idle';
+      return {
+        state: this.state,
+        targetSpotId: 'vc_row',
+        lineId: line,
+        emoteId: null,
+        animId: 'loco_walk',
+        dwellMs: 4_000,
+        followUserId: target,
+      };
+    }
+    return {
+      state: this.state,
+      targetSpotId: ctx.venue.currentSpotId,
+      lineId: null,
+      emoteId: null,
+      animId: 'loco_idle',
+      dwellMs: 1000,
+      followUserId: this.followUserId,
+    };
+  }
+
+  notify(event: NpcEvent, _ctx: TickCtx): BrainOutput {
+    if (event.kind === 'launch') {
+      this.pendingEvent = event;
+      this.dwellUntilMs = 0;
+    }
+    return {
+      state: this.state,
+      targetSpotId: _ctx.venue.currentSpotId,
+      lineId: null,
+      emoteId: null,
+      animId: 'loco_idle',
+      dwellMs: 100,
+      followUserId: this.followUserId,
+    };
+  }
+}
+
+// --- Builder NPC (M5 #67) ---------------------------------------------
+//
+// Lives in Builder Hills. The builder is permanently wandering
+// between project HQs and occasionally shouting about hiring or
+// a launch. On a launch event the builder shouts and a brief
+// reaction emote plays.
+
+class BuilderNpcBrain implements NpcBrain {
+  readonly archetype = 'builder_npc' as const;
+  state: NpcState = 'idle';
+  dwellUntilMs = 0;
+  followUserId: string | null = null;
+
+  reset(): void {
+    this.state = 'idle';
+    this.dwellUntilMs = 0;
+    this.followUserId = null;
+  }
+
+  tick(ctx: TickCtx): BrainOutput {
+    if (ctx.nowMs >= this.dwellUntilMs) {
+      const isWander = ctx.rng.int(2) === 0;
+      this.state = isWander ? 'wander' : 'talk';
+      this.dwellUntilMs = ctx.nowMs + 20_000 + ctx.rng.int(40_000);
+      const spots =
+        ctx.venue.walkableSpots.length > 0
+          ? ctx.venue.walkableSpots
+          : ['builder_hq_1', 'builder_hq_2'];
+      const targetSpot = spots[ctx.rng.int(spots.length)] ?? null;
+      return {
+        state: this.state,
+        targetSpotId: isWander ? targetSpot : ctx.venue.currentSpotId,
+        lineId: isWander ? null : ctx.rng.int(2) === 0 ? 'builder_hiring' : 'builder_ship',
+        emoteId: null,
+        animId: isWander ? 'loco_walk' : 'loco_idle',
+        dwellMs: 4_000,
+        followUserId: null,
+      };
+    }
+    return {
+      state: this.state,
+      targetSpotId: ctx.venue.currentSpotId,
+      lineId: null,
+      emoteId: null,
+      animId: 'loco_idle',
+      dwellMs: 1000,
+      followUserId: null,
+    };
+  }
+
+  notify(event: NpcEvent, ctx: TickCtx): BrainOutput {
+    if (event.kind === 'launch') {
+      return {
+        state: 'react',
+        targetSpotId: ctx.venue.currentSpotId,
+        lineId: 'builder_ship',
+        emoteId: 'emote_wave',
+        animId: 'react_moon_jump',
+        dwellMs: 3_000,
+        followUserId: null,
+      };
+    }
+    return {
+      state: this.state,
+      targetSpotId: ctx.venue.currentSpotId,
+      lineId: null,
+      emoteId: null,
+      animId: 'loco_idle',
+      dwellMs: 100,
       followUserId: null,
     };
   }
