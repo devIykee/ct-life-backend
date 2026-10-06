@@ -102,6 +102,7 @@ function makeContext(overrides: Partial<AppContext> = {}): AppContext {
     helius: {} as AppContext['helius'],
     idempotency: {} as AppContext['idempotency'],
     livekit: {} as AppContext['livekit'],
+    s3: {} as AppContext['s3'],
     instanceId: 'test',
     nonces: {} as AppContext['nonces'],
     configCache: {} as AppContext['configCache'],

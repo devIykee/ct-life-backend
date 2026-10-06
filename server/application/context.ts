@@ -27,6 +27,8 @@ import { RedisIdempotencyStore as RedisIdem } from '../shared/infra/idempotency.
 import { loadConfig, type Config } from '../shared/config/config.js';
 import type { LiveKitService } from './livekit.js';
 import { createLiveKitService } from './livekit.js';
+import type { S3 } from '../shared/s3/client.js';
+import { createS3 } from '../shared/s3/client.js';
 
 export interface AppContext {
   readonly config: Config;
@@ -36,6 +38,7 @@ export interface AppContext {
   readonly helius: HeliusClient;
   readonly idempotency: RedisIdempotencyStore;
   readonly livekit: LiveKitService;
+  readonly s3: S3;
   /** Bumped at process start; the realtime welcome message carries it. */
   readonly instanceId: string;
   /** Issued per sign-in attempt; the in-memory store. */
@@ -65,6 +68,7 @@ export function buildContext(): AppContext {
     }),
     idempotency: new RedisIdem(redis.main),
     livekit: createLiveKitService(),
+    s3: createS3(),
     instanceId: randomUUID(),
     nonces: new InMemoryNonceStore(),
     configCache: new ConfigCache(),
