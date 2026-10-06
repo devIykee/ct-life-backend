@@ -23,6 +23,32 @@ _resetContextForTests();
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+/**
+ * Clean up test data only, never touching production data.
+ * Handles foreign keys properly: delete children first, then parents.
+ */
+async function resetBoardTestData(): Promise<void> {
+  // Delete only test user data (identified by wallet pattern)
+  await pool.query(
+    `DELETE FROM follows WHERE follower_user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+  );
+  await pool.query(
+    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+  );
+  await pool.query(
+    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+  );
+  await pool.query(
+    `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+  );
+  await pool.query(`DELETE FROM users WHERE wallet LIKE 'boardsUser-%'`);
+
+  // Clean rollover log entries created after the current week
+  await pool.query(
+    `DELETE FROM season_rollover_log WHERE season_iso > '2026-W40'`
+  );
+}
+
 async function newUser(alias: string): Promise<string> {
   const id = uuidv7();
   await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `boardsUser-${id}`]);
@@ -53,9 +79,7 @@ async function follow(follower: string, followee: string): Promise<void> {
 
 beforeAll(async () => {
   // Pre-seed leagues so the league-scope tests can find a cohort.
-  await pool.query(`DELETE FROM season_rollover_log`);
-  await pool.query(`DELETE FROM season_memberships`);
-  await pool.query(`DELETE FROM leagues`);
+  await resetBoardTestData();
   const ctx = buildContext();
   await ensureLeagues(ctx);
 });
@@ -66,19 +90,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   // Clean up test users + their balances + follows.
-  await pool.query(
-    `DELETE FROM follows WHERE follower_user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
-  );
-  await pool.query(
-    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
-  );
-  await pool.query(
-    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
-  );
-  await pool.query(
-    `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
-  );
-  await pool.query(`DELETE FROM users WHERE wallet LIKE 'boardsUser-%'`);
+  await resetBoardTestData();
 });
 
 describe('boards service', () => {

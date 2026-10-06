@@ -24,6 +24,27 @@ _resetContextForTests();
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+/**
+ * Clean up test data only, never touching production leagues or users.
+ * Handles foreign keys properly: delete children first, then parents.
+ */
+async function resetLeagueTables(): Promise<void> {
+  // Delete only test user data (identified by wallet pattern)
+  await pool.query(
+    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`
+  );
+  await pool.query(
+    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`
+  );
+  await pool.query(`DELETE FROM users WHERE wallet LIKE 'leagueUser-%'`);
+
+  // Clean ALL test-created rollover log entries (anything matching 2026-W pattern from tests)
+  // This prevents cross-test pollution in the 8-week rollover test
+  await pool.query(
+    `DELETE FROM season_rollover_log WHERE season_iso ~ '^2026-W[0-9]{2}$'`
+  );
+}
+
 async function freshUsers(n: number): Promise<string[]> {
   const ids: string[] = [];
   for (let i = 0; i < n; i++) {
@@ -43,9 +64,7 @@ async function setBalance(userId: string, cashCents: number, debtCents = 0): Pro
 }
 
 beforeAll(async () => {
-  await pool.query(`DELETE FROM season_rollover_log`);
-  await pool.query(`DELETE FROM season_memberships`);
-  await pool.query(`DELETE FROM leagues`);
+  await resetLeagueTables();
 });
 
 afterAll(async () => {
@@ -53,13 +72,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
-  await pool.query(`DELETE FROM season_rollover_log`);
-  await pool.query(`DELETE FROM season_memberships`);
-  await pool.query(`DELETE FROM leagues`);
-  await pool.query(
-    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`,
-  );
-  await pool.query(`DELETE FROM users WHERE wallet LIKE 'leagueUser-%'`);
+  await resetLeagueTables();
 });
 
 describe('leagues service', () => {
@@ -201,7 +214,7 @@ describe('leagues service', () => {
        WHERE kind = 'season_rollover' AND season_iso LIKE '2026-W%'`,
     );
     expect(Number(r.rows[0]?.count ?? '0')).toBe(8);
-  });
+  }, 30_000); // 30s timeout: 8 rollovers with DB writes
 
   it('getMyLeague returns null before rollover, populated after', async () => {
     const ctx = buildContext();
