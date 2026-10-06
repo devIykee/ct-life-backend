@@ -39,7 +39,7 @@ export function registerSocialRoutes(app: FastifyInstance): void {
     const q = LeaderboardQuery.safeParse(req.query);
     if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
     const svc = new BoardsService(req.ctx);
-    const entries = await svc.top(boardId, q.data.scope, 50);
+    const entries = await svc.top(boardId, q.data.scope, 50, req.user!.sub);
     return reply.send({ entries, me: null });
   });
 
