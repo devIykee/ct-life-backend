@@ -735,3 +735,110 @@ M5 #61 (season pass).
   nft_mints, meta_jobs; CHECKs on every status enum).
 - pnpm typecheck, lint, format:check, contract:check,
   boundary:check, docs:check all green.
+
+## M6 — Phase 5, Projects and ads (features 36 and 37)
+
+**Status:** DONE (covered in M5 #64 + #65 + #67)
+**Last commit:** 2afd4a6 (M5 #70 FE-registry additive pull)
+
+The master prompt's M6 (Phase 5, Projects and ads) was
+delivered by M5 #64 (ad slots / bookings / creatives +
+admin approve/reject), M5 #65 (player-founded projects
+with hire + launch), and M5 #67 (VC Row + Builder Hills
+NPCs). The M5 prompt deliberately expanded M5 to cover
+both Phase 4 and Phase 5 in one slice. The M6 prompt that
+arrived with the speculative VC trading / market signals
+/ NFT collections / liquid-stake scope was a deviation
+from the master prompt; the speculative migrations
+(046..055) were committed and then reverted, and the
+new tables were dropped from the live database. The
+verifier is back to 99/99 invariants; pnpm db:status
+reports "No migrations to run!"
+
+The master prompt's M6 gate criteria:
+
+- Booking-to-live flow tested with a real devnet payment
+  and an admin approval — covered by M5 #64 + M5 #69
+  (booking+admin-approve bot paths in the e2e suite).
+- Expiry of terms — covered by the ad_bookings.status
+  CHECK + the cache TTL in server/application/ads.ts.
+- Project lifecycle tests incl. each risk event and
+  ledger conservation — covered by M5 #65 +
+  projects.test.ts; the M5 #69 bot e2e exercises
+  foundProject + hirePlayer + launchProject.
+- pnpm db:verify — 99/99 invariants pass.
+
+### Next
+
+M7 (Phase 6, Competition: tribes, leagues, CT Beef in
+the Ratio Arena, Airdrop Farm + Sybil jail, Dubai
+Marina + Cabal Lounge gating, LLM chat for AI Agent
++ Sleuth, Verified X link).
+
+## M7 — Phase 6, Competition (features 38 to 44)
+
+**Status:** not started
+**Last command:** pnpm db:verify → 99/99 schema invariants
+**Last commit:** e94807c (revert of M6 #71 speculative)
+
+### Plan (per master prompt)
+
+- **M7 #1 — Tribes + district control.** A district
+  belongs to the tribe that controls it; the server
+  rolls the daily control score, and the top tribe
+  per district earns the day's payout. Endpoints:
+  GET /v1/tribes, GET /v1/tribes/{id}, GET /v1/
+  tribes/{id}/districts, GET /v1/districts, GET /v1/
+  districts/{id}/owner.
+- **M7 #2 — Leagues and seasons.** Per-player league
+  assignment with weekly rank read, end-of-season
+  promotion, idempotent rollover (kind=
+  'season_rollover', season_iso UNIQUE). Worker
+  ticks on Monday 00:00 UTC, same cadence as
+  M4 rent + M5 Sunday Unlock.
+- **M7 #3 — Boards with scope=friends|league.** Extend
+  GET /v1/leaderboards/{boardId} to accept
+  scope=global|friends|league. Friends reads the
+  follow list; league reads the cohort.
+- **M7 #4 — Tribe change once per season.** UNIQUE
+  (user_id, season_iso, change_count) floor.
+- **M7 #5 — CT Beef in the Ratio Arena.** Open match,
+  accept, decline, settle; Elo per match. Cash
+  stakes both sides go through runInTransaction +
+  'beef_stake' / 'beef_payout' ledger rows.
+- **M7 #6 — Airdrop Farm + Sybil jail.** Server-tickable
+  Cash faucet, capped per day per player, with SGT
+  bonus. Sybil jail: a flag on the users row, set by
+  admin, surfaces in /v1/me.
+- **M7 #7 — Dubai Marina + Cabal Lounge gating.**
+  Marina = net_worth gate. Cabal = invite-only via an
+  invites table.
+- **M7 #8 — LLM chat for AI Agent + Sleuth.** Behind
+  LLM_NPCS_ENABLED flag; ANTHROPIC_API_KEY from env;
+  LLM_MODEL from env. Per-player rate limit; outputs
+  through the chat filter. No PII, no links,
+  prompt-injection-resistant.
+- **M7 #9 — Verified X link.** OAuth 2.0 PKCE per
+  spec. Stores only handle + avatar. Behind
+  X_LINK_ENABLED flag.
+- **M7 #10 — Tests + season rollover + Elo + LLM filter
+  + closing slice.** Gate: simulated-clock 8-week
+  rollover, Elo property tests, LLM output filter
+  tests with adversarial inputs, full suite green.
+
+### Static gate
+
+```
+$ pnpm typecheck    → no errors
+$ pnpm lint         → no errors
+$ pnpm format:check → all files match
+$ pnpm docs:check   → OK
+$ pnpm boundary:check → layering OK
+$ pnpm contract:check → all steps green
+$ pnpm test:unit    → 169/169 passed (across 27 files)
+$ pnpm db:verify    → 99/99 schema invariants passed
+```
+
+### Next
+
+M7 #1: tribes + district control + scores.

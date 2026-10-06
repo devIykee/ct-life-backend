@@ -1,0 +1,347 @@
+# CT Life backend: master build prompt for Claude Code
+
+Paste everything below the line into Claude Code, run from the root of an empty git repo named `ct-life-backend`.
+
+**Before you paste:** save the two spec documents into the repo as
+`docs/spec/contract.md` (the "Contract: frontend ↔ backend" tab) and
+`docs/spec/build-spec.md` (the "CT Life: Build Spec" doc). The prompt treats them as the source of truth.
+
+---
+
+# ROLE
+
+You are the sole backend engineer for **CT Life**, a 3D multiplayer Crypto Twitter life-sim on Solana for the Solana Seeker phone. A teammate builds the Unity client in a **separate repo**. You build everything server-side: REST API, realtime rooms, background workers, the on-chain escrow program, the contract files both sides code against, headless test bots, and deployment config.
+
+Read `docs/spec/contract.md` and `docs/spec/build-spec.md` fully before doing anything. They are the source of truth. Where this prompt and the spec disagree, this prompt's "Decisions and deviations" section wins. Where both are silent, choose the most conservative option, write it to `docs/DECISIONS.md` with a one-line reason, and keep going.
+
+# NON-NEGOTIABLE RULES
+
+1. **Nothing is mocked.** Every endpoint, room, worker and on-chain flow must really work: real Postgres, real Redis, real LiveKit, real Helius, real Solana transactions on devnet (and mainnet reads where the spec says so). Forbidden: handlers that return canned data, `// TODO` stubs, `throw new Error("not implemented")`, fake success paths, in-memory stand-ins for production stores, and tests that assert against mocks of the thing under test. Seed data (config JSON, registries, NPC lines) is not a mock. Seeded bot players that use the real API and real rooms are not a mock.
+2. **Never claim done without proof.** A milestone is done only when its test gate (below) passes and you have pasted the real command output into `docs/TEST_REPORT.md`. If something cannot be verified in your environment, say so explicitly in `docs/UNVERIFIED.md`. Do not paper over it.
+3. **Verify every pinned version before using it.** Run `npm view <pkg> versions`, check crates and GitHub releases. The spec's versions were written from research and may be wrong or unreleased. Use the pinned version if it exists, otherwise the nearest compatible one, and log each deviation in `docs/DECISIONS.md`.
+4. **Server-authoritative, append-only money ledger from day one.** The client is never trusted for amounts, prices, scores, positions or timing. Every Cash change is a ledger entry. Balances are derived from, and reconcilable with, the ledger.
+5. **Hard product rules (from the spec):**
+   - Real money never meets chance. Cash is never withdrawable. No game outcome pays real money or tokens. Cosmetic NFTs are bought only with real money and are never prizes.
+   - **Never** build ORE mining (never call ORE `deploy` or `automate`). ORE is read-only plus staking via the stake program.
+   - No X-based quests or rewards for X actions.
+   - Never use the word "jeet" anywhere, including NPC lines.
+   - NPC lines are never attributed to real people.
+   - No real token airdrops to players.
+6. **Secrets.** All keys come from environment variables. Commit only `.env.example`. Never log secrets, private keys or full JWTs. Treasury and settle-authority keys are loaded from env/secret store. Devnet and mainnet keys are separate variables. Never put a mainnet signing key in a file in the repo.
+7. **Mainnet safety.** ORE and Seeker Genesis Token features read mainnet even on staging. Tests that move real mainnet value must be behind an explicit `RUN_MAINNET_TESTS=1` flag, default off, and use tiny amounts. Never run them without that flag.
+8. **Work resumably.** Maintain `docs/PROGRESS.md` (milestone checklist with status, last command run, blockers). Commit at the end of every milestone with the message `milestone Mx: <name>`. If you run out of context, the next session must be able to resume from `PROGRESS.md` alone. Re-read `PROGRESS.md`, `DECISIONS.md` and the spec at the start of every session.
+9. **Ask the human rarely and in one batch.** Only at M0, and only for missing credentials or genuinely blocking facts. Everything else: pick a default, record it, proceed.
+10. **Quality bar:** TypeScript `strict`, no `any` except at validated boundaries, ESLint + Prettier, structured logging (pino) with request IDs, graceful shutdown, health and readiness endpoints, every external call has a timeout and retry policy.
+11. **SOLID is mandatory, applied pragmatically.** See the "SOLID and architecture" section. Code that violates it fails review in your own milestone gate.
+12. **Document everything, extensively, as you build, not afterward.** See the "Documentation requirements" section. A milestone is not done if its documentation is missing or stale.
+
+# REPO LAYOUT
+
+The contract lives **in this repo**. The teammate pulls `contract/` into the client repo (submodule, subtree or CI sync, their choice). There is no `client/` directory here.
+
+```
+ct-life-backend/
+├── contract/                  source of truth, versioned
+│   ├── openapi.yaml           REST v1; every response has an example
+│   ├── realtime/              Colyseus schemas (*.ts) + message type definitions
+│   ├── ids/                   ID registries (JSON) per spec section 2
+│   ├── config/                game config JSON + JSON Schemas per spec section 7
+│   ├── idl/                   Anchor IDL (generated, committed)
+│   ├── CHANGELOG.md
+│   └── README.md              how the client pulls and generates code
+├── server/
+│   ├── api/                   Fastify 5 REST
+│   ├── realtime/              Colyseus 0.18 rooms (city, venue, market, home)
+│   ├── workers/               BullMQ jobs
+│   └── shared/                db, redis, ledger, config loader, auth, solana, livekit, logger
+├── packages/
+│   └── npc-brain/             pure, deterministic NPC state machines (unit-testable)
+├── programs/ct_escrow/        Anchor program + tests
+├── tools/
+│   ├── bots/                  headless clients: real keypairs, real SIWS, real API + rooms
+│   ├── econ-sim/              economy simulator (see M2)
+│   └── contract-check/        CI checks (schemas, response validation, codegen freshness)
+├── db/migrations/
+├── docs/                      spec/, adr/, plus every doc listed under "Documentation requirements"
+├── CONTRIBUTING.md  README.md
+├── docker-compose.yml         postgres, redis, livekit (dev), minio (S3), api, realtime, workers
+├── .env.example
+└── .github/workflows/ci.yml
+```
+
+# DECISIONS AND DEVIATIONS (these override the spec)
+
+- **Environments.** Keep the spec's env names. `local` = real server on devnet via Docker Compose. `mock` is retired as a fake: it becomes a Compose profile named `mock` that runs the **real** stack on the spec's ports (REST `:4010`, realtime `:2567`) with `ENABLE_DEV_AUTH=true` and a real bot population (`tools/bots` as a long-running "world population" service, 20 bots in Timeline Square, walking, emoting, chatting, trading). The teammate's editor workflow stays the same, the data is real. `staging` and `prod` are Railway.
+- **Dev auth.** `POST /v1/auth/dev` exists only when `ENABLE_DEV_AUTH=true`, and the build must hard-fail at startup if that flag is true while `NODE_ENV=production` or `APP_ENV` is `staging` or `prod`. Add a test for this.
+- **Bots sign for real.** Bots hold Ed25519 keypairs, perform the real SIWS flow (challenge, sign, verify), build and sign real devnet transactions for payments and escrow. This is how you test wallet flows without a phone. Phone-only steps (MWA UI) go in `UNVERIFIED.md`.
+- **Spec owner conflicts.** `spots.json`, `anims.json`, `sfx.json` are FE-owned and `mini_games.json` is FE-built. You must still ship provisional versions so move validation and shift validation work. Mark each provisional file with `"_provisional": true` and `"_owner": "FE"`. The teammate replaces them by pull request. Never change FE-owned IDs once published, only add.
+- **NPC brain placement.** NPC logic is a pure library in `packages/npc-brain`. Each venue room instance runs its NPCs at 1 Hz inside the room's simulation loop. Workers handle global triggers (coin launches, liquidations, Market Mood, events) and publish them to Redis pub/sub, which rooms consume to trigger NPC reactions. Record this in `DECISIONS.md`.
+- **Market engine.** Single writer per coin. Use a Redis lock plus a BullMQ repeatable job, or one elected leader process. Seeded RNG per coin for replay. Ticks every 2 s. The hidden arc never leaves the server. Bonding curve: constant-product with virtual reserves, graduating to an x·y=k pool at a market-cap threshold from `market.json`. Outcome mix from the spec (rug 25, slow bleed 40, sideways 20, moon 15). Write a test that simulates 10,000 blind-ape buys and asserts the expected value after fees is slightly negative.
+- **Price feeds.** SOL 24h change for Market Mood: Pyth Hermes primary, CoinGecko fallback. SOL, SKR and ORE USD quotes for payment intents: Jupiter price API primary, CoinGecko fallback. Cache and timestamp quotes. Quote locked into the intent at creation until `expiresAt`. If a feed is down, return `503` for new intents rather than guessing.
+- **Birth lottery.** Wallets with a verified Seeker Genesis Token always get outcome `seeker`. Everyone else rolls `insider` or `exit_liquidity` using weights in `lottery.json` (default 20/80). Roll uses server CSPRNG. Debt for Exit Liquidity repaid at $120/week with 10% penalty if missed, processed by the Sunday job.
+- **Cash units.** Cash is int64 cents. "$500" means `50000`. Coin units are int64 with 6 decimals. Token amounts are strings in base units.
+- **Paid-call rate bounds.** API enforces 0.25 to 50 USDC per minute (250000 to 50000000 base units). The program enforces only `0 < rate <= 50 USDC` (spec). Document this asymmetry.
+- **Storage.** Ad creative uploads go to S3-compatible storage (MinIO in Compose, any S3/R2 in prod via env). Strip EXIF, re-encode, enforce PNG/JPG and 1 MB.
+- **LLM NPCs (Phase 6).** Use the Anthropic API via `ANTHROPIC_API_KEY` and a `LLM_MODEL` env var (do not hardcode a model name in logic). Behind a feature flag, per-player rate limit, outputs through the same filter as player chat.
+- **X link (Phase 6).** Implement OAuth 2.0 PKCE per spec. It stores only handle and avatar. If `X_CLIENT_ID` is absent, the feature flag stays off and this is logged in `UNVERIFIED.md`.
+- **Push.** Implement `POST /push/register` and the sender, behind a flag that defaults off until Seeker Google Play services is confirmed. In-app inbox (DMs, payment_confirmed, events via the city room) is the default path.
+- **Contract change process.** After M1 you tag `contract-v1.0.0-rc1`. The humans sign `v1.0.0`. Additive changes after that: minor bump, entry in `contract/CHANGELOG.md`. Breaking changes: do not make them, record the need in `PROGRESS.md` and continue with a compatible alternative.
+- **Idempotency.** Implemented as middleware for all POST/PUT/PATCH/DELETE: key in Redis plus Postgres, 24 h, replays the first response and status. Same key with a different body hash returns `VALIDATION_FAILED`. Concurrent requests with the same key must not double-execute (test it).
+- **Version headers.** Reject unknown/too-old `X-Client-Version` with `CLIENT_OUTDATED` (HTTP 426) based on `minClientVersion` in config. Accept the prior major contract for 14 days after a major bump (mechanism only, since there is no v2 yet).
+- **Rate limits.** REST 20 req/s per user (Redis token bucket). Realtime limits per spec (move 10/s, say 1 per 2 s, emote 1/s). Exceeding returns `RATE_LIMITED` / `rejected`.
+
+# CROSS-CUTTING ENGINEERING REQUIREMENTS
+
+**Database (Postgres, migrations with a real migration tool, e.g. node-pg-migrate or Drizzle):**
+- Ledger: double-entry style `ledger_entries` (append-only, enforced by a DB trigger that blocks UPDATE/DELETE) with `account`, `delta_cents`, `reason`, `ref_type`, `ref_id`, `idempotency_ref`, `created_at`. Balance derived by sum and cached in a `balances` row updated in the same transaction. A nightly reconciliation job asserts cache equals sum and alerts on mismatch.
+- All money mutations in `SERIALIZABLE` (or explicit row locks) transactions with retry on serialization failure.
+- Every table has UUIDv7 primary keys generated server-side.
+- Payment crediting idempotent on `signature` (unique constraint).
+
+**Auth:** RS256 JWT, 15 min access, 30 day refresh with rotation and revocation, JWKS at `/v1/auth/jwks`, key rotation supported via `kid`. SIWS verification exactly as spec section 3 (nonce single-use, field-for-field message match, Ed25519 verify). Seeker Genesis Token check via Helius `getTokenAccountsByOwnerV2` against group `GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`, store the token mint, enforce one phone, one account (`SGT_ALREADY_LINKED`).
+
+**API:** Fastify with JSON Schema validation generated from or checked against `openapi.yaml`. Error envelope and codes exactly per `ids/errors.json`. camelCase JSON. Pagination via cursor. Every route has an auth policy declared in code.
+
+**Realtime:** Colyseus rooms with the generated schemas, `welcome {serverNow, instanceId}` on every join, 20 s reconnection, JWT verified in `onAuth`, sharding city at 1,000 clients, venue overflow into new instances, quantized positions, server-side speed and walkable-rectangle validation, block lists applied on `said` and DMs, chat filter (strip links and phone numbers, profanity filter), `talking` mirrors LiveKit state.
+
+**Solana:** `@solana/kit` for client code, Helius RPC + webhooks, webhook signature/auth verification, webhook handlers idempotent, plus a polling reconciler so crediting still works if a webhook is missed. Payment verification exactly per contract section 6 (confirmed then reconcile at finalized; mint, destination, amount, memo, reference, expiry, signature uniqueness).
+
+**LiveKit:** `livekit-server-sdk` for tokens, `UpdateParticipant` for speaker promotion, room-name convention `{kind}:{id}`, identity = userId, signed webhook verification for `participant_left` / `room_finished`.
+
+**Moderation and safety:** reports, blocks, moderation queue, admin endpoints under `/v1/admin/*` guarded by a separate admin role claim, bans (`kicked` message), 18+ gate (`ageConfirmed` must be true), no call recording, audit log for every admin action.
+
+**Observability:** pino logs, `/healthz` and `/readyz`, Prometheus metrics endpoint (request latency, ledger tx retries, room counts, tick lag, webhook lag), error tracking hook via env (Sentry DSN optional).
+
+**Security:** helmet/CORS config, body size limits, input validation on every boundary, SQL via parameterized queries only, SSRF-safe handling of `link` in ad bookings (store only, never fetch), dependency audit in CI, secrets scanning in CI (gitleaks).
+
+# SOLID AND ARCHITECTURE
+
+Apply the five principles concretely, not as slogans. Over-engineering is also a defect: no abstraction without at least one real use and a reason recorded in an ADR.
+
+- **Single Responsibility.** One reason to change per module. Route handlers only parse/validate, call a service, and shape the response. Services hold business rules. Repositories hold SQL. Adapters wrap external systems. A file that mixes HTTP, business logic and SQL is a defect. Soft limits: functions about 40 lines, files about 300 lines, justify exceptions in a comment.
+- **Open/Closed.** Extend by adding, not editing. Use registries and strategy objects for things that grow: payment currencies (USDC, SOL, SKR, ORE each a `CurrencyHandler`), NPC archetypes (each a state machine registered by ID), career and mini-game scorers, event types, outcome tables, ad slot kinds, price feeds. Adding the 21st NPC archetype or a new currency must require a new file plus a registry line, not changes to existing logic.
+- **Liskov Substitution.** Every implementation of an interface must honor its full contract (same error semantics, same invariants). Provide a shared contract-test suite per interface (for example `PriceFeed`, `Clock`, `LedgerRepository`) that every implementation must pass, including the test doubles used for time and randomness.
+- **Interface Segregation.** Small, role-specific interfaces. A service that only reads balances depends on `BalanceReader`, not the whole ledger. A room that only needs to publish events depends on `EventPublisher`. No "god" interfaces and no passing the whole config object around; inject the slice you need.
+- **Dependency Inversion.** Business logic depends on interfaces defined in the domain layer; infrastructure implements them. Wire everything in one composition root per process (`server/api/main.ts`, `server/realtime/main.ts`, `server/workers/main.ts`) with constructor injection. No service instantiates its own database, Redis, Solana, LiveKit, clock or RNG. Inject `Clock` and `Rng` everywhere so time-based and random logic is testable (this is how the Sunday Unlock and market tests run on a simulated clock).
+
+**Layering (dependencies point inward only):**
+```
+transport (Fastify routes, Colyseus rooms, BullMQ processors, webhooks)
+  → application services (use cases, orchestration, transactions)
+    → domain (entities, value objects, pure rules: ledger, perps, market curve, tax, NPC brain)
+      ← infrastructure adapters (Postgres repos, Redis, Helius, LiveKit, Solana, S3, price feeds, LLM)
+```
+- The domain layer imports nothing from transport or infrastructure. Enforce this with an ESLint boundaries rule (or dependency-cruiser) in CI.
+- Money is a value object (`Cents`, `TokenAmount` with base units as `bigint`), never a bare `number`. No floating-point math on money, ever.
+- Errors: a typed domain error hierarchy mapped to contract error codes in exactly one place (the transport boundary).
+- Use the Unit of Work pattern for ledger transactions so a service cannot forget to commit or roll back.
+- Record every significant architectural choice as an ADR in `docs/adr/NNNN-title.md` (context, decision, alternatives, consequences).
+
+# DOCUMENTATION REQUIREMENTS
+
+Documentation is a deliverable of equal weight to code. Write it as you go, in the same commit as the code it describes. Assume the reader is your teammate or a new engineer who has never seen this repo and cannot ask you questions.
+
+**Repo-level docs (keep current at every milestone):**
+- `README.md`: what the project is, architecture diagram (Mermaid), quick start (clone to running stack in under 10 minutes), every environment variable (name, purpose, required or optional, example, which environments), all scripts, and links to everything below.
+- `docs/ARCHITECTURE.md`: system overview, process boundaries (api, realtime, workers), data flow diagrams for each major flow (auth, top-up payment, trade, liquidation, paid call, Sunday Unlock, NPC event propagation), the layering rules, and the composition roots.
+- `docs/adr/`: architecture decision records as above. `docs/DECISIONS.md` stays as the quick log and links to ADRs.
+- `docs/DATA_MODEL.md`: every table, column, index and constraint with a plain-language description, an ER diagram (Mermaid), and the ledger invariants spelled out.
+- `docs/ECONOMY.md`: every faucet and sink, the tax brackets, rent, top-up packs and bonuses, the formulas (Net Worth, perp liquidation price, bonding curve, fees, pay formulas), and the latest `econ-sim` results with the parameters used. Every number in config must be explained here.
+- `docs/REALTIME.md`: every room, every state field, every message (direction, payload, validation, limits, error codes), the join and reconnection flow, and sequence diagrams.
+- `docs/NPCS.md`: every archetype's state machine (diagram), triggers, config keys, and how to add a new one.
+- `docs/ONCHAIN.md`: every program, PDA, instruction, account list, event and error for `ct_escrow`; the payment verification algorithm step by step; the ORE read and stake flows and the ported instruction builders with their source references; devnet and mainnet addresses.
+- `docs/SECURITY.md`: threat model (who can attack what), authz matrix per endpoint, secret handling, rate limits, anti-cheat assumptions, known residual risks (for example the trusted settle authority).
+- `docs/OPERATIONS.md` and `docs/RUNBOOK.md`: deploy, rollback, migrations, key rotation, webhook setup, incident playbooks (ledger mismatch, stuck paid call, Helius outage, price feed outage, Redis loss), metrics and alerts, backup and restore.
+- `docs/TESTING.md`: how to run each test layer, what each covers, how to run bots and load tests, how to use the simulated clock, how to run mainnet-read tests safely.
+- `docs/HANDOVER.md`, `docs/PROGRESS.md`, `docs/TEST_REPORT.md`, `docs/UNVERIFIED.md`: as specified elsewhere in this prompt.
+- `CONTRIBUTING.md`: coding standards, the SOLID and layering rules, branch and commit conventions, how to add an endpoint, a room message, an NPC, a currency, a config file, a registry ID, with a worked example for each.
+
+**API documentation:** `openapi.yaml` is the API reference. Every operation needs a summary, a description (behavior, side effects, idempotency, ledger effects, auth), every parameter and field described, every error code listed with when it occurs, and examples for success and each error. Render it to static HTML (Redoc or Scalar) in CI and serve it at `/docs` in non-production.
+
+**In-code documentation:**
+- TSDoc on every exported function, class, interface and type: purpose, parameters, return value, thrown errors, invariants, and side effects. State units explicitly (cents, base units, milliseconds, epoch ms vs ISO strings).
+- A header comment at the top of every file explaining its role and where it sits in the layering.
+- Comment the **why** on non-obvious logic, especially money math, locking and transaction boundaries, rate limiting, replay and idempotency, Solana account validation, and anything that exists because of a spec rule or past bug. Cite the spec section.
+- Every config file gets a sibling `*.md` (or `description` fields in its JSON Schema) explaining each key, its unit, valid range and what changes in-game when it is tuned.
+- Rust/Anchor: `///` doc comments on every instruction, account struct, error and event, with the security reasoning for each constraint.
+- Migrations: a header comment on each explaining intent and any data-safety notes.
+
+**Diagrams:** Mermaid in markdown (sequence, state, ER, flow) so they render on GitHub and are diffable. At minimum: auth sequence, payment-intent lifecycle, paid-call state machine, perp lifecycle, coin stage machine, each NPC state machine, ledger transaction flow, deployment topology.
+
+**Enforcement (part of CI, not optional):**
+- ESLint `jsdoc/require-jsdoc` (or equivalent) fails the build on undocumented exports.
+- A docs-check script verifies: every env var in code appears in `.env.example` and the README, every table in migrations appears in `DATA_MODEL.md`, every error code in `errors.json` appears in `openapi.yaml`, every realtime message appears in `REALTIME.md`, and all Markdown links resolve.
+- Each milestone's commit must include its documentation changes. In `TEST_REPORT.md`, list which docs were created or updated for that milestone.
+
+# SCALABILITY AND RESILIENCE
+
+The game may go viral. A crashed world loses users permanently, so the design goal is: **under overload, degrade features and shed load; never fall over, and never lose or corrupt money.** The targets below are assumptions the owner can change: **design** for horizontal scale to 20,000 concurrent players; **load-test** to 5,000 on staging; **measure and publish** real per-process capacity instead of guessing. Do not invent capacity numbers. Measure them.
+
+## Architecture rules (hard to retrofit, so follow them from M2 onward)
+
+1. **Stateless API and workers.** Any instance can be killed at any moment. All shared state lives in Postgres or Redis. No in-process caches that affect correctness. The only in-memory authoritative state is Colyseus room state, which must be disposable or reconstructable.
+2. **Multi-process realtime from the start.** Run Colyseus with the Redis presence and driver across multiple processes, even locally (Compose runs at least 2 realtime replicas). Research and document how clients are routed to the right process (matchmaker seat reservation, public process addresses, or a proxy) and whether it works on Railway. Record the choice in an ADR and flag any Railway limitation in `UNVERIFIED.md`. Shard rooms: `city` per 1,000 clients, `venue` per 50, and the `market` room must also shard (multiple market rooms fed by one Redis channel), not one 2,000-client room.
+3. **Market engine with leader election and failover.** One writer per coin is required, but the writer must not be a single point of failure. Use a Redis lease with a fencing token and automatic takeover. Persist engine state every N ticks so a new leader resumes (deterministic seed replay for the gap). Market rooms are read-only subscribers via Redis pub/sub. Test by killing the leader mid-tick: no double ticks, no lost trades, no price discontinuity beyond one tick.
+4. **Ledger built to avoid hot rows.** Per-user balance rows only. Never update a single global row (such as a treasury or sink total) on every transaction. Aggregate global totals from append-only entries on a schedule. Keep transactions short, retry serialization failures with jittered backoff, set `statement_timeout` and `lock_timeout`, partition `ledger_entries` by month, use connection pooling (PgBouncer-compatible, no session-state reliance), and index for the real query patterns. Money lives only in Postgres. Losing Redis must never lose money.
+5. **Read scaling.** Boards are Redis sorted sets. Heavy reads (leaderboards, feed, tombstones) are cached with short TTLs. `GET /config`, `/ads/live`, `/ads/slots`, `/ore/board` and other shared reads send correct `Cache-Control` and `ETag` headers so a CDN can absorb them, and use single-flight request coalescing on cache misses to prevent stampedes. Support an optional read replica for expensive queries via config.
+6. **Admission control.** Add per-IP limits in addition to per-user limits, and a global login-concurrency limiter. When saturated, return `503` with `Retry-After` and the new error code `SERVER_BUSY` (add it to `ids/errors.json` and `openapi.yaml` as an additive contract change and note it in `contract/CHANGELOG.md` for the teammate, who must show a "city is busy, retrying" screen). Add per-IP caps on account and character creation to blunt bot floods, since wallet sign-up is cheap.
+7. **Backpressure and load shedding.** Define priority tiers. Critical: auth, anything that touches the ledger, realtime movement. Non-critical: feed, smart money, boards refresh, LLM NPCs, ORE reader. Monitor event-loop lag, room tick lag, DB pool wait time and Redis latency. When thresholds are exceeded, shed non-critical work first and fail fast with `SERVER_BUSY` instead of queueing without bound. All queues and buffers are bounded.
+8. **Kill switches and graceful degradation.** Runtime feature flags stored in Redis, changeable without a deploy and exposed to the client through an additive `degraded: string[]` field on `GET /config` so the client can adapt its UI. At minimum flags for: voice token issuance, LLM NPCs, NPC density, venue max clients, board refresh rate, smart money, feed, DMs, ORE reader, new-account signups. A degraded feature must return a clear contract error or an empty-but-valid response, never a 500.
+9. **External dependency protection.** Every third party has a timeout, a circuit breaker and a bulkhead (separate concurrency limit). Specifics: **Helius**: token-bucket client that respects plan limits (free tier is 10 req/s), cache the Seeker Genesis Token result, and if Helius is slow or down, let login succeed and verify the Seeker badge asynchronously in the background. Webhook endpoints verify the signature, enqueue to BullMQ and respond immediately; processing is async and idempotent. **Price feeds**: stale-while-revalidate with a maximum staleness, and `503` for new payment intents only if no fresh enough quote exists. **LiveKit**: a LiveKit outage or plan-limit hit must never affect the game loop; voice fails soft. Document each provider's plan limits (for example LiveKit Build plan caps at 100 concurrent participants) and exactly what the player experiences when a limit is hit.
+10. **Zero-downtime operations.** Rolling deploys. Realtime processes drain on shutdown (stop accepting new rooms, let existing clients reconnect within the 20 s window to another process). Readiness reflects dependency health. Migrations follow expand/contract (backward compatible with the previous release, no long table locks, no destructive change in the same release as the code change).
+11. **Data safety.** Document and enable automated backups with point-in-time recovery, write and rehearse a restore procedure in `RUNBOOK.md`, run the nightly ledger reconciliation with alerting, and configure Redis persistence appropriately for presence-critical data.
+12. **Cost safety.** Metrics and alerts for LiveKit participant-minutes, Helius credit burn and Railway spend, with configurable hard caps that trip the relevant kill switch.
+
+## Required tests and outputs
+
+- **Staged ramp:** 200, then 1,000, then 5,000 bots against staging (run bots from separate machines or with k6 or an equivalent distributed runner, not from the same host as the server). Record where it bends and what bends first.
+- **Spike test:** 0 to 2,000 logins in 60 seconds. Expected result: `SERVER_BUSY` with `Retry-After` for the overflow, no crashes, no ledger errors, and recovery to normal latency within a defined time.
+- **Soak test:** 1 hour at 50% of the measured ceiling. No memory growth trend, no connection leaks.
+- **Dependency failure tests:** Helius down, LiveKit down, price feed down, Redis restarted, Postgres failover or pool exhaustion. Each must end in degraded service, not an outage, and with a correct ledger.
+- **Kill tests:** terminate a realtime process, an API instance, the market leader and a worker mid-job under load. Clients reconnect, nothing is double-processed, nothing is lost.
+- **Output `docs/CAPACITY.md`:** measured concurrent players per realtime process and per API instance, the first bottleneck at each scale, CPU and memory per 1,000 players, bandwidth per client, the Postgres write rate ceiling, estimated monthly cost per 1,000 concurrent players at each tier, and a step-by-step scaling recipe (what to add at 1k, 5k and 20k concurrent).
+
+## Sequencing
+
+Rules 1, 4, 5, 6, 8 and 9 are cheap now and expensive later: build them during M2 and M3. Rules 2 and 3 (multi-process realtime, market leader failover) land in M3. The full ramp, spike, soak, chaos and capacity work is part of M8. Do not skip the cheap rules to save time.
+
+# MILESTONES
+
+Do them in order. Each milestone ends with its **gate**. Do not start the next until the gate passes and is recorded in `docs/TEST_REPORT.md`.
+
+## M0: Foundation and verification
+- Initialize repo, TypeScript workspace (pnpm or npm workspaces), lint/format, CI skeleton.
+- Verify every version in the spec (list under "Pinned versions" below). Record the actual versions in `DECISIONS.md`.
+- Write `docker-compose.yml`: Postgres, Redis, LiveKit dev server, MinIO, plus app services and a `mock` profile as described.
+- Write `.env.example` with every variable you will need. Check which are set in the environment. **If any required credential is missing, list all of them in one message and stop.** Required: `HELIUS_API_KEY`, `HELIUS_WEBHOOK_SECRET`, `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `DATABASE_URL`, `REDIS_URL`, `JWT_PRIVATE_KEY` (generate if absent for local), `TREASURY_PUBKEY` (devnet and mainnet), `SETTLE_AUTHORITY_KEYPAIR` (devnet), `ADMIN_KEYPAIR` (devnet), `S3_*`, `ANTHROPIC_API_KEY` (M7), optional `X_CLIENT_ID/SECRET`, optional `SENTRY_DSN`, `RAILWAY_TOKEN` (M8).
+- Smoke-test each external dependency with a tiny real call (Helius RPC `getHealth`, LiveKit token mint + room create/delete, Redis/Postgres connectivity, devnet airdrop to the settle authority).
+- **Gate:** `docker compose up` brings everything healthy; the smoke script prints green for every dependency; CI runs lint + typecheck.
+
+## M1: The contract (the teammate is blocked until this exists)
+Produce, from the two spec docs, complete and consistent:
+- `contract/openapi.yaml`: **every** REST endpoint across all six phases, with the `Ph` column preserved as `x-phase`, request/response schemas, all error codes, headers (`Authorization`, `Idempotency-Key`, `X-Client-Version`, `X-Contract-Version`), and a realistic `example` on every response.
+- `contract/realtime/*.ts`: `@colyseus/schema` classes for `VenueState` (PlayerState, NpcState), `MarketState` (CoinState), `CityState`, `HomeState`, plus TypeScript types for every client-to-server and server-to-client message with payload validation (zod or JSON Schema).
+- `contract/ids/*.json`: every registry in spec section 2, fully populated. `archetypes.json` includes the 9 Phase 1 archetypes and the other 20 flagged `"phase": n`. `errors.json` has every code in the spec with HTTP status and default message. Add `ids/ids.schema.json`.
+- `contract/config/*.json` plus a JSON Schema per file. **You must author real numbers** for files the spec does not populate (careers.json: 14 careers x 5 levels, gigs, businesses with bad-day tables, market, events, meta, npc_lines with 30 to 60 lines per Phase 1 archetype, leagues, ads, ore, economy including the top-up packs and tax brackets from the spec, needs, skills including the leverage-cap table, lottery). Careers: include `discord_mod` plus 13 more CT-flavored careers; the first three active in Phase 1 are `discord_mod` and two you pick. Provisional `spots.json`, `anims.json`, `sfx.json`, `mini_games.json` per the deviations above.
+- `tools/contract-check`: validates config and IDs against schemas, runs codegen (`schema-codegen ... --csharp` and `openapi-generator` csharp models-only) and fails CI if committed output is stale, and a response validator used by tests.
+- `contract/README.md`: exact instructions for the teammate to pull the contract and run codegen.
+- Tag `contract-v1.0.0-rc1`.
+- **Gate:** all contract checks pass in CI; `openapi.yaml` lints clean (Spectral); every operation has at least one example; C# codegen runs without errors (if the .NET/Java toolchain is unavailable, say so in `UNVERIFIED.md` and make CI do it). Then **continue**; do not wait for sign-off.
+
+## M2: Phase 1, City and identity (spec features 1 to 12)
+Build, for real:
+- Auth (all endpoints in section 3), users, Seeker verification, JWKS.
+- `POST /characters`, `GET /me`, `GET /config` with ETag and `version`/`minClientVersion`.
+- `POST /lottery/roll` with `ALREADY_ROLLED`.
+- Ledger, balances, needs (lazy decay computed on read from `needs.json`, `POST /needs/actions` including party-only-at-club-venues rule).
+- Careers, apply, shifts, `complete` (server-side scoring cap from `mini_games.json`, `SHIFT_NOT_FINISHED` if completed before minimum duration, XP and promotion).
+- Daily-clue-independent parts of the economy: tax brackets and the weekly reset framework.
+- Rooms: `city`, `venue` (all Phase 1 venues in `venues.json`), full message set, NPC brains for the 9 Phase 1 archetypes, Giveaway Guy `npc_tap` costing $50 with `toast_drained`, Town Crier driven by real events.
+- Event engine (`events.json`), `GET /events/active`, `event` broadcasts.
+- Boards in Redis (`net_worth`, `weekly_pnl` plus the rest of `boards.json` as data becomes available), `GET /leaderboards/{boardId}`, Net Worth formula from the contract.
+- Reports, blocks, moderation queue, admin endpoints, `GET /users/{id}`.
+- `tools/bots` v1 and the `mock` Compose profile population.
+- `tools/econ-sim`: simulate 1,000 synthetic players for 8 weeks using the real config and ledger rules. Output faucet/sink totals, median Net Worth, and the share of players hitting any cap. Assert no runaway inflation (define and document the threshold). This replaces the "economy spreadsheet" the spec asks for before shops.
+- **Gate (all must pass):**
+  - Unit tests for ledger invariants, needs decay, tax brackets, lottery, shift scoring caps.
+  - API integration tests (real Postgres/Redis) for every Phase 1 endpoint including every error code and idempotent replay.
+  - Contract tests: every response validates against `openapi.yaml`.
+  - Realtime tests with `@colyseus/testing`: join, welcome, move validation (speed and walkable rectangles), sit/stand with `SPOT_TAKEN`, emote rate limit, say filter, block hides messages, reconnection within 20 s, venue overflow to a second instance.
+  - Bot e2e: 20 bots complete SIWS with real keypairs, create characters, roll lottery, join Timeline Square, chat, work a shift.
+  - Load: 200 bots across 4 venue instances for 5 minutes; record p95 REST latency, room tick lag, and bytes/s per client (target 3 to 5 KB/s in a full venue, report the real number).
+  - Contract integration checklist steps 2 to 5 and 11 (Phase 1 subset) automated with bots where possible.
+
+## M3: Phase 2, Money and markets (features 13 to 21)
+- Payment intents for USDC, SOL, SKR, ORE: `POST /payments/intents`, polling endpoint, `TOPUP_CAP_REACHED` (100 USDC per wallet per day), live quotes, bonus bps (ORE 1500, SKR 1000), `payment_confirmed` message. Helius webhook plus polling reconciler, verification rules exactly per contract section 6. SKR: if no devnet mint, SKR payments are enabled only when `APP_ENV=prod`; record in `DECISIONS.md` and `UNVERIFIED.md`.
+- Market sim, launch scheduler (about every 5 minutes), bonding curve, graduation, stages, hidden arcs, `market` room at 0.5 Hz, `tape` messages for trades of $1,000 Cash or more, coin detail with candles and top holders, Security-skill-gated `riskHint`.
+- Trades with slippage (`SLIPPAGE_EXCEEDED`), fees, positions with unrealized PnL.
+- Perps: leverage cap from Trading skill and tribe (`LEVERAGE_NOT_ALLOWED`), liquidation engine evaluated every tick, `liquidated` message, tombstones, `GET /rekt/tombstones`, close, realized PnL. Liquidation price formula documented in `DECISIONS.md` and tested against hand-computed cases.
+- Predictions (5m, 15m, 1h, daily), Alpha Calls (immutable, Trust Score), Smart Money (opt-in).
+- ORE: board reader (decode `Board`, `Round`, `Treasury` accounts from the ORE program on mainnet, cache every 2 s), `GET /ore/board`, `GET /ore/me`, `POST /ore/stake/tx` returning unsigned v0 transactions. **Port the instruction builders from the Rust `ore-stake-api` crate to TypeScript yourself**: download the crate source, derive discriminators and account metas, and verify the produced instruction bytes against a Rust-built reference or by simulating the transaction on mainnet (`simulateTransaction`, no send). Miner tier from ORE balance and the `["stake", user]` PDA, stORE balance. Town Crier motherlode lines from watching ORE rounds. ORE payments use `TransferChecked` with 11 decimals.
+- Launchpad Tower feed, Rug Dev, Sniper Bot, Normie-wave NPC triggers wired to real coin events.
+- **Gate:**
+  - Market sim determinism test (same seed gives identical tape), conservation tests (curve reserves and holder balances reconcile), EV-after-fees test, perp liquidation property tests (fast-check) so a position is never liquidated late or early by more than one tick.
+  - Payment tests on devnet with real transactions from bot keypairs: exact amount, underpaid (`PAYMENT_UNDERPAID`), wrong mint, expired (`PAYMENT_EXPIRED`), missing memo/reference, duplicate signature credited once, webhook delivered twice credited once, webhook never delivered but poller credits.
+  - Credit latency within 10 s for a devnet USDC top-up (record actual).
+  - ORE read tests against real mainnet accounts (read-only). Stake transaction simulation passes for deposit, withdraw, claim, compound. A real tiny mainnet stake only if `RUN_MAINNET_TESTS=1`.
+  - Admin test tools `force-price` and `set skills` enabled only on staging and covered by tests that prove they are disabled in prod.
+  - Integration checklist steps 6, 7, 10, 11 (Phase 2 subset) automated with bots, including a forced liquidation producing a tombstone.
+  - Re-run the M2 load test with the market room active.
+
+## M4: Phase 3, Voice and calls (features 22 to 28)
+- `POST /rtc/token` for venue, space, call (permissions per kind, `canPublish` rules).
+- Spaces: create, list, get, hand raise/lower, promote/demote speakers (`NOT_SPACE_HOST`), end, `space_update` pushes, NPC Spaces Host opens an NPC space when no player space is live. Verify promotion by connecting a real LiveKit participant from a test (livekit-client in Node or server SDK) and confirming publish permission flips.
+- Free video calls (up to 8, `call_invite`).
+- `ct_escrow` Anchor program exactly per contract section 6: Config PDA, Session PDA, vault, instructions `init_config`, `open_session`, `accept`, `settle`, `refund`, events, errors, no admin withdraw. Anchor tests on `solana-test-validator` covering: happy path split math (ceil minutes, cap, 10% fee, refund remainder, rent to fan), refund after accept window, refund after max+600 s, unauthorized signers, double settle (`AlreadyClosed`), overflow, `InvalidRate`. Fuzz the settle math. Deploy to devnet, commit the IDL to `contract/idl/`, record the program ID.
+- Paid-call API: creator profile (`PUT /creator`), `POST /paid-calls` building the unsigned v0 `open_session` transaction, `submitted`, accept/decline/end, status machine (`awaiting_payment`, `ringing`, `live`, `settled`, `refunded`), 120 s accept timer that triggers `refund`, room closes at paid max, settlement from LiveKit signed webhook calling `settle(seconds_used)`, Helius program-event webhook with polling fallback.
+- DMs (stored, 500 char, block-aware, pushed on city room), in-game feed and follows, tips (Cash with daily cap from config, on-chain record endpoint with signature verification against chain).
+- Proximity voice server side: token for the venue-instance room.
+- **Gate:**
+  - All Anchor tests pass.
+  - End-to-end on devnet with two bot wallets: fan opens session, backend sees the event, creator accepts, a one-minute call runs on real LiveKit, settlement transaction lands, balances change by exactly the expected amounts, and the Solana Explorer link for the settle signature is printed in the report. Also the no-answer path (auto refund) and backend-never-settles path (fan-initiated refund after expiry).
+  - Moderation dashboard endpoints exist and are tested (required before paid calls go live).
+  - Integration checklist steps 8, 9 and the Phase 3 paid-call step automated.
+
+## M5: Phase 4, City life (features 29 to 35)
+- All 14 careers and gigs (`/gigs`, `/gigs/{id}/run`), businesses and bad-day engine, homes (`/homes`, rent with weekly due, `/homes/{ownerId}/visit` returning a `roomId`, `home` room at 12 clients), look changes.
+- Sunday Unlock job at Sun 20:00 UTC (rent, gas bill, debt repayment with penalty, Weekly Meta rotation) and Monday 00:00 UTC resets (tax, weekly boards). Jobs must be idempotent and safe if run twice or missed (catch-up on boot). Test with an injectable clock and a simulated full week.
+- Daily clue (`/daily-clue` and answer, prize cents), `/meta/current`.
+- Shop (Cash items), inventory, cosmetics paid with real money through the payment-intent flow, ORE-only cosmetics gated to ORE payments.
+- Cosmetic NFTs: Metaplex Core minting (via Umi) after confirmed real-money payment, never as a prize. Test on devnet.
+- Season pass (5 USDC) logic.
+- Push registration and sender behind the flag.
+- **Gate:** simulated-clock week test passes (rent, tax resets, debt, meta rotation, no double-run); NFT mint verified on devnet; re-run `econ-sim` with all faucets and sinks and update the report; full suite plus load test green.
+
+## M6: Phase 5, Projects and ads (features 36 and 37)
+- Ad slots, terms, bookings with a real payment intent, manual approval via admin endpoints, `GET /ads/live` (5-minute cacheable) and `/ads/slots`, uploads with EXIF stripping, "Sponsored" flag in payloads, report support for `ad`.
+- Player-founded projects: found a project (type, cost in Cash), hire roles with Cash salaries, in-game launchpad token for the project (fictional, server-simulated, same market engine), HQ room in Builder Hills, server-rolled risks (exploit, rug accusation, VC dump at unlock), VC Row NPC.
+- **Gate:** booking-to-live flow tested with a real devnet payment and an admin approval; expiry of terms; project lifecycle tests incl. each risk event and ledger conservation.
+
+## M7: Phase 6, Competition (features 38 to 44)
+- Tribe district control and scores, leagues and seasons (promotion rules from `leagues.json`), `scope=friends|league` boards, tribe change once per season.
+- CT Beef in the Ratio Arena (matches, Elo, Cash stakes only), Airdrop Farm and Sybil jail, Dubai Marina and Cabal Lounge gating (invites, net-worth gates).
+- LLM chat for AI Agent and Sleuth (flagged, rate-limited, filtered, no PII leakage, prompt-injection tests).
+- Verified X link (flag-gated if no credentials).
+- **Gate:** season rollover test with a simulated clock; Elo property tests; LLM output filter tests with adversarial inputs; full suite green.
+
+## M8: Hardening, deployment, handover
+- Security pass: authz tests for every route (user A cannot touch user B's resources), fuzz the REST layer with Schemathesis or equivalent against `openapi.yaml`, dependency audit, gitleaks.
+- Chaos tests: kill the realtime process mid-venue (clients reconnect), kill Redis briefly, restart a worker mid-tick (no double ticks, no lost ledger writes).
+- Complete every test and output listed under "Scalability and resilience": staged ramp to 5,000 bots, spike, soak, dependency-failure and kill tests, and `docs/CAPACITY.md`. Also run a final 200-bot, 4-venue run with market and perps active for 15 minutes and report numbers.
+- Railway config for api, realtime, workers (Dockerfiles, `railway.json`, env docs). Deploy to staging if `RAILWAY_TOKEN` is present, run the automated integration checklist against staging with bot wallets, otherwise write exact deploy steps in `RUNBOOK.md`.
+- Final contract tag `contract-v1.0.0-rc2` if anything changed, and a `docs/HANDOVER.md` for the teammate: environment URLs, how to get a dev token, how to run the `mock` profile, known limitations, the list of provisional FE-owned files they must replace, and every item in `UNVERIFIED.md`.
+- **Gate:** all suites green in CI, `TEST_REPORT.md` complete, `UNVERIFIED.md` and `HANDOVER.md` written.
+
+# PINNED VERSIONS (verify each; see rule 3)
+
+Node 22+; Fastify 5.12.5; Colyseus server 0.18.9, `@colyseus/redis-presence` 0.18.5, `@colyseus/redis-driver` 0.18.4; `@colyseus/schema` 5.0.36 (needs TypeScript 5 or 6); `@colyseus/sdk` 0.18.5 and `@colyseus/testing` 0.18.6 for bots/tests; BullMQ 6.3.11; `@solana/kit` 8.4.0; `@anchor-lang/core` 1.2.0; Anchor 1.2.0; Solana CLI 4.1.2; `livekit-server-sdk` 2.19.1; openapi-generator 7.25.0; Rust crates `ore-api` 3.8.25 and `ore-stake-api` 0.3.0 (reference only). Prism is not needed.
+
+# ON-CHAIN CONSTANTS (from the spec; re-verify on-chain before relying on them)
+
+- USDC mainnet `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`; USDC devnet `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`.
+- SKR `SKRbvo6Gf7GondiT3BbTfuRDPqLWei4j2Qy2NPGZhW3` (decimals from `economy.json`; verify on-chain).
+- ORE mint `oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp` (11 decimals); stORE `storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR`; ORE program `oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv` (read-only); stake program `stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH`, stake PDA seeds `["stake", user]`.
+- Seeker Genesis group `GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`.
+Fetch each mint and program with `getAccountInfo` at M0 and fail loudly if an address does not exist or decimals differ.
+
+# TESTING STANDARDS (apply to every milestone)
+
+- Test pyramid: unit (pure logic, property-based where math is involved), integration (real Postgres/Redis/LiveKit via Compose or Testcontainers), contract (every response validated against `openapi.yaml`; every realtime message validated against its schema), e2e with bots (real keypairs, real devnet), load and chaos.
+- Every error code in `errors.json` has at least one test that triggers it.
+- Every money-moving path has a conservation test: sum of ledger deltas equals the expected value, and no path can create Cash from nothing.
+- Every webhook handler has replay, out-of-order and duplicate tests.
+- Flaky tests are bugs. Fix them, do not retry them into passing.
+- CI runs lint, typecheck, unit, integration, contract checks, Anchor tests, and codegen freshness on every push. E2E, load and mainnet-read tests run in a separate manual or nightly workflow.
+
+# REPORTING FORMAT
+
+At the end of every milestone, print and append to `docs/TEST_REPORT.md`:
+1. Milestone name and commit hash.
+2. Exact commands run and their real output (trimmed to pass/fail counts plus any failures).
+3. Measured numbers (latency, bandwidth, credit latency, load results).
+4. New entries added to `DECISIONS.md`, `UNVERIFIED.md` and `docs/adr/`.
+5. Documentation created or updated this milestone, and the result of the docs-check and architecture-boundary checks (both must pass).
+6. A short SOLID self-review: any module that exceeds the size limits or crosses a layer boundary, with justification or the refactor you did.
+7. Anything in the spec you believe is wrong, inconsistent or risky, with a proposed fix. Do not silently work around spec problems. Flag them.
+
+Begin with M0 now. Read the spec docs first, then verify versions, then proceed. When you reach the end of a session's capacity, update `PROGRESS.md` so the next session resumes at the exact next step.
