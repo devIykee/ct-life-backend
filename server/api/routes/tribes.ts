@@ -66,14 +66,10 @@ export function registerTribeRoutes(app: FastifyInstance): void {
 
   // POST /v1/me/tribe — change the caller's tribe. Refused if the
   // caller already changed tribe in the current ISO-8601 week.
-  app.post(
-    '/v1/me/tribe',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const body = ChangeTribeBody.safeParse(req.body);
-      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const out = await changeTribe(req.ctx, req.user!.sub, body.data.tribeId);
-      return reply.send(out);
-    },
-  );
+  app.post('/v1/me/tribe', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
+    const body = ChangeTribeBody.safeParse(req.body);
+    if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+    const out = await changeTribe(req.ctx, req.user!.sub, body.data.tribeId);
+    return reply.send(out);
+  });
 }

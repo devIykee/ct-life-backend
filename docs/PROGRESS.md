@@ -793,7 +793,7 @@ Marina + Cabal Lounge gating, LLM chat for AI Agent
       outscores the current one; UNIQUE on
       (district_id, valid_from) is the history-row floor.
 - [x] M7 #2 — Leagues and seasons. `server/application/
-    leagues.ts` + `routes/leagues.ts`. Five tiers
+leagues.ts` + `routes/leagues.ts`. Five tiers
       (iron/bronze/silver/gold/diamond) seeded from
       contract/config/leagues.json. runSeasonRollover
       assigns every user with a balance, ranked by net

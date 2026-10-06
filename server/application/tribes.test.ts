@@ -275,9 +275,7 @@ describe('tribes service', () => {
       const ctx = buildContext();
       const { changeTribe } = await import('./tribes.js');
       const userId = await newCharUser();
-      await expect(changeTribe(ctx, userId, 'anon')).rejects.toBeInstanceOf(
-        ValidationFailedError,
-      );
+      await expect(changeTribe(ctx, userId, 'anon')).rejects.toBeInstanceOf(ValidationFailedError);
     });
 
     it('refuses when the user has no character', async () => {

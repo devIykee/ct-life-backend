@@ -38,11 +38,7 @@
  * `district_ownership_history.valid_to`.
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import {
-  ForbiddenError,
-  NotFoundError,
-  ValidationFailedError,
-} from '../shared/domain/errors.js';
+import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { weekIso } from './season-clock.js';
 import type { AppContext } from './context.js';
