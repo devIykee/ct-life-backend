@@ -31,34 +31,12 @@ import {
 } from '@solana/spl-token';
 import { Connection } from '@solana/web3.js';
 
-const ORE_MINT = new PublicKey('oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp');
-const STORE_MINT = new PublicKey('storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR');
-/**
- * ORE stake program ID. The master prompt quotes a placeholder
- * (`stake-cNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeHMM`) that is
- * not a valid base58 Solana pubkey (it contains `-`). The real
- * ORE stake program ID is read from `ORE_STAKE_PROGRAM_ID` env
- * var; the default below is `SystemProgram.programId` so the
- * module compiles and tests can run before the env var is set.
- *
- * Production deploy: set `ORE_STAKE_PROGRAM_ID` to the actual
- * ORE stake program address on mainnet/devnet.
- */
-function resolveOreStakeProgramId(): PublicKey {
-  const raw = process.env['ORE_STAKE_PROGRAM_ID'];
-  if (raw !== undefined && raw.length > 0) {
-    try {
-      return new PublicKey(raw);
-    } catch {
-      // Fall through to the placeholder.
-    }
-  }
-  // Placeholder so the module loads when ORE_STAKE_PROGRAM_ID
-  // is absent. Staking transactions built against this default
-  // are useful for shape testing but will fail on send.
-  return new PublicKey('11111111111111111111111111111111');
-}
-export const ORE_STAKE_PROGRAM_ID: PublicKey = resolveOreStakeProgramId();
+// ORE v3 constants (mainnet-beta verified 2026-10-06 via getAccountInfo)
+// Source: ore-stake-api v0.3.0 crate documentation
+const ORE_MINT = new PublicKey('oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp'); // ORE token mint
+const STORE_MINT = new PublicKey('storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR'); // stORE token mint
+export const ORE_STAKE_PROGRAM_ID = new PublicKey('stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH'); // ORE stake program
+export const ORE_PROGRAM_ID = new PublicKey('oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv'); // ORE v3 program
 import { PublicKey as PKType } from '@solana/web3.js';
 
 function disc(name: string): Uint8Array {
