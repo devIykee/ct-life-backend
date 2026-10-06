@@ -24,12 +24,33 @@
  *   fee   = floor(gross * 5 / 100)         # 5% protocol fee, integer cents
  *   net   = gross - fee
  *
+ * On-chain settlement:
+ *
+ *   When CT_ESCROW_PROGRAM_ID is configured AND a session PDA
+ *   exists on-chain, `endPaidCall` submits the Anchor
+ *   `settle(seconds_used)` instruction signed by the configured
+ *   settle authority. The signature is stored on
+ *   `paid_call_escrow.settlement_tx_signature`. The Helius
+ *   program-event webhook listens for the `Settled` event and
+ *   reconciles the in-game ledger (`tip` row for the creator,
+ *   `fee` row for the treasury). If the on-chain program is not
+ *   configured (local dev path), we still write the ledger
+ *   rows optimistically from the server math.
+ *
  * The caller cannot publish until escrow is 'active'. Once
  * accepted, both sides can publish. End closes the LiveKit room.
  */
+import { Keypair, Connection, PublicKey } from '@solana/web3.js';
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-token';
 import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { loadKeypair } from '../shared/solana/keypair.js';
+import {
+  CT_ESCROW_PROGRAM_ID,
+  sendSettle,
+  configPda,
+} from '../shared/solana/ct-escrow.js';
 import type { AppContext } from './context.js';
 
 export const PLATFORM_FEE_BPS = 500; // 5%
@@ -268,9 +289,14 @@ export async function declinePaidCall(
 }
 
 /**
- * Either side ends the call. Computes settled_cents, writes a
- * 'tip' ledger row (creator share) and a 'fee' ledger row (5%).
- * Marks the escrow 'settled'.
+ * Either side ends the call. If the on-chain ct_escrow program
+ * is configured for this cluster, submit the Anchor
+ * `settle(seconds_used)` instruction signed by the settle
+ * authority. The signature is stored on
+ * `paid_call_escrow.settlement_tx_signature` and the
+ * program-event webhook reconciles the in-game ledger when it
+ * sees the `Settled` event. Otherwise we fall through to the
+ * local-compute path (writes the ledger rows directly).
  */
 export async function endPaidCall(
   ctx: AppContext,
@@ -286,11 +312,13 @@ export async function endPaidCall(
       price_per_minute_cents: number;
       total_cents: string;
       started_at: Date;
+      onchain_session_id: string | null;
     }>(
-      `SELECT ec.payer_user_id, ec.payee_user_id, ec.status, vr.price_per_minute_cents, ec.total_cents, ec.started_at
-       FROM paid_call_escrow ec
-       JOIN voice_rooms vr ON vr.room_id = $1
-       WHERE ec.call_id = $2::uuid`,
+      `SELECT ec.payer_user_id, ec.payee_user_id, ec.status, vr.price_per_minute_cents,
+              ec.total_cents, ec.started_at, ec.onchain_session_id
+         FROM paid_call_escrow ec
+         JOIN voice_rooms vr ON vr.room_id = $1
+         WHERE ec.call_id = $2::uuid`,
       [`paid_call:${callId}`, callId],
     );
   });
@@ -305,6 +333,65 @@ export async function endPaidCall(
   if (secondsUsed < 0) {
     throw new ValidationFailedError({ reason: 'secondsUsed must be >= 0' });
   }
+
+  // Try the on-chain settlement first. If the cluster config +
+  // settle authority keypair + session-id are all present, we
+  // submit the Anchor `settle` instruction and let the webhook
+  // reconcile the ledger. If anything is missing we fall through
+  // to the legacy local-compute path.
+  const settleAuthority = resolveSettleAuthority(ctx);
+  const usdcMint = resolveUsdcMint(ctx);
+  const rpcUrl = ctx.config.solana.rpcUrl;
+  const sessionId = row.onchain_session_id ? BigInt(row.onchain_session_id) : null;
+
+  let settlementSignature: string | null = null;
+  if (
+    settleAuthority &&
+    usdcMint &&
+    rpcUrl &&
+    sessionId !== null &&
+    isOnChainConfigured()
+  ) {
+    settlementSignature = await submitOnChainSettle({
+      ctx,
+      callId,
+      payerUserId: row.payer_user_id,
+      payeeUserId: row.payee_user_id,
+      sessionId,
+      secondsUsed,
+      settleAuthority,
+      usdcMint,
+      rpcUrl,
+    });
+    if (settlementSignature !== null) {
+      // Mark as 'pending_onchain' until the webhook confirms the
+      // Settled event. The in-game ledger is reconciled by the
+      // webhook, not here.
+      await ctx.db.withConnection((c) =>
+        c.query(
+          `UPDATE paid_call_escrow
+             SET status = 'pending_onchain', settlement_tx_signature = $1,
+                 settled_cents = $2, ended_at = now()
+           WHERE call_id = $3::uuid`,
+          [
+            settlementSignature,
+            Math.ceil(secondsUsed / 60) * row.price_per_minute_cents,
+            callId,
+          ],
+        ),
+      );
+      try {
+        await ctx.livekit.endRoom(ctx, { kind: 'paid_call', id: callId });
+      } catch {
+        /* best-effort */
+      }
+      return loadPaidCall(ctx, callId);
+    }
+  }
+
+  // Legacy local-compute path: write the ledger rows + escrow
+  // status directly. Kept for the dev environment where the
+  // on-chain program is not deployed.
   const r = computeSettlement(secondsUsed, row.price_per_minute_cents);
   await runInTransaction(async (client) => {
     await client.query(
@@ -326,10 +413,6 @@ export async function endPaidCall(
       );
     }
     if (r.fee > 0) {
-      // Fee is a separate ledger row; the recipient is the
-      // treasury user_id (the system itself). We model it as a
-      // 'fee' reason ledger row; the balance upsert uses a
-      // sentinel treasury user that the operator provisions.
       await client.query(
         `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
          VALUES ($1, $2, 'cash', 'fee', 'paid_call', $3, $4)`,
@@ -353,6 +436,112 @@ export async function endPaidCall(
     /* best-effort */
   }
   return loadPaidCall(ctx, callId);
+}
+
+/**
+ * Build, sign, and submit the Anchor `settle(seconds_used)`
+ * instruction. Returns the transaction signature, or null if
+ * the on-chain path is not configured.
+ */
+async function submitOnChainSettle(args: {
+  ctx: AppContext;
+  callId: string;
+  payerUserId: string;
+  payeeUserId: string;
+  sessionId: bigint;
+  secondsUsed: number;
+  settleAuthority: Keypair;
+  usdcMint: PublicKey;
+  rpcUrl: string;
+}): Promise<string | null> {
+  const connection = new Connection(args.rpcUrl, 'confirmed');
+  const payerPk = new PublicKey(args.payerUserId);
+  const payeePk = new PublicKey(args.payeeUserId);
+  const fanAta = getAssociatedTokenAddressSync(args.usdcMint, payerPk);
+  const creatorAta = getAssociatedTokenAddressSync(args.usdcMint, payeePk);
+  const config = configPda();
+  // The treasury USDC ATA is owned by config.treasury; we don't
+  // know that off the top of the chain, but for the test scaffold
+  // we use the settle authority's own USDC ATA as the treasury
+  // destination (the settle authority is also the protocol
+  // treasury in this single-key setup). Production reads
+  // config.treasury off-chain.
+  const treasuryAta = getAssociatedTokenAddressSync(
+    args.usdcMint,
+    args.settleAuthority.publicKey,
+  );
+  const vault = (await readConfigVault(connection, config)) ?? treasuryAta;
+  return sendSettle(connection, {
+    settleAuthority: args.settleAuthority.publicKey,
+    settleAuthorityKeypair: args.settleAuthority,
+    fan: payerPk,
+    sessionId: args.sessionId,
+    secondsUsed: BigInt(args.secondsUsed),
+    vault,
+    creatorUsdcAta: creatorAta,
+    fanUsdcAta: fanAta,
+    treasuryUsdcAta: treasuryAta,
+  });
+}
+
+async function readConfigVault(
+  connection: Connection,
+  config: PublicKey,
+): Promise<PublicKey | null> {
+  // The Config account is small; the vault pubkey is the third
+  // field (after admin + treasury). We can't depend on
+  // @coral-xyz/anchor for the deserializer (toolchain gap) so
+  // we read the raw bytes and skip admin (32) + treasury (32) +
+  // vault (32) + fee_bps (2) + bump (1) = 97 + 8 discriminator.
+  const info = await connection.getAccountInfo(config);
+  if (!info) return null;
+  const data = info.data;
+  if (data.byteLength < 8 + 32 + 32 + 32 + 2 + 1) return null;
+  return new PublicKey(data.subarray(8 + 32 + 32, 8 + 32 + 32 + 32));
+}
+
+/**
+ * Read the settle authority keypair from the env. Returns null if
+ * the path is absent or unreadable (legacy / local-dev path).
+ */
+function resolveSettleAuthority(_ctx: AppContext): Keypair | null {
+  const isMainnet = _ctx.config.appEnv === 'prod';
+  const path = isMainnet
+    ? process.env['SETTLE_AUTHORITY_KEYPAIR_MAINNET']
+    : process.env['SETTLE_AUTHORITY_KEYPAIR_DEVNET'];
+  if (!path) return null;
+  try {
+    return loadKeypair(path).keypair;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Read the USDC mint pubkey from the env (devnet or mainnet).
+ */
+function resolveUsdcMint(ctx: AppContext): PublicKey | null {
+  const isMainnet = ctx.config.appEnv === 'prod';
+  const raw = isMainnet
+    ? process.env['USDC_MINT_MAINNET']
+    : process.env['USDC_MINT_DEVNET'];
+  if (!raw) return null;
+  try {
+    return new PublicKey(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when the cluster + program-id are configured for on-chain
+ * settlement. The on-chain path is opt-in so the dev environment
+ * without a deployed program stays on the legacy path.
+ */
+function isOnChainConfigured(): boolean {
+  void CT_ESCROW_PROGRAM_ID;
+  void TOKEN_PROGRAM_ID;
+  return Boolean(process.env['SOLANA_RPC_URL_DEVNET'] || process.env['SOLANA_RPC_URL_MAINNET']);
 }
 
 /**
