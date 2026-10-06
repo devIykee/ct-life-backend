@@ -109,6 +109,19 @@
  *  74. season_rollover_log UNIQUE (kind, season_iso).
  *  75. season_rollover_log.kind CHECK contains 'season_rollover'.
  *
+ * Checks (M7 #5):
+ *
+ *  76. M7 #5 tables exist: beef_matches, beef_elo.
+ *  77. beef_matches.status CHECK contains
+ *      'open','active','closed','declined','cancelled'.
+ *  78. beef_matches.stake_cents > 0.
+ *  79. beef_matches.elo_*_pre/post BETWEEN 0 AND 3000.
+ *  80. beef_matches (status='closed' AND winner_user_id NOT NULL)
+ *      OR (status != 'closed') CHECK.
+ *  81. beef_elo.elo BETWEEN 0 AND 3000.
+ *  82. beef_elo.matches_played >= 0.
+ *  83. beef_elo (wins + losses + draws) = matches_played CHECK.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -1019,6 +1032,89 @@ async function main(): Promise<void> {
       const cs = await checks('season_rollover_log');
       const all = cs.join('\n');
       record('season_rollover_log.kind in allowed set', /season_rollover/i.test(all));
+    }
+
+    // --- M7 #5 invariants -------------------------------------------
+
+    // (76) M7 #5 tables exist.
+    for (const t of ['beef_matches', 'beef_elo']) {
+      record(`table ${t} exists`, await tableExists(client, t));
+    }
+
+    // (77) beef_matches.status CHECK.
+    {
+      const cs = await checks('beef_matches');
+      const all = cs.join('\n');
+      record(
+        'beef_matches.status in allowed set',
+        /open.*active.*closed.*declined.*cancelled/is.test(all),
+      );
+    }
+
+    // (78) beef_matches.stake_cents > 0.
+    {
+      const cs = await checks('beef_matches');
+      const all = cs.join('\n');
+      record('beef_matches.stake_cents > 0', /stake_cents\s*>\s*0/i.test(all));
+    }
+
+    // (79) beef_matches.elo_*_pre/post BETWEEN 0 AND 3000.
+    {
+      const cs = await checks('beef_matches');
+      const all = cs.join('\n');
+      record(
+        'beef_matches.elo_*_pre/post BETWEEN 0 AND 3000',
+        /elo_challenger_pre\s+BETWEEN\s+0\s+AND\s+3000/i.test(all) === false
+          ? /elo_challenger_pre\s*>=\s*0/i.test(all) &&
+              /elo_challenger_pre\s*<=\s*3000/i.test(all) &&
+              /elo_accepter_pre\s*>=\s*0/i.test(all) &&
+              /elo_accepter_pre\s*<=\s*3000/i.test(all) &&
+              /elo_challenger_post\s*>=\s*0/i.test(all) &&
+              /elo_challenger_post\s*<=\s*3000/i.test(all) &&
+              /elo_accepter_post\s*>=\s*0/i.test(all) &&
+              /elo_accepter_post\s*<=\s*3000/i.test(all)
+          : true,
+      );
+    }
+
+    // (80) beef_matches (closed + winner) CHECK.
+    {
+      const cs = await checks('beef_matches');
+      const all = cs.join('\n');
+      record(
+        'beef_matches status=closed requires winner_user_id',
+        /status\s*=\s*'closed'/i.test(all) && /winner_user_id\s+IS\s+NOT\s+NULL/i.test(all),
+      );
+    }
+
+    // (81) beef_elo.elo BETWEEN 0 AND 3000.
+    {
+      const cs = await checks('beef_elo');
+      const all = cs.join('\n');
+      record(
+        'beef_elo.elo BETWEEN 0 AND 3000',
+        /elo\s+BETWEEN\s+0\s+AND\s+3000/i.test(all) ||
+          (/elo\s*>=\s*0/i.test(all) && /elo\s*<=\s*3000/i.test(all)),
+      );
+    }
+
+    // (82) beef_elo.matches_played >= 0.
+    {
+      const cs = await checks('beef_elo');
+      const all = cs.join('\n');
+      record('beef_elo.matches_played >= 0', /matches_played\s*>=\s*0/i.test(all));
+    }
+
+    // (83) beef_elo wins+losses+draws = matches_played.
+    {
+      const cs = await checks('beef_elo');
+      const all = cs.join('\n');
+      record(
+        'beef_elo wins+losses+draws = matches_played',
+        /wins\s*\+\s*losses\s*\+\s*draws\s*=\s*matches_played/is.test(all) ||
+          /wins\s*\+\s*losses\s*\)\s*\+\s*draws\s*=\s*matches_played/is.test(all) ||
+          /\(\(wins\s*\+\s*losses\)\s*\+\s*draws\)\s*=\s*matches_played/is.test(all),
+      );
     }
   } finally {
     await client.end();

@@ -39,6 +39,7 @@ import { registerProjectRoutes } from './routes/projects.js';
 import { registerNftMintRoutes } from './routes/nft-mint.js';
 import { registerTribeRoutes } from './routes/tribes.js';
 import { registerLeagueRoutes } from './routes/leagues.js';
+import { registerRatioArenaRoutes } from './routes/ratio-arena.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -152,6 +153,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerNftMintRoutes(app);
   registerTribeRoutes(app);
   registerLeagueRoutes(app);
+  registerRatioArenaRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 
