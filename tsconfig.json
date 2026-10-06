@@ -23,7 +23,6 @@
     "**/target",
     "contract",
     "programs/ct_escrow/tests",
-    "server/shared/solana/ct-escrow.ts",
     "tools/fuzz/rest-fuzz.ts",
     "tools/load/staged-ramp.ts"
   ]

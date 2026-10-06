@@ -93,16 +93,16 @@ describe('ct_escrow event decoder', () => {
     const b64 = Buffer.from(bytes).toString('base64');
     const out = decodeCtEscrowEvent(b64);
     expect(out).not.toBeNull();
-    expect(out!.kind).toBe('settled');
-    expect(out!.session).toBe(base58(session));
-    expect(out!.fan).toBe(base58(fan));
-    expect(out!.creator).toBe(base58(creator));
-    expect(out!.secondsUsed).toBe(60n);
-    expect(out!.grossBaseUnits).toBe(1_000_000n);
-    expect(out!.feeBaseUnits).toBe(50_000n);
-    expect(out!.creatorPayoutBaseUnits).toBe(950_000n);
-    expect(out!.refundBaseUnits).toBe(4_000_000n);
-    expect(out!.settledAt).toBe(1_700_000_000n);
+    if (out?.kind !== 'settled') throw new Error('expected settled');
+    expect(out.session).toBe(base58(session));
+    expect(out.fan).toBe(base58(fan));
+    expect(out.creator).toBe(base58(creator));
+    expect(out.secondsUsed).toBe(60n);
+    expect(out.grossBaseUnits).toBe(1_000_000n);
+    expect(out.feeBaseUnits).toBe(50_000n);
+    expect(out.creatorPayoutBaseUnits).toBe(950_000n);
+    expect(out.refundBaseUnits).toBe(4_000_000n);
+    expect(out.settledAt).toBe(1_700_000_000n);
   });
 
   it('decodes a Refunded event', () => {
@@ -120,9 +120,9 @@ describe('ct_escrow event decoder', () => {
     const b64 = Buffer.from(bytes).toString('base64');
     const out = decodeCtEscrowEvent(b64);
     expect(out).not.toBeNull();
-    expect(out!.kind).toBe('refunded');
-    expect(out!.refundBaseUnits).toBe(5_000_000n);
-    expect(out!.refundedAt).toBe(1_700_000_001n);
+    if (out?.kind !== 'refunded') throw new Error('expected refunded');
+    expect(out.refundBaseUnits).toBe(5_000_000n);
+    expect(out.refundedAt).toBe(1_700_000_001n);
   });
 
   it('returns null on a non-ct_escrow log line', () => {
