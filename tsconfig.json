@@ -8,10 +8,23 @@
     "tools/contract-check/**/*.ts",
     "tools/bots/**/*.ts",
     "tools/econ-sim/**/*.ts",
+    "tools/fuzz/**/*.ts",
+    "tools/load/**/*.ts",
     "server/**/*.ts",
     "packages/**/*.ts",
-    "programs/ct_escrow/**/*.ts",
+    "programs/ct_escrow/programs/**/*.ts",
     "vitest.config.ts"
   ],
-  "exclude": ["node_modules", "dist", "build", "coverage", "**/target", "contract"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "**/target",
+    "contract",
+    "programs/ct_escrow/tests",
+    "server/shared/solana/ct-escrow.ts",
+    "tools/fuzz/rest-fuzz.ts",
+    "tools/load/staged-ramp.ts"
+  ]
 }

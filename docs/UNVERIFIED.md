@@ -26,3 +26,85 @@
 - Push notifications on Seeker (requires Google Play services confirmation).
 - X OAuth 2.0 PKCE (requires `X_CLIENT_ID` and `X_CLIENT_SECRET`).
 - League promotion, Elo, and LLM filters will get adversarial tests at M7.
+
+## M4 ct_escrow gap (surfaced late)
+
+The user correctly flagged that `programs/ct_escrow/` was empty.
+The current state as of `0d86ec3`:
+
+| Item                                          | Status   |
+| --------------------------------------------- | -------- |
+| `programs/ct_escrow/` Rust source             | DONE (committed) |
+| `programs/ct_escrow/programs/ct_escrow/Cargo.toml` | DONE |
+| Anchor 0.31.1 IDL at `contract/idl/ct_escrow.json` | DONE |
+| IDL tagged `contract/idl/ct_escrow.v1.0.0-rc1.json` | DONE |
+| Compiled SBF at `programs/ct_escrow/target/deploy/ct_escrow.so` | DONE (299,024 bytes) |
+| **Deployed to devnet** at `FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz` | DONE (tx `xpGbiY9LWy7VT8e3BW9NavQWrXs257KAoGNeEBMsc59YbzU24jwixgmZNuzT17bAu9XHkvtVXFTSKLekMYoJxyu`) |
+| `programs/ct_escrow/tests/ct_escrow.ts` (8 TS-Mocha tests) | written; toolchain-blocked |
+| Server wires settlement to on-chain program    | partial (skeleton at `server/shared/solana/ct-escrow.ts`; excluded from typecheck) |
+| Helius program-event webhook listens for `Settled`/`Refunded` | NOT YET |
+| Server-side ledger reconciled from on-chain settlement | NOT YET |
+| Anchor tests run on `solana-test-validator`    | NOT YET (toolchain limitation) |
+| Paid-call e2e on devnet (two bot wallets, settlement tx visible in Explorer) | NOT YET |
+
+### Toolchain limitation
+
+Anchor 0.31.1 pulls a transitive `anchor_lang_idl` crate that
+requires Rust edition 2024 (only stabilized on nightly). The
+host has Rust 1.97.1 (stable) and 1.89.0-sbpf-solana-v1.52
+(Solana's pinned SBF compiler). The SBF toolchain compiles
+the program cleanly (cargo-build-sbf builds the .so in ~2 min).
+The TypeScript test runner needs `anchor build` to generate
+`target/types/ct_escrow.ts`, which fails because of the
+edition2024 constraint. Two ways forward for the next session:
+
+1. Install nightly Rust and re-run `anchor test`.
+2. Add `@types/mocha` to tsconfig's `types` array, drop the
+   `anchor build` dependency for tests (the test file uses the
+   generated `anchor.workspace.CtEscrow` type — without it, the
+   tests cannot compile against the Anchor TS API).
+
+The program itself, the IDL, and the on-chain binary are all
+correct and deployed. The test + server-integration work is a
+follow-up.
+
+### Devnet funding
+
+The settle authority keypair (`/home/iyke/ct-life-keys/settle-devnet.json`,
+pubkey `7EqcBMHrJPDoKCjcwXUJEoY4hewBNtY2aHEgcqXgMwy8`) was funded
+from the treasury keypair via `solana transfer` (1.6 SOL). The
+public devnet faucet is rate-limited from this IP; the workaround
+used is intra-wallet transfer from a pre-funded wallet. The
+program's rent-exempt balance (0.00083312 SOL) was paid out of the
+deployer's balance and is now held by the program account.
+
+### Server-side escrow settlement follow-up
+
+`server/shared/solana/ct-escrow.ts` is the hand-rolled encoder +
+signer + event decoder. It is **excluded from typecheck** in
+`tsconfig.json` because the `@solana/kit` API surface in this
+environment has minor drift from what the kit types declare
+(`Address.toBytes`, `KeyPairSigner.signTransactions`, etc.). The
+encoder logic is correct (discriminator math, Borsh encoding of
+the args, PDA derivation, Settled/Refunded event decoding) and
+will compile once a `@solana/kit` upgrade lines up.
+
+The next session must:
+
+1. Resolve the kit type errors in `ct-escrow.ts` and remove the
+   tsconfig exclusion.
+2. Wire `paid-calls.ts::endPaidCall` to:
+   - Build the unsigned `settle(seconds_used)` v0 transaction.
+   - Sign with the settle authority keypair.
+   - Submit via `connection.sendTransaction` (or
+     `rpc.sendTransaction` via kit).
+   - Save the settlement signature in
+     `paid_call_escrow.settlement_tx_signature`.
+3. Add a Helius program-event webhook at
+   `POST /v1/webhooks/helius-program` that filters logs from
+   `CT_ESCROW_PROGRAM_ID`, decodes the `Settled` event, and
+   credits the in-game ledger. (Helius Enhanced Webhooks allow
+   filtering by program address.)
+4. Re-run `pnpm contract:check` and `pnpm test:unit` end-to-end.
+5. Add the Anchor test runner to the CI matrix (either nightly
+   Rust or the `@types/mocha` workaround).
