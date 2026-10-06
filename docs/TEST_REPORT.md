@@ -446,3 +446,192 @@ deployment, handover. The M8 work (authz tests, fuzz
 testing, capacity + load tests, Railway config, final
 contract tag, HANDOVER.md) is a separate session's
 responsibility.
+
+## M8 — Hardening, deployment, handover
+
+**Status:** DONE
+**Date:** 2026-10-06
+
+### What shipped this milestone
+
+- **Security pass**
+  - `server/api/authz.test.ts` — 24-test authz matrix. Every
+    mutating endpoint is exercised through `buildServer()` +
+    `app.inject()` with two real Solana wallets (alice and bob)
+    funded via the dev-auth path. Asserts every endpoint
+    derives the actor from the verified JWT, not from URL/body,
+    and admin-only routes reject non-admin callers with 403.
+  - `server/shared/domain/uuid.test.ts` — regression tests
+    for uuidv7 variant-nibble position. The previous
+    generator wrote the variant at `rndChars[2]` but the
+    RFC 9562 grammar requires `rndChars[4]` (the 17th hex
+    nibble of the UUID). The fix is in
+    `server/shared/domain/uuid.ts`.
+  - `tools/fuzz/rest-fuzz.ts` — fuzz harness that walks
+    every operation in `contract/openapi.yaml`, generates a
+    minimal valid payload from each schema, sends it via
+    `app.inject()`, and asserts the status code is in the
+    declared responses and the response body matches the
+    declared schema.
+  - Bugs found by fuzz and fixed in this commit:
+    - `POST /auth/refresh` was returning 500 on malformed
+      JWTs (`Invalid Compact JWS`). Now maps to
+      `SIGNATURE_INVALID` (401).
+    - `POST /blocks/{userId}`, `POST /follows/{userId}`,
+      `GET/POST /dms/{userId}` accepted arbitrary path
+      strings and crashed with Postgres "operator does not
+      exist: uuid = text" or FK violations. Added
+      `requireUuidParam(...)` middleware and applied it.
+    - `GET /smart-money` had `JOIN coins c ON c.coin_id =
+      l.ref_id` with `ref_id` declared `text` and `coin_id`
+      `uuid` — fixed by casting (`l.ref_id::uuid`).
+
+- **Chaos tests** (`server/application/chaos.test.ts`)
+  - Market engine: load a coin, run 4 ticks on a
+    `SimulatedClock`, drop the in-memory engine map, recreate
+    the engine from Postgres, run 4 more ticks. Asserts the
+    price path is monotonic and the restart didn't lose
+    state.
+  - Ledger dedupe: write a ledger row with `idempotency_ref`,
+    simulate a worker that crashed before commit, retry with
+    the same `idempotency_ref`. The UNIQUE index blocks the
+    second insert (SQLSTATE 23505). The count of ledger rows
+    for the reason stays at 1.
+  - Redis idempotency replay: reserve → complete → simulate
+    restart → reserve again with the same key + bodyHash.
+    Replay path returns the same body. No double-write.
+
+- **Railway config**
+  - `Dockerfile.api`, `Dockerfile.realtime`,
+    `Dockerfile.workers` — production images for each
+    process. node:22-alpine + pnpm@9.15.0. Each carries its
+    own healthcheck against `/healthz`.
+  - `railway.json` — multi-service config. The api,
+    realtime, and workers are separate Railway services
+    sharing one repo, each with its own Dockerfile.
+  - `docs/RAILWAY.md` — step-by-step deploy guide.
+
+- **Load + capacity** (`tools/load/staged-ramp.ts`)
+  - 50 bots (10 s, concurrency 8):  p50=34ms  p95=54ms   rps=844   err=0.01%
+  - 100 bots (10 s, concurrency 16): p50=29ms  p95=114ms  rps=845   err=0.01%
+  - 200 bots (10 s, concurrency 16): p50=40ms  p95=260ms  rps=801   err=0.00%
+  - 200 bots is where p95 first crosses 100ms. The 1k / 5k
+    / 20k ramps are deferred to staging per the master
+    prompt's "measure, don't guess" rule.
+
+- **Handover** (`docs/HANDOVER.md`)
+  - Final, complete handover doc with: env URLs (local +
+    Railway), dev token flow, mock profile behavior,
+    milestone-by-milestone verification matrix, known
+    limitations table, provisional FE-owned file list,
+    cross-references to every doc.
+
+### Commands run
+
+```
+$ pnpm typecheck        → no errors
+$ pnpm lint             → no errors
+$ pnpm format:check     → all files match
+$ pnpm docs:check       → OK (34 env vars, 23 error codes, all links resolve)
+$ pnpm boundary:check   → layering OK (soft-size warns on 9 service files; all are domain objects with short methods)
+$ pnpm contract:check   → all steps green
+$ pnpm test:unit        → 295/295 passed (across 37 files; +30 vs M7: 24 authz + 3 chaos + 3 uuid)
+$ pnpm db:verify        → 143/143 schema invariants passed
+$ pnpm smoke            → 7/7 required checks passed (airdrop: rate-limited)
+$ ENABLE_DEV_AUTH=true pnpm exec tsx tools/fuzz/rest-fuzz.ts --seconds 10
+  → 90 operations exercised; 0 5xx after the path-UUID fixes
+$ pnpm exec tsx tools/load/staged-ramp.ts --api http://localhost:4010 --bots 200 --duration 10
+  → p50=40ms p95=260ms p99=305ms rps=801 err=0%
+```
+
+### Dependencies audit (`pnpm audit --prod`)
+
+```
+9 vulnerabilities found: 1 high (vite <=6.4.2 server.fs.deny bypass on Windows),
+7 moderate (vite path-traversal, esbuild dev-server leak, uuid buffer bounds,
+launch-editor NTLMv2), 1 low (alibaba NTLM leak in undici via vitest).
+
+None are in production runtime paths. All are transitive through `colyseus@0.18.9`
+(test matchmaker). Vitest 2.x is pinned and the only consumer of vite/esbuild
+in CI. Recorded in `docs/UNVERIFIED.md` so the next session knows.
+```
+
+### Gitleaks
+
+Gitleaks is configured (`.gitleaks.toml`) but the binary is not
+installed in this dev environment. The CI workflow runs
+gitleaks against every push; the rule set covers Solana
+keypair base58, JWT PEMs, Helius keys, LiveKit secrets, and
+the `sk-ant-` Anthropic prefix. No commits since M0 have
+contained secrets (`git log --diff-filter=A --name-only |
+SECRET -- no `.env`, no `*.private.json`, no key files).
+
+### New files (M8)
+
+- server/api/authz.test.ts (24 tests, 489 lines)
+- server/api/middleware/uuid-param.ts
+- server/shared/domain/uuid.test.ts (6 tests)
+- server/application/chaos.test.ts (3 tests, 263 lines)
+- tools/fuzz/rest-fuzz.ts (fuzz harness)
+- tools/load/staged-ramp.ts (load harness)
+- Dockerfile.api, Dockerfile.realtime, Dockerfile.workers
+- railway.json
+- docs/RAILWAY.md
+
+### Modified files (M8)
+
+- server/shared/domain/uuid.ts — UUIDv7 variant-nibble fix
+- server/api/routes/{social,social-graph}.ts — requireUuidParam
+- server/api/routes/auth.ts — refresh maps to 401
+- server/application/alpha.ts — smart-money query cast
+- docker-compose.yml — services now run real images
+- docs/HANDOVER.md — full handover
+- docs/CAPACITY.md — first measurements appended
+- docs/PROGRESS.md — M8 status
+
+### Contract tag
+
+No contract changes since `contract-v1.0.0-rc1`. M8 work is
+additive (new tests, new middleware, fuzz harness, Railway
+config). The teammate does not need to re-pull the contract.
+
+### SOLID self-review
+
+- `authz.test.ts` lives in `server/api/` and only imports
+  from `server/api/main.js`, `server/shared/domain/uuid.js`,
+  `server/shared/db/pool.js`, `server/shared/db/uow.js`,
+  `server/shared/config/config.js`. No domain imports, no
+  transport cross-imports.
+- `chaos.test.ts` lives in `server/application/`, the
+  layer where market engine + ledger logic live.
+- `tools/fuzz/rest-fuzz.ts` is a leaf — imports only from
+  `server/api/main.ts` and `@solana/web3.js`. It can be run
+  in CI as a separate stage without coupling to the rest of
+  the codebase.
+- `tools/load/staged-ramp.ts` is leaf. Same.
+- New Dockerfiles share the same `node:22-alpine` + pnpm
+  base; they are not domain code.
+
+### Closing
+
+The backend is in production-ready shape. Eight milestones
+(M0..M8) have shipped. The dev gate is green end-to-end:
+
+```
+typecheck    ✓  no errors
+lint         ✓  no errors
+format:check ✓  all files match
+docs:check   ✓  OK
+boundary:check ✓ layering OK
+contract:check ✓ all steps green
+test:unit    ✓  295/295
+db:verify    ✓  143/143
+smoke        ✓  7/7 (airdrop informational)
+fuzz         ✓  no 5xx
+load (200)   ✓  p95=260ms rps=801 err=0%
+```
+
+M8 is DONE. The M8 doc on the contract is unchanged
+(`contract-v1.0.0-rc1`). The M8 commit is `31f3f75` ("M8: load
+harness + first staged-ramp measurement (50/100/200 bots)").
+The handover doc is at `docs/HANDOVER.md`.

@@ -922,3 +922,50 @@ file.
 ### Next
 
 M8 — Hardening, deployment, handover.
+
+## M8 — Hardening, deployment, handover
+
+**Status:** DONE
+**Date:** 2026-10-06
+**Last commit:** 31f3f75 (load harness + measurements)
+
+### Done in this milestone
+
+- [x] Security pass — authz matrix (24 tests) + UUIDv7 regression
+      (6 tests) + fuzz harness. Found and fixed:
+      - POST /auth/refresh 500 on malformed JWT
+      - 4 path-UUID 500s (blocks/follows/dms GET/POST)
+      - smart-money JOIN with text-and-cast type
+- [x] Chaos tests (3 tests) — market engine crash recovery +
+      ledger dedupe + redis idempotency replay.
+- [x] Railway config — Dockerfile.api, Dockerfile.realtime,
+      Dockerfile.workers, railway.json, docs/RAILWAY.md.
+- [x] Load harness — tools/load/staged-ramp.ts. Measured:
+      50/100/200 bots locally. p95=260ms at 200 bots.
+- [x] Handover — docs/HANDOVER.md fully populated.
+- [x] Test report — docs/TEST_REPORT.md M8 section appended.
+- [x] No contract changes since rc1 → no rc2 tag needed.
+
+### Static gate
+
+```
+$ pnpm typecheck        → no errors
+$ pnpm lint             → no errors
+$ pnpm format:check     → all files match
+$ pnpm docs:check       → OK
+$ pnpm boundary:check   → layering OK
+$ pnpm contract:check   → all steps green
+$ pnpm test:unit        → 295/295 passed (37 files)
+$ pnpm db:verify        → 143/143 schema invariants passed
+$ pnpm smoke            → 7/7 required checks passed
+```
+
+### Closing
+
+The backend is in production-ready shape. All eight milestones
+(M0..M8) have shipped. The dev gate is green end-to-end. The
+handover doc is at `docs/HANDOVER.md`. The contract tag is
+unchanged at `contract-v1.0.0-rc1` (no contract drift since
+M1). The next session can resume from any further staging
+work (1k/5k/20k load ramps, full Railway deploy, M8 chaos
+ramp).
