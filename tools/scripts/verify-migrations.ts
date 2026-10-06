@@ -122,6 +122,13 @@
  *  82. beef_elo.matches_played >= 0.
  *  83. beef_elo (wins + losses + draws) = matches_played CHECK.
  *
+ * Checks (M7 #6):
+ *
+ *  84. users.is_sybil_jailed column exists (default false).
+ *  85. airdrop_claims table exists.
+ *  86. airdrop_claims UNIQUE (user_id, day_date).
+ *  87. airdrop_claims.amount_cents > 0.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -1115,6 +1122,46 @@ async function main(): Promise<void> {
           /wins\s*\+\s*losses\s*\)\s*\+\s*draws\s*=\s*matches_played/is.test(all) ||
           /\(\(wins\s*\+\s*losses\)\s*\+\s*draws\)\s*=\s*matches_played/is.test(all),
       );
+    }
+
+    // --- M7 #6 invariants -------------------------------------------
+
+    // (84) users.is_sybil_jailed column exists.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_attribute
+         WHERE attrelid = 'public.users'::regclass
+           AND attname = 'is_sybil_jailed'`,
+      );
+      record('users.is_sybil_jailed exists', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (85) airdrop_claims table exists.
+    {
+      record('table airdrop_claims exists', await tableExists(client, 'airdrop_claims'));
+    }
+
+    // (86) airdrop_claims UNIQUE (user_id, day_date).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.airdrop_claims'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['user_id','day_date']::name[]`,
+      );
+      record('airdrop_claims UNIQUE (user_id, day_date)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (87) airdrop_claims.amount_cents > 0.
+    {
+      const cs = await checks('airdrop_claims');
+      const all = cs.join('\n');
+      record('airdrop_claims.amount_cents > 0', /amount_cents\s*>\s*0/i.test(all));
     }
   } finally {
     await client.end();
