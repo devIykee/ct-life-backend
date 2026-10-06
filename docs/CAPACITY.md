@@ -63,3 +63,24 @@ TBD. The metric `pg_stat_database_tup_inserted` per database is the upper bound;
 - `docs/OPERATIONS.md` — kill switches and cost caps.
 - `docs/TESTING.md` — load, spike, soak, chaos.
 - `docs/SECURITY.md` — rate limits and `SERVER_BUSY`.
+
+### Staged ramp — 2026-10-06T03:31:08.933Z
+
+- target: `http://localhost:4010`
+- bots: 50, duration: 10s, concurrency: 8
+- p50/p95/p99/max (ms): 34 / 54 / 63 / 98
+- requests: 17480, rps: 844.4, failures: 1, error rate: 0.01%
+
+### Staged ramp — 2026-10-06T03:31:34.638Z
+
+- target: `http://localhost:4010`
+- bots: 100, duration: 10s, concurrency: 16
+- p50/p95/p99/max (ms): 29 / 114 / 152 / 184
+- requests: 17742, rps: 844.9, failures: 1, error rate: 0.01%
+
+### Staged ramp — 2026-10-06T03:32:00.509Z
+
+- target: `http://localhost:4010`
+- bots: 200, duration: 10s, concurrency: 16
+- p50/p95/p99/max (ms): 40 / 260 / 305 / 339
+- requests: 17302, rps: 801.0, failures: 0, error rate: 0.00%
