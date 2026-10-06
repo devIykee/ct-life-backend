@@ -364,6 +364,9 @@ export function decodeCtEscrowEvent(b64: string): DecodedEvent | null {
     o += 32;
     const creator = address(bytesToString(body.slice(o, o + 32)));
     o += 32;
+    const secondsUsed = dv.getBigUint64(o, true);
+    o += 8;
+    const gross = dv.getBigUint64(o, true);
     o += 8;
     const fee = dv.getBigUint64(o, true);
     o += 8;
@@ -394,6 +397,9 @@ export function decodeCtEscrowEvent(b64: string): DecodedEvent | null {
     o += 32;
     const creator = address(bytesToString(body.slice(o, o + 32)));
     o += 32;
+    const refund = dv.getBigUint64(o, true);
+    o += 8;
+    const refundedAt = dv.getBigInt64(o, true);
     return {
       kind: 'refunded',
       session,
