@@ -96,6 +96,19 @@
  *  65. tribe_district_scores UNIQUE (tribe_id, district_id, day_date).
  *  66. district_ownership_history UNIQUE (district_id, valid_from).
  *
+ * Checks (M7 #2):
+ *
+ *  67. M7 #2 tables exist: leagues, season_memberships,
+ *      season_rollover_log.
+ *  68. leagues.slug UNIQUE.
+ *  69. leagues.sort_order UNIQUE.
+ *  70. leagues.min_net_worth_cents >= 0.
+ *  71. leagues.max_members > 0.
+ *  72. season_memberships UNIQUE (user_id, season_iso).
+ *  73. season_memberships.rank > 0.
+ *  74. season_rollover_log UNIQUE (kind, season_iso).
+ *  75. season_rollover_log.kind CHECK contains 'season_rollover'.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -912,6 +925,100 @@ async function main(): Promise<void> {
         'district_ownership_history UNIQUE (district_id, valid_from)',
         Number(r.rows[0]?.count ?? '0') > 0,
       );
+    }
+
+    // --- M7 #2 invariants -------------------------------------------
+
+    // (67) M7 #2 tables exist.
+    for (const t of ['leagues', 'season_memberships', 'season_rollover_log']) {
+      record(`table ${t} exists`, await tableExists(client, t));
+    }
+
+    // (68) leagues.slug UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.leagues'::regclass
+           AND i.indisunique
+           AND a.attname = 'slug'`,
+      );
+      record('leagues.slug UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (69) leagues.sort_order UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.leagues'::regclass
+           AND i.indisunique
+           AND a.attname = 'sort_order'`,
+      );
+      record('leagues.sort_order UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (70) leagues.min_net_worth_cents >= 0.
+    {
+      const cs = await checks('leagues');
+      const all = cs.join('\n');
+      record('leagues.min_net_worth_cents >= 0', /min_net_worth_cents\s*>=\s*0/i.test(all));
+    }
+
+    // (71) leagues.max_members > 0.
+    {
+      const cs = await checks('leagues');
+      const all = cs.join('\n');
+      record('leagues.max_members > 0', /max_members\s*>\s*0/i.test(all));
+    }
+
+    // (72) season_memberships UNIQUE (user_id, season_iso).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.season_memberships'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['user_id','season_iso']::name[]`,
+      );
+      record(
+        'season_memberships UNIQUE (user_id, season_iso)',
+        Number(r.rows[0]?.count ?? '0') > 0,
+      );
+    }
+
+    // (73) season_memberships.rank > 0.
+    {
+      const cs = await checks('season_memberships');
+      const all = cs.join('\n');
+      record('season_memberships.rank > 0', /rank\s*>\s*0/i.test(all));
+    }
+
+    // (74) season_rollover_log UNIQUE (kind, season_iso).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.season_rollover_log'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['kind','season_iso']::name[]`,
+      );
+      record('season_rollover_log UNIQUE (kind, season_iso)', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (75) season_rollover_log.kind CHECK.
+    {
+      const cs = await checks('season_rollover_log');
+      const all = cs.join('\n');
+      record('season_rollover_log.kind in allowed set', /season_rollover/i.test(all));
     }
   } finally {
     await client.end();

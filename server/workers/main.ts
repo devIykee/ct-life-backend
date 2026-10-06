@@ -30,6 +30,7 @@ import { handleDailyBoardRefresh } from './daily-board.js';
 import { handleTownCrier } from './town-crier.js';
 import { handleSundayUnlock, handleWeeklyMeta } from './sunday-unlock.js';
 import { handleDistrictRollover } from './district-rollover.js';
+import { handleSeasonRollover } from './season-rollover.js';
 import { buildContext } from '../application/context.js';
 
 export interface WorkersHandle {
@@ -75,6 +76,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   const sundayQueue = new Queue('jobs:sunday-unlock', { connection: conn });
   const metaQueue = new Queue('jobs:weekly-meta', { connection: conn });
   const districtQueue = new Queue('jobs:district-rollover', { connection: conn });
+  const seasonQueue = new Queue('jobs:season-rollover', { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -121,6 +123,15 @@ export async function buildWorkers(): Promise<WorkersHandle> {
     log.error({ jobId: job?.id, err: err.message }, 'district-rollover failed'),
   );
 
+  const seasonWorker = new Worker(
+    'jobs:season-rollover',
+    async (job) => handleSeasonRollover(job, ctx),
+    { connection: newClient(redis) },
+  );
+  seasonWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'season-rollover failed'),
+  );
+
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
   // strings are placeholders; the actual schedule is M5.
   await dailyQueue.upsertJobScheduler(
@@ -141,6 +152,11 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   await districtQueue.upsertJobScheduler(
     'district-rollover',
     { pattern: '5 0 * * *' },
+    { name: 'rollover', data: {} },
+  );
+  await seasonQueue.upsertJobScheduler(
+    'season-rollover',
+    { pattern: '0 0 * * 1' },
     { name: 'rollover', data: {} },
   );
 
@@ -166,10 +182,12 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   void sundayWorker;
   void metaWorker;
   void districtWorker;
+  void seasonWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
   void districtQueue;
+  void seasonQueue;
   void log;
   void cfg;
 
@@ -182,11 +200,13 @@ export async function buildWorkers(): Promise<WorkersHandle> {
       await sundayWorker.close();
       await metaWorker.close();
       await districtWorker.close();
+      await seasonWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
       await metaQueue.close();
       await districtQueue.close();
+      await seasonQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },
