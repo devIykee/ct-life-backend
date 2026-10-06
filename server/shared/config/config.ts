@@ -102,6 +102,16 @@ export interface Config {
 
   readonly llmModel: string;
   readonly anthropicApiKey: string;
+
+  readonly xLink: {
+    readonly enabled: boolean;
+    readonly clientId: string;
+    readonly clientSecret: string;
+    readonly redirectUri: string;
+    readonly authorizeUrl: string;
+    readonly tokenUrl: string;
+    readonly meUrl: string;
+  };
 }
 
 class ConfigError extends Error {
@@ -280,6 +290,16 @@ export function loadConfig(): Config {
 
     llmModel: process.env.LLM_MODEL ?? 'claude-opus-4-6',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
+
+    xLink: {
+      enabled: asBool('X_LINK_ENABLED', false),
+      clientId: process.env.X_CLIENT_ID ?? '',
+      clientSecret: process.env.X_CLIENT_SECRET ?? '',
+      redirectUri: process.env.X_REDIRECT_URI ?? 'http://localhost:4010/v1/x/link/callback',
+      authorizeUrl: process.env.X_AUTHORIZE_URL ?? 'https://x.com/i/oauth2/authorize',
+      tokenUrl: process.env.X_TOKEN_URL ?? 'https://api.x.com/2/oauth2/token',
+      meUrl: process.env.X_ME_URL ?? 'https://api.x.com/2/users/me',
+    },
   };
 
   cached = cfg;

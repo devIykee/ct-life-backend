@@ -143,6 +143,14 @@
  *  93. llm_npc_interactions.prompt_tokens >= 0.
  *  94. llm_npc_interactions.completion_tokens >= 0.
  *
+ * Checks (M7 #9):
+ *
+ *  95. x_links table exists.
+ *  96. x_links.user_id UNIQUE.
+ *  97. x_links.x_user_id UNIQUE.
+ *  98. x_links.state UNIQUE.
+ *  99. x_links.x_handle length 1..32.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -1243,6 +1251,63 @@ async function main(): Promise<void> {
       record(
         'llm_npc_interactions.completion_tokens >= 0',
         /completion_tokens\s*>=\s*0/i.test(all),
+      );
+    }
+
+    // --- M7 #9 invariants -------------------------------------------
+
+    // (95) x_links table exists.
+    {
+      record('table x_links exists', await tableExists(client, 'x_links'));
+    }
+
+    // (96) x_links.user_id UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.x_links'::regclass
+           AND i.indisunique
+           AND a.attname = 'user_id'`,
+      );
+      record('x_links.user_id UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (97) x_links.x_user_id UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.x_links'::regclass
+           AND i.indisunique
+           AND a.attname = 'x_user_id'`,
+      );
+      record('x_links.x_user_id UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (98) x_links.state UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.x_links'::regclass
+           AND i.indisunique
+           AND a.attname = 'state'`,
+      );
+      record('x_links.state UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (99) x_links.x_handle length 1..32.
+    {
+      const cs = await checks('x_links');
+      const all = cs.join('\n');
+      record(
+        'x_links.x_handle length 1..32',
+        /length\(x_handle\)\s+BETWEEN\s+1\s+AND\s+32/i.test(all) ||
+          (/length\(x_handle\)\s*>=\s*1/i.test(all) && /length\(x_handle\)\s*<=\s*32/i.test(all)),
       );
     }
   } finally {

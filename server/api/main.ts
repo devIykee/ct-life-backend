@@ -43,6 +43,7 @@ import { registerRatioArenaRoutes } from './routes/ratio-arena.js';
 import { registerAirdropRoutes } from './routes/airdrop-farm.js';
 import { registerVenuesGatingRoutes } from './routes/venues-gating.js';
 import { registerLlmNpcRoutes } from './routes/llm-npcs.js';
+import { registerXLinkRoutes } from './routes/x-link.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -160,6 +161,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerAirdropRoutes(app);
   registerVenuesGatingRoutes(app);
   registerLlmNpcRoutes(app);
+  registerXLinkRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 

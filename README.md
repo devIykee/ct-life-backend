@@ -255,6 +255,9 @@ Every variable the backend reads is documented in `.env.example`. The `docs:chec
 | `X_CLIENT_ID`       | X OAuth client id.                                                      | optional      | —       |
 | `X_CLIENT_SECRET`   | X OAuth client secret.                                                  | optional      | —       |
 | `X_REDIRECT_URI`    | X OAuth redirect URI.                                                   | optional      | —       |
+| `X_AUTHORIZE_URL`    | X OAuth authorize URL (override for tests).                            | optional      | `https://x.com/i/oauth2/authorize` |
+| `X_TOKEN_URL`        | X OAuth token URL (override for tests).                                | optional      | `https://api.x.com/2/oauth2/token`     |
+| `X_ME_URL`           | X users/me URL (override for tests).                                   | optional      | `https://api.x.com/2/users/me`          |
 
 ### Optional M8
 
