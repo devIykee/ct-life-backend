@@ -483,7 +483,7 @@ responsibility.
       exist: uuid = text" or FK violations. Added
       `requireUuidParam(...)` middleware and applied it.
     - `GET /smart-money` had `JOIN coins c ON c.coin_id =
-      l.ref_id` with `ref_id` declared `text` and `coin_id`
+l.ref_id` with `ref_id` declared `text` and `coin_id`
       `uuid` — fixed by casting (`l.ref_id::uuid`).
 
 - **Chaos tests** (`server/application/chaos.test.ts`)
@@ -512,9 +512,9 @@ responsibility.
   - `docs/RAILWAY.md` — step-by-step deploy guide.
 
 - **Load + capacity** (`tools/load/staged-ramp.ts`)
-  - 50 bots (10 s, concurrency 8):  p50=34ms  p95=54ms   rps=844   err=0.01%
-  - 100 bots (10 s, concurrency 16): p50=29ms  p95=114ms  rps=845   err=0.01%
-  - 200 bots (10 s, concurrency 16): p50=40ms  p95=260ms  rps=801   err=0.00%
+  - 50 bots (10 s, concurrency 8): p50=34ms p95=54ms rps=844 err=0.01%
+  - 100 bots (10 s, concurrency 16): p50=29ms p95=114ms rps=845 err=0.01%
+  - 200 bots (10 s, concurrency 16): p50=40ms p95=260ms rps=801 err=0.00%
   - 200 bots is where p95 first crosses 100ms. The 1k / 5k
     / 20k ramps are deferred to staging per the master
     prompt's "measure, don't guess" rule.

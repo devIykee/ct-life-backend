@@ -15,7 +15,11 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AuthService, VerifyInputSchema } from '../../application/auth.js';
-import { ForbiddenError, SignatureInvalidError, ValidationFailedError } from '../../shared/domain/errors.js';
+import {
+  ForbiddenError,
+  SignatureInvalidError,
+  ValidationFailedError,
+} from '../../shared/domain/errors.js';
 import { GlobalLoginSemaphore, perIpLoginLimiter } from '../../shared/infra/rate-limit.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 

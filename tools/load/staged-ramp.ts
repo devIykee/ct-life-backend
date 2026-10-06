@@ -52,7 +52,10 @@ interface BotState {
 async function devAuth(api: string, wallet: string): Promise<string> {
   const res = await fetch(`${api}/v1/auth/dev`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', 'idempotency-key': `ramp-${Date.now()}-${wallet.slice(0, 4)}` },
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': `ramp-${Date.now()}-${wallet.slice(0, 4)}`,
+    },
     body: JSON.stringify({ wallet }),
   });
   if (!res.ok) throw new Error(`dev auth ${res.status}: ${await res.text()}`);
@@ -100,7 +103,9 @@ async function bot(api: string, durationMs: number, lat: Latencies): Promise<voi
 }
 
 async function run(): Promise<void> {
-  console.log(`[ramp] api=${args.api} bots=${args.bots} duration=${args.duration}s concurrency=${args.concurrency}`);
+  console.log(
+    `[ramp] api=${args.api} bots=${args.bots} duration=${args.duration}s concurrency=${args.concurrency}`,
+  );
   const lat: Latencies = { samples: [], failures: 0, totalRequests: 0 };
   const startedAt = Date.now();
   const queue: Promise<void>[] = [];

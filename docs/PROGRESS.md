@@ -932,10 +932,7 @@ M8 — Hardening, deployment, handover.
 ### Done in this milestone
 
 - [x] Security pass — authz matrix (24 tests) + UUIDv7 regression
-      (6 tests) + fuzz harness. Found and fixed:
-      - POST /auth/refresh 500 on malformed JWT
-      - 4 path-UUID 500s (blocks/follows/dms GET/POST)
-      - smart-money JOIN with text-and-cast type
+      (6 tests) + fuzz harness. Found and fixed: - POST /auth/refresh 500 on malformed JWT - 4 path-UUID 500s (blocks/follows/dms GET/POST) - smart-money JOIN with text-and-cast type
 - [x] Chaos tests (3 tests) — market engine crash recovery +
       ledger dedupe + redis idempotency replay.
 - [x] Railway config — Dockerfile.api, Dockerfile.realtime,

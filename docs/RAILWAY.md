@@ -3,11 +3,11 @@
 This file describes how to deploy the CT Life backend to Railway.
 The repo contains three processes that the backend runs:
 
-| Service   | Entry point                  | Dockerfile            | Default port |
-| --------- | ---------------------------- | --------------------- | ------------ |
-| api       | `server/api/main.ts`         | `Dockerfile.api`      | 4010         |
-| realtime  | `server/realtime/main.ts`    | `Dockerfile.realtime` | 2567         |
-| workers   | `server/workers/main.ts`     | `Dockerfile.workers`  | 8080         |
+| Service  | Entry point               | Dockerfile            | Default port |
+| -------- | ------------------------- | --------------------- | ------------ |
+| api      | `server/api/main.ts`      | `Dockerfile.api`      | 4010         |
+| realtime | `server/realtime/main.ts` | `Dockerfile.realtime` | 2567         |
+| workers  | `server/workers/main.ts`  | `Dockerfile.workers`  | 8080         |
 
 The teammate (Unity client) deploys separately and points at the
 Railway URLs.

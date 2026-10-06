@@ -29,7 +29,6 @@ import { createRedis } from '../shared/redis/client.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { SimulatedClock } from '../shared/domain/clock.js';
-import { SeededRng } from '../shared/domain/rng.js';
 import type { HiddenArc } from './hidden-arc.js';
 import { uuidv4 } from '../shared/domain/uuid.js';
 import { RedisIdempotencyStore } from '../shared/infra/idempotency.js';
@@ -106,9 +105,10 @@ async function readPriceMicros(coinId: string): Promise<bigint> {
 async function ledgerCountFor(reason: string): Promise<number> {
   const db = createDb();
   const r = await db.withConnection((c) =>
-    c.query<{ count: string }>('SELECT COUNT(*)::text AS count FROM ledger_entries WHERE reason = $1', [
-      reason,
-    ]),
+    c.query<{ count: string }>(
+      'SELECT COUNT(*)::text AS count FROM ledger_entries WHERE reason = $1',
+      [reason],
+    ),
   );
   return Number(r.rows[0]?.count ?? '0');
 }
@@ -118,17 +118,22 @@ describe('chaos: market engine crash recovery', () => {
     process.env.JWT_PRIVATE_KEY ??= FAKE_PKCS8;
     process.env.JWT_PUBLIC_KEY ??= FAKE_SPKI;
     const coinId = await insertCoin(`chaos-${Date.now()}`);
-    const clock = new SimulatedClock(0);
-    const rng = new SeededRng(42);
+    const clock = new SimulatedClock();
+    clock.set(0);
 
     // First engine instance: ticks 0..3.
-    const e1 = new MarketEngine({
-      tickLengthSec: 2,
-      graduateMcapCents: 1_000_000_000n,
-      paused: false,
-      clock,
-      rng,
-    });
+    const e1 = new MarketEngine(
+      {
+        tickLengthSec: 2,
+        curve: {
+          type: 'constant_product',
+          virtualReservesX: 1_000_000,
+          virtualReservesY: 30_000_000,
+          graduateMcapCents: 1_000_000_000,
+        },
+      },
+      { clock },
+    );
     await e1.load(coinId);
     for (let i = 0; i < 4; i++) {
       clock.advance(3);
@@ -142,13 +147,18 @@ describe('chaos: market engine crash recovery', () => {
     // Restart with a fresh engine instance; reload from Postgres. The
     // deterministic seed must continue the price path from where we
     // left off, not restart from scratch.
-    const e2 = new MarketEngine({
-      tickLengthSec: 2,
-      graduateMcapCents: 1_000_000_000n,
-      paused: false,
-      clock,
-      rng,
-    });
+    const e2 = new MarketEngine(
+      {
+        tickLengthSec: 2,
+        curve: {
+          type: 'constant_product',
+          virtualReservesX: 1_000_000,
+          virtualReservesY: 30_000_000,
+          graduateMcapCents: 1_000_000_000,
+        },
+      },
+      { clock },
+    );
     await e2.load(coinId);
     for (let i = 0; i < 4; i++) {
       clock.advance(3);
@@ -160,15 +170,20 @@ describe('chaos: market engine crash recovery', () => {
     expect(priceAfterRestart).not.toBe(0n);
     // Sanity: a single uninterrupted run for the same total tick count
     // must produce the same price (deterministic).
-    const clock2 = new SimulatedClock(0);
-    const rng2 = new SeededRng(42);
-    const e3 = new MarketEngine({
-      tickLengthSec: 2,
-      graduateMcapCents: 1_000_000_000n,
-      paused: false,
-      clock: clock2,
-      rng: rng2,
-    });
+    const clock2 = new SimulatedClock();
+    clock2.set(0);
+    const e3 = new MarketEngine(
+      {
+        tickLengthSec: 2,
+        curve: {
+          type: 'constant_product',
+          virtualReservesX: 1_000_000,
+          virtualReservesY: 30_000_000,
+          graduateMcapCents: 1_000_000_000,
+        },
+      },
+      { clock: clock2 },
+    );
     await e3.load(coinId);
     // The coin already exists in Postgres at the post-restart price. We
     // do not re-tick here (the deterministic path has been established
@@ -202,10 +217,9 @@ describe('crash: ledger dedupe (no lost writes on idempotent replay)', () => {
          VALUES ($1, 100, 'cash', $2, $3)`,
         [userId, reason, idemp],
       );
-      await client.query(
-        `UPDATE balances SET cash_cents = cash_cents + 100 WHERE user_id = $1`,
-        [userId],
-      );
+      await client.query(`UPDATE balances SET cash_cents = cash_cents + 100 WHERE user_id = $1`, [
+        userId,
+      ]);
     });
 
     const afterFirst = await ledgerCountFor(reason);

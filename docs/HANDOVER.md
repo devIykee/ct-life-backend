@@ -19,9 +19,9 @@ at the api/realtime URLs.
    - Realtime (C#): `pnpm contract:codegen`, output in
      `contract/realtime/generated/csharp/`.
    - REST models (C#): `openapi-generator-cli generate -i
-     contract/openapi.yaml -g csharp -o
-     client/Assets/Generated/Rest --global-property
-     models,modelTests=false,apiTests=false,supportingFiles=false`.
+contract/openapi.yaml -g csharp -o
+client/Assets/Generated/Rest --global-property
+models,modelTests=false,apiTests=false,supportingFiles=false`.
 2. **First step.** `pnpm contract:check && pnpm contract:codegen`,
    then read `contract/README.md`.
 3. **Tag.** After M1 the contract was tagged `contract-v1.0.0-rc1`.
@@ -31,21 +31,21 @@ at the api/realtime URLs.
 4. **Provisional FE-owned files.** `contract/ids/spots.json`,
    `contract/ids/anims.json`, `contract/ids/sfx.json`,
    `contract/config/mini_games.json` ship with `_provisional:
-   true, _owner: "FE"`. The teammate replaces them by PR.
+true, _owner: "FE"`. The teammate replaces them by PR.
    Additions only after publication, never renames.
 
 ## Environment URLs
 
 Set after first staging deploy. Until then, the local stack is:
 
-| Service       | URL                                |
-| ------------- | ---------------------------------- |
-| REST API      | `http://localhost:4010`            |
-| Realtime WS   | `http://localhost:2567`             |
-| Postgres      | `postgres://localhost:5434/ctlife` |
-| Redis         | `redis://localhost:6381`           |
-| LiveKit HTTP  | `http://localhost:7880`            |
-| MinIO         | `http://localhost:9000`            |
+| Service      | URL                                |
+| ------------ | ---------------------------------- |
+| REST API     | `http://localhost:4010`            |
+| Realtime WS  | `http://localhost:2567`            |
+| Postgres     | `postgres://localhost:5434/ctlife` |
+| Redis        | `redis://localhost:6381`           |
+| LiveKit HTTP | `http://localhost:7880`            |
+| MinIO        | `http://localhost:9000`            |
 
 On Railway, the equivalent URLs are issued per service
 (`https://ctlife-api.up.railway.app` etc.). See `docs/RAILWAY.md`.
@@ -53,8 +53,8 @@ On Railway, the equivalent URLs are issued per service
 ## Dev token
 
 - **Local / mock:** `POST /v1/auth/dev { wallet: "<solana base58
-  pubkey>" }` returns `{ accessToken, refreshToken, id, wallet,
-  isSeeker, hasCharacter }`. The endpoint only exists when
+pubkey>" }` returns `{ accessToken, refreshToken, id, wallet,
+isSeeker, hasCharacter }`. The endpoint only exists when
   `ENABLE_DEV_AUTH=true` and the process is not `production` /
   `staging` / `prod` — the build hard-fails at startup if those
   combine. See `server/shared/config/config.ts`.
@@ -75,13 +75,13 @@ On Railway, the equivalent URLs are issued per service
 | Milestone | Status | Gate                                  |
 | --------- | ------ | ------------------------------------- |
 | M0        | DONE   | `pnpm smoke` 7/7 green                |
-| M1        | DONE   | `pnpm contract:check` green            |
-| M2        | DONE   | 32 unit tests, e2e with 20 bots        |
-| M3        | DONE   | 47 unit tests, market engine + ORE   |
+| M1        | DONE   | `pnpm contract:check` green           |
+| M2        | DONE   | 32 unit tests, e2e with 20 bots       |
+| M3        | DONE   | 47 unit tests, market engine + ORE    |
 | M4        | DONE   | 99 unit tests, paid calls + LiveKit   |
-| M5        | DONE   | 169 unit tests, Phase 4 + 5          |
-| M6        | DONE   | covered by M5 (decision in DECISIONS)  |
-| M7        | DONE   | 265 unit tests, Phase 6 competition  |
+| M5        | DONE   | 169 unit tests, Phase 4 + 5           |
+| M6        | DONE   | covered by M5 (decision in DECISIONS) |
+| M7        | DONE   | 265 unit tests, Phase 6 competition   |
 | M8        | DONE   | 295 unit tests, authz matrix, fuzz    |
 
 Run the full gate locally:
@@ -107,28 +107,28 @@ exercises a 200-bot REST ramp and appends the result to
 
 ## Known limitations (at handover time)
 
-| Item                                          | Where tracked                       | Workaround / next step                                 |
-| --------------------------------------------- | ----------------------------------- | ------------------------------------------------------ |
-| `helius-sdk` incompatible with @solana/kit 8  | `docs/UNVERIFIED.md` M0 #14         | Thin fetch client in `server/shared/solana/helius.ts`  |
-| LiveKit + MinIO Docker Hub pulls blocked      | `docs/UNVERIFIED.md` M0 #12         | Run from `.runtime/` binaries locally                   |
-| Anchor 1.2.0 CLI not published                | `docs/UNVERIFIED.md` M0 #10         | Installed 1.1.2; IDL works either way                  |
-| Solana CLI 4.x not installed                  | `docs/UNVERIFIED.md` M0 #11         | 3.1.10 in env; 4.3.0 stable if upgrade needed          |
-| Push notifications                            | `docs/UNVERIFIED.md` M3+             | Flag defaults off until Seeker Play services confirmed |
-| X OAuth requires client creds                 | `docs/UNVERIFIED.md` M3+             | `X_LINK_ENABLED=false` if `X_CLIENT_ID` absent         |
-| Mainnet ORE stake transaction                 | `docs/UNVERIFIED.md` M3+             | Gated by `RUN_MAINNET_TESTS=1`                         |
-| LLM NPCs require Anthropic key               | `docs/UNVERIFIED.md` M7              | `LLM_NPCS_ENABLED=false` if `ANTHROPIC_API_KEY` absent  |
+| Item                                         | Where tracked               | Workaround / next step                                 |
+| -------------------------------------------- | --------------------------- | ------------------------------------------------------ |
+| `helius-sdk` incompatible with @solana/kit 8 | `docs/UNVERIFIED.md` M0 #14 | Thin fetch client in `server/shared/solana/helius.ts`  |
+| LiveKit + MinIO Docker Hub pulls blocked     | `docs/UNVERIFIED.md` M0 #12 | Run from `.runtime/` binaries locally                  |
+| Anchor 1.2.0 CLI not published               | `docs/UNVERIFIED.md` M0 #10 | Installed 1.1.2; IDL works either way                  |
+| Solana CLI 4.x not installed                 | `docs/UNVERIFIED.md` M0 #11 | 3.1.10 in env; 4.3.0 stable if upgrade needed          |
+| Push notifications                           | `docs/UNVERIFIED.md` M3+    | Flag defaults off until Seeker Play services confirmed |
+| X OAuth requires client creds                | `docs/UNVERIFIED.md` M3+    | `X_LINK_ENABLED=false` if `X_CLIENT_ID` absent         |
+| Mainnet ORE stake transaction                | `docs/UNVERIFIED.md` M3+    | Gated by `RUN_MAINNET_TESTS=1`                         |
+| LLM NPCs require Anthropic key               | `docs/UNVERIFIED.md` M7     | `LLM_NPCS_ENABLED=false` if `ANTHROPIC_API_KEY` absent |
 
 ## Provisional FE-owned files (must replace)
 
 The teammate is responsible for replacing these with real
 values; the server treats them as read-only:
 
-| File                                  | Status   |
-| ------------------------------------ | -------- |
-| `contract/ids/spots.json`            | provisional |
-| `contract/ids/anims.json`            | provisional |
-| `contract/ids/sfx.json`              | provisional |
-| `contract/config/mini_games.json`    | provisional |
+| File                              | Status      |
+| --------------------------------- | ----------- |
+| `contract/ids/spots.json`         | provisional |
+| `contract/ids/anims.json`         | provisional |
+| `contract/ids/sfx.json`           | provisional |
+| `contract/config/mini_games.json` | provisional |
 
 The PR they open must keep every existing ID and only add new
 ones.

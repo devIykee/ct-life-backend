@@ -102,7 +102,8 @@ function pickExample(s: SchemaObject | undefined): unknown {
   const t = (s as { type?: string }).type;
   switch (t) {
     case 'string':
-      if ((s as { format?: string }).format === 'uuid') return '01a10f37-a39b-7045-ade5-b6bcf6d8ae4c';
+      if ((s as { format?: string }).format === 'uuid')
+        return '01a10f37-a39b-7045-ade5-b6bcf6d8ae4c';
       if ((s as { format?: string }).format === 'uri') return 'https://example.com';
       return 'string';
     case 'integer':
@@ -234,7 +235,8 @@ async function main(): Promise<void> {
   const { accessToken } = JSON.parse(authR.body);
   console.log(`[fuzz] dev auth OK; running for ${seconds}s`);
 
-  const failures: { op: string; method: string; path: string; status: number; error: string }[] = [];
+  const failures: { op: string; method: string; path: string; status: number; error: string }[] =
+    [];
   const start = Date.now();
   let iterations = 0;
 
@@ -249,7 +251,9 @@ async function main(): Promise<void> {
     const queryParts: string[] = [];
     for (const p of o.op.parameters ?? []) {
       if (p.in === 'query') {
-        queryParts.push(`${encodeURIComponent(p.name)}=${encodeURIComponent(String(pickExample(p.schema)))}`);
+        queryParts.push(
+          `${encodeURIComponent(p.name)}=${encodeURIComponent(String(pickExample(p.schema)))}`,
+        );
       }
       if (p.in === 'header') {
         headers[p.name.toLowerCase()] = String(pickExample(p.schema));

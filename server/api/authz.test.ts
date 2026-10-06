@@ -112,10 +112,9 @@ async function readCashCents(userId: string): Promise<number> {
   const db = createDb();
   try {
     const r = await db.withConnection((c) =>
-      c.query<{ cash_cents: string }>(
-        'SELECT cash_cents FROM balances WHERE user_id = $1',
-        [userId],
-      ),
+      c.query<{ cash_cents: string }>('SELECT cash_cents FROM balances WHERE user_id = $1', [
+        userId,
+      ]),
     );
     return Number(r.rows[0]?.cash_cents ?? 0);
   } finally {
