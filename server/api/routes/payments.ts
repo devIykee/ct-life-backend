@@ -18,6 +18,7 @@ import {
   type TopupKind,
 } from '../../application/topup.js';
 import { handleHeliusWebhook } from '../../application/helius-webhook.js';
+import { handleProgramWebhook } from '../../application/program-webhook.js';
 
 const CreateIntentBody = z.object({
   kind: z.enum(['topup', 'cosmetic', 'ad', 'season_pass']),
@@ -71,6 +72,17 @@ export function registerPaymentsRoutes(app: FastifyInstance): void {
     const signature = (req.headers['x-helius-signature'] as string | undefined) ?? undefined;
     const payload = req.body as Parameters<typeof handleHeliusWebhook>[3];
     const result = await handleHeliusWebhook(req.ctx, signature, rawBody, payload);
+    return reply.send(result);
+  });
+
+  // Helius Enhanced Webhook filtered by program address (ct_escrow).
+  // Receives Settled / Refunded events and reconciles the in-game
+  // ledger.
+  app.post('/v1/webhooks/helius-program', async (req: FastifyRequest, reply) => {
+    const rawBody = (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
+    const signature = (req.headers['x-helius-signature'] as string | undefined) ?? undefined;
+    const payload = req.body as Parameters<typeof handleProgramWebhook>[3];
+    const result = await handleProgramWebhook(req.ctx, signature, rawBody, payload);
     return reply.send(result);
   });
 }
