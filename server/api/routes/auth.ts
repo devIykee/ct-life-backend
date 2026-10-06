@@ -15,7 +15,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { AuthService, VerifyInputSchema } from '../../application/auth.js';
-import { ForbiddenError, ValidationFailedError } from '../../shared/domain/errors.js';
+import { ForbiddenError, SignatureInvalidError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { GlobalLoginSemaphore, perIpLoginLimiter } from '../../shared/infra/rate-limit.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 
@@ -120,8 +120,29 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const body = RefreshBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const out = await auth(req).refresh(body.data.refreshToken);
-      return reply.send(out);
+      try {
+        const out = await auth(req).refresh(body.data.refreshToken);
+        return reply.send(out);
+      } catch (e) {
+        // The JWT layer throws plain Errors for malformed/invalid
+        // tokens ("Invalid Compact JWS", "Not a refresh token",
+        // "JWS signature verification failed"). These must surface
+        // as 401, not 500.
+        const err = e as { code?: string; name?: string };
+        if (
+          err.code === 'ERR_JWT_EXPIRED' ||
+          err.code === 'ERR_JWS_INVALID' ||
+          err.code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED' ||
+          err.name === 'JWTExpired' ||
+          err.name === 'JWTInvalid' ||
+          err.name === 'JWSInvalid' ||
+          err.name === 'JWSSignatureVerificationFailed' ||
+          err.name === 'JOSEError'
+        ) {
+          throw new SignatureInvalidError({ reason: (e as Error).message });
+        }
+        throw e;
+      }
     },
   );
 

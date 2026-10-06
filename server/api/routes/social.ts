@@ -11,6 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireUuidParam } from '../middleware/uuid-param.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import { BoardsService } from '../../application/boards.js';
 import { BlocksService } from '../../application/blocks.js';
@@ -46,7 +47,7 @@ export function registerSocialRoutes(app: FastifyInstance): void {
   // POST /v1/blocks/{userId}
   app.post(
     '/v1/blocks/:userId',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireUuidParam('userId'), withIdempotency()] },
     async (req, reply) => {
       const { userId } = req.params as { userId: string };
       const svc = new BlocksService(req.ctx);
@@ -58,7 +59,7 @@ export function registerSocialRoutes(app: FastifyInstance): void {
   // DELETE /v1/blocks/{userId}
   app.delete(
     '/v1/blocks/:userId',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireUuidParam('userId'), withIdempotency()] },
     async (req, reply) => {
       const { userId } = req.params as { userId: string };
       const svc = new BlocksService(req.ctx);

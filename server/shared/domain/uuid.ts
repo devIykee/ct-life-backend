@@ -23,15 +23,15 @@ export function uuidv7(now: number = Date.now()): string {
   let rndHex = '';
   for (const b of rnd) rndHex += b.toString(16).padStart(2, '0');
 
-  // Set version (7) in the high 4 bits of byte 6 (the 13th hex digit).
-  // Set variant (10) in the high 2 bits of byte 8 (the 17th hex digit).
-  // The 80 random bits start at position 12 in the hex string (after the
-  // 48-bit timestamp). Bytes 6-7 are at hex positions 12-15.
+  // Set version (7) in the high 4 bits of byte 6 (the 13th hex digit
+  // of the UUID, which is rndChars[0] after we drop the first 12 chars
+  // of the timestamp). Set variant (10) in the high 2 bits of byte 8
+  // (the 17th hex digit of the UUID, which is rndChars[4]).
   const rndChars = rndHex.split('');
   // version 7 -> '7'
   rndChars[0] = '7';
   // variant 10 -> 'a' or 'b'; use 'a'
-  rndChars[2] = 'a';
+  rndChars[4] = 'a';
 
   const uuid = `${timeHex.slice(0, 8)}-${timeHex.slice(8, 12)}-${rndChars.slice(0, 4).join('')}-${rndChars.slice(4, 8).join('')}-${rndChars.slice(8, 20).join('')}`;
   return uuid;

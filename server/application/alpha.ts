@@ -267,7 +267,7 @@ export async function listSmartMoney(
        FROM ledger_entries l
        JOIN users u ON u.id = l.user_id
        LEFT JOIN characters ch ON ch.user_id = l.user_id
-       JOIN coins c ON c.coin_id = l.ref_id
+       JOIN coins c ON c.coin_id = l.ref_id::uuid
        WHERE u.is_opted_in_smart_money = true
          AND l.account = 'cash'
          AND l.reason IN ('trade_buy', 'trade_sell')

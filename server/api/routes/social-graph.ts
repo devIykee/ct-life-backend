@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireUuidParam } from '../middleware/uuid-param.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   createPost,
@@ -49,18 +50,22 @@ export function registerSocialGraphRoutes(app: FastifyInstance): void {
   });
 
   // GET /v1/dms/:userId?before=
-  app.get('/v1/dms/:userId', { preHandler: requireAuth }, async (req, reply) => {
-    const { userId } = req.params as { userId: string };
-    const q = DmPeerQuery.safeParse(req.query);
-    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
-    const dms = await listDms(req.ctx, req.user!.sub, userId, q.data.before ?? null);
-    return reply.send({ messages: dms });
-  });
+  app.get(
+    '/v1/dms/:userId',
+    { preHandler: [requireAuth, requireUuidParam('userId')] },
+    async (req, reply) => {
+      const { userId } = req.params as { userId: string };
+      const q = DmPeerQuery.safeParse(req.query);
+      if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+      const dms = await listDms(req.ctx, req.user!.sub, userId, q.data.before ?? null);
+      return reply.send({ messages: dms });
+    },
+  );
 
   // POST /v1/dms/:userId
   app.post(
     '/v1/dms/:userId',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireUuidParam('userId'), withIdempotency()] },
     async (req, reply) => {
       const { userId } = req.params as { userId: string };
       const body = DmBody.safeParse(req.body);
@@ -93,7 +98,7 @@ export function registerSocialGraphRoutes(app: FastifyInstance): void {
   // POST /v1/follows/:userId
   app.post(
     '/v1/follows/:userId',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireUuidParam('userId'), withIdempotency()] },
     async (req, reply) => {
       const { userId } = req.params as { userId: string };
       await follow(req.ctx, req.user!.sub, userId);
@@ -104,7 +109,7 @@ export function registerSocialGraphRoutes(app: FastifyInstance): void {
   // DELETE /v1/follows/:userId
   app.delete(
     '/v1/follows/:userId',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireUuidParam('userId'), withIdempotency()] },
     async (req, reply) => {
       const { userId } = req.params as { userId: string };
       await unfollow(req.ctx, req.user!.sub, userId);
