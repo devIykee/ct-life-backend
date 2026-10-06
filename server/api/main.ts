@@ -35,6 +35,7 @@ import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
 import { registerBusinessRoutes } from './routes/businesses.js';
 import { registerGigRoutes } from './routes/gigs.js';
+import { registerProjectRoutes } from './routes/projects.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -144,6 +145,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerSeasonPassRoutes(app);
   registerBusinessRoutes(app);
   registerGigRoutes(app);
+  registerProjectRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 

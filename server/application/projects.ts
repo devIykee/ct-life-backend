@@ -1,0 +1,291 @@
+/**
+ * Player projects service (M5 #65).
+ *
+ * Endpoints:
+ *
+ *   POST /v1/projects                — found a project (kind + cash
+ *                                      seed). The Builder -30% perk
+ *                                      lowers the seed cost (out of
+ *                                      M5 scope; the perk check is
+ *                                      left as a TODO). Debits the
+ *                                      seed via a 'project_seed'
+ *                                      ledger row.
+ *   POST /v1/projects/{id}/hire      — hire a player (role + salary).
+ *                                      Inserts project_hires, weekly
+ *                                      salary debits from the project
+ *                                      owner's cash via a
+ *                                      'project_payroll' ledger row.
+ *   POST /v1/projects/{id}/launch    — flip status 'founded' -> 'launching'.
+ *                                      The M3 launchpad flow (M3 #42)
+ *                                      runs from there; for M5 we just
+ *                                      flip the status and return.
+ *   GET  /v1/projects/{id}           — return the project + hires + status.
+ *
+ * The weekly payroll worker (server/workers/projects.ts) debits
+ * every project_hire's salary from the owner's cash every Monday
+ * 00:00 UTC. When cash < salary the project's status flips to
+ * 'paused'.
+ */
+import { runInTransaction } from '../shared/db/uow.js';
+import { ConflictError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import { uuidv7 } from '../shared/domain/uuid.js';
+import type { AppContext } from './context.js';
+
+export type ProjectKind = 'memecoin' | 'dex' | 'nft_studio' | 'perps_venue' | 'l2';
+export type ProjectStatus = 'founded' | 'launching' | 'live' | 'paused' | 'rugged';
+export type ProjectRole = 'dev' | 'mod' | 'kol' | 'auditor';
+
+export interface ProjectRow {
+  readonly projectId: string;
+  readonly ownerUserId: string;
+  readonly kind: ProjectKind;
+  readonly status: ProjectStatus;
+  readonly cashCents: number;
+  readonly createdAt: string;
+}
+
+export interface ProjectHireRow {
+  readonly hireId: string;
+  readonly projectId: string;
+  readonly userId: string;
+  readonly role: ProjectRole;
+  readonly salaryCentsPerWeek: number;
+  readonly hiredAt: string;
+}
+
+const SEED_COST_BY_KIND: Record<ProjectKind, number> = {
+  memecoin: 50_000,
+  dex: 250_000,
+  nft_studio: 200_000,
+  perps_venue: 400_000,
+  l2: 1_000_000,
+};
+
+interface ProjectDbRow {
+  project_id: string;
+  owner_user_id: string;
+  kind: ProjectKind;
+  status: ProjectStatus;
+  cash_cents: string;
+  created_at: Date;
+}
+
+interface ProjectHireDbRow {
+  hire_id: string;
+  project_id: string;
+  user_id: string;
+  role: ProjectRole;
+  salary_cents_per_week: string;
+  hired_at: Date;
+}
+
+function rowToProject(r: ProjectDbRow): ProjectRow {
+  return {
+    projectId: r.project_id,
+    ownerUserId: r.owner_user_id,
+    kind: r.kind,
+    status: r.status,
+    cashCents: Number(r.cash_cents),
+    createdAt: r.created_at.toISOString(),
+  };
+}
+
+function rowToHire(r: ProjectHireDbRow): ProjectHireRow {
+  return {
+    hireId: r.hire_id,
+    projectId: r.project_id,
+    userId: r.user_id,
+    role: r.role,
+    salaryCentsPerWeek: Number(r.salary_cents_per_week),
+    hiredAt: r.hired_at.toISOString(),
+  };
+}
+
+/** Found a project. Debits the seed cost. */
+export async function foundProject(
+  _ctx: AppContext,
+  ownerUserId: string,
+  kind: ProjectKind,
+): Promise<ProjectRow> {
+  const seedCost = SEED_COST_BY_KIND[kind];
+  if (seedCost === undefined) {
+    throw new ValidationFailedError({ reason: `unknown project kind ${kind}` });
+  }
+  const projectId = uuidv7();
+  const result = await runInTransaction(async (client) => {
+    await client.query(
+      `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 0)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [ownerUserId],
+    );
+    const bal = await client.query<{ cash_cents: string }>(
+      `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
+      [ownerUserId],
+    );
+    const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');
+    if (cash < BigInt(seedCost)) {
+      throw new ValidationFailedError({
+        reason: 'insufficient cash for project seed',
+        have: cash.toString(),
+        need: seedCost.toString(),
+      });
+    }
+    await client.query(
+      `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now() WHERE user_id = $2`,
+      [seedCost, ownerUserId],
+    );
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+       VALUES ($1, $2, 'cash', 'project_seed', 'project', $3, $4)`,
+      [ownerUserId, -seedCost, projectId, `proj-seed:${projectId}:${uuidv7()}`],
+    );
+    const r = await client.query<ProjectDbRow>(
+      `INSERT INTO projects (project_id, owner_user_id, kind, status, cash_cents)
+       VALUES ($1, $2, $3, 'founded', $4)
+       RETURNING project_id, owner_user_id, kind, status, cash_cents, created_at`,
+      [projectId, ownerUserId, kind, seedCost],
+    );
+    return r.rows[0]!;
+  });
+  return rowToProject(result);
+}
+
+/** Hire a player into a project. */
+export async function hirePlayer(
+  _ctx: AppContext,
+  ownerUserId: string,
+  projectId: string,
+  args: { userId: string; role: ProjectRole; salaryCentsPerWeek: number },
+): Promise<ProjectHireRow> {
+  if (args.salaryCentsPerWeek <= 0) {
+    throw new ValidationFailedError({ reason: 'salaryCentsPerWeek > 0 required' });
+  }
+  const hireId = uuidv7();
+  const result = await runInTransaction(async (client) => {
+    // Lock the project.
+    const pR = await client.query<ProjectDbRow>(
+      `SELECT project_id, owner_user_id, kind, status, cash_cents, created_at
+       FROM projects WHERE project_id = $1 FOR UPDATE`,
+      [projectId],
+    );
+    const project = pR.rows[0];
+    if (!project) throw new NotFoundError({ reason: 'project not found' });
+    if (project.owner_user_id !== ownerUserId) {
+      throw new ConflictError({ reason: 'only the owner may hire' });
+    }
+    if (project.status === 'rugged') {
+      throw new ValidationFailedError({ reason: 'project is rugged' });
+    }
+    // Lock the new hire's balance (debit the first week's salary
+    // immediately; the weekly worker debits future weeks).
+    await client.query(
+      `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 0)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [ownerUserId],
+    );
+    const bal = await client.query<{ cash_cents: string }>(
+      `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
+      [ownerUserId],
+    );
+    const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');
+    if (cash < BigInt(args.salaryCentsPerWeek)) {
+      throw new ValidationFailedError({
+        reason: 'insufficient cash for first week salary',
+        have: cash.toString(),
+        need: args.salaryCentsPerWeek.toString(),
+      });
+    }
+    await client.query(
+      `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now() WHERE user_id = $2`,
+      [args.salaryCentsPerWeek, ownerUserId],
+    );
+    // Credit the hired player's balance.
+    await client.query(
+      `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 0)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [args.userId],
+    );
+    await client.query(
+      `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now() WHERE user_id = $2`,
+      [args.salaryCentsPerWeek, args.userId],
+    );
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+       VALUES ($1, $2, 'cash', 'project_payroll', 'project_hire', $3, $4)`,
+      [ownerUserId, -args.salaryCentsPerWeek, hireId, `proj-payroll:${hireId}:${uuidv7()}`],
+    );
+    await client.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+       VALUES ($1, $2, 'cash', 'project_payroll', 'project_hire', $3, $4)`,
+      [args.userId, args.salaryCentsPerWeek, hireId, `proj-payroll-in:${hireId}:${uuidv7()}`],
+    );
+    // Insert the project_hires row. UNIQUE (project_id, user_id)
+    // means a duplicate insert fires 23505 -> translate to 409.
+    try {
+      const r = await client.query<ProjectHireDbRow>(
+        `INSERT INTO project_hires (hire_id, project_id, user_id, role, salary_cents_per_week)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING hire_id, project_id, user_id, role, salary_cents_per_week, hired_at`,
+        [hireId, projectId, args.userId, args.role, args.salaryCentsPerWeek],
+      );
+      return r.rows[0]!;
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') {
+        throw new ConflictError({ reason: 'user already hired into this project' });
+      }
+      throw e;
+    }
+  });
+  return rowToHire(result);
+}
+
+/** Launch: flip founded -> launching. */
+export async function launchProject(
+  _ctx: AppContext,
+  ownerUserId: string,
+  projectId: string,
+): Promise<ProjectRow> {
+  const result = await runInTransaction(async (client) => {
+    const r = await client.query<ProjectDbRow>(
+      `UPDATE projects SET status = 'launching'
+       WHERE project_id = $1 AND owner_user_id = $2 AND status = 'founded'
+       RETURNING project_id, owner_user_id, kind, status, cash_cents, created_at`,
+      [projectId, ownerUserId],
+    );
+    if (!r.rows[0]) {
+      throw new NotFoundError({ reason: 'project not in founded state' });
+    }
+    return r.rows[0];
+  });
+  return rowToProject(result);
+}
+
+/**
+ *
+ */
+export async function getProject(
+  ctx: AppContext,
+  projectId: string,
+): Promise<{ project: ProjectRow; hires: ProjectHireRow[] }> {
+  const project = await ctx.db.withConnection(async (c) => {
+    const r = await c.query<ProjectDbRow>(
+      `SELECT project_id, owner_user_id, kind, status, cash_cents, created_at
+       FROM projects WHERE project_id = $1`,
+      [projectId],
+    );
+    return r.rows[0];
+  });
+  if (!project) throw new NotFoundError({ reason: 'project not found' });
+  const hires = await ctx.db.withConnection(async (c) => {
+    const r = await c.query<ProjectHireDbRow>(
+      `SELECT hire_id, project_id, user_id, role, salary_cents_per_week, hired_at
+       FROM project_hires WHERE project_id = $1
+       ORDER BY hired_at ASC`,
+      [projectId],
+    );
+    return r.rows.map(rowToHire);
+  });
+  return { project: rowToProject(project), hires };
+}
+
+void ConflictError;
