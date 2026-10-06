@@ -30,10 +30,13 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function newUser(prefix: string, sgtMint: string | null = null): Promise<string> {
   const id = uuidv7();
+  // SGT mints are UNIQUE on users; suffix to avoid collisions
+  // across tests.
+  const mint = sgtMint !== null ? `${sgtMint}-${id}` : null;
   await pool.query(
     `INSERT INTO users (id, wallet, sgt_mint) VALUES ($1, $2, $3)
      ON CONFLICT (id) DO UPDATE SET sgt_mint = EXCLUDED.sgt_mint`,
-    [id, `airdropUser-${prefix}-${id}`, sgtMint],
+    [id, `airdropUser-${prefix}-${id}`, mint],
   );
   return id;
 }

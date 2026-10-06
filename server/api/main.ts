@@ -41,6 +41,7 @@ import { registerTribeRoutes } from './routes/tribes.js';
 import { registerLeagueRoutes } from './routes/leagues.js';
 import { registerRatioArenaRoutes } from './routes/ratio-arena.js';
 import { registerAirdropRoutes } from './routes/airdrop-farm.js';
+import { registerVenuesGatingRoutes } from './routes/venues-gating.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -156,6 +157,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerLeagueRoutes(app);
   registerRatioArenaRoutes(app);
   registerAirdropRoutes(app);
+  registerVenuesGatingRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 

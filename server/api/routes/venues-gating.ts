@@ -1,0 +1,76 @@
+/**
+ * Dubai Marina + Cabal Lounge routes (M7 #7).
+ *
+ *   POST /v1/homes/:id/marina/visit
+ *   POST /v1/cabal/invites
+ *   POST /v1/cabal/invites/:id/accept
+ *   GET  /v1/cabal/invites
+ */
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import { requireAuth } from '../middleware/auth.js';
+import { withIdempotency } from '../middleware/idempotency.js';
+import { ValidationFailedError } from '../../shared/domain/errors.js';
+import {
+  acceptCabalInvite,
+  createCabalInvite,
+  listCabalInvites,
+  marinaVisit,
+} from '../../application/venues-gating.js';
+
+const CabalListQuery = z.object({
+  hostId: z.string().uuid().optional(),
+  guestId: z.string().uuid().optional(),
+  used: z.enum(['true', 'false']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+/**
+ * Register the venues-gating routes on the Fastify app.
+ */
+export function registerVenuesGatingRoutes(app: FastifyInstance): void {
+  app.post(
+    '/v1/homes/:id/marina/visit',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const out = await marinaVisit(req.ctx, req.user!.sub, id);
+      return reply.send(out);
+    },
+  );
+
+  app.post(
+    '/v1/cabal/invites',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const out = await createCabalInvite(req.ctx, req.user!.sub);
+      return reply.status(201).send(out);
+    },
+  );
+
+  app.post(
+    '/v1/cabal/invites/:id/accept',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const out = await acceptCabalInvite(req.ctx, req.user!.sub, id);
+      return reply.send(out);
+    },
+  );
+
+  app.get('/v1/cabal/invites', { preHandler: requireAuth }, async (req, reply) => {
+    const q = CabalListQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+    const used = q.data.used === undefined ? undefined : q.data.used === 'true';
+    const out = await listCabalInvites(
+      req.ctx,
+      {
+        hostUserId: q.data.hostId,
+        guestUserId: q.data.guestId,
+        used,
+      },
+      q.data.limit ?? 30,
+    );
+    return reply.send({ invites: out });
+  });
+}

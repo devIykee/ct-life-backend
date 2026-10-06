@@ -129,6 +129,12 @@
  *  86. airdrop_claims UNIQUE (user_id, day_date).
  *  87. airdrop_claims.amount_cents > 0.
  *
+ * Checks (M7 #7):
+ *
+ *  88. cabal_invites table exists.
+ *  89. cabal_invites.code UNIQUE.
+ *  90. cabal_invites.code length 16..64.
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -1162,6 +1168,37 @@ async function main(): Promise<void> {
       const cs = await checks('airdrop_claims');
       const all = cs.join('\n');
       record('airdrop_claims.amount_cents > 0', /amount_cents\s*>\s*0/i.test(all));
+    }
+
+    // --- M7 #7 invariants -------------------------------------------
+
+    // (88) cabal_invites table exists.
+    {
+      record('table cabal_invites exists', await tableExists(client, 'cabal_invites'));
+    }
+
+    // (89) cabal_invites.code UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.cabal_invites'::regclass
+           AND i.indisunique
+           AND a.attname = 'code'`,
+      );
+      record('cabal_invites.code UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (90) cabal_invites.code length 16..64.
+    {
+      const cs = await checks('cabal_invites');
+      const all = cs.join('\n');
+      record(
+        'cabal_invites.code length 16..64',
+        /length\(code\)\s+BETWEEN\s+16\s+AND\s+64/i.test(all) ||
+          (/length\(code\)\s*>=\s*16/i.test(all) && /length\(code\)\s*<=\s*64/i.test(all)),
+      );
     }
   } finally {
     await client.end();
