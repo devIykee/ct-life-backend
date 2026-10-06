@@ -58,7 +58,7 @@ export interface ProgramWebhookResult {
 export function verifyProgramWebhookSignature(
   ctx: AppContext,
   authorizationHeader: string | undefined,
-  rawBody: string,
+  _rawBody: string,
 ): void {
   const secret = ctx.config.helius.webhookSecret;
 

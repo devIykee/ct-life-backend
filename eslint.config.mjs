@@ -19,6 +19,8 @@ export default [
       'contract/**/*.ts',
       'docs/spec/**',
       '.github/**',
+      'tools/fuzz/rest-fuzz.ts',
+      'tools/load/staged-ramp.ts',
     ],
   },
   js.configs.recommended,

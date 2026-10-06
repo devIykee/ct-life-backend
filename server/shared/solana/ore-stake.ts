@@ -116,6 +116,9 @@ export interface OreStakeTxResult {
   readonly action: OreStakeAction;
 }
 
+/**
+ * Builds an unsigned ORE stake transaction (deposit, withdraw, claim, or compound).
+ */
 export function buildOreStakeTx(input: OreStakeTxInput): Transaction {
   const { userPubkey } = input;
   const stake = stakePda(userPubkey);
@@ -209,6 +212,9 @@ function _ignoreUnused(): void { void PKType; }
 _ignoreUnused();
 
 /** Encode the transaction as a base64 string (the wire format the Unity client expects). */
+/**
+ * Encodes a Transaction to base64 for MWA signing.
+ */
 export function encodeTxBase64(tx: Transaction): string {
   // Transaction.serializeMessage() returns the unsigned wire
   // bytes. The client signs the bytes via MWA before sending.

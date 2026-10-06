@@ -98,6 +98,9 @@ function concat(parts: Uint8Array[]): Uint8Array {
 // --- PDAs -------------------------------------------------------------------
 
 /** Config PDA: seeds = ["config"], program = CT_ESCROW_PROGRAM_ID. */
+/**
+ * Derives the Config PDA for ct_escrow (seeds: ["config"]).
+ */
 export function configPda(): PublicKey {
   const [pda] = PublicKey.findProgramAddressSync(
     [Buffer.from('config')],
@@ -111,6 +114,9 @@ export function configPda(): PublicKey {
  * Per spec section 6: the creator address is part of the seed
  * tuple so a given (fan, session_id) pair can only have one
  * creator.
+ */
+/**
+ * Derives the Session PDA for ct_escrow (seeds: ["session", fan, creator, session_id_le_bytes]).
  */
 export function sessionPda(fan: PublicKey, creator: PublicKey, sessionId: bigint): PublicKey {
   const sid = Buffer.alloc(8);
@@ -128,6 +134,9 @@ export function sessionPda(fan: PublicKey, creator: PublicKey, sessionId: bigint
  * Spec: rate × max_minutes × (1 + fee_bps/10000). The single
  * deposit at open_session covers creator's eventual payout, the
  * fee, and any refund.
+ */
+/**
+ * Computes the required deposit: rate × max_minutes × (1 + fee_bps/10000).
  */
 export function computeDeposit(
   rateBaseUnitsPerMin: bigint,
@@ -150,6 +159,9 @@ export interface InitConfigArgs {
   acceptWindowSecs: number;
 }
 
+/**
+ * Builds the init_config instruction (admin-only, one-time setup).
+ */
 export function buildInitConfigIx(args: InitConfigArgs): TransactionInstruction {
   const config = configPda();
   return new TransactionInstruction({
@@ -184,14 +196,14 @@ export interface OpenSessionArgs {
   feeBps: number;
 }
 
+/**
+ * Builds the open_session instruction (fan deposits funds into escrow).
+ */
 export function buildOpenSessionIx(args: OpenSessionArgs): TransactionInstruction {
   const config = configPda();
   const session = sessionPda(args.fan, args.creator, args.sessionId);
-  args.depositOverride ?? computeDeposit(
-    args.rateBaseUnitsPerMin,
-    args.maxMinutes,
-    args.feeBps,
-  );
+  // Deposit amount is computed by the on-chain program from rate × max_minutes × fee
+  // Not passed in instruction data; this calculation is for reference only
   return new TransactionInstruction({
     programId: CT_ESCROW_PROGRAM_ID,
     keys: [
@@ -221,6 +233,9 @@ export interface AcceptArgs {
   sessionId: bigint;
 }
 
+/**
+ * Builds the accept instruction (settle authority moves session from Pending to Active).
+ */
 export function buildAcceptIx(args: AcceptArgs): TransactionInstruction {
   const config = configPda();
   const session = sessionPda(args.fan, args.creator, args.sessionId);
@@ -247,6 +262,9 @@ export interface SettleArgs {
   treasuryUsdcAta: PublicKey;
 }
 
+/**
+ * Builds the settle instruction (settle authority closes session, pays creator and treasury, refunds fan).
+ */
 export function buildSettleIx(args: SettleArgs): TransactionInstruction {
   const config = configPda();
   const session = sessionPda(args.fan, args.creator, args.sessionId);
@@ -277,6 +295,9 @@ export interface RefundArgs {
   signer: PublicKey;
 }
 
+/**
+ * Builds the refund instruction (settle authority refunds fan before accept or after grace period).
+ */
 export function buildRefundIx(args: RefundArgs): TransactionInstruction {
   const config = configPda();
   const session = sessionPda(args.fan, args.creator, args.sessionId);
@@ -301,6 +322,9 @@ export interface SendSettleExtra {
   settleAuthorityKeypair: Keypair;
 }
 
+/**
+ * Sends a settle transaction on-chain (devnet/mainnet).
+ */
 export async function sendSettle(
   args: SettleArgs & SendSettleExtra & { connection: Connection },
 ): Promise<string> {
@@ -323,6 +347,9 @@ export async function sendSettle(
   return sig;
 }
 
+/**
+ * Sends an open_session transaction on-chain (devnet/mainnet).
+ */
 export async function sendOpenSession(
   args: OpenSessionArgs & { fanKeypair: Keypair } & { connection: Connection },
 ): Promise<string> {
@@ -345,6 +372,9 @@ export async function sendOpenSession(
   return sig;
 }
 
+/**
+ * Sends an accept transaction on-chain (devnet/mainnet).
+ */
 export async function sendAccept(
   args: AcceptArgs & { settleAuthorityKeypair: Keypair } & { connection: Connection },
 ): Promise<string> {
@@ -421,6 +451,9 @@ export interface DecodedRefunded {
 export type DecodedEvent = DecodedOpened | DecodedAccepted | DecodedSettled | DecodedRefunded;
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+/**
+ * Decodes a base58 string to a Buffer (for Solana pubkey decoding).
+ */
 function base58Decode(s: string): Buffer {
   if (s.length === 0) return Buffer.alloc(0);
   const bytes: number[] = [0];
@@ -477,6 +510,9 @@ function pubkeyFromBytes(bytes: Uint8Array): string {
 }
 
 /** Decode a Solana program-data log line emitted by ct_escrow. */
+/**
+ * Decodes a ct_escrow program event from base64 (SessionOpened, SessionAccepted, SessionSettled, SessionRefunded).
+ */
 export function decodeCtEscrowEvent(b64: string): DecodedEvent | null {
   let bytes: Uint8Array;
   try {

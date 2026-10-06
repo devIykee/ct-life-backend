@@ -33,7 +33,7 @@
  *     --keypair /home/iyke/ct-life-keys/settle-devnet.json
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -128,7 +128,7 @@ async function startLocalValidator(): Promise<{
 }
 
 function loadKeypair(path: string): Keypair {
-  const arr = JSON.parse(require('node:fs').readFileSync(path, 'utf8')) as number[];
+  const arr = JSON.parse(readFileSync(path, 'utf8')) as number[];
   return Keypair.fromSecretKey(Uint8Array.from(arr));
 }
 

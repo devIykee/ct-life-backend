@@ -22,7 +22,6 @@ import { Program } from '@coral-xyz/anchor';
 import { BN } from 'bn.js';
 import {
   TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccount,
   createMint,
@@ -41,8 +40,9 @@ const FEE_BPS = 500; // 5%
 const RATE_LOW = 250_000; // 0.25 USDC
 const RATE_HIGH = 50_000_000; // 50 USDC
 
-const ACCEPT_WINDOW_SECS = 120;
-const POST_ACCEPT_GRACE_SECS = 600;
+// Accept window and grace period constants (for reference)
+const _ACCEPT_WINDOW_SECS = 120;
+const _POST_ACCEPT_GRACE_SECS = 600;
 
 describe('ct_escrow', () => {
   const provider = anchor.AnchorProvider.env();
