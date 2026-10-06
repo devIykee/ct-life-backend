@@ -36,6 +36,7 @@ import { registerSeasonPassRoutes } from './routes/season-pass.js';
 import { registerBusinessRoutes } from './routes/businesses.js';
 import { registerGigRoutes } from './routes/gigs.js';
 import { registerProjectRoutes } from './routes/projects.js';
+import { registerNftMintRoutes } from './routes/nft-mint.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -146,6 +147,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerBusinessRoutes(app);
   registerGigRoutes(app);
   registerProjectRoutes(app);
+  registerNftMintRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 
