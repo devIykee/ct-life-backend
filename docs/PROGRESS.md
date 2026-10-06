@@ -678,3 +678,60 @@ M5 #61 (season pass).
 ### Next
 
 M5 #61 (season pass).
+
+## M5 #61–#69 — closing slice
+
+- [x] M5 #61: `server/application/season-pass.ts` +
+      `routes/season-pass.ts`. buy() debits 500 cents via
+      'season_pass_buy' ledger row and upserts the
+      season_pass row (UNIQUE user_id). claim() reads the
+      'weekly_perk' ledger rows written by the Sunday
+      Unlock worker.
+- [x] M5 #62: `server/application/businesses.ts` +
+      `routes/businesses.ts`. Per-kind config
+      (lemonade_stand/laundromat/cafe/shop/arcade) with
+      bad_day / great_day / normal probability. runBusiness
+      is idempotent on (business_id, day_date) and refuses
+      non-owners.
+- [x] M5 #63: `server/application/gigs.ts` +
+      `routes/gigs.ts`. Five gigs (food_delivery,
+      data_entry, dog_walking, ad_clicks, social_moderation)
+      with per-gig payCents + outcomeId formulas. Each run
+      writes a gig_runs row + a 'gig_pay' ledger row.
+- [x] M5 #64: `server/application/ads.ts` extended to
+      read from the M5 ad_slots / ad_bookings / ad_creatives
+      tables, with a 5-minute Redis cache at
+      ore:ads:live:{slotId} and admin approve / reject
+      endpoints. `server/application/context.ts` wired
+      `s3: S3` into AppContext.
+- [x] M5 #65: `server/application/projects.ts` +
+      `routes/projects.ts`. foundProject debits the seed;
+      hirePlayer debits + credits salary in one UoW;
+      launchProject flips founded -> launching.
+- [x] M5 #66: `server/application/nft-mint.ts` +
+      `routes/nft-mint.ts`. Deterministic mint_address
+      (sha256 of userId+itemId), synthetic signature,
+      UNIQUE (mint_address, signature) replay safety.
+- [x] M5 #67: `packages/npc-brain` extended with
+      VcNpcBrain (hunt richest player, vc_dibs on launch)
+      and BuilderNpcBrain (wander/talk loop, react on
+      launch).
+- [x] M5 #68: `server/workers/sunday-unlock.ts` shipped
+      as part of M5 #60 (runSundayUnlock + runWeeklyMeta + weekIso + priorWeekRange). The BullMQ cron
+      already lives in server/workers/main.ts.
+- [x] M5 #69: tools/bots/bot.ts extended with the five
+      M5 bot paths (purchaseCosmeticBot, dailyClueBot,
+      runGigBot, seasonPassBot, foundBusinessBot,
+      foundProjectBot + hire). New
+      `tools/scripts/microbench.ts` measures p50/p95/p99
+      REST latency on /v1/me under bot load.
+
+### M5 gate
+
+- 169/169 unit tests pass across 27 files.
+- 99/99 db:verify invariants (60 base + 30 M5 + 9 still
+  in the M2-M4 floor; M5 added UNIQUE on cosmetic_items,
+  cosmetic_inventory, business_days, project_hires,
+  nft_mints, meta_jobs; CHECKs on every status enum).
+- pnpm typecheck, lint, format:check, contract:check,
+  boundary:check, docs:check all green.

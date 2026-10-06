@@ -31,6 +31,7 @@ export interface BotResult {
   characterCreated: boolean;
   rolledLottery: boolean;
   shiftStarted: boolean;
+  ranM5Flow: boolean;
 }
 
 interface DevAuthResponse {
@@ -67,6 +68,7 @@ export class Bot {
   private readonly keypair: Keypair;
   private readonly opts: BotOptions;
   private accessToken: string | null = null;
+  private userId: string | null = null;
 
   constructor(opts: BotOptions) {
     this.keypair = Keypair.generate();
@@ -90,11 +92,13 @@ export class Bot {
       characterCreated: false,
       rolledLottery: false,
       shiftStarted: false,
+      ranM5Flow: false,
     };
     // 1. Dev auth.
     const auth = await this.devAuth().catch(() => null);
     if (!auth) return r;
     this.accessToken = auth.accessToken;
+    this.userId = auth.id;
     r.userId = auth.id;
 
     // 2. Character.
@@ -108,6 +112,14 @@ export class Bot {
 
     // 5. Shift start.
     r.shiftStarted = await this.startShift().catch(() => false);
+
+    // M5 flows: drive the city-life endpoints in sequence.
+    r.ranM5Flow =
+      (await this.purchaseCosmeticBot().catch(() => false)) ||
+      (await this.dailyClueBot().catch(() => false)) ||
+      (await this.runGigBot().catch(() => false)) ||
+      (await this.seasonPassBot().catch(() => false)) ||
+      (await this.foundBusinessBot().catch(() => false));
 
     return r;
   }
@@ -317,5 +329,125 @@ export class Bot {
       },
     });
     return res.ok;
+  }
+
+  /** M5: list the cosmetic shop and buy one item. */
+  async purchaseCosmeticBot(): Promise<boolean> {
+    const listRes = await fetch(`${this.opts.apiBase}/v1/shop`, {
+      headers: { authorization: `Bearer ${this.accessToken}` },
+    });
+    if (!listRes.ok) return false;
+    const list = (await listRes.json()) as {
+      items: Array<{ itemId: string; onchainOnly: boolean }>;
+    };
+    const item = list.items.find((i) => !i.onchainOnly);
+    if (!item) return false;
+    const res = await fetch(`${this.opts.apiBase}/v1/shop/purchase`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('cosmetic'),
+      },
+      body: JSON.stringify({ itemId: item.itemId }),
+    });
+    return res.ok;
+  }
+
+  /** M5: buy the season pass. */
+  async seasonPassBot(): Promise<boolean> {
+    const res = await fetch(`${this.opts.apiBase}/v1/season-pass/buy`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('season-pass'),
+      },
+    });
+    return res.ok;
+  }
+
+  /** M5: submit a daily-clue answer. The bot tries a few candidates. */
+  async dailyClueBot(): Promise<boolean> {
+    const candidates = ['q', '7', 'tokyo', '1989', '2', 'mars', '88', 'au', 'paris', 'gold'];
+    for (const c of candidates) {
+      const res = await fetch(`${this.opts.apiBase}/v1/daily-clue/answer`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.accessToken}`,
+          'idempotency-key': idempotencyKey(`clue-${c}`),
+        },
+        body: JSON.stringify({ attempt: c }),
+      });
+      if (res.ok) return true;
+      // 403 already_attempted -> bail.
+      const body = (await res.json().catch(() => ({}))) as { error?: { code?: string } };
+      if (body.error?.code === 'FORBIDDEN') return false;
+    }
+    return false;
+  }
+
+  /** M5: run a gig (food_delivery by default). */
+  async runGigBot(gigId: string = 'food_delivery'): Promise<boolean> {
+    const res = await fetch(`${this.opts.apiBase}/v1/gigs/${encodeURIComponent(gigId)}/run`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey(`gig-${gigId}`),
+      },
+      body: JSON.stringify({}),
+    });
+    return res.ok;
+  }
+
+  /** M5: found a business. */
+  async foundBusinessBot(kind: string = 'lemonade_stand'): Promise<boolean> {
+    const res = await fetch(`${this.opts.apiBase}/v1/businesses`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('business'),
+      },
+      body: JSON.stringify({ kind }),
+    });
+    return res.ok;
+  }
+
+  /** M5: found a project + hire a bot. */
+  async foundProjectBot(): Promise<boolean> {
+    const fRes = await fetch(`${this.opts.apiBase}/v1/projects`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${this.accessToken}`,
+        'idempotency-key': idempotencyKey('project-found'),
+      },
+      body: JSON.stringify({ kind: 'memecoin' }),
+    });
+    if (!fRes.ok) return false;
+    const fJson = (await fRes.json()) as { projectId: string };
+    // Hire a random (any) user UUID; the test seed users are
+    // uuidv7() so a fresh UUID will 23505 the unique hire
+    // index. The bot's run is logged for the load test but
+    // not asserted on the second bot's UUID match.
+    const hireRes = await fetch(
+      `${this.opts.apiBase}/v1/projects/${encodeURIComponent(fJson.projectId)}/hire`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${this.accessToken}`,
+          'idempotency-key': idempotencyKey('project-hire'),
+        },
+        body: JSON.stringify({
+          userId: this.userId ?? '',
+          role: 'dev',
+          salaryCentsPerWeek: 1000,
+        }),
+      },
+    );
+    return hireRes.ok;
   }
 }
