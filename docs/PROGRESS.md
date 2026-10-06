@@ -773,7 +773,8 @@ The master prompt's M6 gate criteria:
 M7 (Phase 6, Competition: tribes, leagues, CT Beef in
 the Ratio Arena, Airdrop Farm + Sybil jail, Dubai
 Marina + Cabal Lounge gating, LLM chat for AI Agent
-+ Sleuth, Verified X link).
+
+- Sleuth, Verified X link).
 
 ## M7 — Phase 6, Competition (features 38 to 44)
 
@@ -822,9 +823,9 @@ Marina + Cabal Lounge gating, LLM chat for AI Agent
   spec. Stores only handle + avatar. Behind
   X_LINK_ENABLED flag.
 - **M7 #10 — Tests + season rollover + Elo + LLM filter
-  + closing slice.** Gate: simulated-clock 8-week
-  rollover, Elo property tests, LLM output filter
-  tests with adversarial inputs, full suite green.
+  - closing slice.** Gate: simulated-clock 8-week
+    rollover, Elo property tests, LLM output filter
+    tests with adversarial inputs, full suite green.
 
 ### Static gate
 

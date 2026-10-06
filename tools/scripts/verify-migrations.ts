@@ -86,6 +86,16 @@
  *  59. businesses.income_min_cents <= income_max_cents.
  *  60. daily_clue.answer_hash length 64.
  *
+ * Checks (M7 #1):
+ *
+ *  61. M7 tables exist: districts, tribe_district_scores,
+ *      district_ownership_history.
+ *  62. districts.slug UNIQUE.
+ *  63. districts.base_score_per_day > 0.
+ *  64. tribe_district_scores.score > 0.
+ *  65. tribe_district_scores UNIQUE (tribe_id, district_id, day_date).
+ *  66. district_ownership_history UNIQUE (district_id, valid_from).
+ *
  * Run: pnpm exec tsx tools/scripts/verify-migrations.ts
  *
  * Exit code 0 on success, 1 on any failure.
@@ -832,6 +842,76 @@ async function main(): Promise<void> {
       const cs = await checks('daily_clue');
       const all = cs.join('\n');
       record('daily_clue.answer_hash length 64', /length\(answer_hash\)\s*=\s*64/i.test(all));
+    }
+
+    // --- M7 #1 invariants -------------------------------------------
+
+    // (61) M7 tables exist.
+    for (const t of ['districts', 'tribe_district_scores', 'district_ownership_history']) {
+      record(`table ${t} exists`, await tableExists(client, t));
+    }
+
+    // (62) districts.slug UNIQUE.
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+         WHERE i.indrelid = 'public.districts'::regclass
+           AND i.indisunique
+           AND a.attname = 'slug'`,
+      );
+      record('districts.slug UNIQUE', Number(r.rows[0]?.count ?? '0') > 0);
+    }
+
+    // (63) districts.base_score_per_day > 0.
+    {
+      const cs = await checks('districts');
+      const all = cs.join('\n');
+      record('districts.base_score_per_day > 0', /base_score_per_day\s*>\s*0/i.test(all));
+    }
+
+    // (64) tribe_district_scores.score > 0.
+    {
+      const cs = await checks('tribe_district_scores');
+      const all = cs.join('\n');
+      record('tribe_district_scores.score > 0', /score\s*>\s*0/i.test(all));
+    }
+
+    // (65) tribe_district_scores UNIQUE (tribe_id, district_id, day_date).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.tribe_district_scores'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['tribe_id','district_id','day_date']::name[]`,
+      );
+      record(
+        'tribe_district_scores UNIQUE (tribe_id, district_id, day_date)',
+        Number(r.rows[0]?.count ?? '0') > 0,
+      );
+    }
+
+    // (66) district_ownership_history UNIQUE (district_id, valid_from).
+    {
+      const r = await client.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count
+         FROM pg_index i
+         WHERE i.indrelid = 'public.district_ownership_history'::regclass
+           AND i.indisunique
+           AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
+                FROM pg_attribute a
+                WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
+                = ARRAY['district_id','valid_from']::name[]`,
+      );
+      record(
+        'district_ownership_history UNIQUE (district_id, valid_from)',
+        Number(r.rows[0]?.count ?? '0') > 0,
+      );
     }
   } finally {
     await client.end();
