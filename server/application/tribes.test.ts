@@ -16,7 +16,7 @@ import { config as loadDotenv } from 'dotenv';
 import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { NotFoundError } from '../shared/domain/errors.js';
+import { NotFoundError, ValidationFailedError, ForbiddenError } from '../shared/domain/errors.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -205,6 +205,91 @@ describe('tribes service', () => {
        ORDER BY valid_from DESC LIMIT 1`,
     );
     expect(r2.rows[0]?.valid_to).not.toBeNull();
+  });
+
+  // --- M7 #4: tribe change once per season --------------------------
+
+  describe('changeTribe', () => {
+    async function newCharUser(): Promise<string> {
+      const id = uuidv7();
+      await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [
+        id,
+        `tribeChangeUser-${id}`,
+      ]);
+      await pool.query(
+        `INSERT INTO characters (id, user_id, alias, look, tribe_id, trait_ids, dream_id, home_id)
+         VALUES ($1, $2, $3, '{}'::jsonb, 'anon', ARRAY[]::text[], 'be_rich', 'studio')
+         ON CONFLICT (user_id) DO NOTHING`,
+        [uuidv7(), id, `tribe-${id.slice(0, 8)}`],
+      );
+      return id;
+    }
+
+    beforeEach(async () => {
+      await pool.query(
+        `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'tribeChangeUser-%')`,
+      );
+      await pool.query(`DELETE FROM users WHERE wallet LIKE 'tribeChangeUser-%'`);
+    });
+
+    it('allows the first-ever tribe change', async () => {
+      const ctx = buildContext();
+      const { changeTribe } = await import('./tribes.js');
+      const userId = await newCharUser();
+      const out = await changeTribe(ctx, userId, 'perp_degen');
+      expect(out.tribeId).toBe('perp_degen');
+    });
+
+    it('refuses the second change in the same ISO-8601 week', async () => {
+      const ctx = buildContext();
+      const { changeTribe } = await import('./tribes.js');
+      const userId = await newCharUser();
+      const now = new Date('2026-10-06T00:00:00Z');
+      await changeTribe(ctx, userId, 'perp_degen', now);
+      await expect(changeTribe(ctx, userId, 'trencher', now)).rejects.toBeInstanceOf(
+        ForbiddenError,
+      );
+    });
+
+    it('allows a new change in a new ISO-8601 week', async () => {
+      const ctx = buildContext();
+      const { changeTribe } = await import('./tribes.js');
+      const userId = await newCharUser();
+      const first = new Date('2026-10-06T00:00:00Z'); // 2026-W41
+      const next = new Date('2026-10-12T00:00:00Z'); // 2026-W42 (Monday)
+      await changeTribe(ctx, userId, 'perp_degen', first);
+      const out = await changeTribe(ctx, userId, 'trencher', next);
+      expect(out.tribeId).toBe('trencher');
+    });
+
+    it('refuses an unknown tribe id', async () => {
+      const ctx = buildContext();
+      const { changeTribe } = await import('./tribes.js');
+      const userId = await newCharUser();
+      await expect(changeTribe(ctx, userId, 'mythic_9999')).rejects.toBeInstanceOf(
+        ValidationFailedError,
+      );
+    });
+
+    it('refuses the same tribe the caller is already in', async () => {
+      const ctx = buildContext();
+      const { changeTribe } = await import('./tribes.js');
+      const userId = await newCharUser();
+      await expect(changeTribe(ctx, userId, 'anon')).rejects.toBeInstanceOf(
+        ValidationFailedError,
+      );
+    });
+
+    it('refuses when the user has no character', async () => {
+      const ctx = buildContext();
+      const { changeTribe } = await import('./tribes.js');
+      const userId = uuidv7();
+      await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [
+        userId,
+        `noCharUser-${userId}`,
+      ]);
+      await expect(changeTribe(ctx, userId, 'perp_degen')).rejects.toBeInstanceOf(NotFoundError);
+    });
   });
 
   // silence the unused-uuid warning

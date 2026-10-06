@@ -38,8 +38,13 @@
  * `district_ownership_history.valid_to`.
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { weekIso } from './season-clock.js';
 import type { AppContext } from './context.js';
 
 interface TribeRegistryEntry {
@@ -357,4 +362,63 @@ function rowToDistrict(r: DistrictDbRow): DistrictRow {
     defaultHolderTribeId: r.default_holder_tribe_id,
     baseScorePerDay: r.base_score_per_day,
   };
+}
+
+/**
+ * Change the caller's tribe. The gate is "once per season": the
+ * caller's characters.tribe_changed_at is the source of truth;
+ * if it's in the same ISO-8601 week as the current date, the
+ * call is refused with 409. The master prompt's M7 #4 spec
+ * ("Tribe change once per season") is enforced here.
+ *
+ * The first-ever tribe change is always allowed (tribe_changed_at
+ * is NULL).
+ */
+export async function changeTribe(
+  ctx: AppContext,
+  userId: string,
+  newTribeId: string,
+  now: Date = new Date(),
+): Promise<{ tribeId: string; tribeChangedAt: string }> {
+  // Validate the new tribe id against the contract.
+  const tribes = readTribes(ctx);
+  if (!tribes.some((t) => t.id === newTribeId)) {
+    throw new ValidationFailedError({ reason: `unknown tribe ${newTribeId}` });
+  }
+  const currentSeason = weekIso(now);
+  return runInTransaction(async (client) => {
+    // Lock + read the character.
+    const r = await client.query<{
+      tribe_id: string;
+      tribe_changed_at: Date | null;
+    }>(
+      `SELECT tribe_id, tribe_changed_at
+       FROM characters WHERE user_id = $1 FOR UPDATE`,
+      [userId],
+    );
+    const char = r.rows[0];
+    if (!char) {
+      throw new NotFoundError({ kind: 'character', userId });
+    }
+    if (char.tribe_id === newTribeId) {
+      throw new ValidationFailedError({ reason: 'already in this tribe' });
+    }
+    if (char.tribe_changed_at !== null) {
+      const priorSeason = weekIso(char.tribe_changed_at);
+      if (priorSeason === currentSeason) {
+        throw new ForbiddenError({
+          reason: 'tribe change already used this season',
+          lastChanged: char.tribe_changed_at.toISOString(),
+        });
+      }
+    }
+    await client.query(
+      `UPDATE characters SET tribe_id = $1, tribe_changed_at = $2 WHERE user_id = $3`,
+      [newTribeId, now.toISOString(), userId],
+    );
+    return {
+      tribeId: newTribeId,
+      tribeChangedAt: now.toISOString(),
+    };
+  });
 }
