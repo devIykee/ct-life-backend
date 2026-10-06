@@ -78,7 +78,7 @@ isSeeker, hasCharacter }`. The endpoint only exists when
 | M1        | DONE   | `pnpm contract:check` green           |
 | M2        | DONE   | 32 unit tests, e2e with 20 bots       |
 | M3        | DONE   | 47 unit tests, market engine + ORE    |
-| M4        | DONE   | 99 unit tests, paid calls + LiveKit   |
+| M4        | PARTIAL | 99 unit tests; ct_escrow deployed to devnet but server settlement wiring + Anchor test runner pending (see [UNVERIFIED.md](./UNVERIFIED.md)) |
 | M5        | DONE   | 169 unit tests, Phase 4 + 5           |
 | M6        | DONE   | covered by M5 (decision in DECISIONS) |
 | M7        | DONE   | 265 unit tests, Phase 6 competition   |
@@ -97,9 +97,18 @@ pnpm format:check        # clean
 pnpm docs:check          # env vars + error codes + links
 pnpm boundary:check      # layering OK
 pnpm contract:check      # OpenAPI + C# codegen + response validation
-pnpm test:unit           # 295/295 passed
+pnpm test:unit           # 303/303 passed
 pnpm db:verify           # 143/143 schema invariants
 ```
+
+Note: the devnet program ID for the paid-call escrow is
+`FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz`. The on-chain
+binary is at `programs/ct_escrow/target/deploy/ct_escrow.so`;
+the IDL is at `contract/idl/ct_escrow.json`. The server-side
+encoder/decoder is at `server/shared/solana/ct-escrow.ts`. The
+remaining M4 work (server settlement wiring, Helius program-event
+webhook, devnet e2e with two bot wallets, Anchor test runner)
+is documented in `docs/UNVERIFIED.md` and `docs/followups/POST_M8_STAGING.md`.
 
 `pnpm exec tsx tools/load/staged-ramp.ts --bots 200 --duration 10`
 exercises a 200-bot REST ramp and appends the result to
