@@ -33,7 +33,7 @@ const TradeBody = z.object({
   side: z.enum(['buy', 'sell']),
   cashCents: z.number().int().positive().optional(),
   units: z.string().optional(),
-  maxSlippageBps: z.number().int().min(0).max(10_000),
+  maxSlippageBps: z.number().int().min(0).max(10_000).optional().default(500), // B20: optional with default
 });
 
 const LaunchBody = z.object({

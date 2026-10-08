@@ -10,16 +10,17 @@
 /**
  * Quote a trade against the constant-product AMM.
  *
- * `x` is the base-units reserve; `y` is the USDC reserve (cents).
+ * `x` is the base-units reserve (token units with their decimals);
+ * `y` is the quote reserve in cents (100 cents = $1 USDC).
  *
- * - buy:  pay `amountIn` USDC (cents), receive base units out.
+ * - buy:  pay `amountIn` in cents, receive base units out.
  *   y' = y + amountIn;  x' = x * y / y';  amountOut = x - x'.
- * - sell: pay `amountIn` base units, receive USDC out.
+ * - sell: pay `amountIn` base units, receive cents out.
  *   x' = x + amountIn;  usdc = y * amountIn / x';  amountOut = usdc.
  *
  * @param side - 'buy' or 'sell'.
  * @param amountIn - Cents for buy, base units for sell.
- * @param reserves - The current {x, y} reserves.
+ * @param reserves - The current {x, y} reserves (x: base units, y: cents).
  * @returns The output amount and the post-trade reserves.
  */
 export function ammQuote(

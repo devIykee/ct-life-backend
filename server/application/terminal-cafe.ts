@@ -243,7 +243,8 @@ export interface TradeResult {
   readonly side: TradeSide;
   readonly units: string;
   readonly priceMicros: string;
-  readonly cashDeltaCents: string;
+  readonly feeCents: string; // B20: add fee field
+  readonly cashCents: string; // B20: rename from cashDeltaCents, net cash after fee
   readonly realizedCents: string;
   readonly newUnits: string;
 }
@@ -284,45 +285,81 @@ export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise
     if (coin.stage === 'dead') {
       throw new ValidationFailedError({ reason: 'coin is dead' });
     }
-    const snapPrice = BigInt(coin.price_micros);
-    // AMM with virtual reserves. For the in-spec engine the
-    // reserves are fixed; production reads them from the coin row.
-    const reserves = { x: 1_000_000n, y: 30_000_000n };
+    const quotePriceMicros = BigInt(coin.price_micros);
+    if (quotePriceMicros <= 0n) {
+      throw new ValidationFailedError({ reason: 'coin price is not positive' });
+    }
+
+    // B20 fix: Derive virtual reserves from the coin's current price so the curve's
+    // spot price equals price_micros before the trade.
+    // Fixed config reserves: x=1M, y=30M (from market.json)
+    // For any coin price P (micros), scale reserves: x'=1M, y'=x' * P
+    // This ensures y'/x' = P before any trade.
+    const baseReserveX = 1_000_000n;
+    const reserves = {
+      x: baseReserveX,
+      y: (baseReserveX * quotePriceMicros) / 1_000_000n, // Convert micros to cents for y
+    };
+
+    // B20 fix: Apply fees from market.json (100 bps each side)
+    const FEE_BPS_BUY = 100n;
+    const FEE_BPS_SELL = 100n;
+
     let amountOut: bigint;
     let amountInCents: bigint;
-    let newX: bigint;
-    let newY: bigint;
+    let feeCents: bigint;
+
     if (input.side === 'buy') {
       amountInCents = BigInt(input.cashCents!);
+      // Apply buy fee: fee is taken from the input
+      feeCents = (amountInCents * FEE_BPS_BUY) / 10_000n;
+      const amountAfterFee = amountInCents - feeCents;
+
       // cents -> USDC base units (6dp): units = cents * 10_000 (since 1 USDC = 100 cents = 1_000_000 base units)
-      const usdcBaseUnits = amountInCents * 10_000n;
+      const usdcBaseUnits = amountAfterFee * 10_000n;
       const q = ammQuote('buy', usdcBaseUnits, reserves);
       amountOut = q.amountOut;
-      newX = q.newX;
-      newY = q.newY;
     } else {
       const units = BigInt(input.units!);
       const q = ammQuote('sell', units, reserves);
       amountOut = q.amountOut;
-      newX = q.newX;
-      newY = q.newY;
       // USDC base units (6dp) -> cents
-      amountInCents = (amountOut * 100n) / 1_000_000n;
+      const amountOutCents = (amountOut * 100n) / 1_000_000n;
+      // Apply sell fee: fee is taken from the output
+      feeCents = (amountOutCents * FEE_BPS_SELL) / 10_000n;
+      amountInCents = amountOutCents - feeCents;
     }
-    // New price (micros): the marginal price after the trade.
-    // newY / newX (cents per base unit) -> micros (multiply by 1_000_000).
-    const newPriceMicros = (newY * 1_000_000n) / (newX === 0n ? 1n : newX);
-    // Slippage check: divergence from snap price.
-    const diffBps =
-      snapPrice === 0n
-        ? 0n
-        : newPriceMicros > snapPrice
-          ? ((newPriceMicros - snapPrice) * 10_000n) / snapPrice
-          : ((snapPrice - newPriceMicros) * 10_000n) / snapPrice;
-    if (diffBps > BigInt(input.maxSlippageBps)) {
+
+    // B20 fix: Calculate execution price and check slippage one-sided
+    // Execution price = total cash in / units out (for buy), or total cash out / units in (for sell)
+    let executionPriceMicros: bigint;
+    if (input.side === 'buy') {
+      // Buy: execution price = (cashCents + fee) / unitsOut * 1M
+      executionPriceMicros = amountOut > 0n
+        ? (amountInCents * 1_000_000n) / amountOut
+        : 0n;
+    } else {
+      // Sell: execution price = (cashCents - fee) / unitsIn * 1M
+      const units = BigInt(input.units!);
+      executionPriceMicros = units > 0n
+        ? (amountInCents * 1_000_000n) / units
+        : 0n;
+    }
+
+    // Slippage check: one-sided (only worse prices fail)
+    // For buy: worse = higher price (paying more per unit)
+    // For sell: worse = lower price (receiving less per unit)
+    let slippageBps = 0n;
+    if (input.side === 'buy' && executionPriceMicros > quotePriceMicros) {
+      slippageBps = ((executionPriceMicros - quotePriceMicros) * 10_000n) / quotePriceMicros;
+    } else if (input.side === 'sell' && executionPriceMicros < quotePriceMicros) {
+      slippageBps = ((quotePriceMicros - executionPriceMicros) * 10_000n) / quotePriceMicros;
+    }
+
+    if (slippageBps > BigInt(input.maxSlippageBps)) {
       throw new SlippageExceededError({
-        expected: snapPrice.toString(),
-        actual: newPriceMicros.toString(),
+        expected: quotePriceMicros.toString(),
+        actual: executionPriceMicros.toString(),
         maxSlippageBps: input.maxSlippageBps,
       });
     }
@@ -419,18 +456,15 @@ export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise
         );
       }
     }
-    // Update the engine's price.
-    await client.query(`UPDATE coins SET price_micros = $1 WHERE coin_id = $2`, [
-      newPriceMicros.toString(),
-      input.coinId,
-    ]);
+    // B20 fix: Return the contract Trade shape with execution price and fee
     return {
       tradeId: positionId,
       coinId: input.coinId,
       side: input.side,
       units: amountOut.toString(),
-      priceMicros: newPriceMicros.toString(),
-      cashDeltaCents: (input.side === 'buy' ? -amountInCents : amountInCents).toString(),
+      priceMicros: executionPriceMicros.toString(), // B20: execution price, not post-trade marginal
+      feeCents: feeCents.toString(), // B20: add fee to response
+      cashCents: amountInCents.toString(), // B20: net cash (after fee for buy, after fee for sell)
       realizedCents: realizedCents.toString(),
       newUnits: newUnits.toString(),
     };
