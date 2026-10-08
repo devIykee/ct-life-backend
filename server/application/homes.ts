@@ -50,6 +50,22 @@ const RENT_BY_KIND: Record<HomeKind, number> = {
 
 const MAX_VISITS_PER_GET = 50;
 
+/**
+ * B26: List available home types with their rent prices.
+ * Returns the home types catalog for the shop/selection UI.
+ */
+export async function listHomeTypes(_ctx: AppContext): Promise<
+  Array<{ id: HomeKind; name: string; rentCentsPerWeek: number }>
+> {
+  return [
+    { id: 'parents_basement', name: "Parent's Basement", rentCentsPerWeek: 2_000 },
+    { id: 'hacker_house', name: 'Hacker House', rentCentsPerWeek: 6_000 },
+    { id: 'studio', name: 'Studio', rentCentsPerWeek: 18_000 },
+    { id: 'penthouse', name: 'Penthouse', rentCentsPerWeek: 150_000 },
+    { id: 'marina_villa', name: 'Marina Villa', rentCentsPerWeek: 500_000 },
+  ];
+}
+
 /** Resolve a home's row from the DB. */
 async function selectHome(ctx: AppContext, homeId: string): Promise<HomeRow | null> {
   return ctx.db.withConnection(async (c) => {

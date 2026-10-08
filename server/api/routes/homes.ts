@@ -1,6 +1,7 @@
 /**
  * Homes routes (M4 #52).
  *
+ *   GET  /v1/homes
  *   POST /v1/homes
  *   POST /v1/homes/:homeId/rent
  *   POST /v1/homes/:ownerId/visit
@@ -11,7 +12,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
-import { createHome, getHome, payRent, recordVisit } from '../../application/homes.js';
+import { createHome, getHome, listHomeTypes, payRent, recordVisit } from '../../application/homes.js';
 
 const HomeKind = z.enum([
   'parents_basement',
@@ -28,11 +29,17 @@ const CreateBody = z.object({ kind: HomeKind });
  * @param app - The Fastify instance.
  */
 export function registerHomeRoutes(app: FastifyInstance): void {
+  // B26: GET /v1/homes - list available home types
+  app.get('/v1/homes', { preHandler: requireAuth }, async (req, reply) => {
+    const types = await listHomeTypes(req.ctx);
+    return reply.send(types);
+  });
+
   app.post('/v1/homes', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
     const body = CreateBody.safeParse(req.body);
     if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
     const out = await createHome(req.ctx, req.user!.sub, body.data.kind);
-    return reply.status(201).send(out);
+    return reply.send(out); // B26: return 200, not 201
   });
 
   app.post(
@@ -51,7 +58,7 @@ export function registerHomeRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const { ownerId } = req.params as { ownerId: string };
       const out = await recordVisit(req.ctx, ownerId, req.user!.sub);
-      return reply.status(201).send(out);
+      return reply.send(out); // B26: return 200, not 201
     },
   );
 
