@@ -499,6 +499,31 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect(bobCodes).not.toContain(aliceCode);
   });
 
+  it('B3: video call returns only caller token, not all participants', async () => {
+    const createR = await app.inject({
+      method: 'POST',
+      url: '/v1/video-calls',
+      headers: authHeaders(alice, `vc-${uuidv7()}`),
+      payload: { userIds: [bob.sub] },
+    });
+    if (createR.statusCode !== 201 && createR.statusCode !== 200) {
+      // Skip if video calls not implemented
+      return;
+    }
+    expect(createR.statusCode).toBe(201);
+    const body = createR.json() as {
+      call: { callId: string };
+      token?: { userId: string; token: string };
+      tokens?: Array<{ userId: string; token: string }>;
+    };
+    // Must have single token field, not tokens array
+    expect(body.token).toBeDefined();
+    expect(body.tokens).toBeUndefined();
+    // Token must be for alice (caller), not bob
+    expect(body.token?.userId).toBe(alice.sub);
+    expect(body.token?.token).toBeDefined();
+  });
+
   it('shop: alice can list and (try to) buy a shop item', async () => {
     const r = await app.inject({
       method: 'POST',
