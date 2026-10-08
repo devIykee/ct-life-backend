@@ -9,7 +9,7 @@
  * the Helius client. It does not touch the transport layer.
  */
 import { PublicKey } from '@solana/web3.js';
-import { verify as ed25519Verify } from 'node:crypto';
+import { createPublicKey, verify as ed25519Verify } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
@@ -409,11 +409,13 @@ function verifySignature(wallet: string, signedMessage: Buffer, signatureB64: st
   try {
     const pubkey = new PublicKey(wallet);
     const sig = Buffer.from(signatureB64, 'base64');
-    const pub = Buffer.from(pubkey.toBytes());
-    // B0 fix: Wrap raw ed25519 key as SPKI DER before verifying
-    const spkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
-    const spkiKey = Buffer.concat([spkiPrefix, pub]);
-    return ed25519Verify(null, signedMessage, spkiKey, sig);
+    // B0 fix: node:crypto cannot take a raw 32-byte ed25519 key (ERR_OSSL_UNSUPPORTED); wrap it as SPKI DER.
+    const pub = createPublicKey({
+      key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(pubkey.toBytes())]),
+      format: 'der',
+      type: 'spki',
+    });
+    return ed25519Verify(null, signedMessage, pub, sig);
   } catch {
     return false;
   }
