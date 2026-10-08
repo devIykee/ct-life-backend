@@ -14,6 +14,7 @@ COPY packages/ ./packages/
 COPY tools/ ./tools/
 COPY programs/ ./programs/
 COPY db/ ./db/
+COPY contract/ ./contract/
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS runtime

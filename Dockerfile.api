@@ -23,6 +23,7 @@ COPY packages/ ./packages/
 COPY tools/ ./tools/
 COPY programs/ ./programs/
 COPY db/ ./db/
+COPY contract/ ./contract/
 RUN pnpm install --frozen-lockfile
 
 # ---- runtime stage: keep prod deps only.
