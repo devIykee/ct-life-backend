@@ -34,12 +34,31 @@ export function registerLlmNpcRoutes(app: FastifyInstance): void {
     }
     const body = ChatBody.safeParse(req.body);
     if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-    // Production: the real Anthropic client. Dev: a stub
-    // when the API key is missing (so the route is wired +
-    // the filter is exercised without a network call).
-    const client = req.ctx.config.anthropicApiKey
-      ? createAnthropicClient({ apiKey: req.ctx.config.anthropicApiKey })
-      : stubLlmClient("I'm thinking about the latest launches. Ask me about something specific.");
+
+    // F10: Hard-fail in production if API key missing (no stub in prod/staging)
+    if (!req.ctx.config.anthropicApiKey) {
+      if (req.ctx.config.appEnv === 'prod' || req.ctx.config.appEnv === 'staging') {
+        throw new ValidationFailedError({
+          reason: 'anthropic_api_key_required',
+          message: 'LLM client not configured for production environment',
+        });
+      }
+      // Dev/test: use stub when API key missing
+      const client = stubLlmClient("I'm thinking about the latest launches. Ask me about something specific.");
+      const out = await chatWithLlmNpc(
+        req.ctx,
+        {
+          userId: req.user!.sub,
+          archetype: body.data.archetype,
+          message: body.data.message,
+        },
+        client,
+      );
+      return reply.send(out);
+    }
+
+    // Production: use real Anthropic client
+    const client = createAnthropicClient({ apiKey: req.ctx.config.anthropicApiKey });
     const out = await chatWithLlmNpc(
       req.ctx,
       {
