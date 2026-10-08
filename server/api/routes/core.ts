@@ -216,6 +216,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       minerTier: 'none',
       flags: {
         lotteryRolled: uRow.lottery_rolled_at !== null,
+        hasCharacter: chRow !== undefined,
       },
     };
   });

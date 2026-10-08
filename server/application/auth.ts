@@ -123,7 +123,9 @@ export class AuthService {
     // Upsert the user and check SGT.
     const user = await this.upsertUserWithSgt(input.address);
     const tokens = await this.mintTokens(user);
-    return { ...user, ...tokens, hasCharacter: false };
+    // B14 fix: Check if user has a character
+    const hasCharacter = await this.checkHasCharacter(user.id);
+    return { ...user, ...tokens, hasCharacter };
   }
 
   /**
@@ -141,7 +143,9 @@ export class AuthService {
     }
     const user = await this.upsertUser(wallet, false);
     const tokens = await this.mintTokens(user);
-    return { ...user, ...tokens, hasCharacter: false };
+    // B14 fix: Check if user has a character
+    const hasCharacter = await this.checkHasCharacter(user.id);
+    return { ...user, ...tokens, hasCharacter };
   }
 
   /** Refresh: re-mint an access token. Revokes the old refresh token (single-use). */
@@ -267,6 +271,19 @@ export class AuthService {
     const accessToken = await this.ctx.jwt.signAccess(user.id, user.wallet, user.isSeeker);
     const refreshToken = await this.ctx.jwt.signRefresh(user.id, randomUUID());
     return { accessToken, refreshToken };
+  }
+
+  /**
+   * B14 fix: Check if user has a character
+   */
+  private async checkHasCharacter(userId: string): Promise<boolean> {
+    return this.ctx.db.withConnection(async (c) => {
+      const r = await c.query<{ id: string }>(
+        'SELECT id FROM characters WHERE user_id = $1 LIMIT 1',
+        [userId],
+      );
+      return r.rowCount !== null && r.rowCount > 0;
+    });
   }
 }
 
