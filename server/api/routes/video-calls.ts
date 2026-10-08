@@ -31,7 +31,8 @@ export function registerVideoCallRoutes(app: FastifyInstance): void {
       const out = await startVideoCall(req.ctx, req.user!.sub, {
         participantUserIds: body.data.userIds,
       });
-      return reply.status(201).send(out);
+      // B3: Return only callId, not tokens for other participants
+      return reply.send({ callId: out.call.callId });
     },
   );
 

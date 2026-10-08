@@ -161,16 +161,20 @@ export class VenueRoom extends Room {
       throw new Error('AUTH_REQUIRED');
     }
     const claims = await this.verifyToken(tokenStr);
+    const userId = claims.sub ?? '';
+
+    // B5 fix: Fetch player data from DB, never trust join options
+    const playerData = await this.fetchPlayerProfile(userId);
+
     const player = new PlayerState();
-    player.userId = claims.sub ?? '';
-    player.name = String((options as { name?: string })?.name ?? '');
-    player.skrName = String((options as { skrName?: string })?.skrName ?? '');
-    player.isSeeker = Boolean((options as { isSeeker?: boolean })?.isSeeker);
-    player.tribeId = String((options as { tribeId?: string })?.tribeId ?? '');
-    player.minerTier = String((options as { minerTier?: string })?.minerTier ?? 'none');
-    const lookArr = (options as { look?: string[] })?.look;
-    if (Array.isArray(lookArr) && lookArr.length === 7) {
-      player.look = lookArr;
+    player.userId = userId;
+    player.name = playerData.name;
+    player.skrName = playerData.skrName;
+    player.isSeeker = playerData.isSeeker;
+    player.tribeId = playerData.tribeId;
+    player.minerTier = playerData.minerTier;
+    if (Array.isArray(playerData.look) && playerData.look.length === 7) {
+      player.look = playerData.look;
     }
 
     // B10 fix: Place player at venue entrance spot
@@ -505,6 +509,51 @@ export class VenueRoom extends Room {
     } catch (err) {
       throw new Error('INVALID_TOKEN');
     }
+  }
+
+  // B5: Fetch player profile from DB, never trust join options
+  private async fetchPlayerProfile(userId: string): Promise<{
+    name: string;
+    skrName: string;
+    isSeeker: boolean;
+    tribeId: string;
+    minerTier: string;
+    look: string[];
+  }> {
+    const { buildContext } = await import('../../application/context.js');
+    const ctx = buildContext();
+    const result = await ctx.db.withConnection(async (c) => {
+      return c.query(
+        `SELECT c.name, c.skr_name, u.is_seeker, c.tribe_id, c.look
+         FROM characters c
+         JOIN users u ON u.id = c.user_id
+         WHERE c.user_id = $1
+         LIMIT 1`,
+        [userId],
+      );
+    });
+
+    if (result.rowCount === 0) {
+      // No character yet, return defaults
+      return {
+        name: 'Anon',
+        skrName: '',
+        isSeeker: false,
+        tribeId: '',
+        minerTier: 'none',
+        look: ['0', '0', '0', '0', '0', '0', '0'],
+      };
+    }
+
+    const row = result.rows[0];
+    return {
+      name: row.name || 'Anon',
+      skrName: row.skr_name || '',
+      isSeeker: row.is_seeker || false,
+      tribeId: row.tribe_id || '',
+      minerTier: 'none', // TODO: fetch from ore balances
+      look: Array.isArray(row.look) ? row.look : ['0', '0', '0', '0', '0', '0', '0'],
+    };
   }
 
   // --- Config loaders ---------------------------------------------

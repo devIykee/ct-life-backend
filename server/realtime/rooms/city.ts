@@ -38,11 +38,11 @@ export class CityRoom extends Room {
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     const tokenStr = String((options as { token?: string })?.token ?? '');
-    // Reject if no token provided and not in dev mode
+    // B5 fix: Reject if no token provided and not in dev mode
     if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
       throw new Error('AUTH_REQUIRED');
     }
-    // Verify the token
+    // B5 fix: Verify the token and get userId from claims, not options
     if (tokenStr !== '') {
       try {
         const jwtIssuer = createJwtIssuer();

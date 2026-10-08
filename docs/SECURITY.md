@@ -27,10 +27,30 @@ The game moves real money (USDC, SOL, SKR, ORE) for top-ups, cosmetics, tips, pa
 ## Authentication
 
 - Sign In With Solana via MWA. No email login in v1.
-- Ed25519 signature on a server-issued nonce (single-use, 5 min).
+- Ed25519 signature on a server-issued nonce (single-use, 5 min, Redis-backed per B6).
 - RS256 JWT, 15 min access, 30 day refresh with rotation and revocation.
 - Public key served at `/v1/auth/jwks`. Key rotation supported via `kid`.
 - Seeker Genesis Token check via `getTokenAccountsByOwnerV2` against the group `GT22s89nU4iWFkNXj1Bw6uYhJJWDRPpShHt4Bk8f99Te`. The specific token mint is stored so one phone cannot verify two accounts (`SGT_ALREADY_LINKED`).
+
+### D4: SIWS Domain Placeholder **[SECURITY RISK]**
+
+**Current values**: `SIWS_DOMAIN=ctlife.dev`, `SIWS_URI=https://ctlife.dev`
+
+⚠️ **WARNING**: These are placeholder values for a domain we do not control. This weakens phishing resistance because:
+- An attacker could register ctlife.dev if it's available
+- Users cannot verify domain ownership
+- The SIWS message cannot be trusted to prove the correct service
+
+**Required before production**:
+1. Purchase and control a real domain (e.g., ctlife.app, ctlife.io)
+2. Update SIWS_DOMAIN and SIWS_URI environment variables
+3. Ensure domain matches the actual deployed service
+4. Remove this warning
+
+**Configured via**: Environment variables (never hardcoded)
+- `SIWS_DOMAIN` - bare hostname
+- `SIWS_URI` - absolute https URI
+
 
 ## Authorization matrix
 
