@@ -107,8 +107,8 @@ export async function sendDm(
     // B25: Check mutual blocks (either direction blocks the DM)
     const blockCheck = await client.query(
       `SELECT 1 FROM blocks
-       WHERE (blocker_id = $1 AND blocked_id = $2)
-          OR (blocker_id = $2 AND blocked_id = $1)
+       WHERE (blocker_user_id = $1 AND blocked_user_id = $2)
+          OR (blocker_user_id = $2 AND blocked_user_id = $1)
        LIMIT 1`,
       [fromUserId, toUserId],
     );

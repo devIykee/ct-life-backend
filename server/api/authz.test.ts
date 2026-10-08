@@ -226,6 +226,15 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
       headers: authHeaders(alice, `blk-${uuidv7()}`),
     });
     expect([204, 200]).toContain(r.statusCode);
+    // Unblock before leaving. A live block is enforced by every
+    // alice -> bob interaction below (DMs reject with 400 while one
+    // exists), so this test must not leak it into the rest of the suite.
+    const un = await app.inject({
+      method: 'DELETE',
+      url: `/v1/blocks/${bob.sub}`,
+      headers: authHeaders(alice, `unblk-${uuidv7()}`),
+    });
+    expect([204, 200]).toContain(un.statusCode);
   });
 
   it('reports endpoint: alice can report bob', async () => {
@@ -405,7 +414,8 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
       headers: authHeaders(alice, `hm-${uuidv7()}`),
       payload: { kind: 'studio' },
     });
-    expect([201, 409, 403]).toContain(r.statusCode);
+    // B26: POST /v1/homes answers 200, not 201.
+    expect([200, 409, 403]).toContain(r.statusCode);
   });
 
   it('creator profile: alice can POST her own creator profile', async () => {
@@ -499,7 +509,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect(bobCodes).not.toContain(aliceCode);
   });
 
-  it('B3: video call returns only caller token, not all participants', async () => {
+  it('B3: video call leaks no participant tokens', async () => {
     const createR = await app.inject({
       method: 'POST',
       url: '/v1/video-calls',
@@ -510,18 +520,20 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
       // Skip if video calls not implemented
       return;
     }
-    expect(createR.statusCode).toBe(201);
+    // Per contract/openapi.yaml the response is 200 { callId }. The caller
+    // mints its own RTC token separately via /v1/rtc, so no token for any
+    // participant may appear here.
+    expect(createR.statusCode).toBe(200);
     const body = createR.json() as {
-      call: { callId: string };
+      callId?: string;
       token?: { userId: string; token: string };
       tokens?: Array<{ userId: string; token: string }>;
     };
-    // Must have single token field, not tokens array
-    expect(body.token).toBeDefined();
+    expect(body.callId).toBeDefined();
     expect(body.tokens).toBeUndefined();
-    // Token must be for alice (caller), not bob
-    expect(body.token?.userId).toBe(alice.sub);
-    expect(body.token?.token).toBeDefined();
+    expect(body.token).toBeUndefined();
+    // Nothing in the payload may be scoped to bob.
+    expect(JSON.stringify(body)).not.toContain(bob.sub);
   });
 
   it('shop: alice can list and (try to) buy a shop item', async () => {
