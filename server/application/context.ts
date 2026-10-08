@@ -70,7 +70,7 @@ export function buildContext(): AppContext {
     livekit: createLiveKitService(),
     s3: createS3(),
     instanceId: randomUUID(),
-    nonces: new InMemoryNonceStore(),
+    nonces: new RedisNonceStore(redis), // B6: Use Redis-backed nonce store
     configCache: new ConfigCache(),
   };
   cached = ctx;
@@ -82,7 +82,7 @@ export function _resetContextForTests(): void {
   cached = null;
 }
 
-// --- Nonce store (in-memory; M3+ moves to Redis with a TTL) ----------
+// --- Nonce store (Redis-backed per B6) -----------------------------------
 
 export interface NonceRecord {
   readonly nonce: string;
@@ -100,7 +100,8 @@ export interface NonceStore {
 
 const NONCE_TTL_MS = 5 * 60 * 1000;
 
-class InMemoryNonceStore implements NonceStore {
+// B6: Keep InMemoryNonceStore for tests
+export class InMemoryNonceStore implements NonceStore {
   private readonly map = new Map<string, NonceRecord>();
 
   async put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord> {
@@ -136,6 +137,50 @@ class InMemoryNonceStore implements NonceStore {
     const rec = this.map.get(nonce);
     if (!rec || rec.used || rec.expiresAt < Date.now()) return false;
     this.map.set(nonce, { ...rec, used: true, wallet });
+    return true;
+  }
+}
+
+// B6: Redis-backed nonce store for production
+class RedisNonceStore implements NonceStore {
+  constructor(private readonly redis: RedisLayer) {}
+
+  async put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord> {
+    const now = Date.now();
+    const rec: NonceRecord = {
+      nonce,
+      issuedAt: issuedAt ? issuedAt.getTime() : now,
+      expiresAt: expiresAt ? expiresAt.getTime() : now + ttlMs,
+      wallet: null,
+      used: false,
+    };
+    const key = `nonce:${nonce}`;
+    await this.redis.main.set(key, JSON.stringify(rec), 'PX', ttlMs);
+    return rec;
+  }
+
+  async get(nonce: string): Promise<NonceRecord | null> {
+    const key = `nonce:${nonce}`;
+    const data = await this.redis.main.get(key);
+    if (!data) return null;
+    const rec = JSON.parse(data) as NonceRecord;
+    if (rec.expiresAt < Date.now()) {
+      await this.redis.main.del(key);
+      return null;
+    }
+    return rec;
+  }
+
+  async markUsed(nonce: string, wallet: string): Promise<boolean> {
+    const key = `nonce:${nonce}`;
+    const data = await this.redis.main.get(key);
+    if (!data) return false;
+    const rec = JSON.parse(data) as NonceRecord;
+    if (rec.used || rec.expiresAt < Date.now()) return false;
+    const updated = { ...rec, used: true, wallet };
+    const ttl = rec.expiresAt - Date.now();
+    if (ttl <= 0) return false;
+    await this.redis.main.set(key, JSON.stringify(updated), 'PX', ttl);
     return true;
   }
 }
