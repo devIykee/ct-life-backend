@@ -64,22 +64,33 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const cache = req.ctx.configCache;
     // Aggregated response: all registries + game config in one shot.
     // The contract says the client caches by ETag.
+    const anims = cache.loadOptional<{ anims?: string[] }>('anims');
     const payload = {
       version: '1.0.0-rc1',
       minClientVersion: '1.0.0',
-      // Registries (subset for M2).
-      venues: cache.load<unknown>('venues') ?? null,
-      archetypes: cache.load<unknown>('archetypes') ?? null,
-      traits: cache.load<unknown>('traits') ?? null,
-      tribes: cache.load<unknown>('tribes') ?? null,
-      dreams: cache.load<unknown>('dreams') ?? null,
-      homes: cache.load<unknown>('homes') ?? null,
-      toasts: cache.load<unknown>('toasts') ?? null,
-      anims: cache.load<unknown>('anims') ?? null,
-      sfx: cache.load<unknown>('sfx') ?? null,
-      items: cache.load<unknown>('items') ?? null,
-      spots: cache.load<unknown>('spots') ?? null, // B34: add spots
-      emotes: cache.load<unknown>('emotes') ?? null, // B34: add emotes
+      // Kill-switch list. No kill-switch mechanism exists yet, so nothing
+      // is ever degraded; the contract marks the field required, so it is
+      // always present rather than omitted.
+      degraded: [] as string[],
+      // Registries (subset for M2). Optional per the contract's
+      // ConfigResponse, so a missing file yields null instead of failing
+      // the whole response.
+      venues: cache.loadOptional<unknown>('venues'),
+      archetypes: cache.loadOptional<unknown>('archetypes'),
+      traits: cache.loadOptional<unknown>('traits'),
+      tribes: cache.loadOptional<unknown>('tribes'),
+      dreams: cache.loadOptional<unknown>('dreams'),
+      homes: cache.loadOptional<unknown>('homes'),
+      toasts: cache.loadOptional<unknown>('toasts'),
+      anims: anims ?? null,
+      sfx: cache.loadOptional<unknown>('sfx'),
+      items: cache.loadOptional<unknown>('items'),
+      spots: cache.loadOptional<unknown>('spots'), // B34: add spots
+      // B34: emotes. There is no emotes.json and there is not meant to be:
+      // the emote ids are published in the FE-owned contract/ids/anims.json
+      // under the `emote_` prefix, so derive them rather than duplicating
+      // the list into a file this service does not own.
+      emotes: { emotes: (anims?.anims ?? []).filter((a) => a.startsWith('emote_')) },
       // Game config.
       economy: cache.load<unknown>('economy'),
       needs: cache.load<unknown>('needs'),

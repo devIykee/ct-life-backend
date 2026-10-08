@@ -207,7 +207,7 @@ class RedisNonceStore implements NonceStore {
 
 // --- Config cache -----------------------------------------------------
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
@@ -249,6 +249,25 @@ export class ConfigCache {
     }
     this.cache.set(name, { etag, value });
     return value;
+  }
+
+  /**
+   * Read an optional JSON config, returning null when the file does not
+   * exist. `load` throws on a missing file, which is right for the game
+   * config that the server cannot run without, but wrong for the optional
+   * registries in the aggregated `/v1/config` response: one absent file
+   * there would fail the whole request and leave clients unable to boot.
+   * A malformed file still throws, since that is a real misconfiguration.
+   * @param name - Config or id file name, without the .json suffix.
+   * @returns The parsed config, or null when no such file exists.
+   */
+  loadOptional<T>(name: string): T | null {
+    const exists = [
+      join(REPO_ROOT, 'contract', 'config', `${name}.json`),
+      join(REPO_ROOT, 'contract', 'ids', `${name}.json`),
+    ].some((p) => existsSync(p));
+    if (!exists) return null;
+    return this.load<T>(name);
   }
 }
 
