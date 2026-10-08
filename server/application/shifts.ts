@@ -93,6 +93,7 @@ export class ShiftsService {
    * Complete a shift. Validates: shift exists, is the caller's,
    * is not already complete, and `now >= endsAt`. Caps each score
    * at the mini-game's `maxScore` from contract/ids/mini_games.json.
+   * B4 fix: Rejects results for mini-games not assigned to this shift.
    */
   async complete(
     userId: string,
@@ -105,6 +106,17 @@ export class ShiftsService {
     if (shift.completed) throw new NotFoundError({ kind: 'shift_completed', id: shiftId });
     if (Date.now() < shift.endsAt) {
       throw new ShiftNotFinishedError({ shiftId, endsAt: shift.endsAt });
+    }
+    // B4 fix: Reject results for mini-games not assigned to this shift
+    const assignedGameIds = new Set([shift.miniGameId]);
+    for (const r of results) {
+      if (!assignedGameIds.has(r.miniGameId)) {
+        throw new ValidationFailedError({
+          reason: 'mini_game_not_assigned',
+          miniGameId: r.miniGameId,
+          shiftId,
+        });
+      }
     }
     // Cap scores at the mini-game's maxScore.
     const games = this.loadMiniGames();

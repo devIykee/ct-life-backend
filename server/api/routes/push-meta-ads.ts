@@ -16,9 +16,9 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { ValidationFailedError, ForbiddenError } from '../../shared/domain/errors.js';
+import { ValidationFailedError } from '../../shared/domain/errors.js';
 import { registerDevice } from '../../application/push.js';
 import { getCurrentMeta, setCurrentMeta } from '../../application/meta.js';
 import {
@@ -81,12 +81,8 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/admin/meta',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAdmin, withIdempotency()] },
     async (req, reply) => {
-      const role = (req.user as { role?: string } | undefined)?.role ?? 'user';
-      if (role !== 'admin') {
-        throw new ForbiddenError({ reason: 'admin role required' });
-      }
       const body = MetaBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       const out = await setCurrentMeta(req.ctx, body.data.value);
@@ -143,12 +139,8 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/admin/ads/bookings/:id/approve',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAdmin, withIdempotency()] },
     async (req, reply) => {
-      const role = (req.user as { role?: string } | undefined)?.role ?? 'user';
-      if (role !== 'admin') {
-        throw new ForbiddenError({ reason: 'admin role required' });
-      }
       const { id } = req.params as { id: string };
       const out = await approveBooking(req.ctx, id);
       return reply.send(out);
@@ -157,12 +149,8 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/admin/ads/bookings/:id/reject',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAdmin, withIdempotency()] },
     async (req, reply) => {
-      const role = (req.user as { role?: string } | undefined)?.role ?? 'user';
-      if (role !== 'admin') {
-        throw new ForbiddenError({ reason: 'admin role required' });
-      }
       const { id } = req.params as { id: string };
       const out = await rejectBooking(req.ctx, id);
       return reply.send(out);

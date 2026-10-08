@@ -51,6 +51,11 @@ export interface Config {
     readonly kid: string;
   };
 
+  readonly siws: {
+    readonly domain: string;
+    readonly uri: string;
+  };
+
   readonly solana: {
     readonly cluster: 'devnet' | 'mainnet';
     readonly rpcUrl: string;
@@ -84,6 +89,7 @@ export interface Config {
 
   readonly auth: {
     readonly devAuthEnabled: boolean;
+    readonly adminWallets: readonly string[];
   };
 
   readonly rateLimits: {
@@ -243,6 +249,11 @@ export function loadConfig(): Config {
       kid: optionalEnv('JWT_KID', optionalEnv('JWT_KEY_ID', 'ct-life-1')),
     },
 
+    siws: {
+      domain: optionalEnv('SIWS_DOMAIN', 'ctlife.dev'),
+      uri: optionalEnv('SIWS_URI', 'https://ctlife.dev'),
+    },
+
     solana: {
       cluster,
       rpcUrl: requireEnv(
@@ -290,6 +301,10 @@ export function loadConfig(): Config {
 
     auth: {
       devAuthEnabled,
+      adminWallets: optionalEnv('ADMIN_WALLETS', '')
+        .split(',')
+        .map((w) => w.trim())
+        .filter((w) => w.length > 0),
     },
 
     rateLimits: {

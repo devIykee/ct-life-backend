@@ -161,9 +161,10 @@ export async function acceptCabalInvite(
   });
 }
 
-/** List Cabal invites. */
+/** List Cabal invites. Restricted to caller's invites (as host or guest). */
 export async function listCabalInvites(
   ctx: AppContext,
+  callerId: string,
   filter: { hostUserId?: string; guestUserId?: string; used?: boolean },
   limit: number = 30,
 ): Promise<CabalInviteRow[]> {
@@ -172,6 +173,11 @@ export async function listCabalInvites(
   }
   const where: string[] = [];
   const params: unknown[] = [];
+
+  // B2 fix: Always filter to caller's invites (as host or guest)
+  params.push(callerId);
+  where.push(`(host_user_id = $${params.length} OR guest_user_id = $${params.length})`);
+
   if (filter.hostUserId !== undefined) {
     params.push(filter.hostUserId);
     where.push(`host_user_id = $${params.length}`);

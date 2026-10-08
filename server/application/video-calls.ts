@@ -51,7 +51,7 @@ export interface VideoCallToken {
 
 export interface StartVideoCallResult {
   readonly call: VideoCallRow;
-  readonly tokens: VideoCallToken[];
+  readonly token: VideoCallToken;
 }
 
 function participantsList(host: string, ids: string[]): string[] {
@@ -59,7 +59,7 @@ function participantsList(host: string, ids: string[]): string[] {
   return [...set];
 }
 
-/** Start a 1:1 or group video call. Returns the call + tokens. */
+/** Start a 1:1 or group video call. Returns the call + caller's token only. */
 export async function startVideoCall(
   ctx: AppContext,
   hostUserId: string,
@@ -95,25 +95,13 @@ export async function startVideoCall(
       );
     }
   });
-  const tokens = await Promise.all(
-    participants.map(async (userId) => {
-      const t = await ctx.livekit.mintRtcToken({
-        userId,
-        kind: 'video',
-        id: callId,
-        canPublish: true,
-      });
-      return {
-        userId,
-        token: t.token,
-        url: t.url,
-        roomName: t.roomName,
-        identity: t.identity,
-        canPublish: t.canPublish,
-        expiresAt: t.expiresAt,
-      };
-    }),
-  );
+  // B3 fix: only mint token for the caller (host), not all participants
+  const t = await ctx.livekit.mintRtcToken({
+    userId: hostUserId,
+    kind: 'video',
+    id: callId,
+    canPublish: true,
+  });
   return {
     call: {
       callId,
@@ -123,7 +111,15 @@ export async function startVideoCall(
       startedAt: new Date().toISOString(),
       endedAt: null,
     },
-    tokens,
+    token: {
+      userId: hostUserId,
+      token: t.token,
+      url: t.url,
+      roomName: t.roomName,
+      identity: t.identity,
+      canPublish: t.canPublish,
+      expiresAt: t.expiresAt,
+    },
   };
 }
 

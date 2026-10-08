@@ -11,7 +11,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
@@ -69,7 +69,7 @@ export function registerRatioArenaRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/beef/:id/settle',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAdmin, withIdempotency()] },
     async (req, reply) => {
       const body = SettleBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });

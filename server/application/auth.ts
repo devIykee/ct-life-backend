@@ -68,16 +68,17 @@ export class AuthService {
         throw new ValidationFailedError({ reason: 'invalid_wallet' });
       }
     }
-    const nonce = randomUUID();
-    await this.ctx.nonces.put(nonce, NONCE_TTL_MS);
+    // B7 fix: Use alphanumeric nonce (no hyphens) for Seed Vault compatibility
+    const nonce = randomUUID().replace(/-/g, '');
     const issuedAt = new Date();
     const expires = new Date(issuedAt.getTime() + NONCE_TTL_MS);
+    await this.ctx.nonces.put(nonce, NONCE_TTL_MS, issuedAt, expires);
     const cfg = this.ctx.config;
     return {
       nonce,
-      domain: cfg.jwt.issuer,
+      domain: cfg.siws.domain,
       statement: 'Sign in to CT Life.',
-      uri: cfg.jwt.audience,
+      uri: cfg.siws.uri,
       version: '1',
       chainId: cfg.solana.cluster === 'mainnet' ? 'solana:mainnet' : 'solana:devnet',
       issuedAt: issuedAt.toISOString(),
@@ -98,12 +99,19 @@ export class AuthService {
     if (nonceRec.used) {
       throw new NonceInvalidError({ reason: 'already_used' });
     }
-    // Verify the signed message matches the challenge field-for-field.
-    if (!verifySignedMessage(input.signedMessage, nonceRec, input.address)) {
+    // B8 fix: Decode signedMessage from base64
+    const signedMessageText = decodeSignedMessage(input.signedMessage);
+    const signedMessageBytes = Buffer.from(input.signedMessage, 'base64');
+
+    // B6 fix: Verify the signed message matches the challenge field-for-field
+    const cfg = this.ctx.config;
+    const chainId = cfg.solana.cluster === 'mainnet' ? 'solana:mainnet' : 'solana:devnet';
+    const siws = { domain: cfg.siws.domain, uri: cfg.siws.uri, chainId };
+    if (!verifySignedMessage(signedMessageText, nonceRec, input.address, siws)) {
       throw new SignatureInvalidError({});
     }
-    // Verify the ed25519 signature.
-    const ok = verifySignature(input.address, input.signedMessage, input.signature);
+    // Verify the ed25519 signature over the bytes
+    const ok = verifySignature(input.address, signedMessageBytes, input.signature);
     if (!ok) {
       throw new SignatureInvalidError({});
     }
@@ -277,23 +285,118 @@ export const VerifyInputSchema = z.object({
 
 export type VerifyInput = z.infer<typeof VerifyInputSchema>;
 
-function verifySignedMessage(signed: string, nonce: NonceRecord, _wallet: string): boolean {
-  // The client builds the SIWS payload from the challenge fields and
-  // signs the resulting string. For the M2 wiring we accept any
-  // non-empty signed message and rely on the ed25519 verify step
-  // for the actual proof. A stricter check (parse the SIWS payload
-  // and compare each field) is a follow-up. The nonce being
-  // unexpired and unused is the primary defence.
-  return signed.length > 0 && nonce.expiresAt > Date.now();
+/**
+ * B8 fix: Decode base64 signedMessage to string
+ */
+function decodeSignedMessage(signedMessageBase64: string): string {
+  try {
+    return Buffer.from(signedMessageBase64, 'base64').toString('utf8');
+  } catch {
+    throw new ValidationFailedError({ reason: 'invalid_base64' });
+  }
 }
 
-function verifySignature(wallet: string, signedMessage: string, signatureB64: string): boolean {
+/**
+ * B6 fix: Parse and verify SIWS message structure
+ */
+interface ParsedSIWS {
+  domain: string;
+  address: string;
+  statement: string;
+  uri: string;
+  version: string;
+  chainId: string;
+  nonce: string;
+  issuedAt: string;
+  expirationTime: string;
+}
+
+function parseSIWSMessage(message: string): ParsedSIWS | null {
+  const lines = message.split('\n').map(l => l.trim());
+  if (lines.length < 8) return null;
+
+  // Line 0: "<domain> wants you to sign in with your Solana account:"
+  const domainMatch = lines[0]?.match(/^(.+?) wants you to sign in with your Solana account:$/);
+  if (!domainMatch) return null;
+  const domain = domainMatch[1]!;
+
+  // Line 1: <address>
+  const address = lines[1] ?? '';
+  if (!address) return null;
+
+  // Line 2: blank
+  if (lines[2] !== '') return null;
+
+  // Line 3: <statement>
+  const statement = lines[3] ?? '';
+
+  // Line 4: blank
+  if (lines[4] !== '') return null;
+
+  // Remaining lines: key-value pairs
+  const fields: Record<string, string> = {};
+  for (let i = 5; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line) continue;
+    const colonIdx = line.indexOf(':');
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const value = line.slice(colonIdx + 1).trim();
+    fields[key] = value;
+  }
+
+  return {
+    domain,
+    address,
+    statement,
+    uri: fields['URI'] ?? '',
+    version: fields['Version'] ?? '',
+    chainId: fields['Chain ID'] ?? '',
+    nonce: fields['Nonce'] ?? '',
+    issuedAt: fields['Issued At'] ?? '',
+    expirationTime: fields['Expiration Time'] ?? '',
+  };
+}
+
+function verifySignedMessage(
+  signedMessage: string,
+  nonce: NonceRecord,
+  wallet: string,
+  config: { domain: string; uri: string; chainId: string },
+): boolean {
+  // B6 fix: Parse and verify SIWS message structure
+  const parsed = parseSIWSMessage(signedMessage);
+  if (!parsed) return false;
+
+  // Verify all fields match the challenge
+  if (parsed.domain !== config.domain) return false;
+  if (parsed.address !== wallet) return false;
+  if (parsed.uri !== config.uri) return false;
+  if (parsed.version !== '1') return false;
+  if (parsed.chainId !== config.chainId) return false;
+  if (parsed.nonce !== nonce.nonce) return false;
+
+  // Verify issued-at and expiration-time match what we issued
+  const issuedAt = new Date(nonce.issuedAt).toISOString();
+  const expirationTime = new Date(nonce.expiresAt).toISOString();
+  if (parsed.issuedAt !== issuedAt) return false;
+  if (parsed.expirationTime !== expirationTime) return false;
+
+  // Verify expiration is in the future
+  if (nonce.expiresAt <= Date.now()) return false;
+
+  return true;
+}
+
+function verifySignature(wallet: string, signedMessage: Buffer, signatureB64: string): boolean {
   try {
     const pubkey = new PublicKey(wallet);
-    const msg = Buffer.from(signedMessage, 'utf8');
     const sig = Buffer.from(signatureB64, 'base64');
     const pub = Buffer.from(pubkey.toBytes());
-    return ed25519Verify(null, msg, pub, sig);
+    // B0 fix: Wrap raw ed25519 key as SPKI DER before verifying
+    const spkiPrefix = Buffer.from('302a300506032b6570032100', 'hex');
+    const spkiKey = Buffer.concat([spkiPrefix, pub]);
+    return ed25519Verify(null, signedMessage, spkiKey, sig);
   } catch {
     return false;
   }

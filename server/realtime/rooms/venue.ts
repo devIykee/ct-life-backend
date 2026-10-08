@@ -43,6 +43,8 @@ import { SeededRng } from '../../../packages/npc-brain/src/rng.js';
 import { SimulatedClock } from '../../../packages/npc-brain/src/clock.js';
 import { VenueState, NpcState, PlayerState } from '../../../contract/realtime/states.js';
 import { z } from 'zod';
+import { createJwtIssuer } from '../../shared/auth/jwt.js';
+import { loadConfig } from '../../shared/config/config.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -146,8 +148,13 @@ export class VenueRoom extends Room {
   /**
    *
    */
-  override onJoin(client: Client, options: unknown): void {
-    const claims = this.verifyToken(String((options as { token?: string })?.token ?? ''));
+  override async onJoin(client: Client, options: unknown): Promise<void> {
+    const tokenStr = String((options as { token?: string })?.token ?? '');
+    // B5 fix: Reject if no token provided and not in dev mode
+    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
+      throw new Error('AUTH_REQUIRED');
+    }
+    const claims = await this.verifyToken(tokenStr);
     const player = new PlayerState();
     player.userId = claims.sub ?? '';
     player.name = String((options as { name?: string })?.name ?? '');
@@ -443,23 +450,20 @@ export class VenueRoom extends Room {
 
   // --- Auth --------------------------------------------------------
 
-  private verifyToken(token: string): JWTPayload {
-    // Synchronous verify of an RS256 token against the public key.
-    // Imported lazily to keep this file sync-friendly (the import
-    // is at the top of the file; the verify is async but the room
-    // lifecycle is async so this is fine).
+  private async verifyToken(token: string): Promise<JWTPayload> {
+    // B5 fix: Actually verify the JWT instead of returning unverified claim
     if (token === '') {
-      // Dev mode: synthesize a fake claim from the client's sessionId
-      // so the bot population and the local mock can join without
-      // a real JWT. Real prod requires a valid token.
+      // Dev mode: synthesize a fake claim from a random ID
+      // Only allowed when devAuthEnabled is true (checked in onJoin)
       return { sub: `dev-${Math.floor(Math.random() * 1e9).toString(36)}` } as JWTPayload;
     }
-    // For sync, the JWT issuer keeps the keys in memory. The verify
-    // is async; the caller awaits onJoin. We use jose's importSync
-    // path via a pre-computed Key. For M2, we accept a token but
-    // skip full verification (the API has the same token and uses
-    // it for everything). Production would call jwtVerify.
-    return { sub: `unverified-${token.slice(0, 8)}` } as JWTPayload;
+    try {
+      const jwtIssuer = createJwtIssuer();
+      const claims = await jwtIssuer.verifyAccess(token);
+      return claims;
+    } catch (err) {
+      throw new Error('INVALID_TOKEN');
+    }
   }
 
   // --- Config loaders ---------------------------------------------

@@ -5,9 +5,11 @@
  * engine publishes coin snapshots to Redis; this room reads them
  * and syncs to connected clients.
  */
-import { Room } from 'colyseus';
+import { Room, Client } from 'colyseus';
 import { MapSchema } from '@colyseus/schema';
 import { MarketState, CoinState } from '../../../contract/realtime/states.js';
+import { createJwtIssuer } from '../../shared/auth/jwt.js';
+import { loadConfig } from '../../shared/config/config.js';
 
 const PATCH_HZ = 0.5;
 const MAX_PLAYERS = 2_000;
@@ -31,5 +33,25 @@ export class MarketRoom extends Room {
     this.setSimulationInterval(() => {
       // Placeholder tick for M2. M3 reads from Redis.
     }, 2000);
+  }
+
+  /**
+   * B5 fix: Verify JWT token before allowing join
+   */
+  override async onJoin(_client: Client, options: unknown): Promise<void> {
+    const tokenStr = String((options as { token?: string })?.token ?? '');
+    // Reject if no token provided and not in dev mode
+    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
+      throw new Error('AUTH_REQUIRED');
+    }
+    // Verify the token
+    if (tokenStr !== '') {
+      try {
+        const jwtIssuer = createJwtIssuer();
+        await jwtIssuer.verifyAccess(tokenStr);
+      } catch (err) {
+        throw new Error('INVALID_TOKEN');
+      }
+    }
   }
 }

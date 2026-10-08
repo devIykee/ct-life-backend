@@ -13,6 +13,8 @@
  */
 import { Room, Client } from 'colyseus';
 import { CityState } from '../../../contract/realtime/states.js';
+import { createJwtIssuer } from '../../shared/auth/jwt.js';
+import { loadConfig } from '../../shared/config/config.js';
 
 const PATCH_HZ = 1;
 const MAX_PLAYERS = 1_000;
@@ -32,9 +34,23 @@ export class CityRoom extends Room {
     this.setSimulationInterval((dt) => this.tick(dt), 1000);
   }
   /**
-   *
+   * B5 fix: Verify JWT token before allowing join
    */
-  override onJoin(client: Client): void {
+  override async onJoin(client: Client, options: unknown): Promise<void> {
+    const tokenStr = String((options as { token?: string })?.token ?? '');
+    // Reject if no token provided and not in dev mode
+    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
+      throw new Error('AUTH_REQUIRED');
+    }
+    // Verify the token
+    if (tokenStr !== '') {
+      try {
+        const jwtIssuer = createJwtIssuer();
+        await jwtIssuer.verifyAccess(tokenStr);
+      } catch (err) {
+        throw new Error('INVALID_TOKEN');
+      }
+    }
     this.state.online = this.clients.length;
     client.send('welcome', { serverNow: Date.now(), instanceId: this.roomId ?? 'city' });
   }

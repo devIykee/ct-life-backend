@@ -7,7 +7,7 @@
  * to the right envelope.
  */
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
-import { SignatureInvalidError, TokenExpiredError } from '../../shared/domain/errors.js';
+import { ForbiddenError, SignatureInvalidError, TokenExpiredError } from '../../shared/domain/errors.js';
 import type { AccessClaims } from '../../shared/auth/jwt.js';
 
 declare module 'fastify' {
@@ -45,4 +45,25 @@ export async function requireAuth(
 /** Pre-handler hook wrapper. */
 export const requireAuthMiddleware: preHandlerHookHandler = async (req, reply) => {
   await requireAuth(req, reply);
+};
+
+/**
+ * Verify the bearer token and check that the wallet is in the admin allowlist.
+ * Throws ForbiddenError if the user is not an admin.
+ */
+export async function requireAdmin(
+  req: FastifyRequest,
+  _reply?: FastifyReply,
+): Promise<AccessClaims> {
+  const claims = await requireAuth(req, _reply);
+  const adminWallets = req.ctx.config.auth.adminWallets;
+  if (!adminWallets.includes(claims.wal)) {
+    throw new ForbiddenError({ reason: 'admin_required' });
+  }
+  return claims;
+}
+
+/** Pre-handler hook wrapper for admin routes. */
+export const requireAdminMiddleware: preHandlerHookHandler = async (req, reply) => {
+  await requireAdmin(req, reply);
 };
