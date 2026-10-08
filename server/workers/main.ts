@@ -41,22 +41,26 @@ export interface WorkersHandle {
 }
 
 function redisConnection(redis: ReturnType<typeof createRedis>): ConnectionOptions {
-  // BullMQ wants a connection options object; we share the same
-  // ioredis instance via a separate client so BullMQ's blocking
-  // commands don't interfere with the rest of the app.
+  // B12 fix: Build connection from redisUrl, not from bare host
+  const cfg = loadConfig();
+  const url = new URL(cfg.redisUrl);
   return {
-    host: new URL(redis.main.options.host ?? 'redis://localhost:6379').hostname,
-    port: Number(new URL(redis.main.options.host ?? 'redis://localhost:6379').port || 6379),
-    password: redis.main.options.password,
+    host: url.hostname,
+    port: Number(url.port || 6379),
+    password: url.password || redis.main.options.password,
+    db: Number(url.pathname.slice(1) || 0),
     maxRetriesPerRequest: null,
   };
 }
 
 function newClient(redis: ReturnType<typeof createRedis>): IORedis {
+  const cfg = loadConfig();
+  const url = new URL(cfg.redisUrl);
   return new IORedis({
-    host: new URL(redis.main.options.host ?? 'redis://localhost:6379').hostname,
-    port: Number(new URL(redis.main.options.host ?? 'redis://localhost:6379').port || 6379),
-    password: redis.main.options.password,
+    host: url.hostname,
+    port: Number(url.port || 6379),
+    password: url.password || redis.main.options.password,
+    db: Number(url.pathname.slice(1) || 0),
     maxRetriesPerRequest: null,
   });
 }
@@ -71,16 +75,17 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   const conn = redisConnection(redis);
 
   // Queues.
-  const crierQueue = new Queue<{ event: unknown }>('events:publish', { connection: conn });
-  const dailyQueue = new Queue('jobs:daily-board', { connection: conn });
-  const sundayQueue = new Queue('jobs:sunday-unlock', { connection: conn });
-  const metaQueue = new Queue('jobs:weekly-meta', { connection: conn });
-  const districtQueue = new Queue('jobs:district-rollover', { connection: conn });
-  const seasonQueue = new Queue('jobs:season-rollover', { connection: conn });
+  // B12 fix: Queue names without colons (BullMQ rejects ":")
+  const crierQueue = new Queue<{ event: unknown }>('events-publish', { connection: conn });
+  const dailyQueue = new Queue('jobs-daily-board', { connection: conn });
+  const sundayQueue = new Queue('jobs-sunday-unlock', { connection: conn });
+  const metaQueue = new Queue('jobs-weekly-meta', { connection: conn });
+  const districtQueue = new Queue('jobs-district-rollover', { connection: conn });
+  const seasonQueue = new Queue('jobs-season-rollover', { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
-    'events:publish',
+    'events-publish',
     async (job: Job<{ event: unknown }>) => handleTownCrier(job, redis),
     { connection: newClient(redis) },
   );
@@ -89,7 +94,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   );
 
   const dailyWorker = new Worker(
-    'jobs:daily-board',
+    'jobs-daily-board',
     async (job) => handleDailyBoardRefresh(job, redis),
     { connection: newClient(redis) },
   );
@@ -98,7 +103,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   );
 
   const sundayWorker = new Worker(
-    'jobs:sunday-unlock',
+    'jobs-sunday-unlock',
     async (job) => handleSundayUnlock(job, redis),
     { connection: newClient(redis) },
   );
@@ -106,7 +111,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
     log.error({ jobId: job?.id, err: err.message }, 'sunday-unlock failed'),
   );
 
-  const metaWorker = new Worker('jobs:weekly-meta', async (job) => handleWeeklyMeta(job, redis), {
+  const metaWorker = new Worker('jobs-weekly-meta', async (job) => handleWeeklyMeta(job, redis), {
     connection: newClient(redis),
   });
   metaWorker.on('failed', (job, err) =>
@@ -115,7 +120,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
 
   const ctx = buildContext();
   const districtWorker = new Worker(
-    'jobs:district-rollover',
+    'jobs-district-rollover',
     async (job) => handleDistrictRollover(job, ctx),
     { connection: newClient(redis) },
   );
@@ -124,7 +129,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
   );
 
   const seasonWorker = new Worker(
-    'jobs:season-rollover',
+    'jobs-season-rollover',
     async (job) => handleSeasonRollover(job, ctx),
     { connection: newClient(redis) },
   );

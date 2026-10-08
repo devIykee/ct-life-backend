@@ -74,8 +74,6 @@ const NpcTapMessage = z.object({
   npcId: z.string().min(1),
 });
 
-const MAX_PLAYERS = 50;
-const PATCH_HZ = 10;
 const MOVE_MAX_SPEED_M_PER_S = 6;
 const SAY_MAX_LENGTH = 140;
 const SAY_COOLDOWN_MS = 2_000;
@@ -100,8 +98,6 @@ interface VenueConfig {
 }
 
 export class VenueRoom extends Room {
-  static maxClients = MAX_PLAYERS;
-  static patchRate = PATCH_HZ * 1000; // ms between patches
   /**
    *
    */
@@ -125,10 +121,19 @@ export class VenueRoom extends Room {
    *
    */
   override async onCreate(_options: unknown): Promise<void> {
+    this.maxClients = 50;
+    this.patchRate = 100;
     this.spotsCfg = this.loadVenueConfig();
     this.state = new VenueState();
     const opts = _options as { venueId?: string } | undefined;
-    this.state.venueId = String(opts?.venueId ?? 'unknown');
+    const venueId = String(opts?.venueId ?? 'unknown');
+
+    // Validate venueId exists in spots config
+    if (!this.spotsCfg.venues[venueId]) {
+      throw new Error(`Unknown venueId: ${venueId}`);
+    }
+
+    this.state.venueId = venueId;
     this.state.instanceId = this.roomId ? this.roomId : 'inst-' + Date.now().toString(36);
     // Message handlers. 'welcome' is server-to-client only (sent in onJoin).
     this.onMessage('move', (client, msg) => this.handleMove(client, msg));
@@ -166,6 +171,23 @@ export class VenueRoom extends Room {
     if (Array.isArray(lookArr) && lookArr.length === 7) {
       player.look = lookArr;
     }
+
+    // B10 fix: Place player at venue entrance spot
+    const venueSpots = this.spotsCfg.venues[this.state.venueId];
+    if (venueSpots) {
+      const entranceSpot = venueSpots.spots.find((s: { id: string }) =>
+        s.id.endsWith('.entrance')
+      );
+      if (entranceSpot) {
+        // Parse entrance position from spots.json (simplified - assumes x,z in walkable[0])
+        const walkable = venueSpots.walkable[0];
+        if (walkable) {
+          player.x = walkable.x0;
+          player.z = walkable.z0;
+        }
+      }
+    }
+
     this.state.players.set(client.sessionId, player);
     // Welcome the joiner.
     client.send('welcome', {
