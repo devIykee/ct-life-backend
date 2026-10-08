@@ -1,12 +1,13 @@
 /**
  * LiveKit + ORE webhook tests.
  *
- * Mocks signature verification and exercises the DB paths.
+ * Tests WebhookReceiver integration and exercises the DB paths.
  */
 import { Pool } from 'pg';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
-import { createHmac } from 'node:crypto';
+import { AccessToken } from 'livekit-server-sdk';
+import { createHash, createHmac } from 'node:crypto';
 
 import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
@@ -28,35 +29,79 @@ afterAll(async () => {
   await pool.end();
 });
 
-function jwtHs256(payload: string, secret: string): string {
+/**
+ * Create a valid LiveKit webhook body + auth header pair.
+ * Uses the same signing approach as LiveKit's WebhookReceiver.
+ */
+async function createLiveKitWebhook(
+  apiKey: string,
+  apiSecret: string,
+  event: Record<string, unknown>,
+): Promise<{ body: string; authHeader: string }> {
+  const body = JSON.stringify(event);
+  const bodyHash = createHash('sha256').update(body).digest('base64');
+  const at = new AccessToken(apiKey, apiSecret, { ttl: '5m' });
+  at.sha256 = bodyHash;
+  const token = await at.toJwt();
+  return { body, authHeader: token };
+}
+
+/**
+ * Helper for ORE webhook tests - creates a simple payload.signature token
+ * matching the verifyOreSignature format (not a full JWT).
+ * The signature is HMAC-SHA256 of the decoded payload string, not the base64.
+ */
+async function createOreWebhook(secret: string): Promise<string> {
+  const payload = JSON.stringify({ event: 'round_end', roundId: 'test-round' });
+  const payloadB64 = Buffer.from(payload, 'utf8').toString('base64url');
+  // Sign the payload string, not the base64
   const sig = createHmac('sha256', secret).update(payload, 'utf8').digest('base64url');
-  return `${Buffer.from(payload).toString('base64url')}.${sig}`;
+  return `Bearer ${payloadB64}.${sig}`;
 }
 
 describe('livekit-webhook', () => {
   it('rejects missing Authorization', async () => {
     const ctx = buildContext();
-    const { verifyLiveKitSignature } = await import('./livekit-webhook.js');
-    expect(() => verifyLiveKitSignature(ctx, undefined)).toThrow();
-    expect(() => verifyLiveKitSignature(ctx, '')).toThrow();
-    expect(() => verifyLiveKitSignature(ctx, 'Token xyz')).toThrow();
+    const { verifyLiveKitWebhook } = await import('./livekit-webhook.js');
+    const body = JSON.stringify({ event: 'room_started' });
+    await expect(verifyLiveKitWebhook(ctx, body, undefined)).rejects.toThrow();
+    await expect(verifyLiveKitWebhook(ctx, body, '')).rejects.toThrow();
   });
 
-  it('rejects a token signed with the wrong secret', async () => {
+  it('rejects tampered body', async () => {
     const ctx = buildContext();
-    const payload = JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 60 });
-    const tok = jwtHs256(payload, 'wrong-secret');
-    const { verifyLiveKitSignature } = await import('./livekit-webhook.js');
-    expect(() => verifyLiveKitSignature(ctx, `Bearer ${tok}`)).toThrow();
+    const { verifyLiveKitWebhook } = await import('./livekit-webhook.js');
+    const { body, authHeader } = await createLiveKitWebhook(
+      ctx.config.livekit.apiKey,
+      ctx.config.livekit.apiSecret,
+      { event: 'room_started', room: { name: 'test' } },
+    );
+    const tamperedBody = body.replace('test', 'hacked');
+    await expect(verifyLiveKitWebhook(ctx, tamperedBody, authHeader)).rejects.toThrow();
   });
 
-  it('accepts a token signed with the configured secret', async () => {
+  it('rejects wrong secret', async () => {
     const ctx = buildContext();
-    const payload = JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 60 });
-    const tok = jwtHs256(payload, ctx.config.livekit.webhookSecret);
-    const { verifyLiveKitSignature } = await import('./livekit-webhook.js');
-    expect(() => verifyLiveKitSignature(ctx, `Bearer ${tok}`)).not.toThrow();
+    const { verifyLiveKitWebhook } = await import('./livekit-webhook.js');
+    const { body, authHeader } = await createLiveKitWebhook('wrong-key', 'wrong-secret', {
+      event: 'room_started',
+    });
+    await expect(verifyLiveKitWebhook(ctx, body, authHeader)).rejects.toThrow();
   });
+
+  it('accepts valid webhook', async () => {
+    const ctx = buildContext();
+    const { verifyLiveKitWebhook } = await import('./livekit-webhook.js');
+    const { body, authHeader } = await createLiveKitWebhook(
+      ctx.config.livekit.apiKey,
+      ctx.config.livekit.apiSecret,
+      { event: 'room_started', room: { name: 'test-room' }, createdAt: Date.now() },
+    );
+    const event = await verifyLiveKitWebhook(ctx, body, authHeader);
+    expect(event.event).toBe('room_started');
+    expect(event.room?.name).toBe('test-room');
+  });
+
 
   it('room_finished marks voice_rooms ended + speakers left', async () => {
     const ctx = buildContext();
@@ -137,10 +182,9 @@ describe('ore-webhook', () => {
 
   it('accepts a token signed with the configured secret', async () => {
     const ctx = buildContext();
-    const payload = JSON.stringify({ exp: Math.floor(Date.now() / 1000) + 60 });
-    const tok = jwtHs256(payload, ctx.config.livekit.webhookSecret);
+    const tok = await createOreWebhook(ctx.config.livekit.webhookSecret);
     const { verifyOreSignature } = await import('./ore-webhook.js');
-    expect(() => verifyOreSignature(ctx, `Bearer ${tok}`)).not.toThrow();
+    expect(() => verifyOreSignature(ctx, tok)).not.toThrow();
   });
 
   it('applyOreEvent records the round_end and is idempotent', async () => {

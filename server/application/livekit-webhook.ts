@@ -3,9 +3,8 @@
  *
  * LiveKit fires webhooks for participant join/leave, track
  * published/unpublished, and room finished. The handler verifies
- * the JWT in the `Authorization: Bearer <token>` header using the
- * `LIVEKIT_WEBHOOK_SECRET` (LiveKit's webhook signing convention
- * uses HS256 with that secret).
+ * the webhook using the official WebhookReceiver from livekit-server-sdk,
+ * which validates both the JWT signature and the body hash claim.
  *
  * Idempotency: each event is recorded on `(source, signature)`
  * via the existing webhook_events UNIQUE — replays return the
@@ -15,7 +14,7 @@
  * `ended`. On `participant_left` we mark the matching
  * voice_speakers row `left_at = now()`.
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { WebhookReceiver } from 'livekit-server-sdk';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
@@ -34,42 +33,48 @@ export interface LiveKitWebhookResult {
 }
 
 /**
- * Verify the LiveKit JWT in the Authorization header. LiveKit
- * sends `Authorization: Bearer <jwt>` where the JWT is HS256
- * signed by `LIVEKIT_WEBHOOK_SECRET`.
+ * Verify the LiveKit webhook using the official WebhookReceiver.
+ * This validates both the JWT signature and the body hash claim,
+ * preventing body tampering attacks.
+ *
+ * @param ctx - Application context with LiveKit credentials
+ * @param body - Raw request body (must be the exact bytes received)
+ * @param authHeader - Authorization header from the request
+ * @returns The validated webhook event
  */
-export function verifyLiveKitSignature(ctx: AppContext, authHeader: string | undefined): void {
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    throw new ValidationFailedError({ reason: 'missing Authorization header' });
-  }
-  const token = authHeader.substring('Bearer '.length).trim();
-  const dot = token.indexOf('.');
-  if (dot <= 0 || dot >= token.length - 1) {
-    throw new ValidationFailedError({ reason: 'malformed token' });
-  }
-  const payloadB64 = token.substring(0, dot);
-  const sigB64 = token.substring(dot + 1);
-  const payload = Buffer.from(payloadB64, 'base64url').toString('utf8');
-  const sig = Buffer.from(sigB64, 'base64url');
-  const expected = createHmac('sha256', ctx.config.livekit.webhookSecret)
-    .update(payload, 'utf8')
-    .digest();
-  if (sig.length !== expected.length || !timingSafeEqual(sig, expected)) {
-    throw new ValidationFailedError({ reason: 'invalid signature' });
-  }
-  // Best-effort: verify the JWT's `exp` is in the future.
+export async function verifyLiveKitWebhook(
+  ctx: AppContext,
+  body: string,
+  authHeader: string | undefined,
+): Promise<LiveKitWebhookEvent> {
+  const receiver = new WebhookReceiver(
+    ctx.config.livekit.apiKey,
+    ctx.config.livekit.apiSecret,
+  );
+
   try {
-    const decoded = JSON.parse(payload) as { exp?: number };
-    if (typeof decoded.exp === 'number' && decoded.exp * 1000 < Date.now()) {
-      throw new ValidationFailedError({ reason: 'token expired' });
-    }
+    const event = await receiver.receive(body, authHeader, false);
+    return {
+      event: event.event,
+      room: event.room ? { name: event.room.name } : undefined,
+      participant: event.participant ? { identity: event.participant.identity } : undefined,
+      createdAt: Number(event.createdAt),
+      id: event.id,
+    };
   } catch (e) {
-    if (e instanceof ValidationFailedError) throw e;
-    // ignore parse errors — the secret verification is sufficient.
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new ValidationFailedError({ reason: `webhook verification failed: ${msg}` });
   }
 }
 
-/** Apply a LiveKit webhook event idempotently. */
+/**
+ * Apply a LiveKit webhook event idempotently.
+ *
+ * @param ctx - Application context
+ * @param signature - Unique signature for idempotency (derived from auth header)
+ * @param event - Validated webhook event from verifyLiveKitWebhook
+ * @returns Result indicating whether event was applied, replayed, or no match
+ */
 export async function applyLiveKitEvent(
   ctx: AppContext,
   signature: string,
