@@ -93,7 +93,7 @@ export interface NonceRecord {
 }
 
 export interface NonceStore {
-  put(nonce: string, ttlMs: number): Promise<NonceRecord>;
+  put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord>;
   get(nonce: string): Promise<NonceRecord | null>;
   markUsed(nonce: string, wallet: string): Promise<boolean>;
 }
@@ -103,12 +103,12 @@ const NONCE_TTL_MS = 5 * 60 * 1000;
 class InMemoryNonceStore implements NonceStore {
   private readonly map = new Map<string, NonceRecord>();
 
-  async put(nonce: string, ttlMs: number): Promise<NonceRecord> {
+  async put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord> {
     const now = Date.now();
     const rec: NonceRecord = {
       nonce,
-      issuedAt: now,
-      expiresAt: now + ttlMs,
+      issuedAt: issuedAt ? issuedAt.getTime() : now,
+      expiresAt: expiresAt ? expiresAt.getTime() : now + ttlMs,
       wallet: null,
       used: false,
     };

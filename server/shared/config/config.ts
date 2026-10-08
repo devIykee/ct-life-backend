@@ -51,6 +51,11 @@ export interface Config {
     readonly kid: string;
   };
 
+  readonly siws: {
+    readonly domain: string;
+    readonly uri: string;
+  };
+
   readonly solana: {
     readonly cluster: 'devnet' | 'mainnet';
     readonly rpcUrl: string;
@@ -242,6 +247,11 @@ export function loadConfig(): Config {
         asInt('JWT_REFRESH_TTL_SECONDS', 30 * 24 * 60 * 60),
       ),
       kid: optionalEnv('JWT_KID', optionalEnv('JWT_KEY_ID', 'ct-life-1')),
+    },
+
+    siws: {
+      domain: optionalEnv('SIWS_DOMAIN', 'ctlife.dev'),
+      uri: optionalEnv('SIWS_URI', 'https://ctlife.dev'),
     },
 
     solana: {

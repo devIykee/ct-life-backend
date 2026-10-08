@@ -9,7 +9,6 @@
 import type { FastifyInstance } from 'fastify';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { ForbiddenError } from '../../shared/domain/errors.js';
 import {
   claimAirdrop,
   clearSybilJailed,

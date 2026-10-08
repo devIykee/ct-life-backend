@@ -8,6 +8,8 @@
  */
 import { Room, Client } from 'colyseus';
 import { VideoCallState } from '../../../contract/realtime/states.js';
+import { createJwtIssuer } from '../../shared/auth/jwt.js';
+import { loadConfig } from '../../shared/config/config.js';
 
 export class VideoCallRoom extends Room {
   // Typed local state to keep TypeScript happy without the generic.
@@ -25,10 +27,25 @@ export class VideoCallRoom extends Room {
   }
 
   /**
-   *
+   * B5 fix: Verify JWT token before allowing join
    */
-  override onJoin(client: Client, options: Record<string, unknown>): void {
-    const userId = String(options.userId ?? '');
+  override async onJoin(client: Client, options: Record<string, unknown>): Promise<void> {
+    const tokenStr = String(options.token ?? '');
+    // Reject if no token provided and not in dev mode
+    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
+      throw new Error('AUTH_REQUIRED');
+    }
+    // Verify the token
+    let userId = String(options.userId ?? '');
+    if (tokenStr !== '') {
+      try {
+        const jwtIssuer = createJwtIssuer();
+        const claims = await jwtIssuer.verifyAccess(tokenStr);
+        userId = claims.sub; // Use verified userId from token
+      } catch (err) {
+        throw new Error('INVALID_TOKEN');
+      }
+    }
     if (!userId) return;
     if (!this.state.participantUserIds.includes(userId)) {
       this.state.participantUserIds.push(userId);

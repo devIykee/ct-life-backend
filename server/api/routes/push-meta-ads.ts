@@ -18,7 +18,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { ValidationFailedError, ForbiddenError } from '../../shared/domain/errors.js';
+import { ValidationFailedError } from '../../shared/domain/errors.js';
 import { registerDevice } from '../../application/push.js';
 import { getCurrentMeta, setCurrentMeta } from '../../application/meta.js';
 import {

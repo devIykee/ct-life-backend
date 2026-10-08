@@ -80,9 +80,10 @@ describe('video calls service', () => {
     const out = await startVideoCall(ctx, hostId, { participantUserIds: [p1] });
     expect(out.call.hostUserId).toBe(hostId);
     expect(out.call.participantUserIds).toEqual([p1]);
-    expect(out.tokens.length).toBe(2);
-    expect(out.tokens.map((t) => t.userId).sort()).toEqual([hostId, p1].sort());
-    expect(out.tokens.every((t) => t.canPublish)).toBe(true);
+    // B3 fix: only caller's token is returned
+    expect(out.token).toBeDefined();
+    expect(out.token.userId).toBe(hostId);
+    expect(out.token.canPublish).toBe(true);
     // Room + 2 speakers persisted.
     const room = await pool.query<{ kind: string; status: string; max_speakers: number }>(
       `SELECT kind, status, max_speakers FROM voice_rooms WHERE room_id = $1`,
@@ -93,14 +94,13 @@ describe('video calls service', () => {
     expect(room.rows[0]?.max_speakers).toBe(8);
   });
 
-  it('startVideoCall group setup mints one token per participant', async () => {
+  it('startVideoCall group setup returns only caller token', async () => {
     const ctx = makeCtx();
     const { startVideoCall } = await import('./video-calls.js');
     const out = await startVideoCall(ctx, hostId, { participantUserIds: [p1, p2] });
-    expect(out.tokens.length).toBe(3);
-    expect(out.tokens.find((t) => t.userId === hostId)).toBeTruthy();
-    expect(out.tokens.find((t) => t.userId === p1)).toBeTruthy();
-    expect(out.tokens.find((t) => t.userId === p2)).toBeTruthy();
+    // B3 fix: only the host's token is returned
+    expect(out.token).toBeDefined();
+    expect(out.token.userId).toBe(hostId);
   });
 
   it('startVideoCall refuses more than 8 participants', async () => {

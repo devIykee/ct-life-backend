@@ -161,16 +161,17 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
     const inv1 = await createCabalInvite(ctx, host);
     const inv2 = await createCabalInvite(ctx, host);
     await acceptCabalInvite(ctx, guest, inv1.inviteId);
-    const used = await listCabalInvites(ctx, { hostUserId: host, used: true });
+    const used = await listCabalInvites(ctx, host, { hostUserId: host, used: true });
     expect(used.length).toBe(1);
     expect(used[0]!.inviteId).toBe(inv1.inviteId);
-    const unused = await listCabalInvites(ctx, { hostUserId: host, used: false });
+    const unused = await listCabalInvites(ctx, host, { hostUserId: host, used: false });
     expect(unused.length).toBe(1);
     expect(unused[0]!.inviteId).toBe(inv2.inviteId);
   });
 
   it('listCabalInvites rejects bad limit', async () => {
     const ctx = buildContext();
-    await expect(listCabalInvites(ctx, {}, 0)).rejects.toBeInstanceOf(ValidationFailedError);
+    const testHost = await newUser('h6');
+    await expect(listCabalInvites(ctx, testHost, {}, 0)).rejects.toBeInstanceOf(ValidationFailedError);
   });
 });
