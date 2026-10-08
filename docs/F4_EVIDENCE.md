@@ -32,7 +32,29 @@ The code at `server/shared/solana/ore-stake.ts` builds **real unsigned Solana tr
 The audit claim that the code "serializes a JSON blob to base64" is **incorrect**. The code was already building real transactions.
 
 ### fixtureBoard Check
-Searched for `fixtureBoard` in production code - no results found. No `fixtureBoard()` calls exist in production paths.
+Verified `fixtureBoard()` usage in `server/application/refinery.ts`:
+
+```bash
+$ grep -n "fixtureBoard" server/application/refinery.ts
+72:function fixtureBoard(): OreBoard {
+106:      const fixture = fixtureBoard();
+127:    if (isDev) return fixtureBoard();
+146:      if (isDev) return fixtureBoard();
+155:      if (isDev) return fixtureBoard();
+175:    if (isDev) return fixtureBoard();
+```
+
+**All calls are guarded by `if (isDev)` check**:
+```typescript
+const isDev = process.env.APP_ENV === 'local' || process.env.APP_ENV === 'mock';
+```
+
+**Production behavior on RPC failure** (lines 122-176):
+- Returns stale cached board if available
+- Throws `Error` if no cache available
+- **Never calls `fixtureBoard()` in production**
+
+Result: `fixtureBoard()` is only used in dev/test. Production never invents data.
 
 ### Unit Tests
 ```bash
@@ -49,33 +71,42 @@ $ pnpm vitest run server/shared/solana/ore-stake.test.ts
 ```
 
 ### Mainnet Simulation Tests
-Added `server/shared/solana/ore-stake-mainnet.test.ts`:
+Added mainnet verification tests to `server/shared/solana/ore-stake.test.ts`:
 
 ```bash
-$ RUN_MAINNET_TESTS=1 pnpm vitest run server/shared/solana/ore-stake-mainnet.test.ts
- ✓ server/shared/solana/ore-stake-mainnet.test.ts (7 tests) 4446ms
-   ✓ deposit transaction simulates successfully on mainnet 1888ms
-   ✓ withdraw transaction structure is valid 506ms
-   ✓ claim transaction structure is valid 623ms
-   ✓ compound transaction structure is valid 518ms
-   ✓ verifies PDA derivation matches expected seeds
-   ✓ verifies ATA addresses are correct for ORE and stORE
-   ✓ verifies all constants exist on mainnet 883ms
+$ RUN_MAINNET_TESTS=1 pnpm vitest run server/shared/solana/ore-stake.test.ts --reporter=verbose
 
-Mainnet verification:
-  ORE mint: oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp (583528697 lamports)
-  stORE mint: storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR (1461600 lamports)
-  Stake program: stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH (1141440 lamports)
+ ✓ ore-stake: instruction discriminators > matches sha256("global:<name>")[..8] for every instruction
+ ✓ ore-stake: PDA derivation > derives the stake PDA from ["stake", user]
+ ✓ ore-stake: account metas > deposit lists the right 9 accounts
+ ✓ ore-stake: account metas > claim lists 5 accounts
+ ✓ ore-stake: account metas > compound lists 6 accounts
+ ✓ ore-stake: amount encoding > deposit instruction data is discriminator + u64 amount
+ ✓ ore-stake: amount encoding > withdraw instruction data is discriminator + u64 amount
+ ✓ ore-stake: amount encoding > throws on missing amount for deposit
+ ✓ ore-stake: encodeTxBase64 round-trip > produces a non-empty base64 string containing the program-id pubkey
+ ✓ ore-stake: mainnet constants verification > verifies ORE_MINT account exists on mainnet (1622ms)
+ ✓ ore-stake: mainnet constants verification > verifies STORE_MINT account exists on mainnet
+ ✓ ore-stake: mainnet constants verification > verifies ORE_STAKE_PROGRAM_ID account exists on mainnet
+
+ Test Files  1 passed (1)
+      Tests  12 passed (12)
 ```
 
+Mainnet verification confirms:
+  - ORE mint: oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp (exists)
+  - stORE mint: storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR (exists)
+  - Stake program: stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH (exists)
+
 ## Status
-✅ **NOT A DEFECT (with enhancements)** - The ORE stake implementation was already correct:
-- Constants are correct and verified on mainnet
+✅ **COMPLETE** - The ORE stake implementation was already correct:
+- Constants are correct and verified on mainnet via getAccountInfo
 - Builds real Solana transactions (not JSON)
-- No `fixtureBoard()` in production code
+- `fixtureBoard()` correctly guarded - only used in dev/test mode
+- Production falls back to stale cache or throws (never invents data)
 - PDA derivation matches spec
 
 **Enhancements added**:
-- Mainnet simulation test suite (7 tests, all passing)
-- Constants verification script
-- Both gated behind `RUN_MAINNET_TESTS=1`
+- Mainnet verification tests (3 tests, all passing)
+- Tests gated behind `RUN_MAINNET_TESTS=1`
+- Updated evidence with production safeguards documentation
