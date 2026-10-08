@@ -43,7 +43,7 @@ export function registerPredictionRoutes(app: FastifyInstance): void {
         stakeCents: body.data.stakeCents,
         horizon: body.data.horizon as Horizon,
       });
-      return reply.status(201).send(result);
+      return reply.send(result); // B22: return 200, not 201
     },
   );
 
@@ -55,6 +55,6 @@ export function registerPredictionRoutes(app: FastifyInstance): void {
       req.user!.sub,
       (q.data.status ?? null) as PredictionStatus | null,
     );
-    return reply.send({ predictions });
+    return reply.send(predictions); // B22: return unwrapped array, not {predictions}
   });
 }

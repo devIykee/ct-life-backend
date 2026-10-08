@@ -49,7 +49,7 @@ export function registerAlphaRoutes(app: FastifyInstance): void {
         targetMicros: body.data.targetMicros,
         stopMicros: body.data.stopMicros,
       });
-      return reply.status(201).send(result);
+      return reply.send(result); // B22: return 200, not 201
     },
   );
 
