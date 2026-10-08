@@ -38,7 +38,7 @@ export function registerRtcRoutes(app: FastifyInstance): void {
       const check = await req.ctx.db.withConnection(async (c) => {
         return c.query(
           `SELECT 1 FROM voice_speakers
-           WHERE room_id = $1 AND user_id = $2 AND ended_at IS NULL
+           WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL
            LIMIT 1`,
           [roomName, userId],
         );
