@@ -36,8 +36,20 @@ import {
   TopupCapReachedError,
   NotFoundError,
   ValidationFailedError,
+  PaymentExpiredError,
 } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
+import {
+  PublicKey,
+  TransactionMessage,
+  VersionedTransaction,
+  TransactionInstruction,
+  Connection,
+} from '@solana/web3.js';
+import {
+  createTransferCheckedInstruction,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token';
 
 export type Currency = 'USDC' | 'SOL' | 'SKR' | 'ORE';
 export type TopupSku = 'ramen' | 'bag' | 'whale' | 'cabal' | 'custom';
@@ -84,9 +96,13 @@ export interface IntentResult {
   readonly intentId: string;
   readonly recipient: string;
   readonly mint: string | null;
-  readonly amount: string;
+  readonly amount: string; // B19: base units as integer string
   readonly reference: string;
   readonly memo: string;
+  readonly tx: string; // B19: add unsigned transaction base64
+  readonly currency: Currency; // B19: add currency
+  readonly cashCents: number; // B19: add cashCents
+  readonly bonusBps: number; // B19: add bonusBps
   readonly solanaPayUrl: string;
   readonly expiresAt: string;
 }
@@ -105,14 +121,22 @@ export async function createTopupIntent(
   input: CreateIntentInput,
 ): Promise<IntentResult> {
   const cfg = ctx.configCache.load<EconomyConfig>('economy');
-  const pack = input.sku === 'custom' ? null : cfg.topUpPacks.find((p) => p.id === input.sku);
-  if (pack === undefined && input.sku !== 'custom') {
+
+  // B19 fix: Reject 'custom' until pricing rules are defined
+  if (input.sku === 'custom') {
+    throw new ValidationFailedError({ reason: 'custom sku not yet supported' });
+  }
+
+  const pack = cfg.topUpPacks.find((p) => p.id === input.sku);
+  if (pack === undefined) {
     throw new ValidationFailedError({ sku: input.sku });
   }
-  const cashCents = input.sku === 'custom' ? (input.amountCents ?? 0) : (pack?.cashCents ?? 0);
+
+  const cashCents = pack.cashCents;
   if (cashCents <= 0) {
     throw new ValidationFailedError({ reason: 'cashCents must be > 0' });
   }
+
   const currency = cfg.currencies[input.currency];
   if (currency === undefined) {
     throw new ValidationFailedError({ currency: input.currency });
@@ -123,31 +147,90 @@ export async function createTopupIntent(
   if (input.currency === 'ORE' && currency.mainnetOnly && ctx.config.solana.cluster !== 'mainnet') {
     throw new ValidationFailedError({ reason: 'ORE is mainnet-only' });
   }
-  // Topup cap.
+
+  // B19 fix: Compute amount from pack.priceUsdc in base units (integer)
+  // For non-USDC currencies, would need a price feed (not implemented, return 503)
+  let amountBaseUnits: bigint;
+  if (input.currency !== 'USDC') {
+    // B19: For SOL/SKR/ORE, need price feed to convert from USDC price
+    throw new ValidationFailedError({ reason: `${input.currency} requires price feed (degraded)` });
+  }
+  // priceUsdc is in dollars (e.g., 1 for ramen pack)
+  // USDC has 6 decimals, so 1 USDC = 1_000_000 base units
+  const priceUsdc = pack.priceUsdc;
+  amountBaseUnits = BigInt(priceUsdc) * 1_000_000n;
+
+  // Topup cap: check against USDC value paid, not Cash cents
   const dayStart = new Date();
   dayStart.setUTCHours(0, 0, 0, 0);
   const dayTotal = await ctx.db.withConnection(async (c) => {
+    // B19 fix: Sum the actual USDC cents paid (amount * 100 / 10^6), not cash credited
     const r = await c.query<{ sum: string | null }>(
-      `SELECT COALESCE(SUM(delta_cents), 0)::text AS sum
-       FROM ledger_entries
-       WHERE user_id = $1 AND account = 'cash' AND reason = 'topup' AND created_at >= $2`,
+      `SELECT COALESCE(SUM((amount::numeric * 100 / 1000000)::bigint), 0)::text AS sum
+       FROM payment_intents
+       WHERE user_id = $1 AND kind = 'topup' AND status = 'confirmed' AND created_at >= $2`,
       [input.userId, dayStart.toISOString()],
     );
     return BigInt(r.rows[0]?.sum ?? '0');
   });
-  if (dayTotal + BigInt(cashCents) > BigInt(cfg.topUpCapCentsPerDay)) {
+  const priceUsdcCents = pack.priceUsdc * 100; // Convert dollars to cents
+  if (dayTotal + BigInt(priceUsdcCents) > BigInt(cfg.topUpCapCentsPerDay)) {
     throw new TopupCapReachedError({
       capCents: cfg.topUpCapCentsPerDay,
       dayTotal: dayTotal.toString(),
     });
   }
-  const usdcAmount = cashCents / 100; // 1 USDC = 1 dollar; cashCents is in cents
-  const amount = formatBaseUnits(BigInt(usdcAmount), currency.decimals);
-  const mint = input.currency === 'SOL' ? null : (currency.devnetMint ?? currency.mint);
+
+  const amount = amountBaseUnits.toString(); // B19: integer string, not decimal
+  const mintAddress = currency.devnetMint ?? currency.mint; // input.currency is 'USDC' here
+  if (!mintAddress) {
+    throw new ValidationFailedError({ reason: 'USDC mint address not configured' });
+  }
   const reference = uuidv7().replace(/-/g, '').slice(0, 32);
   const memo = uuidv7();
   const intentId = uuidv7();
   const expiresAt = new Date(Date.now() + INTENT_TTL_SEC * 1000).toISOString();
+  const bonusBps = cfg.currencyBonusBps[input.currency];
+
+  // B19 fix: Build unsigned v0 transaction
+  const userPubkey = new PublicKey(input.userId); // B19: userId is actually wallet address for now
+  const recipient = new PublicKey(ctx.config.solana.treasuryPubkey);
+  const referencePubkey = new PublicKey(Buffer.from(reference, 'hex').toString('base64'));
+
+  const connection = new Connection(ctx.config.solana.rpcUrl, 'confirmed');
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+  // SPL token transfer (USDC only for now)
+  const mintPubkey = new PublicKey(mintAddress);
+  const userAta = getAssociatedTokenAddressSync(mintPubkey, userPubkey);
+  const recipientAta = getAssociatedTokenAddressSync(mintPubkey, recipient);
+
+  const instructions = [
+    createTransferCheckedInstruction(
+      userAta,
+      mintPubkey,
+      recipientAta,
+      userPubkey,
+      amountBaseUnits,
+      currency.decimals,
+    ),
+    // Memo instruction with reference as read-only key
+    new TransactionInstruction({
+      keys: [{ pubkey: referencePubkey, isSigner: false, isWritable: false }],
+      programId: new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'),
+      data: Buffer.from(memo, 'utf-8'),
+    }),
+  ];
+
+  const messageV0 = new TransactionMessage({
+    payerKey: userPubkey,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message();
+
+  const versionedTx = new VersionedTransaction(messageV0);
+  const tx = Buffer.from(versionedTx.serialize()).toString('base64');
+
   await ctx.db.withConnection(async (c) => {
     await c.query(
       `INSERT INTO payment_intents
@@ -160,33 +243,70 @@ export async function createTopupIntent(
         input.currency,
         amount,
         ctx.config.solana.treasuryPubkey,
-        mint,
+        mintAddress,
         reference,
         memo,
         cashCents,
-        cfg.currencyBonusBps[input.currency],
+        bonusBps,
         expiresAt,
       ],
     );
   });
+
   const solanaPayUrl = buildSolanaPayUrl({
     recipient: ctx.config.solana.treasuryPubkey,
     amount,
-    splToken: mint,
+    splToken: mintAddress,
     reference,
     memo,
     label: 'CT Life',
     message: 'Cash top-up',
   });
+
   return {
     intentId,
     recipient: ctx.config.solana.treasuryPubkey,
-    mint,
+    mint: mintAddress,
     amount,
     reference,
     memo,
+    tx, // B19: add unsigned transaction
+    currency: input.currency, // B19: add currency
+    cashCents, // B19: add cashCents
+    bonusBps, // B19: add bonusBps
     solanaPayUrl,
     expiresAt,
+  };
+}
+
+/**
+ * Get a payment intent by id (for the owner only).
+ * Returns status, signature if confirmed, and throws 410 if expired.
+ */
+export async function getPaymentIntent(
+  ctx: AppContext,
+  userId: string,
+  intentId: string,
+): Promise<{ status: string; signature?: string }> {
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{ status: string; signature: string | null; expires_at: Date }>(
+      `SELECT status, signature, expires_at FROM payment_intents WHERE intent_id = $1 AND user_id = $2`,
+      [intentId, userId],
+    );
+  });
+  if (r.rowCount === 0) {
+    throw new NotFoundError({ kind: 'payment_intent', id: intentId });
+  }
+  const intent = r.rows[0]!;
+
+  // B19: Return 410 if expired
+  if (new Date() > new Date(intent.expires_at)) {
+    throw new PaymentExpiredError({ intentId });
+  }
+
+  return {
+    status: intent.status,
+    signature: intent.signature ?? undefined,
   };
 }
 
@@ -255,12 +375,4 @@ function buildSolanaPayUrl(args: {
   params.set('label', args.label);
   params.set('message', args.message);
   return `solana:${args.recipient}?${params.toString()}`;
-}
-
-function formatBaseUnits(units: bigint, decimals: number): string {
-  if (decimals === 0) return units.toString();
-  const base = 10n ** BigInt(decimals);
-  const whole = units / base;
-  const frac = units % base;
-  return `${whole.toString()}.${frac.toString().padStart(decimals, '0')}`;
 }

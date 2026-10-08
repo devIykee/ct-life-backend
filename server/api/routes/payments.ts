@@ -13,6 +13,7 @@ import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   createTopupIntent,
   markSubmitted,
+  getPaymentIntent,
   type TopupSku,
   type Currency,
   type TopupKind,
@@ -49,6 +50,17 @@ export function registerPaymentsRoutes(app: FastifyInstance): void {
         sku: body.data.sku as TopupSku,
         amountCents: body.data.amountCents,
       });
+      return reply.send(result);
+    },
+  );
+
+  // B19: Add GET endpoint for intent status polling
+  app.get(
+    '/v1/payments/intents/:id',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const result = await getPaymentIntent(req.ctx, req.user!.sub, id);
       return reply.send(result);
     },
   );
