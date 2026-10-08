@@ -5,6 +5,7 @@
 -- This webhook delivers the Settled / Refunded events emitted by
 -- ct_escrow; idempotency on (source, signature) is unchanged.
 
+-- Up Migration
 ALTER TABLE webhook_events
   DROP CONSTRAINT webhook_events_source_check;
 
