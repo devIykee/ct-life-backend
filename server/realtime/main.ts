@@ -42,10 +42,7 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   });
   gameServer.define('city', CityRoom);
   gameServer.define('market', MarketRoom);
-  gameServer.define('venue', VenueRoom, {
-    maxClients: 50,
-    patchRate: 100, // 10 Hz
-  });
+  gameServer.define('venue', VenueRoom).filterBy(['venueId']);
   gameServer.define('space', SpaceRoom, {
     maxClients: 50,
     filterBy: () => true, // every space is its own instance
