@@ -54,6 +54,7 @@ const MoveMessage = z.object({
 
 const SitMessage = z.object({
   spotId: z.string().min(1),
+  requestId: z.string().optional(), // B36: optional request ID for client-side matching
 });
 
 const StandMessage = z.object({}).optional();
@@ -272,23 +273,41 @@ export class VenueRoom extends Room {
     }
     const venue = this.spotsCfg.venues[this.state.venueId];
     if (!venue) {
-      client.send('rejected', { type: 'sit', code: 'NOT_FOUND' });
+      // B36 fix: Include spotId and requestId in rejection
+      client.send('rejected', {
+        type: 'sit',
+        code: 'NOT_FOUND',
+        spotId: parsed.data.spotId,
+        requestId: parsed.data.requestId,
+      });
       return;
     }
     const spot = venue.spots.find((s) => s.id === parsed.data.spotId);
     if (!spot) {
-      client.send('rejected', { type: 'sit', code: 'SPOT_NOT_FOUND' });
+      client.send('rejected', {
+        type: 'sit',
+        code: 'SPOT_NOT_FOUND',
+        spotId: parsed.data.spotId,
+        requestId: parsed.data.requestId,
+      });
       return;
     }
     if (this.spotOccupants.has(parsed.data.spotId)) {
-      client.send('rejected', { type: 'sit', code: 'SPOT_TAKEN' });
+      client.send('rejected', {
+        type: 'sit',
+        code: 'SPOT_TAKEN',
+        spotId: parsed.data.spotId,
+        requestId: parsed.data.requestId,
+      });
       return;
     }
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     if (player.spotId) this.spotOccupants.delete(player.spotId);
     player.spotId = parsed.data.spotId;
-    player.anim = spot.kind === 'stage' ? 'act_type' : 'act_sit';
+    // B33 fix: Use spot.anim if present, otherwise fallback based on kind
+    player.anim =
+      (spot as { anim?: string }).anim ?? (spot.kind === 'stage' ? 'act_type' : 'act_sit');
     this.spotOccupants.set(parsed.data.spotId, client.sessionId);
   }
 
