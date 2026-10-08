@@ -203,7 +203,10 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       fun: number;
       hygiene: number;
       sanity: number;
-    }>('SELECT energy, hunger, fun, hygiene, sanity FROM needs WHERE user_id = $1', [userId]);
+      last_action_at: Date;
+    }>('SELECT energy, hunger, fun, hygiene, sanity, last_action_at FROM needs WHERE user_id = $1', [
+      userId,
+    ]);
     const sk = await c.query<{
       clout: number;
       coding: number;
@@ -219,7 +222,23 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       [userId],
     );
     const chRow = ch.rows[0];
-    const needRow = need.rows[0] ?? { energy: 50, hunger: 50, fun: 50, hygiene: 50, sanity: 50 };
+    const defaultNeeds = {
+      energy: 50,
+      hunger: 50,
+      fun: 50,
+      hygiene: 50,
+      sanity: 50,
+      last_action_at: new Date(),
+    };
+    let needRow = need.rows[0] ?? defaultNeeds;
+
+    // B16 fix: Apply needs decay if no active shift
+    const hasActiveShift = await checkActiveShift(req, userId);
+    if (!hasActiveShift && need.rows[0]) {
+      const decayed = applyNeedsDecay(req, needRow);
+      needRow = { ...decayed, last_action_at: needRow.last_action_at };
+    }
+
     const skRow = sk.rows[0] ?? {
       clout: 1,
       coding: 1,
@@ -260,4 +279,56 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       },
     };
   });
+}
+
+/**
+ * B16: Check if user has an active shift (not completed)
+ */
+async function checkActiveShift(_req: import('fastify').FastifyRequest, userId: string): Promise<boolean> {
+  // Import the shifts module to access the in-memory _shifts Map
+  // Since shifts are in-memory, we need to check via the ShiftsService
+  // For now, we'll import the internal _shifts Map
+  // TODO M5: Move to Redis-based check
+  const { _shifts } = await import('../../application/shifts.js');
+  const now = Date.now();
+
+  for (const shift of _shifts.values()) {
+    if (shift.userId === userId && !shift.completed && shift.endsAt > now) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * B16: Apply needs decay based on time elapsed since last_action_at
+ */
+function applyNeedsDecay(
+  req: import('fastify').FastifyRequest,
+  needs: {
+    energy: number;
+    hunger: number;
+    fun: number;
+    hygiene: number;
+    sanity: number;
+    last_action_at: Date;
+  },
+): { energy: number; hunger: number; fun: number; hygiene: number; sanity: number } {
+  const cfg = req.ctx.configCache.load<{
+    decayPerHour: Record<string, number>;
+  }>('needs');
+
+  const now = new Date();
+  const elapsedMs = now.getTime() - needs.last_action_at.getTime();
+  const elapsedHours = elapsedMs / (1000 * 60 * 60);
+
+  const decayPerHour = cfg.decayPerHour;
+
+  return {
+    energy: Math.max(0, Math.min(100, needs.energy - (decayPerHour.energy ?? 0) * elapsedHours)),
+    hunger: Math.max(0, Math.min(100, needs.hunger - (decayPerHour.hunger ?? 0) * elapsedHours)),
+    fun: Math.max(0, Math.min(100, needs.fun - (decayPerHour.fun ?? 0) * elapsedHours)),
+    hygiene: Math.max(0, Math.min(100, needs.hygiene - (decayPerHour.hygiene ?? 0) * elapsedHours)),
+    sanity: Math.max(0, Math.min(100, needs.sanity - (decayPerHour.sanity ?? 0) * elapsedHours)),
+  };
 }

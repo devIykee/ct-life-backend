@@ -39,6 +39,9 @@ interface Shift {
 
 const _shifts = new Map<string, Shift>();
 
+// B16: Export for active shift checking in /me endpoint
+export { _shifts };
+
 interface MiniGameDef {
   readonly id: string;
   readonly careerId: string;
@@ -144,6 +147,8 @@ export class ShiftsService {
          VALUES ($1, $2, 'cash', 'shift_pay', 'shift', $3, $4)`,
         [userId, payCents, shiftId, `shift:${shiftId}`],
       );
+      // B18 fix: Update last_action_at to shift completion time so decay doesn't accumulate during shift
+      await client.query(`UPDATE needs SET last_action_at = now() WHERE user_id = $1`, [userId]);
     });
     _shifts.set(shiftId, { ...shift, completed: true });
     return { payCents, xp: Math.round(ratio * 100), promoted: false };
