@@ -30,23 +30,21 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 async function resetBoardTestData(): Promise<void> {
   // Delete only test user data (identified by wallet pattern)
   await pool.query(
-    `DELETE FROM follows WHERE follower_user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+    `DELETE FROM follows WHERE follower_user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
   await pool.query(
-    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
   await pool.query(
-    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
   await pool.query(
-    `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`
+    `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
   await pool.query(`DELETE FROM users WHERE wallet LIKE 'boardsUser-%'`);
 
   // Clean rollover log entries created after the current week
-  await pool.query(
-    `DELETE FROM season_rollover_log WHERE season_iso > '2026-W40'`
-  );
+  await pool.query(`DELETE FROM season_rollover_log WHERE season_iso > '2026-W40'`);
 }
 
 async function newUser(alias: string): Promise<string> {

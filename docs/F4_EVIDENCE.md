@@ -1,11 +1,13 @@
 # F4: ORE Staking - Verify Constants, Remove fixtureBoard, Add Mainnet Simulation Tests
 
 ## Finding
+
 Audit reported: (1) `buildStakeTx` serializes JSON to base64 instead of real transactions, (2) RPC errors are swallowed and replaced by `fixtureBoard()`, (3) ORE "program" constant is set to the ORE **mint** address instead of the program address.
 
 ## Investigation
 
 ### Constants Verification
+
 All ORE constants were verified against mainnet-beta on 2026-10-08:
 
 ```bash
@@ -23,7 +25,9 @@ Verifying ORE constants on mainnet-beta...
 **Result**: All four constants exist on mainnet and are correctly defined in `server/shared/solana/ore-stake.ts:34-39`.
 
 ### Transaction Builder Verification
+
 The code at `server/shared/solana/ore-stake.ts` builds **real unsigned Solana transactions** using `@solana/web3.js`:
+
 - Lines 100-161: `buildOreStakeTx()` creates `TransactionInstruction` with proper program ID, account metas, and instruction data
 - Lines 42-49: Discriminators derived from `sha256("global:<name>")[..8]` matching Anchor convention
 - Lines 71-77: PDA derived from `["stake", user]` seeds
@@ -32,6 +36,7 @@ The code at `server/shared/solana/ore-stake.ts` builds **real unsigned Solana tr
 The audit claim that the code "serializes a JSON blob to base64" is **incorrect**. The code was already building real transactions.
 
 ### fixtureBoard Check
+
 Verified `fixtureBoard()` usage in `server/application/refinery.ts`:
 
 ```bash
@@ -45,11 +50,13 @@ $ grep -n "fixtureBoard" server/application/refinery.ts
 ```
 
 **All calls are guarded by `if (isDev)` check**:
+
 ```typescript
 const isDev = process.env.APP_ENV === 'local' || process.env.APP_ENV === 'mock';
 ```
 
 **Production behavior on RPC failure** (lines 122-176):
+
 - Returns stale cached board if available
 - Throws `Error` if no cache available
 - **Never calls `fixtureBoard()` in production**
@@ -57,6 +64,7 @@ const isDev = process.env.APP_ENV === 'local' || process.env.APP_ENV === 'mock';
 Result: `fixtureBoard()` is only used in dev/test. Production never invents data.
 
 ### Unit Tests
+
 ```bash
 $ pnpm vitest run server/shared/solana/ore-stake.test.ts
  ✓ server/shared/solana/ore-stake.test.ts (9 tests) 499ms
@@ -71,6 +79,7 @@ $ pnpm vitest run server/shared/solana/ore-stake.test.ts
 ```
 
 ### Mainnet Simulation Tests
+
 Added mainnet verification tests to `server/shared/solana/ore-stake.test.ts`:
 
 ```bash
@@ -94,12 +103,15 @@ $ RUN_MAINNET_TESTS=1 pnpm vitest run server/shared/solana/ore-stake.test.ts --r
 ```
 
 Mainnet verification confirms:
-  - ORE mint: oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp (exists)
-  - stORE mint: storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR (exists)
-  - Stake program: stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH (exists)
+
+- ORE mint: oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp (exists)
+- stORE mint: storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR (exists)
+- Stake program: stakecNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeH (exists)
 
 ## Status
+
 ✅ **COMPLETE** - The ORE stake implementation was already correct:
+
 - Constants are correct and verified on mainnet via getAccountInfo
 - Builds real Solana transactions (not JSON)
 - `fixtureBoard()` correctly guarded - only used in dev/test mode
@@ -107,6 +119,7 @@ Mainnet verification confirms:
 - PDA derivation matches spec
 
 **Enhancements added**:
+
 - Mainnet verification tests (3 tests, all passing)
 - Tests gated behind `RUN_MAINNET_TESTS=1`
 - Updated evidence with production safeguards documentation

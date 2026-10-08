@@ -1,9 +1,11 @@
 # F7: LiveKit Webhook Body Hash Verification
 
 ## Issue
+
 LiveKit webhook handler validated the JWT but not the body hash claim, allowing tampered bodies.
 
 ## Fix
+
 - Updated `verifyLiveKitWebhook` to use official `WebhookReceiver` from `livekit-server-sdk`
 - The receiver validates both JWT signature and SHA256 body hash
 - Added comprehensive tests: valid webhook, tampered body, wrong secret, missing auth
@@ -29,8 +31,10 @@ $ pnpm vitest run server/application/livekit-webhook.test.ts
 ```
 
 ## Code Changes
+
 - `server/application/livekit-webhook.ts` - Now uses `WebhookReceiver.receive(body, token)`
 - `server/application/livekit-webhook.test.ts` - Full test coverage with proper JWT + body hash generation
 
 ## Status
+
 ✅ **FIXED** - Body hash verification now enforced via official SDK

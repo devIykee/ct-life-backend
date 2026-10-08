@@ -75,17 +75,23 @@ describe('program-webhook: signature verification', () => {
 
   it('rejects a missing Authorization header', () => {
     const ctx = buildCtx();
-    expect(() => verifyProgramWebhookSignature(ctx, undefined, '{}')).toThrow(/Request body or params failed validation/);
+    expect(() => verifyProgramWebhookSignature(ctx, undefined, '{}')).toThrow(
+      /Request body or params failed validation/,
+    );
   });
 
   it('rejects a wrong Authorization header', () => {
     const ctx = buildCtx();
-    expect(() => verifyProgramWebhookSignature(ctx, 'wrong-secret', 'body')).toThrow(/Caller is not allowed to perform this action/);
+    expect(() => verifyProgramWebhookSignature(ctx, 'wrong-secret', 'body')).toThrow(
+      /Caller is not allowed to perform this action/,
+    );
   });
 
   it('rejects empty Authorization header', () => {
     const ctx = buildCtx();
-    expect(() => verifyProgramWebhookSignature(ctx, '', 'body')).toThrow(/Request body or params failed validation/);
+    expect(() => verifyProgramWebhookSignature(ctx, '', 'body')).toThrow(
+      /Request body or params failed validation/,
+    );
   });
 
   it('fails closed when secret is unset in staging', () => {
@@ -93,7 +99,9 @@ describe('program-webhook: signature verification', () => {
       ...buildCtx(),
       config: { helius: { webhookSecret: '' }, appEnv: 'staging' as const },
     } as unknown as Parameters<typeof verifyProgramWebhookSignature>[0];
-    expect(() => verifyProgramWebhookSignature(ctx, 'any', 'body')).toThrow(/Caller is not allowed to perform this action/);
+    expect(() => verifyProgramWebhookSignature(ctx, 'any', 'body')).toThrow(
+      /Caller is not allowed to perform this action/,
+    );
   });
 
   it('allows missing secret in local for development', () => {

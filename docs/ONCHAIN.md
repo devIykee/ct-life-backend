@@ -27,6 +27,7 @@ The paid-call escrow on Solana. Adapted from the Anchor escrow example. Anchor 0
 - `rate_per_min: u64` (USDC base units)
 
 Known oddities: `Config` includes an extra `vault` field from the original escrow example, and `Session.vault_bump` is unused even though the account layout still carries it. Neither should be removed or reordered for compatibility.
+
 - `max_minutes: u16`
 - `deposit: u64` (rate × max × (1 + fee_bps/10000))
 - `fee_bps: u16` (copied from Config at `open`)

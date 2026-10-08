@@ -26,9 +26,14 @@ function txFor(action: BinaryData, amount?: bigint): Transaction {
   const user = Keypair.generate().publicKey;
   return buildOreStakeTx({
     userPubkey: user,
-    action: action === 'deposit' || action === 'withdraw'
-      ? (action === 'deposit' ? 'deposit' : 'withdraw')
-      : (action === 'claim' ? 'claim' : 'compound'),
+    action:
+      action === 'deposit' || action === 'withdraw'
+        ? action === 'deposit'
+          ? 'deposit'
+          : 'withdraw'
+        : action === 'claim'
+          ? 'claim'
+          : 'compound',
     amount: amount ?? 1_000_000n,
   });
 }
@@ -47,9 +52,7 @@ describe('ore-stake: instruction discriminators', () => {
     expect(Buffer.from(dataFor('withdraw').subarray(0, 8))).toEqual(
       Buffer.from(sha256Disc('withdraw')),
     );
-    expect(Buffer.from(dataFor('claim').subarray(0, 8))).toEqual(
-      Buffer.from(sha256Disc('claim')),
-    );
+    expect(Buffer.from(dataFor('claim').subarray(0, 8))).toEqual(Buffer.from(sha256Disc('claim')));
     expect(Buffer.from(dataFor('compound').subarray(0, 8))).toEqual(
       Buffer.from(sha256Disc('compound')),
     );
@@ -169,7 +172,7 @@ describe('ore-stake: mainnet constants verification', () => {
           params: [ORE_MINT.toBase58(), { encoding: 'base64' }],
         }),
       });
-      const body = await res.json() as { result?: { value?: unknown } };
+      const body = (await res.json()) as { result?: { value?: unknown } };
       expect(body.result?.value).toBeTruthy();
     },
   );
@@ -187,7 +190,7 @@ describe('ore-stake: mainnet constants verification', () => {
           params: [STORE_MINT.toBase58(), { encoding: 'base64' }],
         }),
       });
-      const body = await res.json() as { result?: { value?: unknown } };
+      const body = (await res.json()) as { result?: { value?: unknown } };
       expect(body.result?.value).toBeTruthy();
     },
   );
@@ -205,7 +208,7 @@ describe('ore-stake: mainnet constants verification', () => {
           params: [ORE_STAKE_PROGRAM_ID.toBase58(), { encoding: 'base64' }],
         }),
       });
-      const body = await res.json() as { result?: { value?: unknown } };
+      const body = (await res.json()) as { result?: { value?: unknown } };
       expect(body.result?.value).toBeTruthy();
     },
   );

@@ -44,6 +44,7 @@ You are continuing an audit remediation session. **Critical context:**
    - Evidence: `docs/F7_EVIDENCE.md`
 
 ### Current Gates Status
+
 - ✅ `pnpm typecheck` - passing
 - ✅ `pnpm lint` - passing
 - ✅ `pnpm test:unit` - 19 tests pass (isolation fixed)
@@ -56,11 +57,13 @@ You are continuing an audit remediation session. **Critical context:**
 ### 🔴 CRITICAL PATH (Must complete before merge)
 
 #### F1: Realtime schemas must match contract (CLIENT BLOCKER)
+
 **Status**: Not started  
 **Difficulty**: 45 minutes  
 **Why critical**: Client cannot decode server state until this is fixed
 
 **The issue**:
+
 - `server/realtime/` has duplicate schema definitions that diverge from `contract/realtime/`
 - `PlayerState` lacks `look: string[7]`
 - Coordinates are `number` instead of `float32` (Schema.Float32Array in Colyseus)
@@ -70,6 +73,7 @@ You are continuing an audit remediation session. **Critical context:**
 - `welcome` wrongly registered as client-to-server (it's server-to-client only)
 
 **Required fix**:
+
 1. Make server **import** schema classes from `contract/realtime/states.ts` (single source of truth)
 2. Delete duplicate definitions in `server/realtime/schemas.ts` (or wherever they are - find them first)
 3. Field-for-field match with spec tables: `PlayerState`, `NpcState`, `CoinState`, `CityState`
@@ -78,6 +82,7 @@ You are continuing an audit remediation session. **Critical context:**
 6. Add CI check: fail if any schema class exists outside `contract/realtime/`
 
 **Files to check**:
+
 ```bash
 # Find where server schemas are defined
 grep -r "class.*State.*extends.*Schema" server/
@@ -88,19 +93,23 @@ grep "from.*contract/realtime" server/realtime/*.ts
 ```
 
 **Test command**:
+
 ```bash
 pnpm test:unit --run --reporter=verbose 2>&1 | grep -i realtime
 ```
 
 #### F4: ORE staking - verify constants and add mainnet simulation
+
 **Status**: Partially complete (in-progress files exist)  
 **Difficulty**: 20 minutes  
 **Critical files in working directory**:
+
 - `server/shared/solana/ore-stake.ts` (modified, in git status)
 - `server/shared/solana/ore-stake.test.ts` (untracked)
 - `tools/scripts/inspect-ore.ts` (untracked)
 
 **What needs verification**:
+
 1. **Constants** (verify these are correct):
    - ORE mint: `oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp`
    - ORE program: `oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv`
@@ -126,21 +135,25 @@ pnpm test:unit --run --reporter=verbose 2>&1 | grep -i realtime
    - The failing test mentioned was about unsigned transaction serialization
 
 **Test command**:
+
 ```bash
 # Only with RUN_MAINNET_TESTS=1
 RUN_MAINNET_TESTS=1 pnpm vitest run ore-stake.test.ts
 ```
 
 #### F8: ct_escrow - line-by-line spec comparison
+
 **Status**: Not started  
 **Difficulty**: 30 minutes  
 **Why critical**: Escrow handles real money
 
 **The issues found**:
+
 - Session PDA seeds omit `creator` (spec: `["session", fan, creator, session_id_le_bytes]`)
 - `open_session` does not add fee to deposit (spec: `rate × max_minutes × (1 + fee_bps/10000)`)
 
 **Required fix**:
+
 1. Read the **entire** `ct_escrow` spec section (find it in `docs/` or `contract/specs/`)
 2. Compare Rust code line-by-line:
    - Config PDA seeds
@@ -155,6 +168,7 @@ RUN_MAINNET_TESTS=1 pnpm vitest run ore-stake.test.ts
 6. Cover: settle split math, refund timing, unauthorized signers, double settle, overflow, InvalidRate
 
 **Commands**:
+
 ```bash
 cd programs/ct_escrow
 anchor test 2>&1 | tee ../../docs/F8_EVIDENCE.md
@@ -168,10 +182,12 @@ cd ../..
 ### 🟡 HIGH PRIORITY (Should complete)
 
 #### F2: REST routes - contract reconciliation
+
 **Status**: Not started  
-**Difficulty**: 60 minutes  
+**Difficulty**: 60 minutes
 
 **Missing routes** (verify each against spec text, not just OpenAPI):
+
 - `PATCH /characters/me/look`
 - `GET /homes`
 - `POST /rtc/token`
@@ -186,6 +202,7 @@ cd ../..
 - LiveKit webhook route (verify it's actually registered)
 
 **Also add to OpenAPI** (these exist in code but not in spec):
+
 - Project routes
 - Hire routes
 - Launch routes
@@ -195,19 +212,23 @@ cd ../..
 - Sybil jail admin routes
 
 **Required tests**:
+
 1. Build route-reconciliation test: parse `openapi.yaml`, collect Fastify routes, fail on mismatch (with allowlist for health/metrics/docs)
 2. Run REST fuzzer or Schemathesis against local server
 3. Staging-only routes must be unreachable when `APP_ENV=prod` (test with hard-coded override)
 
 #### F3: GET /v1/config completeness
+
 **Status**: Not started  
-**Difficulty**: 20 minutes  
+**Difficulty**: 20 minutes
 
 **The issue**:
+
 - Missing from payload: `ads`, `businesses`, `gigs`, `leagues`, `market`, `meta`, `npc_lines`, `ore`
 - Wrongly includes: `boards` registry (server-only)
 
 **Required fix**:
+
 1. Read spec section 7 - lists exactly what `/v1/config` should serve
 2. Serve: `economy, needs, skills, lottery, careers, gigs, businesses, market, events, meta, npc_lines, leagues, ads, ore`
 3. Each with `version`, `minClientVersion`, ETag caching, `degraded` array
@@ -217,16 +238,19 @@ cd ../..
 **File**: `server/api/routes/config.ts`
 
 #### F5: Cosmetic NFTs - real minting or disable
+
 **Status**: Not started  
-**Difficulty**: 45 minutes  
+**Difficulty**: 45 minutes
 
 **The issue**:
+
 - `nft-mint.ts` derives fake address and signature by SHA-256 hashing
 - No real on-chain asset
 
 **Required fix** (choose one):
 
 **Option A: Real minting**
+
 1. Install `@metaplex-foundation/umi` and `@metaplex-foundation/mpl-core` (check latest versions on npm)
 2. Mint real Core asset on **devnet** after confirmed payment
 3. Sign with server mint authority key from env
@@ -238,31 +262,37 @@ cd ../..
 9. Test: Cash purchase cannot reach mint code (cosmetic NFTs are real-money only)
 
 **Option B: Disable**
+
 1. Add feature flag `COSMETIC_NFTS_ENABLED=false`
 2. Return clear contract error when disabled
 3. Never return fabricated address/signature
 4. Document in `docs/UNVERIFIED.md`
 
 #### F10: Remove stubs from production
+
 **Status**: Not started  
-**Difficulty**: 30 minutes  
+**Difficulty**: 30 minutes
 
 **The issues**:
+
 - `llm-npcs.ts` defaults to `stubLlmClient`
 - `x-link.ts` has `stubXClient`
 - `predictions.ts` has hardcoded coin-flip market
 
 **Required fix**:
+
 1. When credentials absent: feature must be **off** (flag disabled, clear error)
 2. Stub clients may exist only under `test/` directories
 3. Predictions: markets created from real in-game events (5m, 15m, 1h, daily), not hardcoded
 4. If current behavior is a deliberate seed: show where real markets are created/resolved
 
 #### F12: Workers must not double-run
+
 **Status**: Not started  
-**Difficulty**: 40 minutes  
+**Difficulty**: 40 minutes
 
 **Workers to check**:
+
 - Payments poller
 - Liquidation
 - Predictions
@@ -273,6 +303,7 @@ cd ../..
 - Advanced jobs
 
 **Required**:
+
 1. Each must take Redis lock/lease OR use unique BullMQ job ID
 2. Test: start two worker instances, assert no double liquidation/rent/unlock
 3. Fix any worker without protection
@@ -293,10 +324,12 @@ These can be documented in `UNVERIFIED.md` if blocked:
 ### Safety (CRITICAL - read before any change)
 
 1. **Check git status first**:
+
    ```bash
    git status --porcelain
    git stash list
    ```
+
    The three ORE files (`ore-stake.ts`, `ore-stake.test.ts`, `inspect-ore.ts`) are work-in-progress. Do not discard them.
 
 2. **You are on branch `fix/test-isolation`** - do not create a new branch
@@ -330,6 +363,7 @@ These can be documented in `UNVERIFIED.md` if blocked:
 ### Verification Requirements
 
 For every fix:
+
 1. **Reproduce** - Confirm the defect by reading code (and failing test if possible)
 2. **Fix** - Make the change
 3. **Test** - Run tests, paste output to `docs/<ITEM>_EVIDENCE.md`
@@ -347,6 +381,7 @@ When all items are complete (or documented as blocked):
 ### 1. Create final report table
 
 Format:
+
 ```
 | Item | Real? | Status | Evidence | Commit |
 |------|-------|--------|----------|--------|
@@ -429,6 +464,7 @@ ct-life-backend/
 ## IMPORTANT CONTEXT FILES
 
 Before starting, read these:
+
 1. `docs/F6_EVIDENCE.md` - Example of proper evidence format
 2. `docs/TEST_EVIDENCE.md` - Test isolation fix (your template)
 3. `AUDIT_STATUS.md` - Current status summary
@@ -439,6 +475,7 @@ Before starting, read these:
 ## TROUBLESHOOTING
 
 ### If tests fail mysteriously
+
 ```bash
 # Check if another process is running tests
 ps aux | grep vitest
@@ -447,14 +484,17 @@ psql $DATABASE_URL -c "SELECT COUNT(*) FROM users;"
 ```
 
 ### If Anchor tests won't run
+
 ```bash
 cd programs/ct_escrow
 anchor --version  # Check if installed
 ls package.json   # Check if deps exist
 ```
+
 If blocked: document in `docs/UNVERIFIED.md` and move on.
 
 ### If mainnet RPC rate-limited
+
 Use a different RPC in env or document the blocker.
 
 ---

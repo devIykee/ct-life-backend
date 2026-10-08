@@ -102,7 +102,6 @@ describe('livekit-webhook', () => {
     expect(event.room?.name).toBe('test-room');
   });
 
-
   it('room_finished marks voice_rooms ended + speakers left', async () => {
     const ctx = buildContext();
     const { applyLiveKitEvent } = await import('./livekit-webhook.js');

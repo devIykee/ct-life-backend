@@ -12,10 +12,7 @@ import { join } from 'node:path';
 const REPO_ROOT = join(import.meta.dirname, '../..');
 
 // Directories to scan for schema violations
-const SCAN_DIRS = [
-  join(REPO_ROOT, 'server'),
-  join(REPO_ROOT, 'tools'),
-];
+const SCAN_DIRS = [join(REPO_ROOT, 'server'), join(REPO_ROOT, 'tools')];
 
 // Known schema class names that must only exist in contract/realtime/
 const SCHEMA_CLASSES = [

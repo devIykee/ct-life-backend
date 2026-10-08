@@ -12,11 +12,7 @@ import { PublicKey } from '@solana/web3.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { NotFoundError, ValidationFailedError } from '../../shared/domain/errors.js';
-import {
-  markStakeSubmitted,
-  readBoard,
-  readOreMe,
-} from '../../application/refinery.js';
+import { markStakeSubmitted, readBoard, readOreMe } from '../../application/refinery.js';
 import {
   buildOreStakeTx,
   encodeTxBase64,

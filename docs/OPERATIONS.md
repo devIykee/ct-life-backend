@@ -22,6 +22,7 @@ The Helius Enhanced Webhooks feature sends program events from the on-chain `ct_
 Helius sends the `authHeader` you configured back in the `Authorization` header of every request. The backend verifies it using constant-time comparison.
 
 **Security notes**:
+
 - If `HELIUS_WEBHOOK_SECRET` is unset in staging or prod, all webhook requests are rejected (fail closed)
 - In local/mock environments, the check is relaxed for development
 - The comparison is constant-time to prevent timing attacks
@@ -29,11 +30,13 @@ Helius sends the `authHeader` you configured back in the `Authorization` header 
 ## Testing
 
 Run the webhook handler tests:
+
 ```bash
 pnpm exec vitest run server/application/program-webhook.test.ts
 ```
 
 To test with a real webhook delivery on devnet, use a tunnel service like ngrok:
+
 ```bash
 ngrok http 3000
 # Update webhook URL to: https://your-tunnel.ngrok.io/v1/webhooks/helius-program
@@ -48,6 +51,7 @@ Webhook deliveries are idempotent on `(source='helius_program', signature)`. If 
 ## Processing
 
 When a `Settled` or `Refunded` event is found in the transaction logs:
+
 1. Look up the escrow row by on-chain session pubkey
 2. Mark the escrow settled/refunded
 3. Write in-game ledger rows (tip for creator, fee for treasury)

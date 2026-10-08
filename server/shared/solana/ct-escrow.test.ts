@@ -35,7 +35,10 @@ function concat(parts: Uint8Array[]): Uint8Array {
   for (const p of parts) total += p.byteLength;
   const out = new Uint8Array(total);
   let o = 0;
-  for (const p of parts) { out.set(p, o); o += p.byteLength; }
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.byteLength;
+  }
   return out;
 }
 function base58(bytes: Uint8Array): string {
@@ -49,10 +52,16 @@ function base58(bytes: Uint8Array): string {
       digits[i] = carry % 58;
       carry = Math.floor(carry / 58);
     }
-    while (carry > 0) { digits.push(carry % 58); carry = Math.floor(carry / 58); }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
   }
   let zeros = 0;
-  for (const b of bytes) { if (b === 0) zeros++; else break; }
+  for (const b of bytes) {
+    if (b === 0) zeros++;
+    else break;
+  }
   let out = '1'.repeat(zeros);
   for (let i = digits.length - 1; i >= 0; i--) out += ALPHA[digits[i]!];
   return out;
@@ -65,7 +74,9 @@ describe('ct_escrow event decoder', () => {
     const creator = pubkey(3);
     const bytes = concat([
       disc('SessionOpened'),
-      session, fan, creator,
+      session,
+      fan,
+      creator,
       u64(42n),
       u64(1_000_000n),
       u16(5),
@@ -89,11 +100,7 @@ describe('ct_escrow event decoder', () => {
 
   it('decodes a SessionAccepted event', () => {
     const session = pubkey(11);
-    const bytes = concat([
-      disc('SessionAccepted'),
-      session,
-      i64(1_700_000_100n),
-    ]);
+    const bytes = concat([disc('SessionAccepted'), session, i64(1_700_000_100n)]);
     const out = decodeCtEscrowEvent(Buffer.from(bytes).toString('base64'));
     expect(out).not.toBeNull();
     if (out?.kind !== 'accepted') throw new Error('expected accepted');
@@ -125,11 +132,7 @@ describe('ct_escrow event decoder', () => {
     const session = pubkey(31);
     const fan = pubkey(32);
     const creator = pubkey(33);
-    const bytes = concat([
-      disc('SessionRefunded'),
-      session, fan, creator,
-      u64(5_000_000n),
-    ]);
+    const bytes = concat([disc('SessionRefunded'), session, fan, creator, u64(5_000_000n)]);
     const out = decodeCtEscrowEvent(Buffer.from(bytes).toString('base64'));
     expect(out).not.toBeNull();
     if (out?.kind !== 'refunded') throw new Error('expected refunded');

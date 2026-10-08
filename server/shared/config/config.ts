@@ -208,13 +208,13 @@ export function loadConfig(): Config {
     if (appEnv === 'staging' || appEnv === 'prod') {
       throw new Error(
         'FATAL: ENABLE_DEV_AUTH=true is not allowed when APP_ENV is staging or prod. ' +
-        'Dev auth bypasses signature verification and must only run in local or mock environments.',
+          'Dev auth bypasses signature verification and must only run in local or mock environments.',
       );
     }
     if (nodeEnv === 'production') {
       throw new Error(
         'FATAL: ENABLE_DEV_AUTH=true is not allowed when NODE_ENV=production. ' +
-        'Dev auth bypasses signature verification and must only run in development.',
+          'Dev auth bypasses signature verification and must only run in development.',
       );
     }
   }

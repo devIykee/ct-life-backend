@@ -34,20 +34,20 @@ The current state as of `0d86ec3`:
 
 - `init_config` admin pinning is not enforced against the program's upgrade authority. The standard Anchor pattern requires a `program_data` account and a checked upgrade-authority address; this is a mainnet deployment blocker unless the program is reworked to read that account during config setup. The repository intentionally leaves the current layout alone to avoid an unsafe migration and because the existing devnet config is already live.
 
-| Item                                          | Status   |
-| --------------------------------------------- | -------- |
-| `programs/ct_escrow/` Rust source             | DONE (committed) |
-| `programs/ct_escrow/programs/ct_escrow/Cargo.toml` | DONE |
-| Anchor 0.31.1 IDL at `contract/idl/ct_escrow.json` | DONE |
-| IDL tagged `contract/idl/ct_escrow.v1.0.0-rc1.json` | DONE |
-| Compiled SBF at `programs/ct_escrow/target/deploy/ct_escrow.so` | DONE (299,024 bytes) |
-| **Deployed to devnet** at `FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz` | DONE (tx `xpGbiY9LWy7VT8e3BW9NavQWrXs257KAoGNeEBMsc59YbzU24jwixgmZNuzT17bAu9XHkvtVXFTSKLekMYoJxyu`) |
-| `programs/ct_escrow/tests/ct_escrow.ts` (8 TS-Mocha tests) | written; toolchain-blocked |
-| Server wires settlement to on-chain program    | partial (skeleton at `server/shared/solana/ct-escrow.ts`; excluded from typecheck) |
-| Helius program-event webhook listens for `Settled`/`Refunded` | NOT YET |
-| Server-side ledger reconciled from on-chain settlement | NOT YET |
-| Anchor tests run on `solana-test-validator`    | NOT YET (toolchain limitation) |
-| Paid-call e2e on devnet (two bot wallets, settlement tx visible in Explorer) | NOT YET |
+| Item                                                                         | Status                                                                                              |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `programs/ct_escrow/` Rust source                                            | DONE (committed)                                                                                    |
+| `programs/ct_escrow/programs/ct_escrow/Cargo.toml`                           | DONE                                                                                                |
+| Anchor 0.31.1 IDL at `contract/idl/ct_escrow.json`                           | DONE                                                                                                |
+| IDL tagged `contract/idl/ct_escrow.v1.0.0-rc1.json`                          | DONE                                                                                                |
+| Compiled SBF at `programs/ct_escrow/target/deploy/ct_escrow.so`              | DONE (299,024 bytes)                                                                                |
+| **Deployed to devnet** at `FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz`     | DONE (tx `xpGbiY9LWy7VT8e3BW9NavQWrXs257KAoGNeEBMsc59YbzU24jwixgmZNuzT17bAu9XHkvtVXFTSKLekMYoJxyu`) |
+| `programs/ct_escrow/tests/ct_escrow.ts` (8 TS-Mocha tests)                   | written; toolchain-blocked                                                                          |
+| Server wires settlement to on-chain program                                  | partial (skeleton at `server/shared/solana/ct-escrow.ts`; excluded from typecheck)                  |
+| Helius program-event webhook listens for `Settled`/`Refunded`                | NOT YET                                                                                             |
+| Server-side ledger reconciled from on-chain settlement                       | NOT YET                                                                                             |
+| Anchor tests run on `solana-test-validator`                                  | NOT YET (toolchain limitation)                                                                      |
+| Paid-call e2e on devnet (two bot wallets, settlement tx visible in Explorer) | NOT YET                                                                                             |
 
 ### Toolchain limitation
 

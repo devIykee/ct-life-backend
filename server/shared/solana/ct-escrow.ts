@@ -35,10 +35,7 @@ import {
   SystemProgram,
   Connection,
 } from '@solana/web3.js';
-import {
-  TOKEN_PROGRAM_ID,
-  ASSOCIATED_TOKEN_PROGRAM_ID,
-} from '@solana/spl-token';
+import { TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from '@solana/spl-token';
 
 const IDL = JSON.parse(
   readFileSync(join(process.cwd(), 'contract/idl/ct_escrow.json'), 'utf8'),
@@ -102,10 +99,7 @@ function concat(parts: Uint8Array[]): Uint8Array {
  * Derives the Config PDA for ct_escrow (seeds: ["config"]).
  */
 export function configPda(): PublicKey {
-  const [pda] = PublicKey.findProgramAddressSync(
-    [Buffer.from('config')],
-    CT_ESCROW_PROGRAM_ID,
-  );
+  const [pda] = PublicKey.findProgramAddressSync([Buffer.from('config')], CT_ESCROW_PROGRAM_ID);
   return pda;
 }
 
@@ -176,9 +170,7 @@ export function buildInitConfigIx(args: InitConfigArgs): TransactionInstruction 
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
     ],
-    data: Buffer.from(
-      concat([IX_INIT_CONFIG, encU16(args.feeBps), encU32(args.acceptWindowSecs)]),
-    ),
+    data: Buffer.from(concat([IX_INIT_CONFIG, encU16(args.feeBps), encU32(args.acceptWindowSecs)])),
   });
 }
 
@@ -528,22 +520,42 @@ export function decodeCtEscrowEvent(b64: string): DecodedEvent | null {
     if (body.byteLength < 32 + 32 + 32 + 8 + 8 + 2 + 8 + 8) return null;
     const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
     let o = 0;
-    const session = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
-    const fan = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
-    const creator = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
-    const sessionId = dv.getBigUint64(o, true); o += 8;
-    const ratePerMin = dv.getBigUint64(o, true); o += 8;
-    const maxMinutes = dv.getUint16(o, true); o += 2;
-    const deposit = dv.getBigUint64(o, true); o += 8;
-    const feeBps = dv.getUint16(o, true); o += 2;
+    const session = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
+    const fan = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
+    const creator = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
+    const sessionId = dv.getBigUint64(o, true);
+    o += 8;
+    const ratePerMin = dv.getBigUint64(o, true);
+    o += 8;
+    const maxMinutes = dv.getUint16(o, true);
+    o += 2;
+    const deposit = dv.getBigUint64(o, true);
+    o += 8;
+    const feeBps = dv.getUint16(o, true);
+    o += 2;
     const openedAt = dv.getBigInt64(o, true);
-    return { kind: 'opened', session, fan, creator, sessionId, ratePerMin, maxMinutes, deposit, feeBps, openedAt };
+    return {
+      kind: 'opened',
+      session,
+      fan,
+      creator,
+      sessionId,
+      ratePerMin,
+      maxMinutes,
+      deposit,
+      feeBps,
+      openedAt,
+    };
   }
   if (eq(eventDisc, EVENT_ACCEPTED_DISC)) {
     if (body.byteLength < 32 + 8) return null;
     const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
     let o = 0;
-    const session = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
+    const session = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
     const acceptedAt = dv.getBigInt64(o, true);
     return { kind: 'accepted', session, acceptedAt };
   }
@@ -551,10 +563,14 @@ export function decodeCtEscrowEvent(b64: string): DecodedEvent | null {
     if (body.byteLength < 32 + 8 + 8 + 8 + 8) return null;
     const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
     let o = 0;
-    const session = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
-    const minutes = dv.getBigUint64(o, true); o += 8;
-    const creatorAmount = dv.getBigUint64(o, true); o += 8;
-    const fee = dv.getBigUint64(o, true); o += 8;
+    const session = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
+    const minutes = dv.getBigUint64(o, true);
+    o += 8;
+    const creatorAmount = dv.getBigUint64(o, true);
+    o += 8;
+    const fee = dv.getBigUint64(o, true);
+    o += 8;
     const refund = dv.getBigUint64(o, true);
     return { kind: 'settled', session, minutes, creatorAmount, fee, refund };
   }
@@ -562,9 +578,12 @@ export function decodeCtEscrowEvent(b64: string): DecodedEvent | null {
     if (body.byteLength < 32 + 32 + 32 + 8) return null;
     const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
     let o = 0;
-    const session = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
-    const fan = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
-    const creator = pubkeyFromBytes(body.slice(o, o + 32)); o += 32;
+    const session = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
+    const fan = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
+    const creator = pubkeyFromBytes(body.slice(o, o + 32));
+    o += 32;
     const refundAmount = dv.getBigUint64(o, true);
     return { kind: 'refunded', session, fan, creator, refundAmount };
   }

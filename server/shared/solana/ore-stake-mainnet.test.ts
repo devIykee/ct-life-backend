@@ -148,7 +148,7 @@ describeMainnet('ORE stake mainnet simulation', () => {
     // Verify the PDA is derived from the correct seeds
     const [expected, bump] = PublicKey.findProgramAddressSync(
       [Buffer.from('stake'), user.toBuffer()],
-      ORE_STAKE_PROGRAM_ID
+      ORE_STAKE_PROGRAM_ID,
     );
 
     expect(pda.toBase58()).toBe(expected.toBase58());
@@ -185,6 +185,8 @@ describeMainnet('ORE stake mainnet simulation', () => {
     console.log('Mainnet verification:');
     console.log(`  ORE mint: ${ORE_MINT.toBase58()} (${oreMintInfo?.lamports} lamports)`);
     console.log(`  stORE mint: ${STORE_MINT.toBase58()} (${stOreMintInfo?.lamports} lamports)`);
-    console.log(`  Stake program: ${ORE_STAKE_PROGRAM_ID.toBase58()} (${stakeProgramInfo?.lamports} lamports)`);
+    console.log(
+      `  Stake program: ${ORE_STAKE_PROGRAM_ID.toBase58()} (${stakeProgramInfo?.lamports} lamports)`,
+    );
   }, 30000);
 });

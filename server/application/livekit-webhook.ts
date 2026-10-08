@@ -47,10 +47,7 @@ export async function verifyLiveKitWebhook(
   body: string,
   authHeader: string | undefined,
 ): Promise<LiveKitWebhookEvent> {
-  const receiver = new WebhookReceiver(
-    ctx.config.livekit.apiKey,
-    ctx.config.livekit.apiSecret,
-  );
+  const receiver = new WebhookReceiver(ctx.config.livekit.apiKey, ctx.config.livekit.apiSecret);
 
   try {
     const event = await receiver.receive(body, authHeader, false);

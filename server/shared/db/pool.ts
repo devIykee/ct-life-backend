@@ -32,9 +32,8 @@ export function createDb(overrides: Partial<PoolConfig> = {}): Db {
   if (cached !== null) return cached;
   const cfg = loadConfig();
   const isTest = process.env.NODE_ENV === 'test';
-  const connectionString = isTest && process.env.TEST_DATABASE_URL
-    ? process.env.TEST_DATABASE_URL
-    : cfg.databaseUrl;
+  const connectionString =
+    isTest && process.env.TEST_DATABASE_URL ? process.env.TEST_DATABASE_URL : cfg.databaseUrl;
   const pool = new Pool({
     connectionString,
     max: 20,

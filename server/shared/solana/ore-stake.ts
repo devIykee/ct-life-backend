@@ -23,7 +23,13 @@
  *   compound  = [165, 21, 134, 17, 90, 198, 34, 218]
  */
 import { createHash } from 'node:crypto';
-import { Keypair, PublicKey, Transaction, TransactionInstruction, SystemProgram } from '@solana/web3.js';
+import {
+  Keypair,
+  PublicKey,
+  Transaction,
+  TransactionInstruction,
+  SystemProgram,
+} from '@solana/web3.js';
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -122,10 +128,7 @@ export function buildOreStakeTx(input: OreStakeTxInput): Transaction {
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data: Buffer.from(
-        concat([
-          input.action === 'deposit' ? IX_DEPOSIT : IX_WITHDRAW,
-          encU64(input.amount),
-        ]),
+        concat([input.action === 'deposit' ? IX_DEPOSIT : IX_WITHDRAW, encU64(input.amount)]),
       ),
     });
   } else if (input.action === 'claim') {
@@ -186,7 +189,9 @@ export async function sendOreStake(
 }
 
 export { ORE_MINT, STORE_MINT };
-function _ignoreUnused(): void { void PKType; }
+function _ignoreUnused(): void {
+  void PKType;
+}
 _ignoreUnused();
 
 /** Encode the transaction as a base64 string (the wire format the Unity client expects). */

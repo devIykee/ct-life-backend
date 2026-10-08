@@ -12,36 +12,38 @@
    - ORE stake builders: complete, real instruction builders ported from Rust
    - ct_escrow: PDA seeds fixed, settlement wired
    - Helius webhook: HMAC verification implemented
-   
+
 2. ✅ **No process conflicts** - only this session editing
 
 3. ✅ **Database isolation fixed** (commit 32d08c2)
    - Tests now clean only their own data (wallet pattern)
    - Never touch dev DB (5 leagues, 7,974 users)
    - All 19 tests in leagues.test.ts + boards.test.ts pass
-   
+
 4. ✅ **Branch**: `fix/audit-remediation` active
 
 ---
 
 ## GATES STATUS
 
-| Gate | Status | Notes |
-|------|--------|-------|
-| `pnpm typecheck` | ✅ PASS | Clean |
-| `pnpm lint` | ⚠️ 17 errors | Fixable: unused vars, missing JSDoc, tsconfig exclusion |
-| `pnpm test:unit` | ⚠️ 4 fails → 0 | Fixed in commit 32d08c2 (leagues/boards only tested) |
-| `pnpm format:check` | ❓ Not tested | |
-| `pnpm docs:check` | ❓ Not tested | |
-| `pnpm boundary:check` | ❓ Not tested | |
-| `pnpm contract:check` | ❓ Not tested | |
+| Gate                  | Status         | Notes                                                   |
+| --------------------- | -------------- | ------------------------------------------------------- |
+| `pnpm typecheck`      | ✅ PASS        | Clean                                                   |
+| `pnpm lint`           | ⚠️ 17 errors   | Fixable: unused vars, missing JSDoc, tsconfig exclusion |
+| `pnpm test:unit`      | ⚠️ 4 fails → 0 | Fixed in commit 32d08c2 (leagues/boards only tested)    |
+| `pnpm format:check`   | ❓ Not tested  |                                                         |
+| `pnpm docs:check`     | ❓ Not tested  |                                                         |
+| `pnpm boundary:check` | ❓ Not tested  |                                                         |
+| `pnpm contract:check` | ❓ Not tested  |                                                         |
 
 ---
 
 ## AUDIT ITEMS STATUS
 
 ### F1: Realtime schemas must match contract 🔴 NOT STARTED
+
 **Blocker**: High (client contract)
+
 - Server `schemas.ts` differs from contract `states.ts`
 - Missing: `PlayerState.look`, `CoinState`, `HomeState`, `SpaceState`, `VideoCallState`, `SpeakerState`
 - Wrong types: `number` instead of `float32`, `NpcState` property names
@@ -49,6 +51,7 @@
 - Server must **import from contract/** (single source of truth)
 
 **Solution**:
+
 1. Delete `server/realtime/schemas.ts`
 2. Make server import from `contract/realtime/states.ts`
 3. Add CI check: no schema classes outside contract/
@@ -57,7 +60,9 @@
 ---
 
 ### F2: REST routes vs contract 🟡 PARTIAL
+
 **Blocker**: Medium (client API)
+
 - Missing routes flagged by auditor (need verification against spec text)
 - Need route reconciliation test
 - Need OpenAPI sync
@@ -67,14 +72,18 @@
 ---
 
 ### F3: GET /v1/config completeness 🔴 NOT STARTED
+
 **Blocker**: Medium (client config)
+
 - Missing: `ads`, `businesses`, `gigs`, `leagues`, `market`, `meta`, `npc_lines`, `ore`
 - Wrong: includes `boards` registry (spec doesn't list it)
 
 ---
 
 ### F4: ORE staking real transactions 🟢 MOSTLY DONE
+
 **Status**: ✅ Builders ported, ⚠️ Needs verification
+
 - ✅ Real discriminators, PDA derivation, account layout
 - ✅ `ore-stake.ts` + tests exist (9 tests pass)
 - ⚠️ Constants need mainnet verification
@@ -82,6 +91,7 @@
 - ⚠️ Fixture removal from production paths
 
 **Remaining**:
+
 1. Verify constants via `getAccountInfo` on mainnet
 2. Add simulation test (`simulateTransaction`)
 3. Remove `fixtureBoard()` from production
@@ -90,7 +100,9 @@
 ---
 
 ### F5: Cosmetic NFTs real minting 🔴 NOT STARTED
+
 **Blocker**: High (payment integrity)
+
 - Current: SHA-256 hash as "address" and "signature"
 - Need: Real Core asset mint on devnet or disable
 - Cash-only purchases enforced
@@ -98,7 +110,9 @@
 ---
 
 ### F6: Helius webhook auth 🟡 PARTIAL
+
 **Status**: ⚠️ Wrong header used
+
 - Current: checks `x-helius-signature` with HMAC
 - Correct: check `Authorization` header exact match
 - Need: constant-time comparison
@@ -109,13 +123,17 @@
 ---
 
 ### F7: LiveKit webhook verification 🔴 NOT STARTED
+
 **Blocker**: Medium (RTC security)
+
 - Need: `WebhookReceiver` from SDK with body hash validation
 
 ---
 
 ### F8: ct_escrow spec compliance 🟢 MOSTLY DONE
+
 **Status**: ✅ Deployed, ⚠️ Needs full verification
+
 - ✅ Deployed to devnet: `FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz`
 - ✅ PDA seeds corrected (includes creator)
 - ✅ Settlement wired in paid-calls.ts
@@ -124,6 +142,7 @@
 - ⚠️ Need devnet e2e (open→accept→settle)
 
 **Remaining**:
+
 1. Re-read spec, compare Rust line-by-line
 2. Run `anchor test` from programs/ct_escrow
 3. Devnet e2e with Explorer links
@@ -131,14 +150,18 @@
 ---
 
 ### F9: Dev auth guard 🔴 NOT STARTED
+
 **Blocker**: Critical (security)
+
 - `ENABLE_DEV_AUTH` must check `APP_ENV` is `local` or `mock`
 - Startup hard-fail if enabled in staging/prod
 
 ---
 
 ### F10: Remove stubs from production 🔴 NOT STARTED
+
 **Blocker**: Medium (fake data)
+
 - `llm-npcs.ts`: defaults to `stubLlmClient`
 - `x-link.ts`: has `stubXClient`
 - `predictions.ts`: hardcoded coin-flip market
@@ -146,13 +169,16 @@
 ---
 
 ### F11: Error registry and gates 🟡 PARTIAL
+
 **Status**: ✅ Typecheck passes, ✅ Test isolation fixed, ⚠️ Lint errors remain
+
 - ✅ Test isolation: commit 32d08c2
 - ⚠️ 17 lint errors (unused vars, JSDoc, tsconfig exclusion)
 - ⚠️ Need error codes in `contract/ids/errors.json`
 - ⚠️ Need CI check for unknown error codes
 
 **Remaining**:
+
 1. Fix 17 lint errors
 2. Add missing error codes to contract
 3. Add CI check
@@ -160,7 +186,9 @@
 ---
 
 ### F12: Worker double-run prevention 🔴 NOT STARTED
+
 **Blocker**: High (data integrity)
+
 - Need: Redis locks or BullMQ job IDs for all workers
 - Need: Test with two worker instances
 
@@ -201,6 +229,7 @@ Given token budget and priorities:
 ## SAFETY REMINDER
 
 The dev database contains **real data**:
+
 - 5 leagues
 - 7,974 users
 

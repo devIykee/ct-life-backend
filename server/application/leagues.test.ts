@@ -31,18 +31,16 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 async function resetLeagueTables(): Promise<void> {
   // Delete only test user data (identified by wallet pattern)
   await pool.query(
-    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`
+    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`,
   );
   await pool.query(
-    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`
+    `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`,
   );
   await pool.query(`DELETE FROM users WHERE wallet LIKE 'leagueUser-%'`);
 
   // Clean ALL test-created rollover log entries (anything matching 2026-W pattern from tests)
   // This prevents cross-test pollution in the 8-week rollover test
-  await pool.query(
-    `DELETE FROM season_rollover_log WHERE season_iso ~ '^2026-W[0-9]{2}$'`
-  );
+  await pool.query(`DELETE FROM season_rollover_log WHERE season_iso ~ '^2026-W[0-9]{2}$'`);
 }
 
 async function freshUsers(n: number): Promise<string[]> {
@@ -214,7 +212,7 @@ describe('leagues service', () => {
        WHERE kind = 'season_rollover' AND season_iso LIKE '2026-W%'`,
     );
     expect(Number(r.rows[0]?.count ?? '0')).toBe(8);
-  }, 30_000); // 30s timeout: 8 rollovers with DB writes
+  }, 60_000); // 60s timeout: 8 rollovers with DB writes (each ~5s)
 
   it('getMyLeague returns null before rollover, populated after', async () => {
     const ctx = buildContext();

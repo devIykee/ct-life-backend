@@ -94,15 +94,24 @@ async function startLocalValidator(): Promise<{
   const ledgerDir = join(tmpdir(), `ctlife-e2e-${Date.now()}`);
   mkdirSync(ledgerDir, { recursive: true });
   const programSo = join(process.cwd(), 'programs/ct_escrow/target/deploy/ct_escrow.so');
-  const programKeypair = join(process.cwd(), 'programs/ct_escrow/target/deploy/ct_escrow-keypair.json');
+  const programKeypair = join(
+    process.cwd(),
+    'programs/ct_escrow/target/deploy/ct_escrow-keypair.json',
+  );
   const args = [
     '--reset',
-    '--ledger', ledgerDir,
-    '--rpc-port', '18999',
-    '--faucet-port', '18998',
-    '--bind-address', '127.0.0.1',
+    '--ledger',
+    ledgerDir,
+    '--rpc-port',
+    '18999',
+    '--faucet-port',
+    '18998',
+    '--bind-address',
+    '127.0.0.1',
     '--quiet',
-    '--bpf-program', programKeypair, programSo,
+    '--bpf-program',
+    programKeypair,
+    programSo,
   ];
   const proc = spawn('solana-test-validator', args, { stdio: 'pipe' });
   // Wait for the validator to be ready.
@@ -193,13 +202,7 @@ async function main(): Promise<void> {
     await airdropTo(conn, creator.publicKey, 5 * LAMPORTS_PER_SOL);
 
     // USDC mint + fan USDC ATA + treasury USDC ATA + creator USDC ATA.
-    const usdcMint = await createMint(
-      conn,
-      admin,
-      admin.publicKey,
-      null,
-      6,
-    );
+    const usdcMint = await createMint(conn, admin, admin.publicKey, null, 6);
     const fanUsdcAta = await ensureAta(conn, admin, usdcMint, fan.publicKey);
     const creatorUsdcAta = await ensureAta(conn, admin, usdcMint, creator.publicKey);
     const treasuryUsdcAta = await ensureAta(conn, admin, usdcMint, treasury.publicKey);
@@ -333,10 +336,18 @@ async function main(): Promise<void> {
     console.log(`[e2e] fee       =${expectedFee}`);
     console.log(`[e2e] creator   =${expectedCreator}`);
     console.log(`[e2e] refund    =${expectedRefund}`);
-    console.log(`[e2e] vault     before=${vaultBeforeSettle}  after=${vaultAfterSettle}  delta=${vaultAfterSettle - vaultBeforeSettle}`);
-    console.log(`[e2e] fan       before=${fanBefore}        after=${fanAfter}        delta=${fanAfter - fanBefore}`);
-    console.log(`[e2e] creator   before=${creatorBefore}    after=${creatorAfter}    delta=${creatorAfter - creatorBefore}`);
-    console.log(`[e2e] treasury  before=${treasuryBefore}   after=${treasuryAfter}   delta=${treasuryAfter - treasuryBefore}`);
+    console.log(
+      `[e2e] vault     before=${vaultBeforeSettle}  after=${vaultAfterSettle}  delta=${vaultAfterSettle - vaultBeforeSettle}`,
+    );
+    console.log(
+      `[e2e] fan       before=${fanBefore}        after=${fanAfter}        delta=${fanAfter - fanBefore}`,
+    );
+    console.log(
+      `[e2e] creator   before=${creatorBefore}    after=${creatorAfter}    delta=${creatorAfter - creatorBefore}`,
+    );
+    console.log(
+      `[e2e] treasury  before=${treasuryBefore}   after=${treasuryAfter}   delta=${treasuryAfter - treasuryBefore}`,
+    );
 
     // Program-derived address assertion.
     console.log('[e2e] session PDA:', session.toBase58());
@@ -352,11 +363,15 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     if (creatorAfter - creatorBefore !== expectedCreator) {
-      console.error(`[e2e] FAIL: creator delta ${creatorAfter - creatorBefore} != expected ${expectedCreator}`);
+      console.error(
+        `[e2e] FAIL: creator delta ${creatorAfter - creatorBefore} != expected ${expectedCreator}`,
+      );
       process.exit(1);
     }
     if (treasuryAfter - treasuryBefore !== expectedFee) {
-      console.error(`[e2e] FAIL: treasury delta ${treasuryAfter - treasuryBefore} != expected ${expectedFee}`);
+      console.error(
+        `[e2e] FAIL: treasury delta ${treasuryAfter - treasuryBefore} != expected ${expectedFee}`,
+      );
       process.exit(1);
     }
     console.log('[e2e] OK: vault drained, creator + treasury received exact expected amounts.');

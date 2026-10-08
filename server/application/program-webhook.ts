@@ -28,10 +28,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import {
-  ForbiddenError,
-  ValidationFailedError,
-} from '../shared/domain/errors.js';
+import { ForbiddenError, ValidationFailedError } from '../shared/domain/errors.js';
 import { decodeCtEscrowEvent } from '../shared/solana/ct-escrow.js';
 import { configPda } from '../shared/solana/ct-escrow.js';
 import type { AppContext } from './context.js';
@@ -190,24 +187,14 @@ async function reconcileSettled(
       await client.query(
         `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
          VALUES ($1, $2, 'cash', 'tip', 'paid_call', $3, $4)`,
-        [
-          row.payee_user_id,
-          netCents,
-          row.escrow_id,
-          `paid-call-creator:${signature.slice(0, 16)}`,
-        ],
+        [row.payee_user_id, netCents, row.escrow_id, `paid-call-creator:${signature.slice(0, 16)}`],
       );
     }
     if (feeCents > 0) {
       await client.query(
         `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
          VALUES ($1, $2, 'cash', 'fee', 'paid_call', $3, $4)`,
-        [
-          row.payer_user_id,
-          -feeCents,
-          row.escrow_id,
-          `paid-call-fee:${signature.slice(0, 16)}`,
-        ],
+        [row.payer_user_id, -feeCents, row.escrow_id, `paid-call-fee:${signature.slice(0, 16)}`],
       );
     }
     void configPda; // imported for documentation
