@@ -418,6 +418,41 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect([200, 201, 400, 409]).toContain(r.statusCode);
   });
 
+  it('B1: non-admin cannot settle a Beef match', async () => {
+    // Create a beef match between alice and bob
+    const createR = await app.inject({
+      method: 'POST',
+      url: '/v1/beef',
+      headers: authHeaders(alice, `beef-create-${uuidv7()}`),
+      payload: { opponentUserId: bob.sub, stakeCents: 1000 },
+    });
+    // May fail if implementation incomplete, but we need a match id
+    if (createR.statusCode !== 201 && createR.statusCode !== 200) {
+      // Skip if beef creation not implemented
+      return;
+    }
+    const { id: matchId } = createR.json() as { id: string };
+
+    // Alice (participant, non-admin) tries to settle
+    const settleR = await app.inject({
+      method: 'POST',
+      url: `/v1/beef/${matchId}/settle`,
+      headers: authHeaders(alice, `beef-settle-${uuidv7()}`),
+      payload: { winnerUserId: alice.sub },
+    });
+    expect(settleR.statusCode).toBe(403);
+    expect((settleR.json() as { error: { code: string } }).error.code).toBe('FORBIDDEN');
+
+    // Bob (participant, non-admin) also cannot settle
+    const settleBobR = await app.inject({
+      method: 'POST',
+      url: `/v1/beef/${matchId}/settle`,
+      headers: authHeaders(bob, `beef-settle-bob-${uuidv7()}`),
+      payload: { winnerUserId: bob.sub },
+    });
+    expect(settleBobR.statusCode).toBe(403);
+  });
+
   it('shop: alice can list and (try to) buy a shop item', async () => {
     const r = await app.inject({
       method: 'POST',

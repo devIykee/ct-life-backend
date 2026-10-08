@@ -84,6 +84,7 @@ export interface Config {
 
   readonly auth: {
     readonly devAuthEnabled: boolean;
+    readonly adminWallets: readonly string[];
   };
 
   readonly rateLimits: {
@@ -290,6 +291,10 @@ export function loadConfig(): Config {
 
     auth: {
       devAuthEnabled,
+      adminWallets: optionalEnv('ADMIN_WALLETS', '')
+        .split(',')
+        .map((w) => w.trim())
+        .filter((w) => w.length > 0),
     },
 
     rateLimits: {
