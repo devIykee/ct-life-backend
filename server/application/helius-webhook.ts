@@ -128,7 +128,7 @@ async function fetchMemoFromTx(helius: HeliusClient, signature: string): Promise
 }
 
 async function creditIntentByMemo(
-  _ctx: AppContext,
+  ctx: AppContext,
   memo: string,
   payload: HeliusWebhookPayload,
 ): Promise<boolean> {
@@ -142,20 +142,41 @@ async function creditIntentByMemo(
       currency: Currency;
       status: string;
       expires_at: Date;
+      kind: string;
     }>(
-      `SELECT intent_id, user_id, cash_cents, bonus_bps, amount, currency, status, expires_at
+      `SELECT intent_id, user_id, cash_cents, bonus_bps, amount, currency, status, expires_at, kind
        FROM payment_intents WHERE memo = $1 FOR UPDATE`,
       [memo],
     );
     if ((r.rowCount ?? 0) === 0) return false;
     const intent = r.rows[0]!;
     if (intent.status === 'confirmed') return false;
+
+    // B32: Only credit topup intents (not custom/other)
+    if (intent.kind !== 'topup') {
+      return false;
+    }
+
     if (new Date(intent.expires_at).getTime() < Date.now()) {
       await client.query(`UPDATE payment_intents SET status = 'expired' WHERE intent_id = $1`, [
         intent.intent_id,
       ]);
       throw new PaymentExpiredError({ intentId: intent.intent_id });
     }
+
+    // B32: Verify mint, recipient, and base-unit amount
+    const validation = validatePaymentTransfer(ctx, intent.currency, intent.amount, payload);
+    if (!validation.valid) {
+      await client.query(`UPDATE payment_intents SET status = 'failed' WHERE intent_id = $1`, [
+        intent.intent_id,
+      ]);
+      throw new ValidationFailedError({
+        reason: 'payment_validation_failed',
+        intentId: intent.intent_id,
+        error: validation.error,
+      });
+    }
+
     const receivedCents = computeReceivedCents(intent.currency, payload);
     if (receivedCents < BigInt(intent.cash_cents)) {
       await client.query(`UPDATE payment_intents SET status = 'failed' WHERE intent_id = $1`, [
@@ -185,6 +206,54 @@ async function creditIntentByMemo(
     );
     return true;
   });
+}
+
+/**
+ * B32: Validate payment transfer matches expected recipient and amount.
+ */
+function validatePaymentTransfer(
+  ctx: AppContext,
+  currency: Currency,
+  expectedAmount: string,
+  payload: HeliusWebhookPayload,
+): { valid: boolean; error?: string } {
+  const expectedRecipient = ctx.config.solana.treasuryPubkey;
+
+  for (const acct of payload.accountData ?? []) {
+    for (const chg of acct.tokenBalanceChanges ?? []) {
+      // B32: Verify recipient account
+      if (chg.userAccount !== expectedRecipient) {
+        return {
+          valid: false,
+          error: `recipient_mismatch: expected ${expectedRecipient}, got ${chg.userAccount}`,
+        };
+      }
+
+      // B32: Verify base-unit amount
+      const receivedAmount = chg.rawTokenAmount?.tokenAmount;
+      if (receivedAmount !== expectedAmount) {
+        return {
+          valid: false,
+          error: `amount_mismatch: expected ${expectedAmount}, got ${receivedAmount}`,
+        };
+      }
+
+      return { valid: true };
+    }
+
+    // SOL native balance (no mint check needed)
+    if (currency === 'SOL' && acct.nativeBalanceChange !== undefined) {
+      if (acct.account !== expectedRecipient) {
+        return {
+          valid: false,
+          error: `recipient_mismatch: expected ${expectedRecipient}, got ${acct.account}`,
+        };
+      }
+      return { valid: true };
+    }
+  }
+
+  return { valid: false, error: 'no_matching_transfer_found' };
 }
 
 /**

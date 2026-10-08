@@ -53,6 +53,16 @@ export function idempotencyPreHandler(): preHandlerHookHandler {
         };
       return;
     }
+    // B31 fix: Return 409 on in-flight request (poll, don't wait)
+    if ('waitMs' in decision && decision.waitMs > 0) {
+      return reply.status(409).send({
+        error: {
+          code: 'IN_FLIGHT',
+          message: 'Request with this idempotency key is currently being processed',
+          details: { key },
+        },
+      });
+    }
     if ('bodyHashMismatch' in decision && decision.bodyHashMismatch) {
       throw new ValidationFailedError({ reason: 'idempotency_body_mismatch' });
     }
