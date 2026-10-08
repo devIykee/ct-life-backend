@@ -35,6 +35,15 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   const redis = createRedis();
   const port = Number(process.env.PORT_REALTIME ?? cfg.port);
   const httpServer = createServer();
+  // Health endpoint for the container HEALTHCHECK and the platform probe.
+  // Only the health paths are answered here; every other request is left
+  // untouched so Colyseus keeps serving its own matchmaking routes and the
+  // WebSocket upgrade.
+  httpServer.on('request', (req, res) => {
+    if (req.url !== '/healthz' && req.url !== '/readyz') return;
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, ts: Date.now() }));
+  });
   const gameServer = new Server({
     transport: new WebSocketTransport({ server: httpServer }),
     driver: new RedisDriver(redis.main),
