@@ -1,22 +1,53 @@
-# CT Life - backend
+# CT Life Backend
 
-CT Life is a 3D multiplayer Crypto Twitter life-sim on Solana, built native for the Solana Seeker phone. This repository contains everything server-side: REST API, realtime rooms, background workers, the on-chain `ct_escrow` program, the cross-team contract, headless test bots, and deployment config. The Unity client lives in a separate repo and pulls `contract/` from here.
+**A 3D multiplayer crypto life simulation on Solana, built for the Solana Seeker phone.**
 
-## Status
+CT Life is a social metaverse where players build their identity, earn through mini-games, interact in voice/video calls, and manage their crypto assets. This repository contains the complete backend infrastructure: REST API, realtime multiplayer rooms, background workers, on-chain escrow program, and deployment configurations.
 
-| Milestone | Description                       | Status      |
-| --------- | --------------------------------- | ----------- |
-| M0        | Foundation and verification       | in progress |
-| M1        | The contract (versioned, codegen) | not started |
-| M2        | Phase 1: City and identity        | not started |
-| M3        | Phase 2: Money and markets        | not started |
-| M4        | Phase 3: Voice and calls          | not started |
-| M5        | Phase 4: City life                | not started |
-| M6        | Phase 5: Projects and ads         | not started |
-| M7        | Phase 6: Competition              | DONE        |
-| M8        | Hardening, deployment, handover   | not started |
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.7-blue)](https://www.typescriptlang.org/)
+[![Node](https://img.shields.io/badge/Node-22-green)](https://nodejs.org/)
+[![Postgres](https://img.shields.io/badge/Postgres-16-blue)](https://www.postgresql.org/)
+[![Solana](https://img.shields.io/badge/Solana-Devnet%20%7C%20Mainnet-purple)](https://solana.com/)
 
-See `docs/PROGRESS.md` for live status and `docs/TEST_REPORT.md` for per-milestone proof.
+---
+
+## Features
+
+### 🎮 **Core Gameplay**
+- Character creation with customizable looks, tribes, dreams, and traits
+- Lottery-based home assignment system
+- Work shifts with mini-game scoring and crypto rewards
+- Needs system (energy, hunger, fun, hygiene, sanity) with decay mechanics
+- Skill progression across 6 categories
+
+### 💰 **Economy & Payments**
+- Multi-currency support (USDC, SOL, SKR, ORE)
+- Secure payment flows with webhook verification
+- Ledger-based transaction system with ACID guarantees
+- Topup system with bonus rewards
+- Debt management
+
+### 👥 **Social Features**
+- Direct messaging between players
+- Friend system with requests and acceptance
+- Bidirectional blocking for privacy
+- Public profiles and user discovery
+
+### 🎙️ **Voice & Video**
+- Voice Spaces (audio-only group calls)
+- Video calls with up to 10 participants
+- Proximity voice in game venues
+- LiveKit-powered real-time communication
+- Secure per-user token minting
+
+### 🏢 **Advanced Features**
+- Venue system with entrance spawning
+- NPC interactions with state machines
+- Admin tools for ratio arena and airdrops
+- LLM-powered NPCs (optional)
+- X (Twitter) account linking (optional)
+
+---
 
 ## Architecture
 
@@ -71,235 +102,313 @@ flowchart LR
   ORE -. read .-> Main
 ```
 
-## Quick start
+---
+
+## Quick Start
+
+### Prerequisites
+
+- **Node.js 22+** ([nvm](https://github.com/nvm-sh/nvm) recommended)
+- **pnpm** (via `corepack enable`)
+- **Docker & Docker Compose** (for local stack)
+- **Postgres 16**, **Redis 7** (or use Docker Compose)
+
+### Installation
 
 ```bash
-# 1. Toolchain
-nvm use                    # Node 22
-corepack enable            # pnpm
+# 1. Clone the repository
+git clone https://github.com/devIykee/ct-life-backend.git
+cd ct-life-backend
 
-# 2. Environment
+# 2. Install dependencies
+nvm use
+corepack enable
+pnpm install
+
+# 3. Set up environment
 cp .env.example .env
-# Fill in the credentials listed in .env.example. Required ones
-# (Helius, LiveKit, treasury pubkeys, keypairs) are documented inline.
+# Edit .env with your credentials (see Environment Variables section)
 
-# 3. Local stack (Postgres, Redis, LiveKit dev, MinIO, api, realtime, workers)
+# 4. Start local stack
 pnpm dev:up
 
-# 4. Smoke test every external dependency
+# 5. Run database migrations
+pnpm db:migrate
+
+# 6. Verify setup
 pnpm smoke
-
-# 5. Lint and typecheck
-pnpm lint
 pnpm typecheck
-
-# 6. Run the contract checks (M1 onwards)
-pnpm contract:check
+pnpm lint
 ```
 
-## Environments
+### Running the Server
 
-| Env       | REST             | Realtime         | Solana                      | Notes                                                     |
-| --------- | ---------------- | ---------------- | --------------------------- | --------------------------------------------------------- |
-| `local`   | `localhost:4010` | `localhost:2567` | devnet                      | Real stack via Docker Compose                             |
-| `mock`    | `localhost:4010` | `localhost:2567` | devnet                      | Same stack with `ENABLE_DEV_AUTH=true` and bot population |
-| `staging` | Railway          | Railway          | devnet + mainnet (ORE, SGT) | Two real Seekers for the integration checklist            |
-| `prod`    | Railway          | Railway          | mainnet                     | Public launch                                             |
+```bash
+# Start API server (default port: 4010)
+tsx server/api/main.ts
 
-## Repository layout
+# Start realtime server (default port: 2567)
+tsx server/realtime/main.ts
+
+# Start background workers
+tsx server/workers/main.ts
+```
+
+---
+
+## API Documentation
+
+**Base URL**: `http://localhost:4010` (or your configured `PORT_API`)
+
+### Authentication
+
+All authenticated endpoints require:
+```
+Authorization: Bearer YOUR_ACCESS_TOKEN
+```
+
+All write operations (POST/PUT/PATCH/DELETE) require:
+```
+Idempotency-Key: UNIQUE_UUID_V4
+```
+
+### Key Endpoints
+
+**Authentication**
+- `POST /v1/auth/nonce` - Get SIWS nonce
+- `POST /v1/auth/verify` - Sign in with wallet signature
+- `POST /v1/auth/refresh` - Refresh access token
+
+**Core Gameplay**
+- `GET /v1/config` - Get all game configuration
+- `GET /v1/me` - Get current user profile
+- `POST /v1/lottery/roll` - Roll lottery (once per user)
+- `POST /v1/characters` - Create character
+- `POST /v1/shifts/start` - Start work shift
+- `POST /v1/shifts/:id/complete` - Complete shift
+- `POST /v1/needs/actions` - Apply needs action
+
+**Social**
+- `POST /v1/dms` - Send direct message
+- `POST /v1/friends/:userId/request` - Send friend request
+- `POST /v1/blocks/:userId` - Block user
+
+**Voice/Video**
+- `POST /v1/spaces` - Start voice space
+- `POST /v1/video-calls` - Start video call
+- `POST /v1/rtc/token` - Get RTC participant token
+
+**Payments**
+- `POST /v1/payments/intents` - Create payment intent
+- `POST /v1/payments/verify` - Verify payment
+
+📚 **Full API documentation**: See [`docs/POSTMAN_ENDPOINTS.md`](docs/POSTMAN_ENDPOINTS.md)
+
+---
+
+## Security Features
+
+### ✅ **Authentication & Authorization**
+- Sign-In with Solana (SIWS) implementation
+- Redis-backed nonce validation with 10-minute TTL
+- JWT tokens with RS256 signing
+- Admin wallet allowlist for protected endpoints
+
+### ✅ **Payment Security**
+- Recipient address verification on webhooks
+- Base-unit amount validation
+- HMAC signature verification (Helius webhooks)
+- Idempotency keys prevent double-spend
+
+### ✅ **Rate Limiting**
+- Token bucket algorithm (20 req/s per user)
+- Redis-backed for distributed systems
+- Automatic 429 responses with `Retry-After` header
+
+### ✅ **Realtime Security**
+- JWT authentication on all 5 realtime rooms
+- Per-user RTC token minting
+- Participant validation for voice/video calls
+- DB-backed profile verification
+
+### ✅ **Database Integrity**
+- SERIALIZABLE transaction isolation
+- CHECK constraints prevent negative balances
+- UNIQUE constraints on idempotency keys
+- BigInt arithmetic eliminates floating-point errors
+
+📚 **Security documentation**: See [`docs/SECURITY.md`](docs/SECURITY.md)
+
+---
+
+## Repository Structure
 
 ```
 ct-life-backend/
-├── contract/         # Source of truth (OpenAPI, Colyseus schemas, IDs, config, IDL)
+├── contract/         # Source of truth (OpenAPI, schemas, IDs, config)
 ├── server/
-│   ├── api/          # Fastify 5 REST
-│   ├── realtime/     # Colyseus 0.18 rooms
-│   ├── workers/      # BullMQ jobs
-│   └── shared/       # Domain + adapters (db, redis, ledger, auth, solana, livekit)
+│   ├── api/          # Fastify 5 REST API
+│   ├── realtime/     # Colyseus 0.18 multiplayer rooms
+│   ├── workers/      # BullMQ background jobs
+│   └── shared/       # Domain logic & adapters
 ├── packages/
-│   └── npc-brain/    # Pure, deterministic NPC state machines
-├── programs/ct_escrow/  # Anchor 0.31 program
+│   └── npc-brain/    # NPC state machines
+├── programs/
+│   └── ct_escrow/    # Anchor 0.31 on-chain program
 ├── tools/
-│   ├── bots/         # Headless real-keypair clients for e2e and load
-│   ├── econ-sim/     # 1,000-player economy simulator
-│   ├── contract-check/  # Schema, codegen, response validation
-│   └── scripts/      # keygen, smoke, docs-check, boundary-check
-├── db/migrations/    # node-pg-migrate SQL
-├── docs/             # spec/, adr/, all top-level docs
-└── .github/workflows/ci.yml
+│   ├── bots/         # Headless test clients
+│   ├── contract-check/ # Schema validation & codegen
+│   └── scripts/      # Utilities (keygen, smoke tests)
+├── db/migrations/    # SQL migrations (node-pg-migrate)
+└── docs/             # Documentation
 ```
 
-## Scripts
+---
 
-| Command                 | What it does                                                                        |
-| ----------------------- | ----------------------------------------------------------------------------------- |
-| `pnpm dev:up`           | Start the local stack (Postgres, Redis, LiveKit dev, MinIO, api, realtime, workers) |
-| `pnpm dev:down`         | Stop the local stack                                                                |
-| `pnpm dev:logs`         | Tail the stack logs                                                                 |
-| `pnpm smoke`            | Smoke-test every external dependency                                                |
-| `pnpm keygen`           | Generate a devnet keypair (treasury, settle authority, admin)                       |
-| `pnpm typecheck`        | TypeScript `strict` over all workspaces                                             |
-| `pnpm lint`             | ESLint (incl. JSDoc, layering) over all workspaces                                  |
-| `pnpm format`           | Prettier write                                                                      |
-| `pnpm test`             | All test suites                                                                     |
-| `pnpm test:unit`        | Pure unit tests                                                                     |
-| `pnpm test:integration` | Real Postgres + Redis via Compose                                                   |
-| `pnpm test:e2e`         | Bots on real devnet (gated by `ENABLE_E2E=1`)                                       |
-| `pnpm contract:check`   | Schema, codegen, response validation                                                |
-| `pnpm contract:codegen` | Run codegen into `contract/openapi/generated/` and `contract/realtime/generated/`   |
-| `pnpm docs:check`       | Verify env vars, error codes, room messages are documented                          |
-| `pnpm boundary:check`   | Verify layering (domain never imports transport)                                    |
-| `pnpm anchor:build`     | Build the `ct_escrow` program                                                       |
-| `pnpm anchor:test`      | Run Anchor tests on `solana-test-validator`                                         |
+## Environment Variables
 
-## Environment variables
+### Required
 
-Every variable the backend reads is documented in `.env.example`. The `docs:check` script fails the build if any variable referenced in code is missing from `.env.example` or this README. The exhaustive list, grouped by purpose:
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `APP_ENV` | Deployment environment | `local`, `staging`, `prod` |
+| `DATABASE_URL` | PostgreSQL connection string | `postgres://user:pass@localhost:5432/ctlife` |
+| `REDIS_URL` | Redis connection string | `redis://localhost:6379/0` |
+| `JWT_PRIVATE_KEY` | RS256 private key (PEM) | `/path/to/jwt-private.pem` |
+| `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.mainnet-beta.solana.com` |
+| `SOLANA_TREASURY_PUBKEY` | Treasury wallet address | `YOUR_TREASURY_PUBKEY` |
+| `HELIUS_WEBHOOK_SECRET` | Webhook HMAC secret | `your-webhook-secret` |
+| `LIVEKIT_API_KEY` | LiveKit API key | `your-livekit-key` |
+| `LIVEKIT_API_SECRET` | LiveKit API secret | `your-livekit-secret` |
 
-### Process
+### Optional
 
-| Variable        | Purpose                                                                     | Required | Example       |
-| --------------- | --------------------------------------------------------------------------- | -------- | ------------- |
-| `APP_ENV`       | Deployment profile: `local` \| `mock` \| `staging` \| `prod`.               | yes      | `local`       |
-| `NODE_ENV`      | Follows `APP_ENV` (`production` for staging/prod, otherwise `development`). | yes      | `development` |
-| `LOG_LEVEL`     | pino log level.                                                             | yes      | `info`        |
-| `PORT_API`      | REST listen port for `server/api`.                                          | yes      | `4010`        |
-| `PORT_REALTIME` | Colyseus listen port for `server/realtime`.                                 | yes      | `2567`        |
-| `PORT_WORKERS`  | HTTP listen port for `server/workers`; `0` means no HTTP.                   | yes      | `0`           |
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `PORT_API` | API server port | `4010` |
+| `PORT_REALTIME` | Realtime server port | `2567` |
+| `ENABLE_DEV_AUTH` | Enable dev auth (local only) | `false` |
+| `LLM_ENABLED` | Enable LLM NPCs | `false` |
+| `ANTHROPIC_API_KEY` | Anthropic API key | - |
+| `X_LINK_ENABLED` | Enable X account linking | `false` |
 
-### Solana
+📚 **Complete list**: See [`.env.example`](.env.example)
 
-| Variable                           | Purpose                                                   | Required   | Example                                      |
-| ---------------------------------- | --------------------------------------------------------- | ---------- | -------------------------------------------- |
-| `SOLANA_RPC_URL_DEVNET`            | Devnet RPC.                                               | yes        | `https://api.devnet.solana.com`              |
-| `SOLANA_RPC_URL_MAINNET`           | Mainnet RPC.                                              | yes        | `https://api.mainnet-beta.solana.com`        |
-| `SOLANA_WS_URL_DEVNET`             | Devnet WebSocket.                                         | yes        | `wss://api.devnet.solana.com`                |
-| `SOLANA_WS_URL_MAINNET`            | Mainnet WebSocket.                                        | yes        | `wss://api.mainnet-beta.solana.com`          |
-| `SOLANA_COMMITMENT`                | Default commitment.                                       | yes        | `confirmed`                                  |
-| `SOLANA_FINALIZED_COMMITMENT`      | Commitment for the reconciliation pass.                   | yes        | `finalized`                                  |
-| `TREASURY_PUBKEY_DEVNET`           | Treasury wallet on devnet (top-ups land here).            | yes (M2+)  | `Dgw3c4GbQ…N2gZ`                             |
-| `TREASURY_PUBKEY_MAINNET`          | Treasury wallet on mainnet.                               | yes (prod) | —                                            |
-| `SETTLE_AUTHORITY_KEYPAIR_DEVNET`  | Path or base58 of the settle authority keypair on devnet. | yes (M3+)  | `/home/iyke/ct-life-keys/settle-devnet.json` |
-| `SETTLE_AUTHORITY_KEYPAIR_MAINNET` | Same for mainnet.                                         | yes (prod) | —                                            |
-| `ADMIN_KEYPAIR_DEVNET`             | Path or base58 of the admin keypair on devnet.            | yes (M2+)  | `/home/iyke/ct-life-keys/admin-devnet.json`  |
-| `ADMIN_KEYPAIR_MAINNET`            | Same for mainnet.                                         | yes (prod) | —                                            |
-| `CT_ESCROW_PROGRAM_ID_DEVNET`      | ct_escrow program id on devnet.                           | yes (M4+)  | —                                            |
-| `CT_ESCROW_PROGRAM_ID_MAINNET`     | Same for mainnet.                                         | yes (prod) | —                                            |
+---
 
-### Helius
+## Testing
 
-| Variable                 | Purpose                                           | Required  | Example                                     |
-| ------------------------ | ------------------------------------------------- | --------- | ------------------------------------------- |
-| `HELIUS_API_KEY`         | Helius API key (free tier, 10 req/s, 1M credits). | yes       | —                                           |
-| `HELIUS_RPC_URL_DEVNET`  | Helius devnet RPC URL with `?api-key=…`.          | yes       | `https://devnet.helius-rpc.com/?api-key=…`  |
-| `HELIUS_RPC_URL_MAINNET` | Helius mainnet RPC URL with `?api-key=…`.         | yes       | `https://mainnet.helius-rpc.com/?api-key=…` |
-| `HELIUS_WEBHOOK_SECRET`  | HMAC secret for the Helius webhook.               | yes (M2+) | —                                           |
+```bash
+# Type checking
+pnpm typecheck
 
-### LiveKit
+# Linting
+pnpm lint
 
-| Variable                 | Purpose                        | Required  | Example                   |
-| ------------------------ | ------------------------------ | --------- | ------------------------- |
-| `LIVEKIT_URL`            | LiveKit server URL.            | yes       | `ws://localhost:7880`     |
-| `LIVEKIT_API_KEY`        | LiveKit API key (server-side). | yes       | `devkey`                  |
-| `LIVEKIT_API_SECRET`     | LiveKit API secret.            | yes       | `devsecret_please_change` |
-| `LIVEKIT_WEBHOOK_SECRET` | Webhook signing secret.        | yes (M3+) | —                         |
+# Unit tests
+pnpm test:unit
 
-### Database and cache
+# Integration tests (requires Docker)
+pnpm test:integration
 
-| Variable            | Purpose                                  | Required | Example                                               |
-| ------------------- | ---------------------------------------- | -------- | ----------------------------------------------------- |
-| `DATABASE_URL`      | Postgres URL.                            | yes      | `postgres://ctlife:ctlife@localhost:5434/ctlife`      |
-| `DATABASE_SSL`      | Enable TLS to Postgres.                  | yes      | `false`                                               |
-| `REDIS_URL`         | Redis URL.                               | yes      | `redis://localhost:6381/0`                            |
-| `REDIS_TLS`         | Enable TLS to Redis.                     | yes      | `false`                                               |
-| `TEST_DATABASE_URL` | Test database URL (isolated test suite). | test     | `postgres://ctlife:ctlife@localhost:5432/ctlife_test` |
-| `TEST_SCHEMA`       | Test schema name.                        | test     | `test`                                                |
-| `SOLANA_RPC_URL`    | Mainnet RPC for verification tests.      | test     | `https://api.mainnet-beta.solana.com`                 |
+# E2E tests (requires ENABLE_E2E=1)
+pnpm test:e2e
 
-### Auth
+# Smoke test all external dependencies
+pnpm smoke
 
-| Variable                  | Purpose                                                         | Required | Example                                   |
-| ------------------------- | --------------------------------------------------------------- | -------- | ----------------------------------------- |
-| `JWT_PRIVATE_KEY`         | RS256 private key in PEM (or path).                             | yes      | `/home/iyke/ct-life-keys/jwt-private.pem` |
-| `JWT_PUBLIC_KEY`          | RS256 public key (auto-derived from the private in local/mock). | optional | —                                         |
-| `JWT_KEY_ID`              | `kid` published in JWKS.                                        | yes      | `ctlife-1`                                |
-| `JWT_ACCESS_TTL_SECONDS`  | Access-token TTL.                                               | yes      | `900`                                     |
-| `JWT_REFRESH_TTL_SECONDS` | Refresh-token TTL.                                              | yes      | `2592000`                                 |
+# Contract validation
+pnpm contract:check
+```
 
-### Storage (S3)
+---
 
-| Variable              | Purpose                        | Required  | Example                 |
-| --------------------- | ------------------------------ | --------- | ----------------------- |
-| `S3_ENDPOINT`         | S3-compatible endpoint.        | yes (M5+) | `http://localhost:9000` |
-| `S3_REGION`           | Region for the SDK.            | yes       | `us-east-1`             |
-| `S3_ACCESS_KEY`       | Access key.                    | yes       | `minioadmin`            |
-| `S3_SECRET_KEY`       | Secret key.                    | yes       | `minioadmin`            |
-| `S3_BUCKET`           | Default bucket.                | yes       | `ctlife-uploads`        |
-| `S3_FORCE_PATH_STYLE` | Path-style addressing (MinIO). | yes       | `true`                  |
+## Deployment
 
-### Auth flags
+### Environments
 
-| Variable               | Purpose                                                                            | Required | Example |
-| ---------------------- | ---------------------------------------------------------------------------------- | -------- | ------- |
-| `ENABLE_DEV_AUTH`      | Enables `POST /v1/auth/dev`. Hard-fails at startup if true in `staging` or `prod`. | yes      | `false` |
-| `ALLOW_ALIAS_OVERRIDE` | Dev only; lets bots reuse a single alias.                                          | optional | `false` |
+| Environment | API | Realtime | Blockchain |
+|-------------|-----|----------|------------|
+| **Local** | `localhost:4010` | `localhost:2567` | Devnet |
+| **Staging** | Railway | Railway | Devnet + Mainnet (testing) |
+| **Production** | Railway | Railway | Mainnet |
 
-### Optional M5+
+### Database Migrations
 
-| Variable            | Purpose                                                                 | Required      | Example                            |
-| ------------------- | ----------------------------------------------------------------------- | ------------- | ---------------------------------- |
-| `PUSH_ENABLED`      | Push notifications. Off until Seeker Google Play services is confirmed. | optional      | `false`                            |
-| `PUSH_PROVIDER`     | `fcm` \| `apns`.                                                        | optional      | `fcm`                              |
-| `FCM_SERVER_KEY`    | FCM server key.                                                         | optional      | —                                  |
-| `LLM_ENABLED`       | Enable LLM NPCs.                                                        | optional      | `false`                            |
-| `ANTHROPIC_API_KEY` | API key for LLM NPCs (M7).                                              | optional (M7) | —                                  |
-| `LLM_MODEL`         | LLM provider's flagship model id.                                       | optional (M7) | —                                  |
-| `X_LINK_ENABLED`    | Verified X (Twitter) link.                                              | optional (M7) | `false`                            |
-| `X_CLIENT_ID`       | X OAuth client id.                                                      | optional      | —                                  |
-| `X_CLIENT_SECRET`   | X OAuth client secret.                                                  | optional      | —                                  |
-| `X_REDIRECT_URI`    | X OAuth redirect URI.                                                   | optional      | —                                  |
-| `X_AUTHORIZE_URL`   | X OAuth authorize URL (override for tests).                             | optional      | `https://x.com/i/oauth2/authorize` |
-| `X_TOKEN_URL`       | X OAuth token URL (override for tests).                                 | optional      | `https://api.x.com/2/oauth2/token` |
-| `X_ME_URL`          | X users/me URL (override for tests).                                    | optional      | `https://api.x.com/2/users/me`     |
+```bash
+# Apply migrations
+pnpm db:migrate
 
-### Optional M8
+# Rollback last migration
+pnpm db:rollback
 
-| Variable                 | Purpose         | Required | Example |
-| ------------------------ | --------------- | -------- | ------- |
-| `SENTRY_DSN`             | Error tracking. | optional | —       |
-| `RAILWAY_TOKEN`          | Deploy bot.     | optional | —       |
-| `RAILWAY_PROJECT_ID`     | Project id.     | optional | —       |
-| `RAILWAY_ENVIRONMENT_ID` | Environment id. | optional | —       |
+# Check migration status
+pnpm db:status
+```
 
-### Test safe-mode
-
-| Variable                       | Purpose                                                                 | Required | Example |
-| ------------------------------ | ----------------------------------------------------------------------- | -------- | ------- |
-| `RUN_MAINNET_TESTS`            | Enable tests that move mainnet value. Default `0`.                      | optional | `0`     |
-| `ENABLE_E2E`                   | Enable E2E that hits external services.                                 | optional | `0`     |
-| `SGT_OVERRIDE`                 | Dev only; force `isSeeker=true`. Never in staging/prod.                 | optional | —       |
-| `ORE_DEVNET_USE_MAINNET_CACHE` | Dev only; ORE on devnet uses cached mainnet values.                     | optional | `false` |
-| `ORE_READER_ENABLED`           | When `1`, ORE board reader hits mainnet (gated by `RUN_MAINNET_TESTS`). | optional | `0`     |
+---
 
 ## Documentation
 
-- `docs/PROGRESS.md` — milestone status, last commands, blockers
-- `docs/DECISIONS.md` — quick log of decisions and deviations
-- `docs/UNVERIFIED.md` — claims that cannot be checked in this environment
-- `docs/TEST_REPORT.md` — milestone gate evidence (commands + output)
-- `docs/HANDOVER.md` — what the teammate and ops need at hand-off
-- `docs/ARCHITECTURE.md` — system overview, data flow diagrams, composition roots
-- `docs/DATA_MODEL.md` — every table, column, index, constraint
-- `docs/ECONOMY.md` — every faucet/sink, formula, parameter
-- `docs/REALTIME.md` — every room, message, validation
-- `docs/NPCS.md` — every archetype state machine
-- `docs/ONCHAIN.md` — every program, PDA, instruction, event
-- `docs/SECURITY.md` — threat model, authz matrix
-- `docs/OPERATIONS.md`, `docs/RUNBOOK.md` — deploy, incident playbooks
-- `docs/TESTING.md` — how to run every test layer
-- `docs/adr/NNNN-title.md` — architecture decision records
-- `CONTRIBUTING.md` — coding standards, branch and commit conventions
+- 📘 [`docs/POSTMAN_ENDPOINTS.md`](docs/POSTMAN_ENDPOINTS.md) - API testing guide
+- 🔐 [`docs/SECURITY.md`](docs/SECURITY.md) - Security features & threat model
+- 🏗️ [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - System architecture
+- 💾 [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) - Database schema
+- 💰 [`docs/ECONOMY.md`](docs/ECONOMY.md) - Economy & formulas
+- 🎮 [`docs/REALTIME.md`](docs/REALTIME.md) - Realtime rooms & messages
+- 🤖 [`docs/NPCS.md`](docs/NPCS.md) - NPC state machines
+- ⛓️ [`docs/ONCHAIN.md`](docs/ONCHAIN.md) - On-chain programs
+- 🚀 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) - Operations guide
+- 📋 [`docs/handoff/STATUS.md`](docs/handoff/STATUS.md) - Implementation status
+
+---
+
+## Contributing
+
+We welcome contributions! Please see [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
+- Coding standards
+- Branch and commit conventions
+- Pull request process
+- Testing requirements
+
+---
+
+## Tech Stack
+
+**Backend**
+- [Fastify 5](https://fastify.dev/) - High-performance REST API
+- [Colyseus 0.18](https://colyseus.io/) - Multiplayer game server
+- [BullMQ 6](https://bullmq.io/) - Background job processing
+- [PostgreSQL 16](https://www.postgresql.org/) - Primary database
+- [Redis 7](https://redis.io/) - Caching & rate limiting
+
+**Blockchain**
+- [Solana](https://solana.com/) - Layer 1 blockchain
+- [Anchor 0.31](https://www.anchor-lang.com/) - Solana smart contracts
+- [@solana/web3.js](https://solana-labs.github.io/solana-web3.js/) - Solana SDK
+
+**Real-time Communication**
+- [LiveKit](https://livekit.io/) - Voice & video infrastructure
+
+**TypeScript**
+- Strict mode enabled
+- ESLint + Prettier
+- Vitest for testing
+
+---
+
+## Support
+
+- **Issues**: [GitHub Issues](https://github.com/devIykee/ct-life-backend/issues)
+- **Documentation**: [`docs/`](docs/)
+- **Security**: See [`SECURITY.md`](SECURITY.md)
+
+---
 
 ## License
 
-[MIT](./LICENSE) — Copyright (c) 2026 deviykee. See [LICENSE](./LICENSE) for the full text.
+[MIT](./LICENSE) - Copyright (c) 2026 deviykee
+
+---
+
+**Built for Solana Seeker** 📱 | **Powered by Solana** ⚡
