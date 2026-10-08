@@ -169,7 +169,7 @@ export async function readBoard(ctx: AppContext): Promise<OreBoard> {
     };
     await ctx.redis.main.set(BOARD_KEY, JSON.stringify(board), 'EX', BOARD_TTL_SEC);
     return board;
-  } catch (err) {
+  } catch {
     const staleCache = await ctx.redis.main.get(BOARD_KEY);
     if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
     if (isDev) return fixtureBoard();
