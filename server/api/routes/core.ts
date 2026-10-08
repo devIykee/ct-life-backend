@@ -89,7 +89,7 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       const body = CharacterBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       if (!body.data.ageConfirmed) throw new ValidationFailedError({ reason: 'age_unconfirmed' });
-      const svc = new CharacterService();
+      const svc = new CharacterService(req.ctx.configCache);
       const created = await svc.create(req.user!.sub, body.data);
       return reply.status(201).send(created);
     },
@@ -138,8 +138,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       skr_name: string | null;
       is_sybil_jailed: boolean;
       sybil_jailed_at: Date | null;
+      lottery_rolled_at: Date | null;
     }>(
-      'SELECT id, wallet, is_seeker, skr_name, is_sybil_jailed, sybil_jailed_at FROM users WHERE id = $1',
+      'SELECT id, wallet, is_seeker, skr_name, is_sybil_jailed, sybil_jailed_at, lottery_rolled_at FROM users WHERE id = $1',
       [userId],
     );
     if (u.rowCount === 0) throw new NotFoundError({ kind: 'user', id: userId });
@@ -213,7 +214,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       debtCents: Number(balRow.debt_cents),
       homeId: chRow?.home_id ?? 'parents_basement',
       minerTier: 'none',
-      flags: {},
+      flags: {
+        lotteryRolled: uRow.lottery_rolled_at !== null,
+      },
     };
   });
 }

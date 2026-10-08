@@ -68,18 +68,19 @@ export class LotteryService {
     const isSeeker = await this.isSeeker(userId);
     const chosen = this.pickOutcome(cfg, isSeeker, userId);
     return runInTransaction(async (client) => {
-      // Has the user already rolled? A character is the M2 sentinel.
-      const u = await client.query<{ id: string }>('SELECT id FROM users WHERE id = $1', [userId]);
+      // B13 fix: Check lottery_rolled_at instead of character existence
+      const u = await client.query<{ id: string; lottery_rolled_at: Date | null }>(
+        'SELECT id, lottery_rolled_at FROM users WHERE id = $1',
+        [userId],
+      );
       if ((u.rowCount ?? 0) === 0) {
         throw new NotFoundError({ kind: 'user', id: userId });
       }
-      const ch = await client.query<{ id: string }>(
-        'SELECT id FROM characters WHERE user_id = $1',
-        [userId],
-      );
-      if ((ch.rowCount ?? 0) > 0) {
+      if (u.rows[0]!.lottery_rolled_at !== null) {
         throw new AlreadyRolledError({});
       }
+      // Mark the user as having rolled
+      await client.query('UPDATE users SET lottery_rolled_at = now() WHERE id = $1', [userId]);
       // The balance is the only writer of the lottery outcome. We
       // also create a ledger entry for the disbursement so the
       // reconciliation invariant holds from the first cent.
