@@ -168,9 +168,15 @@ describeMainnet('ORE stake mainnet simulation', () => {
     // Verify the ATAs are different
     expect(oreAta.toBase58()).not.toBe(stOreAta.toBase58());
 
-    // Verify they follow the ATA pattern
-    expect(oreAta.toBase58().length).toBe(44); // Base58 pubkey length
-    expect(stOreAta.toBase58().length).toBe(44);
+    // Verify they follow the ATA pattern. A 32-byte key base58-encodes to
+    // 43 or 44 chars: any value below 58^43 (~2^251.9) needs only 43, which
+    // is ~5.5% of the 256-bit space. Asserting exactly 44 failed on roughly
+    // one run in ten across these two addresses.
+    for (const ata of [oreAta.toBase58(), stOreAta.toBase58()]) {
+      expect(ata.length).toBeGreaterThanOrEqual(43);
+      expect(ata.length).toBeLessThanOrEqual(44);
+      expect(new PublicKey(ata).toBytes().length).toBe(32);
+    }
   });
 
   it('verifies all constants exist on mainnet', async () => {
