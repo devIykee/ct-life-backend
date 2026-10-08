@@ -18,6 +18,22 @@ import { CharacterService } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
 import { PublicProfileService } from '../../application/public-profile.js';
 
+/**
+ * B34: Compare semver versions. Returns true if clientVersion < minVersion.
+ */
+function isVersionOutdated(clientVersion: string, minVersion: string): boolean {
+  const parseVersion = (v: string): number[] => {
+    return v.split('.').map((x) => parseInt(x, 10) || 0);
+  };
+  const client = parseVersion(clientVersion);
+  const min = parseVersion(minVersion);
+  for (let i = 0; i < 3; i++) {
+    if ((client[i] ?? 0) < (min[i] ?? 0)) return true;
+    if ((client[i] ?? 0) > (min[i] ?? 0)) return false;
+  }
+  return false;
+}
+
 const CharacterBody = z.object({
   alias: z.string().min(3).max(24),
   look: z.object({
@@ -62,6 +78,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       anims: cache.load<unknown>('anims') ?? null,
       sfx: cache.load<unknown>('sfx') ?? null,
       items: cache.load<unknown>('items') ?? null,
+      spots: cache.load<unknown>('spots') ?? null, // B34: add spots
+      emotes: cache.load<unknown>('emotes') ?? null, // B34: add emotes
       // Game config.
       economy: cache.load<unknown>('economy'),
       needs: cache.load<unknown>('needs'),
@@ -71,6 +89,28 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       events: cache.load<unknown>('events'),
       boards: cache.load<unknown>('boards'),
     };
+
+    // B34 fix: ETag support for caching
+    const etag = `"${payload.version}"`;
+    const clientEtag = req.headers['if-none-match'];
+    if (clientEtag === etag) {
+      return reply.status(304).send();
+    }
+
+    // B34 fix: Check client version and return 426 if outdated
+    const clientVersion = req.headers['x-client-version'] as string | undefined;
+    if (clientVersion && isVersionOutdated(clientVersion, payload.minClientVersion)) {
+      return reply.status(426).send({
+        error: {
+          code: 'UPGRADE_REQUIRED',
+          message: `Client version ${clientVersion} is below minimum ${payload.minClientVersion}`,
+          details: { minClientVersion: payload.minClientVersion },
+        },
+      });
+    }
+
+    reply.header('ETag', etag);
+    reply.header('Cache-Control', 'public, max-age=300'); // 5 min cache
     return reply.send(payload);
   });
 
