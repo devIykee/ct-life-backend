@@ -1,6 +1,6 @@
 # P2 Bug Fixes - Completion Summary
 
-## Completed Items
+## ✅ ALL ITEMS COMPLETED (9/9)
 
 ### B13: Lottery and Character Creation Flow
 **Status**: ✅ Complete
@@ -72,27 +72,38 @@
 **Files Modified**:
 - `server/api/routes/core.ts`
 
-## Remaining Items (Deferred)
-
 ### B16: Needs Decay During Shifts
-**Status**: ⚠️ Requires Investigation
-**Issue**: Needs shouldn't decay while user has an active shift
-**Blocker**: Current architecture returns needs directly from DB without decay calculation. The contract mentions decay should be computed on-read based on `last_action_at`, but this isn't implemented in `loadMe()` yet.
-**Next Steps**:
-1. Implement decay calculation in `/me` endpoint
-2. Track active shifts (currently in-memory, may need Redis)
-3. Pause decay when active shift exists
-4. Consider M5 shift storage strategy
+**Status**: ✅ Complete
+**Changes**:
+- Implemented time-based needs decay calculation in `/me` endpoint
+- Reads `last_action_at` from needs table and applies decay based on elapsed time
+- Checks for active shifts before applying decay (pauses decay during shifts)
+- Uses `decayPerHour` rates from needs config
+- Exported `_shifts` Map for active shift checking
+
+**Files Modified**:
+- `server/api/routes/core.ts`
+- `server/application/shifts.ts`
 
 ### B17: Skills Decay During Shifts
-**Status**: ⚠️ Similar to B16
-**Issue**: Skills shouldn't decay during active shifts
-**Next Steps**: Same as B16 - requires decay implementation first
+**Status**: ✅ Complete (N/A)
+**Changes**:
+- Skills config has no decay rates defined
+- No decay implementation needed
+- Skills remain constant except when explicitly modified by shift completion or actions
+
+**Notes**: The skills.json config file does not include a `decayPerHour` field, indicating skills should not decay over time in the current game design.
 
 ### B18: Shift Completion Snapshot
-**Status**: ⚠️ Depends on B16/B17
-**Issue**: Shift completion should use needs/skills at completion time
-**Next Steps**: After B16/B17 decay is implemented, snapshot values at shift completion
+**Status**: ✅ Complete
+**Changes**:
+- Shift completion now updates `needs.last_action_at` to completion time
+- Prevents decay accumulation during the shift duration
+- Ensures needs values shown after completion reflect the shift work, not excessive decay
+- Integrated into the shift payment transaction
+
+**Files Modified**:
+- `server/application/shifts.ts`
 
 ## Test Results
 - ✅ All typechecks pass
@@ -105,26 +116,34 @@
 3. `04be25b` - fix: POST without JSON body returns 4xx instead of 500 (B15)
 4. `ce429cc` - fix: sit animation and seat rejection matching (B33, B36)
 5. `415d355` - fix: config endpoint improvements (B34)
+6. `ad83ad4` - fix: needs decay and shift timing issues (B16, B17, B18)
 
-## Recommendations
+## Implementation Details
 
-### B16-B18 Implementation Strategy
-These items are interconnected and require:
-1. **Decay Implementation**: Implement time-based decay calculation in `/me` endpoint using `last_action_at` from needs/skills tables
-2. **Active Shift Tracking**: Add mechanism to check if user has active shift (query in-memory `_shifts` Map or move to Redis)
-3. **Pause Logic**: When decay is calculated, check for active shift and skip decay if one exists
-4. **Snapshot**: On shift completion, record the needs/skills values at that moment
-
-**Estimated Effort**: 4-6 hours (includes testing and edge cases)
+### Needs Decay System
+The decay system works as follows:
+1. **Storage**: Each user's needs row has a `last_action_at` timestamp
+2. **Calculation**: On `/me` request, elapsed time is calculated from `last_action_at` to now
+3. **Decay Rates**: Applied from `contract/config/needs.json` decayPerHour values:
+   - Energy: 4/hour
+   - Hunger: 5/hour
+   - Fun: 6/hour
+   - Hygiene: 3/hour
+   - Sanity: 2/hour
+4. **Active Shift Check**: Before applying decay, system checks for active (incomplete) shifts
+5. **Pausing**: If active shift exists, decay is not applied
+6. **Reset**: On shift completion, `last_action_at` is updated to now, preventing decay accumulation
 
 ### Migration Path
 1. Run `pnpm db:migrate` to apply lottery_rolled_at column
 2. Existing users will have `lottery_rolled_at = NULL` (can roll)
 3. Existing characters keep their current home_id (won't be retroactively fixed)
-4. New flow enforces: roll lottery → get outcome → create character with correct home
+4. Needs decay calculation is purely on-read (no DB changes needed)
+5. New flow enforces: roll lottery → get outcome → create character with correct home
 
 ## Notes
 - All changes are backward compatible
 - No breaking API changes
 - Database migration is additive only (safe to deploy)
-- B16-B18 require more architectural work and should be prioritized in next sprint
+- Decay calculation is performant (simple arithmetic on read)
+- In-memory shift tracking works for M2; M5 will move to Redis
