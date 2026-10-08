@@ -15,6 +15,7 @@ import {
   NotFoundError,
   ShiftNotFinishedError,
   ValidationFailedError,
+  ConflictError,
 } from '../shared/domain/errors.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
@@ -106,7 +107,13 @@ export class ShiftsService {
     const shift = _shifts.get(shiftId);
     if (!shift) throw new NotFoundError({ kind: 'shift', id: shiftId });
     if (shift.userId !== userId) throw new NotFoundError({ kind: 'shift', id: shiftId });
-    if (shift.completed) throw new NotFoundError({ kind: 'shift_completed', id: shiftId });
+    // B2 fix: Return 409 on duplicate completion (idempotent receipt)
+    if (shift.completed) {
+      throw new ConflictError({
+        shiftId,
+        reason: 'shift_already_completed',
+      });
+    }
     if (Date.now() < shift.endsAt) {
       throw new ShiftNotFinishedError({ shiftId, endsAt: shift.endsAt });
     }

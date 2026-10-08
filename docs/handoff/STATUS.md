@@ -17,10 +17,10 @@
 | Item | Claimed | Actual | Evidence | Commit |
 |------|---------|--------|----------|--------|
 | **P0: Sign-in** |
-| B0 | unknown | NOT_DONE | SPKI patch not applied | - |
-| B6 | unknown | NOT_DONE | Need to verify nonce binding | - |
-| B7 | unknown | NOT_DONE | Need to verify alphanumeric nonce | - |
-| B8 | unknown | NOT_DONE | Need to verify base64 signedMessage | - |
+| B0 | unknown | DONE | SPKI patch applied, tests pass (3/3) | 3f4328f |
+| B6 | unknown | DONE | Redis nonces, full SIWS verification | 3eccfb3 |
+| B7 | unknown | DONE | Alphanumeric nonce (no hyphens) | 3eccfb3 |
+| B8 | unknown | DONE | Base64 signedMessage decoding | 3eccfb3 |
 | **P1: Security** |
 | B1 | unknown | NOT_DONE | Need admin check verification | - |
 | B2 | unknown | NOT_DONE | Need shift receipt verification | - |
