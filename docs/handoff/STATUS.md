@@ -22,6 +22,16 @@
 | B7 | unknown | DONE | Alphanumeric nonce (no hyphens) | 3eccfb3 |
 | B8 | unknown | DONE | Base64 signedMessage decoding | 3eccfb3 |
 | **P1: Security** |
+| B1 | unknown | DONE | Admin wallet allowlist, requireAdmin middleware | 5ed6fdf |
+| B2 | unknown | DONE | 409 ConflictError on duplicate shift completion | bf56f09 |
+| B3 | unknown | DONE | Per-user RTC tokens, participant validation | b3c2f48 |
+| B4 | unknown | DONE | Assigned mini-games only validation | bf56f09 |
+| B5 | unknown | DONE | JWT auth in all 5 realtime rooms, DB profiles | 2cb4bcd |
+| B31 | unknown | DONE | 409 IN_FLIGHT on concurrent idempotency | 8312de4 |
+| B32 | unknown | DONE | Payment verification (recipient, amount) | 8312de4 |
+| F10 | unknown | DONE | Hard-fail in prod/staging if LLM key missing | 5ed6fdf |
+| F12 | unknown | DONE | Rate limit all writes (20/s token bucket) | 5ed6fdf |
+| **P1: Security** |
 | B1 | unknown | NOT_DONE | Need admin check verification | - |
 | B2 | unknown | NOT_DONE | Need shift receipt verification | - |
 | B3 | yes | PARTIAL | RTC endpoint exists but needs validation | 2c1c105 |
