@@ -40,25 +40,18 @@
       "kind": "stake"
     },
     {
-      "id": "launchpad_tower",
-      "name": "Launchpad Tower",
-      "maxClients": 50,
-      "patchHz": 10,
-      "kind": "trade"
-    },
-    {
       "id": "prediction_pit",
       "name": "Prediction Pit",
       "maxClients": 50,
       "patchHz": 10,
-      "kind": "bet"
+      "kind": "social"
     },
     {
-      "id": "builder_hills",
-      "name": "Builder Hills",
+      "id": "launchpad_tower",
+      "name": "Launchpad Tower",
       "maxClients": 50,
       "patchHz": 10,
-      "kind": "build"
+      "kind": "social"
     },
     { "id": "audit_row", "name": "Audit Row", "maxClients": 50, "patchHz": 10, "kind": "social" },
     { "id": "vc_row", "name": "VC Row", "maxClients": 50, "patchHz": 10, "kind": "social" },
@@ -70,8 +63,8 @@
       "kind": "social"
     },
     {
-      "id": "airdrop_farm",
-      "name": "Airdrop Farm",
+      "id": "airdrop_fields",
+      "name": "Airdrop Fields",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
@@ -93,6 +86,55 @@
     {
       "id": "discord_heights",
       "name": "Discord Heights",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "club_liquidity",
+      "name": "Club Liquidity",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "conference_hall",
+      "name": "Conference Hall",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "ct_jail",
+      "name": "CT Jail",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "hackathon_house",
+      "name": "Hackathon House",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "home",
+      "name": "Home",
+      "maxClients": 10,
+      "patchHz": 10,
+      "kind": "home"
+    },
+    {
+      "id": "sybil_barn",
+      "name": "Sybil Barn",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "the_trenches",
+      "name": "The Trenches",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
