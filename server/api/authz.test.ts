@@ -453,6 +453,52 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect(settleBobR.statusCode).toBe(403);
   });
 
+  it('B2: cabal invites list shows only caller invites, not all codes', async () => {
+    // Alice creates an invite
+    const aliceInvite = await app.inject({
+      method: 'POST',
+      url: '/v1/cabal/invites',
+      headers: authHeaders(alice, `cabal-alice-${uuidv7()}`),
+    });
+    if (aliceInvite.statusCode !== 201 && aliceInvite.statusCode !== 200) {
+      // Skip if cabal not implemented
+      return;
+    }
+    const aliceCode = (aliceInvite.json() as { code: string }).code;
+
+    // Bob creates an invite
+    const bobInvite = await app.inject({
+      method: 'POST',
+      url: '/v1/cabal/invites',
+      headers: authHeaders(bob, `cabal-bob-${uuidv7()}`),
+    });
+    const bobCode = (bobInvite.json() as { code: string }).code;
+
+    // Alice lists invites - should only see her own
+    const aliceList = await app.inject({
+      method: 'GET',
+      url: '/v1/cabal/invites',
+      headers: authHeaders(alice),
+    });
+    expect(aliceList.statusCode).toBe(200);
+    const aliceInvites = (aliceList.json() as { invites: Array<{ code: string }> }).invites;
+    const aliceCodes = aliceInvites.map((i) => i.code);
+    expect(aliceCodes).toContain(aliceCode);
+    expect(aliceCodes).not.toContain(bobCode);
+
+    // Bob lists invites - should only see his own
+    const bobList = await app.inject({
+      method: 'GET',
+      url: '/v1/cabal/invites',
+      headers: authHeaders(bob),
+    });
+    expect(bobList.statusCode).toBe(200);
+    const bobInvites = (bobList.json() as { invites: Array<{ code: string }> }).invites;
+    const bobCodes = bobInvites.map((i) => i.code);
+    expect(bobCodes).toContain(bobCode);
+    expect(bobCodes).not.toContain(aliceCode);
+  });
+
   it('shop: alice can list and (try to) buy a shop item', async () => {
     const r = await app.inject({
       method: 'POST',

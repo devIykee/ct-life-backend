@@ -62,8 +62,10 @@ export function registerVenuesGatingRoutes(app: FastifyInstance): void {
     const q = CabalListQuery.safeParse(req.query);
     if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
     const used = q.data.used === undefined ? undefined : q.data.used === 'true';
+    // B2 fix: restrict to caller's invites only (as host or guest)
     const out = await listCabalInvites(
       req.ctx,
+      req.user!.sub,
       {
         hostUserId: q.data.hostId,
         guestUserId: q.data.guestId,
