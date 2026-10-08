@@ -24,6 +24,7 @@ import { registerPredictionRoutes } from './routes/predictions.js';
 import { registerAlphaRoutes } from './routes/alpha.js';
 import { registerSocialGraphRoutes } from './routes/social-graph.js';
 import { registerSpaceRoutes } from './routes/spaces.js';
+import { registerRtcRoutes } from './routes/rtc.js';
 import { registerVideoCallRoutes } from './routes/video-calls.js';
 import { registerCreatorRoutes } from './routes/creator.js';
 import { registerPaidCallRoutes } from './routes/paid-calls.js';
@@ -142,6 +143,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerAlphaRoutes(app);
   registerSocialGraphRoutes(app);
   registerSpaceRoutes(app);
+  registerRtcRoutes(app); // B23: Add RTC token endpoint
   registerVideoCallRoutes(app);
   registerCreatorRoutes(app);
   registerPaidCallRoutes(app);
