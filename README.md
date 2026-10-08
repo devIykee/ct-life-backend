@@ -13,34 +13,34 @@ CT Life is a social metaverse where players build their identity, earn through m
 
 ## Features
 
-### 🎮 **Core Gameplay**
+### Core Gameplay
 - Character creation with customizable looks, tribes, dreams, and traits
 - Lottery-based home assignment system
 - Work shifts with mini-game scoring and crypto rewards
 - Needs system (energy, hunger, fun, hygiene, sanity) with decay mechanics
 - Skill progression across 6 categories
 
-### 💰 **Economy & Payments**
+### Economy & Payments
 - Multi-currency support (USDC, SOL, SKR, ORE)
 - Secure payment flows with webhook verification
 - Ledger-based transaction system with ACID guarantees
 - Topup system with bonus rewards
 - Debt management
 
-### 👥 **Social Features**
+### Social Features
 - Direct messaging between players
 - Friend system with requests and acceptance
 - Bidirectional blocking for privacy
 - Public profiles and user discovery
 
-### 🎙️ **Voice & Video**
+### Voice & Video
 - Voice Spaces (audio-only group calls)
 - Video calls with up to 10 participants
 - Proximity voice in game venues
 - LiveKit-powered real-time communication
 - Secure per-user token minting
 
-### 🏢 **Advanced Features**
+### Advanced Features
 - Venue system with entrance spawning
 - NPC interactions with state machines
 - Admin tools for ratio arena and airdrops
@@ -129,7 +129,7 @@ pnpm install
 cp .env.example .env
 # Edit .env with your credentials (see Environment Variables section)
 
-# 4. Start local stack
+# 4. Start local services (Postgres, Redis, MinIO)
 pnpm dev:up
 
 # 5. Run database migrations
@@ -144,13 +144,13 @@ pnpm lint
 ### Running the Server
 
 ```bash
-# Start API server (default port: 4010)
+# Terminal 1: Start API server (default port: 4010)
 tsx server/api/main.ts
 
-# Start realtime server (default port: 2567)
+# Terminal 2: Start realtime server (default port: 2567)
 tsx server/realtime/main.ts
 
-# Start background workers
+# Terminal 3: Start background workers
 tsx server/workers/main.ts
 ```
 
@@ -202,42 +202,42 @@ Idempotency-Key: UNIQUE_UUID_V4
 - `POST /v1/payments/intents` - Create payment intent
 - `POST /v1/payments/verify` - Verify payment
 
-📚 **Full API documentation**: See [`docs/POSTMAN_ENDPOINTS.md`](docs/POSTMAN_ENDPOINTS.md)
+**Full API documentation**: See [`docs/POSTMAN_ENDPOINTS.md`](docs/POSTMAN_ENDPOINTS.md)
 
 ---
 
 ## Security Features
 
-### ✅ **Authentication & Authorization**
+### Authentication & Authorization
 - Sign-In with Solana (SIWS) implementation
 - Redis-backed nonce validation with 10-minute TTL
 - JWT tokens with RS256 signing
 - Admin wallet allowlist for protected endpoints
 
-### ✅ **Payment Security**
+### Payment Security
 - Recipient address verification on webhooks
 - Base-unit amount validation
 - HMAC signature verification (Helius webhooks)
 - Idempotency keys prevent double-spend
 
-### ✅ **Rate Limiting**
+### Rate Limiting
 - Token bucket algorithm (20 req/s per user)
 - Redis-backed for distributed systems
 - Automatic 429 responses with `Retry-After` header
 
-### ✅ **Realtime Security**
+### Realtime Security
 - JWT authentication on all 5 realtime rooms
 - Per-user RTC token minting
 - Participant validation for voice/video calls
 - DB-backed profile verification
 
-### ✅ **Database Integrity**
+### Database Integrity
 - SERIALIZABLE transaction isolation
 - CHECK constraints prevent negative balances
 - UNIQUE constraints on idempotency keys
 - BigInt arithmetic eliminates floating-point errors
 
-📚 **Security documentation**: See [`docs/SECURITY.md`](docs/SECURITY.md)
+**Security documentation**: See [`docs/SECURITY.md`](docs/SECURITY.md)
 
 ---
 
@@ -292,7 +292,7 @@ ct-life-backend/
 | `ANTHROPIC_API_KEY` | Anthropic API key | - |
 | `X_LINK_ENABLED` | Enable X account linking | `false` |
 
-📚 **Complete list**: See [`.env.example`](.env.example)
+**Complete list**: See [`.env.example`](.env.example)
 
 ---
 
@@ -350,16 +350,16 @@ pnpm db:status
 
 ## Documentation
 
-- 📘 [`docs/POSTMAN_ENDPOINTS.md`](docs/POSTMAN_ENDPOINTS.md) - API testing guide
-- 🔐 [`docs/SECURITY.md`](docs/SECURITY.md) - Security features & threat model
-- 🏗️ [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - System architecture
-- 💾 [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) - Database schema
-- 💰 [`docs/ECONOMY.md`](docs/ECONOMY.md) - Economy & formulas
-- 🎮 [`docs/REALTIME.md`](docs/REALTIME.md) - Realtime rooms & messages
-- 🤖 [`docs/NPCS.md`](docs/NPCS.md) - NPC state machines
-- ⛓️ [`docs/ONCHAIN.md`](docs/ONCHAIN.md) - On-chain programs
-- 🚀 [`docs/OPERATIONS.md`](docs/OPERATIONS.md) - Operations guide
-- 📋 [`docs/handoff/STATUS.md`](docs/handoff/STATUS.md) - Implementation status
+- [`docs/POSTMAN_ENDPOINTS.md`](docs/POSTMAN_ENDPOINTS.md) - API testing guide
+- [`docs/SECURITY.md`](docs/SECURITY.md) - Security features & threat model
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - System architecture
+- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) - Database schema
+- [`docs/ECONOMY.md`](docs/ECONOMY.md) - Economy & formulas
+- [`docs/REALTIME.md`](docs/REALTIME.md) - Realtime rooms & messages
+- [`docs/NPCS.md`](docs/NPCS.md) - NPC state machines
+- [`docs/ONCHAIN.md`](docs/ONCHAIN.md) - On-chain programs
+- [`docs/OPERATIONS.md`](docs/OPERATIONS.md) - Operations guide
+- [`docs/handoff/STATUS.md`](docs/handoff/STATUS.md) - Implementation status
 
 ---
 
@@ -411,4 +411,4 @@ We welcome contributions! Please see [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
 
 ---
 
-**Built for Solana Seeker** 📱 | **Powered by Solana** ⚡
+**Built for Solana Seeker | Powered by Solana**
