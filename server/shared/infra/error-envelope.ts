@@ -71,6 +71,22 @@ export function toErrorEnvelope(
   if (logger) {
     logger.error('unhandled error', { err: (err as Error)?.message ?? String(err) });
   }
+  // B15 fix: Check for statusCode property (Fastify parser errors)
+  const statusCode = (err as { statusCode?: number }).statusCode;
+  if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
+    // Client error from Fastify (e.g. malformed JSON, missing content-type)
+    return {
+      status: statusCode,
+      envelope: {
+        error: {
+          code: 'VALIDATION_FAILED',
+          message: (err as Error).message || 'Invalid request.',
+          details: {},
+        },
+      },
+      headers: {},
+    };
+  }
   return {
     status: 500,
     envelope: {
