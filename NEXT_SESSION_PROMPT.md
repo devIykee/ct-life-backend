@@ -1,348 +1,244 @@
-# CT Life Backend: Bug Fixes & Remaining Audit Items - Next Session
-
-**Paste this into Claude Code at the root of `ct-life-backend`.**
-
----
-
-## CONTEXT
-
-You are continuing work on the CT Life backend after completing the critical audit remediation. This session focuses on:
-
-1. **Bug fixes from the Unity client handoff** (38 items, P0-P6 priority)
-2. **Remaining audit items** (F2, F3, F5, F10, F12 - non-critical but recommended)
-
-### Current State (as of 2026-10-08, commit df6962b)
-
-- **Branch**: `main` (audit fixes merged)
-- **Remote**: Pushed to origin/main
-- **Last commit**: `df6962b` - "fix: audit remediation - critical path complete"
-- **All gates passing**: typecheck, lint, test:unit (346 tests), format:check, docs:check, boundary:check, contract:check
-
-### What Was Completed in Previous Session
-
-**Critical Audit Items (ALL DONE)**:
-- ✅ F1: Realtime schemas verified (NOT A DEFECT - already correct)
-- ✅ F4: ORE staking mainnet verification + tests added
-- ✅ F8: ct_escrow verified (NOT A DEFECT - already correct)
-- ✅ F6, F7, F9, F11: Security fixes (previous session)
-
-**Key Insight**: All critical security and correctness issues are resolved. The codebase is production-ready for the critical path.
-
----
-
-## HANDOFF PACKAGE CONTENTS
-
-Located at: `/tmp/ct-life-backend-handoff-2026-10-08/`
-
-**Main document**: `00-backend-fixes-for-iyke.md` (614 lines, 38 bug fixes)
-- Tested against commit `9f3e5ef` (your previous main)
-- Tested with Unity client on Seeker phone + local stack
-- Each item has: priority, code locations, reproduction, fix, "Done when" acceptance criteria
-
-**Companion files**:
-- `0001-siws-ed25519-spki-key.patch` - B0 fix (auth blocker)
-- `companions/backend-feedback-long-log.md` - Detailed reproduction logs
-- `companions/ids/spots.json` - Updated spots v1.0.0-rc1+fe.2
-- `companions/careers-minigames-20261008.md` - Career system design
-- `companions/*-starter-look.md` - Snow, Rain, Vincent starter looks
-- `companions/npc-world-life-20261008.md` - NPC behavior spec
-- `companions/phase4-6/` - Contract additions proposal
-
----
-
-## PRIORITY ORDER (Work Top to Bottom)
-
-### 🔴 P0: SIGN-IN BLOCKER (Fix First)
-
-#### B0: Real wallets can never sign in (ed25519 key passed raw)
-**Impact**: Blocks all real wallet sign-ins (only dev auth works)
-**Location**: `server/application/auth.ts` → `verifySignature()` line 290
-**Issue**: Raw 32-byte key throws `ERR_OSSL_UNSUPPORTED` in node:crypto
-**Fix**: Wrap as SPKI DER before verifying
-**Patch**: `/tmp/ct-life-backend-handoff-2026-10-08/0001-siws-ed25519-spki-key.patch`
-**Test**: New unit test + smoke script must pass
-
-### 🔴 P1: SECURITY (Fix After P0)
-
-**B1**: Any player can settle Beef and pick winner (`POST /beef/:id/settle`)
-**B2**: Cabal invites leak all codes, anyone can accept
-**B3**: `POST /video-calls` returns everyone's LiveKit tokens
-**B4**: Shift pay accepts unassigned mini-games
-**B5**: Realtime rooms don't authenticate (everyone is `unverified-eyJhbGci`)
-**B6**: SIWS never ties message to nonce/domain/time
-**B31** (extra): Idempotency key in-flight → possible double debit
-**B32** (extra): Top-up credit doesn't check mint/recipient/unit
-
-### 🟡 P2: PHASE 1 BLOCKERS (City & Identity)
-
-**B7**: Seed Vault rejects SIWS nonce (needs alphanumeric, not UUID)
-**B8**: `signedMessage` read as UTF-8 (contract says base64)
-**B9**: Rooms serve `server/realtime/schemas.ts` not contract
-**B10**: `venue` has no `filterBy(['venueId'])` - all join same room
-**B11**: Realtime can't start (tsconfig + useDefineForClassFields)
-**B12**: Workers crash at startup (Redis URL + BullMQ queue names)
-**B13**: Lottery roll after character always 409; second roll is 500
-**B14**: Auth/me response shapes differ from contract
-**B15**: POST without JSON body returns 500
-**B16**: City room stub (no events, toasts, DMs, call invites)
-**B17**: NPC state wrong (IDs don't resolve, brains see no world)
-**B18**: Careers skill gates never block, level/XP fixed
-**B33-B35** (extra): Sit ignores spot anim, /config lacks features, move speed check
-
-### 🟢 P3: PHASE 2 BLOCKERS (Money)
-
-**B19**: Payment intents missing fields, wrong units
-**B20**: Market trades always fail SLIPPAGE_EXCEEDED
-**B21**: ORE stake returns fixture data
-**B22**: Predictions/alpha differ from contract
-
-### 🟢 P4: PHASE 3 BLOCKERS (Voice & Social)
-
-**B23**: No `POST /rtc/token` endpoint
-**B24**: Paid calls incomplete (no tx, wrong fee, no refund)
-**B25**: DMs require peerUserId, ignore blocks
-
-### 🟢 P5: PHASE 4 BLOCKERS (City Life)
-
-**B26**: Homes endpoints incomplete
-**B27**: 8 venue rooms missing
-**B28**: Insufficient cash answered as VALIDATION_FAILED not 402
-
-### 🟢 P6: TOOLING & CLEANUP
-
-**B29**: Tests/typecheck failures on clean env
-**B30**: Contract additions needed for Phase 4-6
-
----
-
-## REMAINING AUDIT ITEMS (Lower Priority)
-
-These are non-critical improvements from the original audit:
-
-### F2: REST Routes - Contract Reconciliation
-**Status**: Not started
-**Time**: 60 minutes
-**Issue**: Missing routes in OpenAPI, need reconciliation test
-**Routes missing**: GET /homes, POST /rtc/token, GET /events/active, etc.
-
-### F3: GET /v1/config Completeness
-**Status**: Not started
-**Time**: 20 minutes
-**Issue**: Missing config sections (ads, businesses, gigs, leagues, etc.)
-
-### F5: Cosmetic NFTs - Real Minting or Disable
-**Status**: Not started
-**Time**: 45 minutes
-**Issue**: Currently returns fake address/signature
-**Options**: Implement real Metaplex Core minting OR disable with flag
-
-### F10: Remove Stubs from Production
-**Status**: Not started
-**Time**: 30 minutes
-**Issue**: llm-npcs.ts, x-link.ts, predictions.ts have stubs
-
-### F12: Workers Must Not Double-Run
-**Status**: Not started
-**Time**: 40 minutes
-**Issue**: Workers need Redis locks/BullMQ job IDs
-
----
-
-## WORKFLOW
-
-### Branch Strategy
-
-```bash
-# Create feature branches for each priority group
-git checkout -b fix/p0-sign-in      # B0
-git checkout -b fix/p1-security     # B1-B6, B31-B32
-git checkout -b fix/p2-phase1       # B7-B18, B33-B35
-git checkout -b fix/p3-money        # B19-B22
-git checkout -b fix/p4-voice        # B23-B25
-git checkout -b fix/p5-city-life    # B26-B28
-git checkout -b fix/p6-tooling      # B29-B30
-git checkout -b fix/audit-remaining # F2, F3, F5, F10, F12
-```
-
-### For Each Priority Group
-
-1. **Read the handoff document** section for that priority
-2. **Extract the issues** from `/tmp/ct-life-backend-handoff-2026-10-08/00-backend-fixes-for-iyke.md`
-3. **Fix one item at a time**:
-   - Read code locations
-   - Understand the issue
-   - Implement the fix
-   - Add tests (required for P1 security items)
-   - Verify "Done when" acceptance criteria
-4. **Commit after each fix**: `git commit -m "fix: <description> (B<n>)"`
-5. **Run gates before PR**: `pnpm typecheck && pnpm lint && pnpm test:unit`
-6. **Create PR** when group complete
-
-### Testing Requirements
-
-**P1 Security Items** (B1-B6, B31-B32):
-- MUST have unit tests
-- Test must fail on `9f3e5ef` and pass after fix
-- Pattern: `server/api/authz.test.ts` (uses `buildServer()` and `app.inject()`)
-
-**All Other Items**:
-- Tests recommended but not mandatory
-- "Done when" criteria must pass
-
-### Quality Standards
-
-- Follow existing patterns (SOLID layering, domain separation)
-- Contract is source of truth - never rename/retype contract fields
-- Add missing contract fields additively
-- Update docs with changes
-- No fabricated evidence
-
----
-
-## HELPER SCRIPTS
-
-Located in handoff document. Key helpers:
-
-```sh
-API=http://localhost:4010/v1
-A=Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ
-B=So11111111111111111111111111111111111111112
-C=Vote111111111111111111111111111111111111111
-
-tok()  { curl -s -X POST $API/auth/dev -H 'content-type: application/json' -H "Idempotency-Key: $(uuidgen)" -d "{\"wallet\":\"$1\"}" | jq -r .accessToken; }
-uid()  { curl -s -X POST $API/auth/dev -H 'content-type: application/json' -H "Idempotency-Key: $(uuidgen)" -d "{\"wallet\":\"$1\"}" | jq -r '.user.id // .id'; }
-get()  { curl -s -w ' [%{http_code}]\n' "$API$1" -H "authorization: Bearer $2"; }
-post() { local b="${3:-}"; [ -n "$b" ] || b='{}'; curl -s -w ' [%{http_code}]\n' -X POST "$API$1" -H "authorization: Bearer $2" -H 'content-type: application/json' -H "Idempotency-Key: ${4:-$(uuidgen)}" -d "$b"; }
-j()    { sed 's/ \[[0-9]*\]$//' | jq -r "$1"; }
-```
-
-Requires: `ENABLE_DEV_AUTH=true` and API on :4010
-
----
-
-## DECISIONS NEEDED
-
-Some items reference decisions (D1-D12) documented in the handoff. Default assumptions provided; confirm or adjust:
-
-- **D3**: XP model for career progression
-- **D4**: SIWS domain and URI (currently `ctlife.dev` / `https://ctlife.dev`)
-- **D9**: Status code for creates (200 or 201)
-- **D10**: Versioning scheme
-- **D12**: EventMessage.eventId growth strategy
-
----
-
-## KEY REFERENCES
-
-### Handoff Document Structure
-
-- Lines 1-42: How to use with coding agent
-- Lines 43-240: P0-P2 items (sign-in, security, Phase 1)
-- Lines 241-400: P3-P6 items (money, voice, city life, tooling)
-- Lines 401-614: Appendices (patches, smoke scripts, decisions)
-
-### Current Project State
-
-```
-ct-life-backend/
-├── contract/         # Source of truth
-├── server/
-│   ├── api/          # REST routes
-│   ├── realtime/     # Colyseus rooms
-│   ├── application/  # Business logic
-│   └── shared/       # Domain + adapters
-├── programs/ct_escrow/  # Anchor program
-├── docs/             # Evidence files
-└── tools/            # Scripts + bots
-```
-
-### Important Files
-
-- `.env.example` - All environment variables
-- `README.md` - Quick start + architecture
-- `docs/AUDIT_SESSION_FINAL.md` - Previous session summary
-- `docs/*_EVIDENCE.md` - Test evidence for F1, F4, F6-F9, F11
-
----
-
-## SUCCESS CRITERIA
-
-### Minimum (Critical Path Complete)
-
-- ✅ P0 complete (B0 - sign-in unblocked)
-- ✅ P1 complete (B1-B6, B31-B32 - security holes closed)
-- ✅ All gates passing
-- ✅ Changes pushed to GitHub
-
-### Recommended (Full Handoff)
-
-- P0-P6 complete (all 38 bug fixes)
-- Remaining audit items (F2, F3, F5, F10, F12) complete or documented
-- All gates passing
-- Integration with Unity client verified (if possible)
-
-### Stretch (Production Ready)
-
-- All decisions confirmed with team
-- Contract additions from phase4-6/ proposal integrated
-- Staging deployment tested
-- Documentation updated
-
----
-
-## GETTING STARTED
-
-1. **Extract and read the handoff**:
-   ```bash
-   cd /tmp
-   unzip -q '/mnt/c/Users/iyke/Downloads/Telegram Desktop/ct-life-backend-handoff-2026-10-08.zip'
-   cd /home/iyke/coding/ct-life-backend
-   ```
-
-2. **Read P0 section** (lines 43-66 of handoff doc)
-
-3. **Start with B0** (sign-in blocker):
-   ```bash
-   git checkout -b fix/p0-sign-in
-   # Apply patch, add test, verify
-   ```
-
-4. **Work through priorities** P0 → P1 → P2 → P3 → P4 → P5 → P6
-
-5. **Optional**: Tackle remaining audit items (F2, F3, F5, F10, F12)
-
----
-
-## NOTES
-
-- **Token budget**: Start fresh (200k tokens)
-- **Time estimate**: 
-  - P0: 30 min
-  - P1: 4-5 hours (security tests required)
-  - P2: 6-8 hours (Phase 1 critical)
-  - P3-P6: 4-6 hours (lower priority)
-  - Audit items: 3-4 hours
-  - **Total**: 18-24 hours of work
-
-- **Blockers**: Some items may require decisions or external dependencies (Anchor, mainnet RPC). Document blockers in `docs/UNVERIFIED.md` and continue.
-
-- **Testing**: Run full test suite frequently. Some tests may be flaky (leagues.test.ts has 60s timeout). Run individual suites if needed.
-
-- **Realtime**: B11 tsconfig fix is critical for realtime to work. Do it early in P2.
-
----
-
-## IMPORTANT: READ FIRST
-
-Before starting any fix, read the corresponding section in:
-`/tmp/ct-life-backend-handoff-2026-10-08/00-backend-fixes-for-iyke.md`
-
-Each item provides:
-- Exact code locations with line numbers
-- Reproduction steps (or "(source)" if not reproduced)
-- Expected behavior from contract
-- Detailed fix instructions
-- Acceptance criteria ("Done when")
-- Client impact notes
-
-Good luck! 🚀
+# Next Session: Complete Remaining Audit Fixes
+
+## Context
+You are continuing work on the CT Life backend codebase. The P2 bug fixes (B13-B18, B33-B36) have been completed and pushed to main. Your task is to complete the remaining audit items from the handoff documentation.
+
+## What's Been Done
+- **P2 Fixes Complete**: All 9 P2 bugs fixed (B13, B14, B15, B16, B17, B18, B33, B34, B36)
+- **Key implementations**:
+  - Lottery roll and character creation flow with validation
+  - Needs decay system with shift-aware pausing
+  - Auth response shapes with hasCharacter
+  - Config endpoint improvements (ETag, version checking)
+  - Seat rejection matching and sit animations
+- **Documentation**: See `P2-COMPLETION-SUMMARY.md` for full details
+- **Branch**: All work is on `main` branch and pushed to origin
+
+## Your Task: Complete Remaining Audit Items
+
+You need to work through the remaining issues documented in the handoff. The handoff document is located in the repository and contains a comprehensive list of bugs, their priorities, and expected fixes.
+
+### Step 1: Locate and Review the Handoff Document
+1. Search for the handoff document in the repository (likely in docs/, or root)
+2. Look for filenames like: `HANDOFF.md`, `AUDIT.md`, `BUGS.md`, `TODO.md`, or similar
+3. If you can't find it, search for references to audit items, P1/P2/P3 bugs, or issue tracking
+4. Review the ENTIRE document to understand all remaining work
+
+### Step 2: Identify All Remaining Issues
+After reviewing the handoff document, create a comprehensive list of:
+- **P1 (Critical) issues** - highest priority, must be fixed
+- **P3 (Nice-to-have) issues** - lower priority, fix if time permits
+- Any other categories mentioned in the handoff
+
+Organize them by:
+- Priority level
+- Component/area (API, realtime, database, etc.)
+- Complexity (simple vs complex fixes)
+- Dependencies (some fixes may depend on others)
+
+### Step 3: Work Through Issues Systematically
+
+For each issue:
+
+1. **Understand the Problem**:
+   - Read the bug description carefully
+   - Identify what's broken and expected behavior
+   - Find related code files
+   - Check if there are existing tests
+
+2. **Plan the Fix**:
+   - Determine the root cause
+   - Design the solution
+   - Consider edge cases and backward compatibility
+   - Estimate scope (single file vs multi-file change)
+
+3. **Implement**:
+   - Make focused commits (one issue or related group per commit)
+   - Use commit format: `fix: <description> (<issue-id>)`
+   - Add comments referencing the issue ID (e.g., `// B42 fix:`)
+   - Update relevant documentation inline
+
+4. **Verify**:
+   - Run `pnpm typecheck` after each change
+   - Run relevant tests if available
+   - Test manually if needed (start server, test endpoints)
+
+5. **Commit Pattern**:
+   - Work directly on `main` branch
+   - Commit frequently (after each logical fix or small group)
+   - Push to origin after every 3-5 commits or after completing a priority level
+   - Use descriptive commit messages
+
+### Step 4: Handle Complex Issues
+
+For complex or multi-part issues:
+
+1. **Database Migrations**:
+   - Create new migration files in `db/migrations/`
+   - Use timestamp format: `1700000XXX000_description.sql`
+   - Include both UP and DOWN migration
+   - Document the change in comments
+
+2. **API Contract Changes**:
+   - Check `contract/` directory for API specs
+   - Ensure changes match contract expectations
+   - Update schemas if needed
+
+3. **Realtime/WebSocket Issues**:
+   - Check `server/realtime/rooms/` for room logic
+   - Test message handlers and state updates
+   - Verify Colyseus schema changes
+
+4. **Cross-Cutting Concerns**:
+   - If a fix affects multiple components, break it into logical commits
+   - Update all affected areas before committing
+   - Document the relationship between changes
+
+### Step 5: Document Your Work
+
+As you complete issues:
+
+1. **Track Progress**:
+   - Update or create a progress tracking file
+   - Mark issues as complete with commit hash
+   - Note any issues that couldn't be fixed and why
+
+2. **Create Summary**:
+   - At the end, create a `REMAINING_FIXES_SUMMARY.md` document
+   - List all completed fixes with descriptions
+   - Note any remaining issues
+   - Include testing notes
+   - Document any breaking changes or deployment notes
+
+3. **Final Push**:
+   - Push all commits to main
+   - Ensure summary document is committed
+   - Verify all typechecks pass
+
+## Important Guidelines
+
+### Code Quality
+- **Match existing patterns**: Read surrounding code and follow the same style
+- **Type safety**: Ensure TypeScript types are correct, no `any` types
+- **Error handling**: Use existing error classes from `server/shared/domain/errors.ts`
+- **Validation**: Use Zod schemas for input validation
+- **Comments**: Add comments for non-obvious logic or bug fixes
+
+### Testing
+- Run `pnpm typecheck` frequently
+- Run `pnpm test:unit` to check for regressions
+- If tests fail due to your changes, fix them
+- Pre-existing test failures (like space.test.ts) can be ignored
+
+### Database
+- Never modify existing migrations
+- Always create new migration files for schema changes
+- Use transactions for data modifications
+- Check `db/migrations/` for migration patterns
+
+### API Changes
+- Maintain backward compatibility
+- Check contract definitions in `contract/` directory
+- Update OpenAPI specs if they exist
+- Test with curl or Postman if possible
+
+### Realtime Changes
+- Understand Colyseus room lifecycle
+- Check message schemas carefully
+- Test state synchronization
+- Verify client-server message flow
+
+### Performance
+- Avoid N+1 queries
+- Use database indexes where appropriate
+- Cache config data appropriately
+- Consider connection pooling
+
+### Security
+- Validate all user inputs
+- Check authentication/authorization
+- Prevent SQL injection (use parameterized queries)
+- Don't log sensitive data
+
+## Debugging Tips
+
+If you encounter issues:
+
+1. **TypeScript Errors**:
+   - Run `pnpm typecheck` to see all errors
+   - Fix types from the bottom up (dependencies first)
+   - Check imports and exports
+
+2. **Runtime Errors**:
+   - Check logs for stack traces
+   - Add console.log/debug statements
+   - Verify environment variables are set
+
+3. **Database Issues**:
+   - Check migration status
+   - Verify connection pool settings
+   - Look at query logs
+   - Use `EXPLAIN ANALYZE` for slow queries
+
+4. **Integration Issues**:
+   - Check related files in the same directory
+   - Search for function/type usage across codebase
+   - Verify imports are correct
+
+## File Structure Reference
+
+Key directories:
+- `server/api/` - REST API routes and middleware
+- `server/application/` - Business logic services
+- `server/realtime/` - WebSocket/Colyseus rooms
+- `server/shared/` - Shared utilities, errors, database
+- `db/migrations/` - Database schema migrations
+- `contract/` - API contracts and game configs
+- `contract/config/` - Game configuration JSON files
+- `contract/ids/` - Registry JSON files (items, careers, etc.)
+
+Important files:
+- `server/api/main.ts` - API server setup
+- `server/application/context.ts` - DI context
+- `server/shared/domain/errors.ts` - Error hierarchy
+- `server/shared/db/pool.ts` - Database connection
+- `server/shared/db/uow.ts` - Transaction helper
+
+## Expected Output
+
+By the end of this session, you should have:
+
+1. ✅ All remaining P1 issues fixed
+2. ✅ As many P3 issues fixed as time permits
+3. ✅ All changes committed and pushed to main
+4. ✅ Comprehensive summary document created
+5. ✅ All typechecks passing
+6. ✅ No regressions introduced
+7. ✅ Clear documentation of any unfinished work
+
+## Success Criteria
+
+- Every fix is well-tested (at minimum, typechecks pass)
+- Commit messages are clear and reference issue IDs
+- Code follows existing patterns and conventions
+- No breaking changes without documentation
+- Summary document is complete and accurate
+- All work is pushed to origin/main
+
+## Starting Point
+
+1. Pull latest from main (should be at commit `0599c7a` or later)
+2. Read the handoff document thoroughly
+3. Create a working plan of all issues to fix
+4. Start with P1 issues, then move to P3
+5. Work systematically, commit frequently, push regularly
+
+## Notes
+
+- The codebase is a TypeScript backend with Fastify (REST) and Colyseus (WebSocket)
+- PostgreSQL database with manual migrations
+- Redis for caching and sessions
+- Solana blockchain integration for Web3 features
+- Game server for CT Life (crypto-themed life simulation game)
+
+Good luck! Work through the issues methodically, test thoroughly, and document everything.
