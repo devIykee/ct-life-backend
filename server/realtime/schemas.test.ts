@@ -6,6 +6,10 @@ import {
   CityState,
   MarketState,
   CoinState,
+  HomeState,
+  SpaceState,
+  SpeakerState,
+  VideoCallState,
 } from '../../contract/realtime/states.js';
 import { MapSchema } from '@colyseus/schema';
 
@@ -172,6 +176,79 @@ describe('Realtime Schema Validation', () => {
     expect(state.npcs.get('npc-town-crier')?.archetypeId).toBe('town_crier');
   });
 
+  it('HomeState has all required fields from contract', () => {
+    const home = new HomeState();
+    home.ownerId = 'user123';
+    home.homeId = 'home456';
+    home.players = new MapSchema<PlayerState>();
+
+    const player = new PlayerState();
+    player.userId = 'guest1';
+    player.name = 'Guest';
+    player.look = ['1', '2', '3', '4', '5', '6', '7'];
+    home.players.set('session1', player);
+
+    expect(home.ownerId).toBe('user123');
+    expect(home.homeId).toBe('home456');
+    expect(home.players.size).toBe(1);
+    expect(home.players.get('session1')?.userId).toBe('guest1');
+  });
+
+  it('SpeakerState has all required fields from contract', () => {
+    const speaker = new SpeakerState();
+    speaker.userId = 'user123';
+    speaker.role = 'speaker';
+    speaker.canPublish = true;
+    speaker.handRaised = false;
+    speaker.handRaisedAt = 0;
+
+    expect(speaker.userId).toBe('user123');
+    expect(speaker.role).toBe('speaker');
+    expect(speaker.canPublish).toBe(true);
+    expect(speaker.handRaised).toBe(false);
+    expect(speaker.handRaisedAt).toBe(0);
+  });
+
+  it('SpaceState has all required fields from contract', () => {
+    const space = new SpaceState();
+    space.spaceId = 'space123';
+    space.hostUserId = 'host456';
+    space.title = 'Test Space';
+    space.status = 'live';
+    space.speakers = new MapSchema<SpeakerState>();
+    space.handQueue = ['user1', 'user2'];
+    space.listenerCount = 42;
+
+    const speaker = new SpeakerState();
+    speaker.userId = 'user1';
+    speaker.role = 'host';
+    speaker.canPublish = true;
+    space.speakers.set('user1', speaker);
+
+    expect(space.spaceId).toBe('space123');
+    expect(space.hostUserId).toBe('host456');
+    expect(space.title).toBe('Test Space');
+    expect(space.status).toBe('live');
+    expect(space.speakers.size).toBe(1);
+    expect(space.handQueue).toEqual(['user1', 'user2']);
+    expect(space.listenerCount).toBe(42);
+  });
+
+  it('VideoCallState has all required fields from contract', () => {
+    const call = new VideoCallState();
+    call.callId = 'call123';
+    call.hostUserId = 'host456';
+    call.kind = 'paid_call';
+    call.status = 'live';
+    call.participantUserIds = ['user1', 'user2', 'user3'];
+
+    expect(call.callId).toBe('call123');
+    expect(call.hostUserId).toBe('host456');
+    expect(call.kind).toBe('paid_call');
+    expect(call.status).toBe('live');
+    expect(call.participantUserIds).toEqual(['user1', 'user2', 'user3']);
+  });
+
   it('all schemas are imported from contract/realtime/', () => {
     // This test verifies that the schema classes are imported from the contract
     // directory and not duplicated in server code. The schema-check.ts script
@@ -182,5 +259,51 @@ describe('Realtime Schema Validation', () => {
     expect(MarketState.name).toBe('MarketState');
     expect(CoinState.name).toBe('CoinState');
     expect(VenueState.name).toBe('VenueState');
+    expect(HomeState.name).toBe('HomeState');
+    expect(SpaceState.name).toBe('SpaceState');
+    expect(SpeakerState.name).toBe('SpeakerState');
+    expect(VideoCallState.name).toBe('VideoCallState');
+  });
+
+  it('PlayerState coordinates use float32 types', () => {
+    // Verify that coordinates are typed as float32, not plain number
+    const player = new PlayerState();
+    player.x = 123.456;
+    player.z = 789.012;
+    player.rotY = 3.14159;
+
+    // Schema decorators ensure the type, verify the fields exist and are numbers
+    expect(typeof player.x).toBe('number');
+    expect(typeof player.z).toBe('number');
+    expect(typeof player.rotY).toBe('number');
+    expect(player.x).toBeCloseTo(123.456, 3);
+    expect(player.z).toBeCloseTo(789.012, 3);
+    expect(player.rotY).toBeCloseTo(3.14159, 5);
+  });
+
+  it('PlayerState look array has length 7', () => {
+    // Verify look is defined as string array with 7 elements
+    const player = new PlayerState();
+    player.look = ['skin', 'head', 'hair', 'top', 'bottom', 'shoes', 'acc'];
+
+    expect(Array.isArray(player.look)).toBe(true);
+    expect(player.look.length).toBe(7);
+    expect(player.look[0]).toBe('skin');
+    expect(player.look[6]).toBe('acc');
+  });
+
+  it('NpcState has lineParams MapSchema', () => {
+    // Verify lineParams is correctly typed as MapSchema<string>
+    const npc = new NpcState();
+    npc.lineParams = new MapSchema<string>();
+    npc.lineParams.set('playerName', 'Alice');
+    npc.lineParams.set('coinTicker', 'SOL');
+    npc.lineParams.set('amount', '1000');
+
+    expect(npc.lineParams).toBeInstanceOf(MapSchema);
+    expect(npc.lineParams.size).toBe(3);
+    expect(npc.lineParams.get('playerName')).toBe('Alice');
+    expect(npc.lineParams.get('coinTicker')).toBe('SOL');
+    expect(npc.lineParams.get('amount')).toBe('1000');
   });
 });

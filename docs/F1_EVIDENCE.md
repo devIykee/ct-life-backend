@@ -16,17 +16,24 @@ No duplicate schema classes exist in `server/realtime/`.
 ## Schema Verification
 ```bash
 $ pnpm vitest run server/realtime/schemas.test.ts
- ✓ server/realtime/schemas.test.ts (7 tests) 21ms
+ ✓ server/realtime/schemas.test.ts (14 tests) 173ms
    ✓ PlayerState has all required fields from contract
    ✓ NpcState has all required fields from contract  
    ✓ CityState has all required fields from contract
    ✓ CoinState has all required fields from contract
    ✓ MarketState has coins MapSchema
    ✓ VenueState has players and NPCs MapSchemas
+   ✓ HomeState has all required fields from contract
+   ✓ SpeakerState has all required fields from contract
+   ✓ SpaceState has all required fields from contract
+   ✓ VideoCallState has all required fields from contract
    ✓ all schemas are imported from contract/realtime/
+   ✓ PlayerState coordinates use float32 types
+   ✓ PlayerState look array has length 7
+   ✓ NpcState has lineParams MapSchema
 
  Test Files  1 passed (1)
-      Tests  7 passed (7)
+      Tests  14 passed (14)
 ```
 
 ## Schema Coverage
