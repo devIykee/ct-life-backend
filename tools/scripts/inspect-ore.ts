@@ -1,5 +1,5 @@
-import { Keypair, Transaction } from '@solana/web3.js';
-import { buildOreStakeTx } from '../../server/shared/solana/ore-stake.ts';
+import { Keypair } from '@solana/web3.js';
+import { buildOreStakeTx } from '../../server/shared/solana/ore-stake.js';
 
 for (const action of ['deposit', 'withdraw', 'claim', 'compound'] as const) {
   const user = Keypair.generate().publicKey;

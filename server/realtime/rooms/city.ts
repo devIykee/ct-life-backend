@@ -12,7 +12,7 @@
  * workers.
  */
 import { Room, Client } from 'colyseus';
-import { CityState } from '../schemas.js';
+import { CityState } from '../../../contract/realtime/states.js';
 
 const PATCH_HZ = 1;
 const MAX_PLAYERS = 1_000;

@@ -1,10 +1,5 @@
 /**
- * Pure-TS unit tests for the ct_escrow event decoder.
- *
- * The decoder reads Solana program-data log lines (base64) and
- * decodes the Settled / Refunded events. We hand-construct the
- * binary payloads (matching the on-chain Borsh layout) and
- * verify the decoder produces the right fields.
+ * Decoder tests for the ct_escrow program events.
  *
  * Run: `pnpm exec vitest run server/shared/solana/ct-escrow.test.ts`
  */
@@ -15,29 +10,29 @@ import { decodeCtEscrowEvent } from './ct-escrow.js';
 function disc(name: string): Uint8Array {
   return new Uint8Array(createHash('sha256').update(`event:${name}`).digest().slice(0, 8));
 }
-
 function u64(n: bigint): Uint8Array {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigUint64(0, n, true);
   return b;
 }
-
 function i64(n: bigint): Uint8Array {
   const b = new Uint8Array(8);
   new DataView(b.buffer).setBigInt64(0, n, true);
   return b;
 }
-
+function u16(n: number): Uint8Array {
+  const b = new Uint8Array(2);
+  new DataView(b.buffer).setUint16(0, n, true);
+  return b;
+}
 function pubkey(seed: number): Uint8Array {
-  // Deterministic 32-byte "address" — fill with the seed for
-  // each byte so each test gets a distinct value.
   const b = new Uint8Array(32);
   for (let i = 0; i < 32; i++) b[i] = (seed + i) & 0xff;
   return b;
 }
-
 function concat(parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((s, p) => s + p.byteLength, 0);
+  let total = 0;
+  for (const p of parts) total += p.byteLength;
   const out = new Uint8Array(total);
   let o = 0;
   for (const p of parts) {
@@ -46,7 +41,6 @@ function concat(parts: Uint8Array[]): Uint8Array {
   }
   return out;
 }
-
 function base58(bytes: Uint8Array): string {
   const ALPHA = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
   if (bytes.length === 0) return '';
@@ -74,62 +68,81 @@ function base58(bytes: Uint8Array): string {
 }
 
 describe('ct_escrow event decoder', () => {
-  it('decodes a Settled event', () => {
+  it('decodes a SessionOpened event', () => {
     const session = pubkey(1);
     const fan = pubkey(2);
     const creator = pubkey(3);
     const bytes = concat([
-      disc('Settled'),
+      disc('SessionOpened'),
       session,
       fan,
       creator,
-      u64(60n),                  // seconds_used
-      u64(1_000_000n),           // gross
-      u64(50_000n),              // fee
-      u64(950_000n),             // creator_payout
-      u64(4_000_000n),           // refund
-      i64(1_700_000_000n),       // settled_at
+      u64(42n),
+      u64(1_000_000n),
+      u16(5),
+      u64(5_500_000n),
+      u16(1_000),
+      i64(1_700_000_000n),
     ]);
-    const b64 = Buffer.from(bytes).toString('base64');
-    const out = decodeCtEscrowEvent(b64);
+    const out = decodeCtEscrowEvent(Buffer.from(bytes).toString('base64'));
     expect(out).not.toBeNull();
-    if (out?.kind !== 'settled') throw new Error('expected settled');
+    if (out?.kind !== 'opened') throw new Error('expected opened');
     expect(out.session).toBe(base58(session));
     expect(out.fan).toBe(base58(fan));
     expect(out.creator).toBe(base58(creator));
-    expect(out.secondsUsed).toBe(60n);
-    expect(out.grossBaseUnits).toBe(1_000_000n);
-    expect(out.feeBaseUnits).toBe(50_000n);
-    expect(out.creatorPayoutBaseUnits).toBe(950_000n);
-    expect(out.refundBaseUnits).toBe(4_000_000n);
-    expect(out.settledAt).toBe(1_700_000_000n);
+    expect(out.sessionId).toBe(42n);
+    expect(out.ratePerMin).toBe(1_000_000n);
+    expect(out.maxMinutes).toBe(5);
+    expect(out.deposit).toBe(5_500_000n);
+    expect(out.feeBps).toBe(1_000);
+    expect(out.openedAt).toBe(1_700_000_000n);
   });
 
-  it('decodes a Refunded event', () => {
+  it('decodes a SessionAccepted event', () => {
     const session = pubkey(11);
-    const fan = pubkey(12);
-    const creator = pubkey(13);
+    const bytes = concat([disc('SessionAccepted'), session, i64(1_700_000_100n)]);
+    const out = decodeCtEscrowEvent(Buffer.from(bytes).toString('base64'));
+    expect(out).not.toBeNull();
+    if (out?.kind !== 'accepted') throw new Error('expected accepted');
+    expect(out.session).toBe(base58(session));
+    expect(out.acceptedAt).toBe(1_700_000_100n);
+  });
+
+  it('decodes a SessionSettled event', () => {
+    const session = pubkey(21);
     const bytes = concat([
-      disc('Refunded'),
+      disc('SessionSettled'),
       session,
-      fan,
-      creator,
-      u64(5_000_000n),          // refund_base_units
-      i64(1_700_000_001n),
+      u64(1n),
+      u64(950_000n),
+      u64(50_000n),
+      u64(4_000_000n),
     ]);
-    const b64 = Buffer.from(bytes).toString('base64');
-    const out = decodeCtEscrowEvent(b64);
+    const out = decodeCtEscrowEvent(Buffer.from(bytes).toString('base64'));
+    expect(out).not.toBeNull();
+    if (out?.kind !== 'settled') throw new Error('expected settled');
+    expect(out.session).toBe(base58(session));
+    expect(out.minutes).toBe(1n);
+    expect(out.creatorAmount).toBe(950_000n);
+    expect(out.fee).toBe(50_000n);
+    expect(out.refund).toBe(4_000_000n);
+  });
+
+  it('decodes a SessionRefunded event', () => {
+    const session = pubkey(31);
+    const fan = pubkey(32);
+    const creator = pubkey(33);
+    const bytes = concat([disc('SessionRefunded'), session, fan, creator, u64(5_000_000n)]);
+    const out = decodeCtEscrowEvent(Buffer.from(bytes).toString('base64'));
     expect(out).not.toBeNull();
     if (out?.kind !== 'refunded') throw new Error('expected refunded');
-    expect(out.refundBaseUnits).toBe(5_000_000n);
-    expect(out.refundedAt).toBe(1_700_000_001n);
+    expect(out.refundAmount).toBe(5_000_000n);
   });
 
-  it('returns null on a non-ct_escrow log line', () => {
+  it('returns null on a non-ct_escrow log', () => {
     const other = new Uint8Array(64);
     for (let i = 0; i < 64; i++) other[i] = i;
-    const b64 = Buffer.from(other).toString('base64');
-    expect(decodeCtEscrowEvent(b64)).toBeNull();
+    expect(decodeCtEscrowEvent(Buffer.from(other).toString('base64'))).toBeNull();
   });
 
   it('returns null on an empty log', () => {

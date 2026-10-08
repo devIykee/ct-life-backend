@@ -206,12 +206,15 @@ Every variable the backend reads is documented in `.env.example`. The `docs:chec
 
 ### Database and cache
 
-| Variable       | Purpose                 | Required | Example                                          |
-| -------------- | ----------------------- | -------- | ------------------------------------------------ |
-| `DATABASE_URL` | Postgres URL.           | yes      | `postgres://ctlife:ctlife@localhost:5434/ctlife` |
-| `DATABASE_SSL` | Enable TLS to Postgres. | yes      | `false`                                          |
-| `REDIS_URL`    | Redis URL.              | yes      | `redis://localhost:6381/0`                       |
-| `REDIS_TLS`    | Enable TLS to Redis.    | yes      | `false`                                          |
+| Variable            | Purpose                                  | Required | Example                                               |
+| ------------------- | ---------------------------------------- | -------- | ----------------------------------------------------- |
+| `DATABASE_URL`      | Postgres URL.                            | yes      | `postgres://ctlife:ctlife@localhost:5434/ctlife`      |
+| `DATABASE_SSL`      | Enable TLS to Postgres.                  | yes      | `false`                                               |
+| `REDIS_URL`         | Redis URL.                               | yes      | `redis://localhost:6381/0`                            |
+| `REDIS_TLS`         | Enable TLS to Redis.                     | yes      | `false`                                               |
+| `TEST_DATABASE_URL` | Test database URL (isolated test suite). | test     | `postgres://ctlife:ctlife@localhost:5432/ctlife_test` |
+| `TEST_SCHEMA`       | Test schema name.                        | test     | `test`                                                |
+| `SOLANA_RPC_URL`    | Mainnet RPC for verification tests.      | test     | `https://api.mainnet-beta.solana.com`                 |
 
 ### Auth
 

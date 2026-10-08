@@ -6,7 +6,7 @@ The full content lands in M3 (Anchor tests + IDL commit) and M4 (deployed progra
 
 ## ct_escrow program
 
-The paid-call escrow on Solana. Adapted from the Anchor escrow example. Anchor 0.31 client, Solana CLI 3.1.10, Rust crate `anchor-lang = "0.31.1"`. **The program has no admin withdraw.**
+The paid-call escrow on Solana. Adapted from the Anchor escrow example. Anchor 0.31 client, Solana CLI 3.1.10, Rust crate `anchor-lang = "0.31.1"`. **The program has no admin withdraw.** The on-chain Session enforces `1 <= max_minutes <= 60`, and `settle()` / `refund()` must mark the session as `status = 2` or `status = 3` before closing the vault.
 
 ### Accounts
 
@@ -25,6 +25,9 @@ The paid-call escrow on Solana. Adapted from the Anchor escrow example. Anchor 0
 - `fan, creator: Pubkey`
 - `session_id: u64`
 - `rate_per_min: u64` (USDC base units)
+
+Known oddities: `Config` includes an extra `vault` field from the original escrow example, and `Session.vault_bump` is unused even though the account layout still carries it. Neither should be removed or reordered for compatibility.
+
 - `max_minutes: u16`
 - `deposit: u64` (rate × max × (1 + fee_bps/10000))
 - `fee_bps: u16` (copied from Config at `open`)

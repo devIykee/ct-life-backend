@@ -72,17 +72,17 @@ isSeeker, hasCharacter }`. The endpoint only exists when
 
 ## Verified milestones
 
-| Milestone | Status | Gate                                  |
-| --------- | ------ | ------------------------------------- |
-| M0        | DONE   | `pnpm smoke` 7/7 green                |
-| M1        | DONE   | `pnpm contract:check` green           |
-| M2        | DONE   | 32 unit tests, e2e with 20 bots       |
-| M3        | DONE   | 47 unit tests, market engine + ORE    |
+| Milestone | Status  | Gate                                                                                                                                         |
+| --------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| M0        | DONE    | `pnpm smoke` 7/7 green                                                                                                                       |
+| M1        | DONE    | `pnpm contract:check` green                                                                                                                  |
+| M2        | DONE    | 32 unit tests, e2e with 20 bots                                                                                                              |
+| M3        | DONE    | 47 unit tests, market engine + ORE                                                                                                           |
 | M4        | PARTIAL | 99 unit tests; ct_escrow deployed to devnet but server settlement wiring + Anchor test runner pending (see [UNVERIFIED.md](./UNVERIFIED.md)) |
-| M5        | DONE   | 169 unit tests, Phase 4 + 5           |
-| M6        | DONE   | covered by M5 (decision in DECISIONS) |
-| M7        | DONE   | 265 unit tests, Phase 6 competition   |
-| M8        | DONE   | 295 unit tests, authz matrix, fuzz    |
+| M5        | DONE    | 169 unit tests, Phase 4 + 5                                                                                                                  |
+| M6        | DONE    | covered by M5 (decision in DECISIONS)                                                                                                        |
+| M7        | DONE    | 265 unit tests, Phase 6 competition                                                                                                          |
+| M8        | DONE    | 295 unit tests, authz matrix, fuzz                                                                                                           |
 
 Run the full gate locally:
 

@@ -7,21 +7,21 @@ and a Railway project to run.
 
 ## TL;DR — what is and isn't done
 
-| Work item                                         | Local | Staging | Mainnet |
-| ------------------------------------------------- | ----- | ------- | ------- |
-| M0..M8 code (api/realtime/workers, db, contract)  | DONE  | DONE   | DONE    |
-| Static gate (typecheck/lint/format/docs/boundary) | DONE  | n/a    | n/a     |
-| Unit + integration + chaos tests                  | DONE  | n/a    | n/a     |
-| Fuzz harness + authz matrix                       | DONE  | n/a    | n/a     |
-| 200-bot staged ramp                               | DONE  | n/a    | n/a     |
-| **1k + 5k + 20k staged ramp**                     | TODO  | TODO   | n/a     |
-| **Spike test (0 → 2k logins / 60 s)**             | TODO  | TODO   | n/a     |
-| **Soak (1 h at 50% of measured ceiling)**         | TODO  | TODO   | n/a     |
-| **Dependency failure tests** (Helius/LK/Redis/PG) | TODO  | TODO   | n/a     |
-| **Real Railway deploy**                           | partial| TODO  | TODO    |
-| **Mainnet ORE stake transaction** (RUN_MAINNET_TESTS=1) | n/a | n/a | TODO |
-| **Push notifications on Seeker**                  | flag-off | flag-off | flag-off |
-| **X OAuth end-to-end**                            | flag-off | flag-off | flag-off |
+| Work item                                               | Local    | Staging  | Mainnet  |
+| ------------------------------------------------------- | -------- | -------- | -------- |
+| M0..M8 code (api/realtime/workers, db, contract)        | DONE     | DONE     | DONE     |
+| Static gate (typecheck/lint/format/docs/boundary)       | DONE     | n/a      | n/a      |
+| Unit + integration + chaos tests                        | DONE     | n/a      | n/a      |
+| Fuzz harness + authz matrix                             | DONE     | n/a      | n/a      |
+| 200-bot staged ramp                                     | DONE     | n/a      | n/a      |
+| **1k + 5k + 20k staged ramp**                           | TODO     | TODO     | n/a      |
+| **Spike test (0 → 2k logins / 60 s)**                   | TODO     | TODO     | n/a      |
+| **Soak (1 h at 50% of measured ceiling)**               | TODO     | TODO     | n/a      |
+| **Dependency failure tests** (Helius/LK/Redis/PG)       | TODO     | TODO     | n/a      |
+| **Real Railway deploy**                                 | partial  | TODO     | TODO     |
+| **Mainnet ORE stake transaction** (RUN_MAINNET_TESTS=1) | n/a      | n/a      | TODO     |
+| **Push notifications on Seeker**                        | flag-off | flag-off | flag-off |
+| **X OAuth end-to-end**                                  | flag-off | flag-off | flag-off |
 
 ## Read first
 
@@ -30,7 +30,7 @@ and a Railway project to run.
 3. `docs/HANDOVER.md` — env URLs, dev token flow, mock profile,
    known limitations.
 4. `docs/RAILWAY.md` — Railway-specific deploy guide.
-6. `docs/UNVERIFIED.md` — every gap, with workaround.
+5. `docs/UNVERIFIED.md` — every gap, with workaround.
 
 ## Re-run the dev gate as a smoke check
 
@@ -163,7 +163,7 @@ degrades, not crashes:
   continues.
 - **Redis down.** The presence/boards collapse; clients
   reconnect. Assert the ledger is intact (`sum(ledger.delta_cents)
-  == balances.cash_cents`).
+== balances.cash_cents`).
 - **Postgres failover.** Trigger a Railway Postgres failover
   mid-ramp. Api/workers reconnect via DATABASE_URL; in-flight
   transactions retry; idempotency prevents double-credit.

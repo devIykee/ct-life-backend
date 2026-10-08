@@ -1,350 +1,382 @@
 // =============================================================================
-// CT Life paid-call escrow program.
+// CT Life paid-call escrow program (M4 / spec section 6).
 //
-// Master prompt M4 / contract section 6. The backend can:
+// Accounts
+//   • Config PDA, seeds ["config"]
+//       admin, settle_authority, treasury (USDC account), usdc_mint,
+//       fee_bps (u16, default 1000), accept_window_secs (u32, 120).
+//   • Session PDA, seeds ["session", fan, creator, session_id_le_bytes]
+//       fan, creator, session_id: u64, rate_per_min: u64, max_minutes: u16,
+//       deposit: u64 (rate × max_minutes × (1 + fee_bps/10000) at open),
+//       fee_bps: u16 (copied from Config at open),
+//       opened_at: i64, accepted_at: i64 (0 until accept),
+//       status: u8 (0 Open, 1 Accepted, 2 Settled, 3 Refunded), bump.
+//   • Vault: the Session PDA's USDC associated token account.
 //
-//   1.  init_config(admin, treasury, fee_bps) — one-time setup. The
-//       admin is the backend's settle authority. The treasury is
-//       the protocol's USDC treasury (receives the 5% fee). The
-//       Config PDA owns the vault.
+// Instructions
+//   init_config(fee_bps, accept_window_secs)  admin
+//   open_session(session_id, rate_per_min, max_minutes)  fan
+//     Moves rate × max_minutes × (1 + fee_bps/10000) from fan to vault.
+//   accept()  settle_authority
+//   settle(seconds_used)  settle_authority
+//     minutes = ceil(seconds/60), capped at max. Pays creator rate × min,
+//     pays treasury rate × min × fee_bps / 10000, refunds remainder to
+//     fan, closes vault + Session (rent → fan).
+//   refund()  fan or settle_authority
+//     Open + accept window expired, or Accepted + max_minutes*60+600s
+//     since opened_at.
 //
-//   2.  open_session(fan, creator, rate_per_min, max_minutes,
-//                    fan_usdc_ata, escrow_usdc_ata, vault) — pure
-//       USDC transfer from fan to vault up to rate*max_minutes
-//       (the cap). Records the Session PDA with the agreed terms
-//       and a 120s accept timer.
-//
-//   3.  accept(creator, session) — creator must call before the
-//       120s accept timer; otherwise the fan refunds and gets the
-//       full amount back. After accept, status=active.
-//
-//   4.  settle(settle_authority, session, seconds_used) — at end
-//       of the call. minutes = ceil(seconds_used / 60). The
-//       creator gets minutes*rate, the treasury gets floor(gross
-//       * fee_bps / 10_000), the fan gets the refund remainder
-//       (cap - gross). Refund remainder is never withdrawn by an
-//       admin: the only outflows are to creator, fan, and
-//       treasury.
-//
-//   5.  refund(fan, session) — fan-initiated refund after the
-//       accept window (max+600s) or before accept. Returns the
-//       full vaulted amount to the fan.
-//
-// Security model: the admin key (settle_authority) can ONLY call
-// settle(). It cannot withdraw funds directly. The fan holds the
-// refund authority. The treasury is a passive recipient. The
-// on-chain logic is server-authoritative on the math; the server
-// supplies seconds_used honestly because the off-chain mortgage is
-// a settlement signature the program emits, the server records
-// the corresponding Helius program event, and the user's Net
-// Worth is the source of truth for the in-game ledger. Real
-// money movement goes through this program; the in-game ledger
-// is a parallel ledger that the same money presses can read.
+// Errors (spec): InvalidRate (rate is 0 or > 50 USDC/min),
+//   TooEarlyForRefund, AlreadyClosed, Unauthorized, MathOverflow.
 
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Token, TokenAccount, Transfer, CloseAccount};
+use anchor_spl::associated_token::AssociatedToken;
 
 declare_id!("FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz");
 
 pub mod errors;
 pub use errors::EscrowError;
 
-pub const FEE_BPS_DENOM: u16 = 10_000;
-/// Default protocol fee in basis points (5%).
-pub const DEFAULT_FEE_BPS: u16 = 500;
-/// Accept window in seconds (per contract section 6: 120 s).
-pub const ACCEPT_WINDOW_SECS: i64 = 120;
-/// Post-accept grace before fan can refund (per contract: 600 s).
+pub const FEE_BPS_DENOM: u64 = 10_000;
+/// Spec default: 10% platform fee.
+pub const DEFAULT_FEE_BPS: u16 = 1_000;
+/// Spec default: 120 s accept window.
+pub const DEFAULT_ACCEPT_WINDOW_SECS: u32 = 120;
+/// Spec: refund allowed after `max_minutes × 60 + 600 s` post-accept.
 pub const POST_ACCEPT_GRACE_SECS: i64 = 600;
-/// Minimum rate_cents_per_min (0.25 USDC = 25_000_000 base units at
-/// 6-decimal precision; for USDC the master prompt locks the API
-/// layer to 250_000..50_000_000 base units).
-pub const MIN_RATE_BASE_UNITS: u64 = 250_000;
+/// Program-side rate validation is only a positive rate <= 50 USDC/min.
+/// The 0.25 USDC/min floor is enforced by the API layer, not here.
+pub const MIN_RATE_BASE_UNITS: u64 = 1;
 pub const MAX_RATE_BASE_UNITS: u64 = 50_000_000;
-/// Minimum / maximum call length in minutes.
-pub const MIN_MINUTES: u8 = 1;
-pub const MAX_MINUTES: u8 = 60;
+/// Spec: u16 minutes.
+pub const MAX_MINUTES: u16 = u16::MAX;
 
 #[program]
 pub mod ct_escrow {
     use super::*;
 
-    /// One-time setup. The admin becomes the settle authority; the
-    /// treasury becomes the fee destination; fee_bps is the
-    /// protocol cut.
+    /// One-time setup. The admin is the backend's settle
+    /// authority. Fee 1000 bps = 10% per spec.
     pub fn init_config(
         ctx: Context<InitConfig>,
         fee_bps: u16,
+        accept_window_secs: u32,
     ) -> Result<()> {
         require!(
-            fee_bps <= FEE_BPS_DENOM,
+            fee_bps <= FEE_BPS_DENOM as u16,
             EscrowError::InvalidFeeBps
         );
         let cfg = &mut ctx.accounts.config;
         cfg.admin = ctx.accounts.admin.key();
+        cfg.settle_authority = ctx.accounts.settle_authority.key();
         cfg.treasury = ctx.accounts.treasury.key();
-        cfg.fee_bps = fee_bps;
+        cfg.usdc_mint = ctx.accounts.usdc_mint.key();
         cfg.vault = ctx.accounts.vault.key();
+        cfg.fee_bps = fee_bps;
+        cfg.accept_window_secs = accept_window_secs;
         cfg.bump = ctx.bumps.config;
+        emit!(ConfigInitialized {
+            admin: cfg.admin,
+            settle_authority: cfg.settle_authority,
+            treasury: cfg.treasury,
+            fee_bps: cfg.fee_bps,
+            accept_window_secs: cfg.accept_window_secs,
+        });
         Ok(())
     }
 
-    /// Fan opens a paid-call session. Pulls the call's max value
-    /// (rate * max_minutes) from the fan's USDC ATA into the
-    /// program's vault. Records the agreed terms + a 120s accept
-    /// window. The session PDA is the on-chain receipt.
+    /// Fan opens the session. The on-chain deposit is
+    /// `rate × max_minutes × (1 + fee_bps/10000)` — the creator's
+    /// eventual payout, the fee, and the rent all come from this
+    /// single deposit. The vault is the Session PDA's USDC ATA.
     pub fn open_session(
         ctx: Context<OpenSession>,
         session_id: u64,
-        creator: Pubkey,
-        rate_base_units_per_min: u64,
-        max_minutes: u8,
+        rate_per_min: u64,
+        max_minutes: u16,
     ) -> Result<()> {
         require!(
-            rate_base_units_per_min >= MIN_RATE_BASE_UNITS
-                && rate_base_units_per_min <= MAX_RATE_BASE_UNITS,
+            rate_per_min > 0 && rate_per_min <= MAX_RATE_BASE_UNITS,
             EscrowError::InvalidRate
         );
-        require!(
-            max_minutes >= MIN_MINUTES && max_minutes <= MAX_MINUTES,
-            EscrowError::InvalidMinutes
-        );
-
-        // Cap = rate * max_minutes (in base units). We compute it
-        // in u128 to avoid any chance of overflow even on the
-        // largest allowed inputs.
-        let cap: u64 = (rate_base_units_per_min as u128)
+        require!(max_minutes > 0 && max_minutes <= 60, EscrowError::InvalidMinutes);
+        let cfg = &ctx.accounts.config;
+        let deposit: u64 = (rate_per_min as u128)
             .checked_mul(max_minutes as u128)
+            .and_then(|s| s.checked_mul((FEE_BPS_DENOM as u128) + (cfg.fee_bps as u128)))
+            .and_then(|s| s.checked_div(FEE_BPS_DENOM as u128))
             .and_then(|s| u64::try_from(s).ok())
             .ok_or(EscrowError::MathOverflow)?;
 
-        // Transfer fan -> vault. The fan signs; the program is
-        // the PDA authority on the vault's token account, but
-        // this is a CPI from the fan's token account so the fan's
-        // authority is what matters.
+        // Initialize the Session PDA.
+        let session = &mut ctx.accounts.session;
+        session.session_id = session_id;
+        session.fan = ctx.accounts.fan.key();
+        session.creator = ctx.accounts.creator.key();
+        session.rate_per_min = rate_per_min;
+        session.max_minutes = max_minutes;
+        session.deposit = deposit;
+        session.fee_bps = cfg.fee_bps;
+        session.opened_at = Clock::get()?.unix_timestamp;
+        session.accepted_at = 0;
+        session.settled_at = 0;
+        session.status = 0; // Open
+        session.bump = ctx.bumps.session;
+
+        // The vault is the Session PDA's USDC ATA. Create it
+        // here; the user signed for fan, the PDA authorizes the
+        // ATA create via `init_if_needed` (CPI to Associated
+        // Token Program; the fan funds the ATA after creation).
+        // We split the deposit transfer out so the init runs
+        // first; token::transfer is below.
+
         let cpi_accounts = Transfer {
             from: ctx.accounts.fan_usdc_ata.to_account_info(),
             to: ctx.accounts.vault.to_account_info(),
             authority: ctx.accounts.fan.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts);
-        token::transfer(cpi_ctx, cap)?;
+        token::transfer(cpi_ctx, deposit)?;
 
-        let session = &mut ctx.accounts.session;
-        session.session_id = session_id;
-        session.fan = ctx.accounts.fan.key();
-        session.creator = creator;
-        session.rate_base_units_per_min = rate_base_units_per_min;
-        session.max_minutes = max_minutes;
-        session.cap_base_units = cap;
-        session.opened_at = Clock::get()?.unix_timestamp;
-        session.accepted_at = 0;
-        session.settled_at = 0;
-        session.seconds_used = 0;
-        session.status = SessionStatus::Pending;
-        session.bump = ctx.bumps.session;
+        let event = SessionOpened {
+            session: ctx.accounts.session.key(),
+            fan: ctx.accounts.session.fan,
+            creator: ctx.accounts.session.creator,
+            session_id,
+            rate_per_min,
+            max_minutes,
+            deposit,
+            fee_bps: ctx.accounts.session.fee_bps,
+            opened_at: ctx.accounts.session.opened_at,
+        };
+        emit!(event);
         Ok(())
     }
 
-    /// Creator accepts the call. Must be called before
-    /// opened_at + ACCEPT_WINDOW_SECS.
+    /// Settle authority marks the session Accepted. This
+    /// happens after the creator taps Accept in the client.
     pub fn accept(ctx: Context<Accept>) -> Result<()> {
+        let cfg = &ctx.accounts.config;
         let session = &mut ctx.accounts.session;
+        require!(session.status == 0, EscrowError::AlreadyClosed);
         require!(
-            session.status == SessionStatus::Pending,
-            EscrowError::NotPending
-        );
-        require!(
-            session.creator == ctx.accounts.creator.key(),
-            EscrowError::NotCreator
+            ctx.accounts.settle_authority.key() == cfg.settle_authority,
+            EscrowError::Unauthorized
         );
         let now = Clock::get()?.unix_timestamp;
         require!(
-            now <= session.opened_at + ACCEPT_WINDOW_SECS,
+            now <= session.opened_at + cfg.accept_window_secs as i64,
             EscrowError::AcceptWindowExpired
         );
-        session.status = SessionStatus::Active;
+        session.status = 1; // Accepted
         session.accepted_at = now;
+        let event = SessionAccepted {
+            session: ctx.accounts.session.key(),
+            accepted_at: now,
+        };
+        emit!(event);
         Ok(())
     }
 
-    /// Settle the call. The settle_authority is the program's
-    /// admin key (the backend). It supplies seconds_used. Math:
-    ///
-    ///   minutes = ceil(seconds_used / 60)        (cap by max_minutes)
-    ///   gross   = minutes * rate
-    ///   fee     = floor(gross * fee_bps / 10_000)
-    ///   creator_payout = gross - fee
-    ///   refund  = cap - gross                    (back to fan)
-    ///
-    /// The fan receives the refund, the creator receives
-    /// creator_payout, the treasury receives fee. The vault must
-    /// have enough; if seconds_used > max_minutes * 60, the
-    /// call has overrun and we cap to max_minutes. If the creator
-    /// or fan ATA is missing, we still allow the call to settle
-    /// by leaving their portion in the vault (the off-chain
-    /// ledger handles accounting).
-    pub fn settle(
-        ctx: Context<Settle>,
-        seconds_used: u64,
-    ) -> Result<()> {
+    /// Settle authority closes the call.
+    ///   minutes = ceil(seconds/60), capped at max_minutes.
+    ///   gross   = rate × minutes
+    ///   fee     = floor(gross × fee_bps / 10000)
+    ///   creator = gross
+    ///   fan     = vault.amount - gross - fee
+    ///   The vault and Session accounts are closed after the
+    ///   payouts; the rent-exempt balance that the program
+    ///   held for the Session is returned to the fan.
+    pub fn settle(ctx: Context<Settle>, seconds_used: u64) -> Result<()> {
+        let cfg = &ctx.accounts.config;
         let session = &mut ctx.accounts.session;
+        require!(session.status == 1, EscrowError::AlreadyClosed);
         require!(
-            session.status == SessionStatus::Active,
-            EscrowError::NotActive
+            ctx.accounts.settle_authority.key() == cfg.settle_authority,
+            EscrowError::Unauthorized
         );
+
         let now = Clock::get()?.unix_timestamp;
-        // Allow settle any time after accept. The LiveKit
-        // room_finished webhook drives this. The server should
-        // call within POST_ACCEPT_GRACE_SECS of the call ending
-        // or the fan can refund.
-        require!(now >= session.accepted_at, EscrowError::ClockMath);
-        require!(
-            session.seconds_used == 0,
-            EscrowError::AlreadySettled
-        );
-
-        // minutes = ceil(seconds / 60), capped at max_minutes.
-        let cap_minutes = session.max_minutes as u64;
-        let max_secs = cap_minutes.checked_mul(60).ok_or(EscrowError::MathOverflow)?;
-        let seconds_used = seconds_used.min(max_secs);
-        let minutes = (seconds_used + 59) / 60;
-        let minutes = minutes.min(cap_minutes);
-
-        // gross = minutes * rate, in u128 to avoid overflow.
-        let gross: u64 = (session.rate_base_units_per_min as u128)
+        let max_secs = (session.max_minutes as i64)
+            .checked_mul(60)
+            .ok_or(EscrowError::MathOverflow)?;
+        let seconds_used = (seconds_used as i64).min(max_secs);
+        let minutes: u64 = {
+            let s = seconds_used as u64;
+            ((s + 59) / 60).min(session.max_minutes as u64)
+        };
+        let gross: u64 = (session.rate_per_min as u128)
             .checked_mul(minutes as u128)
             .and_then(|s| u64::try_from(s).ok())
             .ok_or(EscrowError::MathOverflow)?;
-        let cfg_fee_bps = ctx.accounts.config.fee_bps;
         let fee: u64 = (gross as u128)
-            .checked_mul(cfg_fee_bps as u128)
-            .map(|m| m / FEE_BPS_DENOM as u128)
+            .checked_mul(session.fee_bps as u128)
+            .and_then(|s| s.checked_div(FEE_BPS_DENOM as u128))
             .and_then(|s| u64::try_from(s).ok())
             .ok_or(EscrowError::MathOverflow)?;
-        let creator_payout = gross.checked_sub(fee).ok_or(EscrowError::MathOverflow)?;
-        let refund = session
-            .cap_base_units
-            .checked_sub(gross)
+
+        let vault_amount = ctx.accounts.vault.amount;
+        let total_owed = gross
+            .checked_add(fee)
+            .ok_or(EscrowError::MathOverflow)?;
+        if vault_amount < total_owed {
+            return err!(EscrowError::MathOverflow);
+        }
+        let fan_refund = vault_amount
+            .checked_sub(total_owed)
             .ok_or(EscrowError::MathOverflow)?;
 
-        // Vault -> creator USDC ATA.
-        if creator_payout > 0 {
+        session.status = 2; // Settled
+        session.settled_at = now;
+
+        let session_seeds: &[&[u8]] = &[
+            b"session",
+            session.fan.as_ref(),
+            session.creator.as_ref(),
+            &session.session_id.to_le_bytes(),
+            &[session.bump],
+        ];
+        let signer = &[&session_seeds[..]];
+
+        if gross > 0 {
             let cpi_accounts = Transfer {
                 from: ctx.accounts.vault.to_account_info(),
                 to: ctx.accounts.creator_usdc_ata.to_account_info(),
-                authority: ctx.accounts.config.to_account_info(),
+                authority: session.to_account_info(),
             };
-            let seeds: &[&[u8]] = &[b"config", &[ctx.accounts.config.bump]];
-            let signer_seeds = &[seeds];
             let cpi_ctx = CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 cpi_accounts,
-                signer_seeds,
+                signer,
             );
-            token::transfer(cpi_ctx, creator_payout)?;
+            token::transfer(cpi_ctx, gross)?;
         }
-
-        // Vault -> treasury USDC ATA (the fee).
         if fee > 0 {
             let cpi_accounts = Transfer {
                 from: ctx.accounts.vault.to_account_info(),
                 to: ctx.accounts.treasury_usdc_ata.to_account_info(),
-                authority: ctx.accounts.config.to_account_info(),
+                authority: session.to_account_info(),
             };
-            let seeds: &[&[u8]] = &[b"config", &[ctx.accounts.config.bump]];
-            let signer_seeds = &[seeds];
             let cpi_ctx = CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 cpi_accounts,
-                signer_seeds,
+                signer,
             );
             token::transfer(cpi_ctx, fee)?;
         }
-
-        // Vault -> fan USDC ATA (the refund remainder).
-        if refund > 0 {
+        if fan_refund > 0 {
             let cpi_accounts = Transfer {
                 from: ctx.accounts.vault.to_account_info(),
                 to: ctx.accounts.fan_usdc_ata.to_account_info(),
-                authority: ctx.accounts.config.to_account_info(),
+                authority: session.to_account_info(),
             };
-            let seeds: &[&[u8]] = &[b"config", &[ctx.accounts.config.bump]];
-            let signer_seeds = &[seeds];
             let cpi_ctx = CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
                 cpi_accounts,
-                signer_seeds,
+                signer,
             );
-            token::transfer(cpi_ctx, refund)?;
+            token::transfer(cpi_ctx, fan_refund)?;
         }
 
-        session.status = SessionStatus::Settled;
-        session.settled_at = now;
-        session.seconds_used = seconds_used;
-        session.gross_base_units = gross;
-        session.fee_base_units = fee;
-        session.creator_payout_base_units = creator_payout;
-        session.refund_base_units = refund;
-        emit!(Settled {
-            session: session.key(),
-            fan: session.fan,
-            creator: session.creator,
-            seconds_used,
-            gross_base_units: gross,
-            fee_base_units: fee,
-            creator_payout_base_units: creator_payout,
-            refund_base_units: refund,
-            settled_at: now,
-        });
+        // The vault may have dust; we pay from the actual vault balance and
+        // floor the fee using integer division, so the fan gets the remainder.
+        let close_accounts = CloseAccount {
+            account: ctx.accounts.vault.to_account_info(),
+            destination: ctx.accounts.fan.to_account_info(),
+            authority: session.to_account_info(),
+        };
+        let close_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            close_accounts,
+            signer,
+        );
+        token::close_account(close_ctx)?;
+
+        let event = SessionSettled {
+            session: ctx.accounts.session.key(),
+            minutes,
+            creator_amount: gross,
+            fee,
+            refund: fan_refund,
+        };
+        emit!(event);
         Ok(())
     }
 
-    /// Fan-initiated refund. Allowed at any time before settle, plus
-    /// after the post-accept grace if active.
+    /// Fan or settle authority refunds. Allowed:
+    ///   - Status Open + now > opened_at + accept_window_secs
+    ///     (creator never accepted).
+    ///   - Status Accepted + now > opened_at + max_minutes × 60 + 600 s.
     pub fn refund(ctx: Context<Refund>) -> Result<()> {
+        let cfg = &ctx.accounts.config;
         let session = &mut ctx.accounts.session;
-        require!(
-            session.fan == ctx.accounts.fan.key(),
-            EscrowError::NotFan
-        );
         let now = Clock::get()?.unix_timestamp;
-        let can_refund = match session.status {
-            SessionStatus::Pending => true,
-            SessionStatus::Active => {
-                now >= session.accepted_at + POST_ACCEPT_GRACE_SECS
-                    && session.seconds_used == 0
+        let allowed = match session.status {
+            0 => now > session.opened_at + cfg.accept_window_secs as i64,
+            1 => {
+                let max_deadline = session
+                    .opened_at
+                    .checked_add((session.max_minutes as i64).checked_mul(60).ok_or(EscrowError::MathOverflow)?)
+                    .and_then(|ts| ts.checked_add(POST_ACCEPT_GRACE_SECS))
+                    .ok_or(EscrowError::MathOverflow)?;
+                now > max_deadline
             }
             _ => false,
         };
-        require!(can_refund, EscrowError::CannotRefund);
-
-        // Vault -> fan. The whole cap comes back; settlement
-        // accounting happens off-chain.
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.vault.to_account_info(),
-            to: ctx.accounts.fan_usdc_ata.to_account_info(),
-            authority: ctx.accounts.config.to_account_info(),
-        };
-        let seeds: &[&[u8]] = &[b"config", &[ctx.accounts.config.bump]];
-        let signer_seeds = &[seeds];
-        let cpi_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            cpi_accounts,
-            signer_seeds,
+        if !allowed {
+            return err!(EscrowError::TooEarlyForRefund);
+        }
+        require!(
+            ctx.accounts.signer.key() == session.fan || ctx.accounts.signer.key() == cfg.settle_authority,
+            EscrowError::Unauthorized
         );
-        token::transfer(cpi_ctx, session.cap_base_units)?;
 
-        session.status = SessionStatus::Refunded;
+        session.status = 3; // Refunded
         session.settled_at = now;
-        session.refund_base_units = session.cap_base_units;
-        emit!(Refunded {
-            session: session.key(),
-            fan: session.fan,
-            creator: session.creator,
-            refund_base_units: session.cap_base_units,
-            refunded_at: now,
-        });
+
+        let refund_amount = ctx.accounts.vault.amount;
+        let session_seeds: &[&[u8]] = &[
+            b"session",
+            session.fan.as_ref(),
+            session.creator.as_ref(),
+            &session.session_id.to_le_bytes(),
+            &[session.bump],
+        ];
+        let signer = &[&session_seeds[..]];
+        if refund_amount > 0 {
+            let cpi_accounts = Transfer {
+                from: ctx.accounts.vault.to_account_info(),
+                to: ctx.accounts.fan_usdc_ata.to_account_info(),
+                authority: session.to_account_info(),
+            };
+            let cpi_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                cpi_accounts,
+                signer,
+            );
+            token::transfer(cpi_ctx, refund_amount)?;
+        }
+
+        let close_accounts = CloseAccount {
+            account: ctx.accounts.vault.to_account_info(),
+            destination: ctx.accounts.fan.to_account_info(),
+            authority: session.to_account_info(),
+        };
+        let close_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            close_accounts,
+            signer,
+        );
+        token::close_account(close_ctx)?;
+
+        let event = SessionRefunded {
+            session: ctx.accounts.session.key(),
+            fan: ctx.accounts.session.fan,
+            creator: ctx.accounts.session.creator,
+            refund_amount,
+        };
+        emit!(event);
         Ok(())
     }
 }
@@ -358,25 +390,26 @@ pub struct InitConfig<'info> {
         seeds = [b"config"],
         bump,
     )]
-    pub config: Account<'info, Config>,
+    pub config: Box<Account<'info, Config>>,
 
-    /// CHECK: the USDC token account that holds the vault. We
-    // verify the mint + owner in the handler.
+    /// CHECK: the USDC token account that holds the vault.
+    /// Verified by mint + owner.
     #[account(
         constraint = vault.mint == usdc_mint.key() @ EscrowError::InvalidMint,
         constraint = vault.owner == config.key() @ EscrowError::InvalidVaultOwner,
     )]
-    pub vault: Account<'info, TokenAccount>,
+    pub vault: Box<Account<'info, TokenAccount>>,
 
-    /// CHECK: the USDC mint. Verified against the vault.
-    pub usdc_mint: AccountInfo<'info>,
-
-    /// The treasury USDC token account (the protocol's fee destination).
-    /// CHECK: we don't read the data; the off-chain code wires it.
+    pub usdc_mint: Account<'info, anchor_spl::token::Mint>,
+    /// CHECK: USDC ATA owned by `treasury`.
     pub treasury: AccountInfo<'info>,
 
     #[account(mut)]
     pub admin: Signer<'info>,
+
+    /// The settle authority (backend signer). Stored in Config
+    /// and required by `accept` / `settle` / `refund`.
+    pub settle_authority: Signer<'info>,
 
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
@@ -389,34 +422,42 @@ pub struct OpenSession<'info> {
         init,
         payer = fan,
         space = 8 + Session::INIT_SPACE,
-        seeds = [b"session", fan.key().as_ref(), &session_id.to_le_bytes()],
+        seeds = [b"session", fan.key().as_ref(), creator.key().as_ref(), &session_id.to_le_bytes()],
         bump,
     )]
-    pub session: Account<'info, Session>,
+    pub session: Box<Account<'info, Session>>,
 
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    /// The vault is the Session PDA's USDC ATA. Created via
+    /// `init_if_needed` so the same instruction opens both.
     #[account(
-        seeds = [b"config"],
-        bump = config.bump,
+        init_if_needed,
+        payer = fan,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = session,
     )]
-    pub config: Account<'info, Config>,
+    pub vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(address = config.usdc_mint @ EscrowError::InvalidMint)]
+    pub usdc_mint: Box<Account<'info, anchor_spl::token::Mint>>,
 
     #[account(
         mut,
-        constraint = vault.key() == config.vault @ EscrowError::InvalidVault,
-    )]
-    pub vault: Account<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        constraint = fan_usdc_ata.mint == vault.mint @ EscrowError::InvalidMint,
+        constraint = fan_usdc_ata.mint == usdc_mint.key() @ EscrowError::InvalidMint,
         constraint = fan_usdc_ata.owner == fan.key() @ EscrowError::InvalidTokenOwner,
     )]
-    pub fan_usdc_ata: Account<'info, TokenAccount>,
+    pub fan_usdc_ata: Box<Account<'info, TokenAccount>>,
+
+    /// CHECK: the creator whose address seeds the Session PDA.
+    pub creator: AccountInfo<'info>,
 
     #[account(mut)]
     pub fan: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     pub rent: Sysvar<'info, Rent>,
 }
@@ -425,59 +466,67 @@ pub struct OpenSession<'info> {
 pub struct Accept<'info> {
     #[account(
         mut,
-        seeds = [b"session", session.fan.as_ref(), &session.session_id.to_le_bytes()],
+        seeds = [b"session", session.fan.as_ref(), session.creator.as_ref(), &session.session_id.to_le_bytes()],
         bump = session.bump,
     )]
-    pub session: Account<'info, Session>,
+    pub session: Box<Account<'info, Session>>,
 
-    pub creator: Signer<'info>,
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
+
+    pub settle_authority: Signer<'info>,
 }
 
 #[derive(Accounts)]
 pub struct Settle<'info> {
     #[account(
         mut,
-        seeds = [b"session", session.fan.as_ref(), &session.session_id.to_le_bytes()],
+        close = fan,
+        seeds = [b"session", session.fan.as_ref(), session.creator.as_ref(), &session.session_id.to_le_bytes()],
         bump = session.bump,
     )]
-    pub session: Account<'info, Session>,
+    pub session: Box<Account<'info, Session>>,
 
-    #[account(
-        seeds = [b"config"],
-        bump = config.bump,
-    )]
-    pub config: Account<'info, Config>,
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
 
     #[account(
         mut,
-        constraint = vault.key() == config.vault @ EscrowError::InvalidVault,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = session,
     )]
-    pub vault: Account<'info, TokenAccount>,
+    pub vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(address = config.usdc_mint @ EscrowError::InvalidMint)]
+    pub usdc_mint: Box<Account<'info, anchor_spl::token::Mint>>,
 
     #[account(
         mut,
-        constraint = creator_usdc_ata.mint == vault.mint @ EscrowError::InvalidMint,
+        constraint = creator_usdc_ata.mint == usdc_mint.key() @ EscrowError::InvalidMint,
         constraint = creator_usdc_ata.owner == session.creator @ EscrowError::InvalidTokenOwner,
     )]
-    pub creator_usdc_ata: Account<'info, TokenAccount>,
+    pub creator_usdc_ata: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
-        constraint = fan_usdc_ata.mint == vault.mint @ EscrowError::InvalidMint,
+        constraint = fan_usdc_ata.mint == usdc_mint.key() @ EscrowError::InvalidMint,
         constraint = fan_usdc_ata.owner == session.fan @ EscrowError::InvalidTokenOwner,
     )]
-    pub fan_usdc_ata: Account<'info, TokenAccount>,
+    pub fan_usdc_ata: Box<Account<'info, TokenAccount>>,
 
     #[account(
         mut,
-        constraint = treasury_usdc_ata.mint == vault.mint @ EscrowError::InvalidMint,
+        constraint = treasury_usdc_ata.mint == usdc_mint.key() @ EscrowError::InvalidMint,
         constraint = treasury_usdc_ata.owner == config.treasury @ EscrowError::InvalidTokenOwner,
     )]
-    pub treasury_usdc_ata: Account<'info, TokenAccount>,
+    pub treasury_usdc_ata: Box<Account<'info, TokenAccount>>,
 
-    /// The settle authority (the backend). Constraint: must equal
-    /// config.admin.
+    /// The settle authority (must equal config.settle_authority).
     pub settle_authority: Signer<'info>,
+
+    /// CHECK: receives the Session account rent on close.
+    #[account(mut, address = session.fan @ EscrowError::Unauthorized)]
+    pub fan: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token>,
 }
@@ -486,119 +535,121 @@ pub struct Settle<'info> {
 pub struct Refund<'info> {
     #[account(
         mut,
-        seeds = [b"session", session.fan.as_ref(), &session.session_id.to_le_bytes()],
+        close = fan,
+        seeds = [b"session", session.fan.as_ref(), session.creator.as_ref(), &session.session_id.to_le_bytes()],
         bump = session.bump,
     )]
-    pub session: Account<'info, Session>,
+    pub session: Box<Account<'info, Session>>,
 
-    #[account(
-        seeds = [b"config"],
-        bump = config.bump,
-    )]
-    pub config: Account<'info, Config>,
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Box<Account<'info, Config>>,
 
     #[account(
         mut,
-        constraint = vault.key() == config.vault @ EscrowError::InvalidVault,
+        associated_token::mint = usdc_mint,
+        associated_token::authority = session,
     )]
-    pub vault: Account<'info, TokenAccount>,
+    pub vault: Box<Account<'info, TokenAccount>>,
+
+    #[account(address = config.usdc_mint @ EscrowError::InvalidMint)]
+    pub usdc_mint: Box<Account<'info, anchor_spl::token::Mint>>,
 
     #[account(
         mut,
-        constraint = fan_usdc_ata.mint == vault.mint @ EscrowError::InvalidMint,
+        constraint = fan_usdc_ata.mint == usdc_mint.key() @ EscrowError::InvalidMint,
         constraint = fan_usdc_ata.owner == session.fan @ EscrowError::InvalidTokenOwner,
     )]
-    pub fan_usdc_ata: Account<'info, TokenAccount>,
+    pub fan_usdc_ata: Box<Account<'info, TokenAccount>>,
 
-    pub fan: Signer<'info>,
+    /// The signer — fan or settle_authority.
+    pub signer: Signer<'info>,
+
+    /// CHECK: receives the Session account rent on close.
+    #[account(mut, address = session.fan @ EscrowError::Unauthorized)]
+    pub fan: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token>,
 }
 
 #[account]
 pub struct Config {
-    pub admin: Pubkey,           // settle authority
-    pub treasury: Pubkey,        // protocol fee destination
-    pub vault: Pubkey,           // USDC token account owned by config PDA
-    pub fee_bps: u16,            // protocol fee in basis points (max 10_000)
+    pub admin: Pubkey,
+    pub settle_authority: Pubkey,
+    pub treasury: Pubkey,
+    pub usdc_mint: Pubkey,
+    pub vault: Pubkey,
+    pub fee_bps: u16,
+    pub accept_window_secs: u32,
     pub bump: u8,
 }
 
 impl Config {
-    pub const INIT_SPACE: usize =
-        32  // admin
-        + 32  // treasury
-        + 32  // vault
-        + 2   // fee_bps
-        + 1;  // bump
+    pub const INIT_SPACE: usize = 32 + 32 + 32 + 32 + 32 + 2 + 4 + 1;
 }
 
 #[account]
 pub struct Session {
-    pub session_id: u64,                 // monotonic per fan
+    pub session_id: u64,
     pub fan: Pubkey,
     pub creator: Pubkey,
-    pub rate_base_units_per_min: u64,    // 0.25..50 USDC
-    pub max_minutes: u8,                 // 1..60
-    pub cap_base_units: u64,             // rate * max_minutes
-    pub opened_at: i64,                  // unix ts
-    pub accepted_at: i64,                // 0 until accept
-    pub settled_at: i64,                 // 0 until settle/refund
-    pub seconds_used: u64,               // 0 until settle
-    pub gross_base_units: u64,           // 0 until settle
-    pub fee_base_units: u64,             // 0 until settle
-    pub creator_payout_base_units: u64,  // 0 until settle
-    pub refund_base_units: u64,          // 0 until settle/refund
-    pub status: SessionStatus,
+    pub rate_per_min: u64,
+    pub max_minutes: u16,
+    pub deposit: u64,
+    pub fee_bps: u16,
+    pub opened_at: i64,
+    pub accepted_at: i64,
+    pub settled_at: i64,
+    pub status: u8, // 0 Open, 1 Accepted, 2 Settled, 3 Refunded
     pub bump: u8,
+    pub vault_bump: u8,
 }
 
 impl Session {
     pub const INIT_SPACE: usize =
-        8   // session_id
-        + 32  // fan
-        + 32  // creator
-        + 8   // rate
-        + 1   // max_minutes
-        + 8   // cap
-        + 8   // opened_at
-        + 8   // accepted_at
-        + 8   // settled_at
-        + 8   // seconds_used
-        + 8   // gross
-        + 8   // fee
-        + 8   // creator_payout
-        + 8   // refund
-        + 1   // status
-        + 1;  // bump
-}
-
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SessionStatus {
-    Pending,
-    Active,
-    Settled,
-    Refunded,
+        8 + 32 + 32 + 8 + 2 + 8 + 2 + 8 + 8 + 8 + 1 + 1 + 1;
 }
 
 #[event]
-pub struct Settled {
-    pub session: Pubkey,
-    pub fan: Pubkey,
-    pub creator: Pubkey,
-    pub seconds_used: u64,
-    pub gross_base_units: u64,
-    pub fee_base_units: u64,
-    pub creator_payout_base_units: u64,
-    pub refund_base_units: u64,
-    pub settled_at: i64,
+pub struct ConfigInitialized {
+    pub admin: Pubkey,
+    pub settle_authority: Pubkey,
+    pub treasury: Pubkey,
+    pub fee_bps: u16,
+    pub accept_window_secs: u32,
 }
 
 #[event]
-pub struct Refunded {
+pub struct SessionOpened {
     pub session: Pubkey,
     pub fan: Pubkey,
     pub creator: Pubkey,
-    pub refund_base_units: u64,
-    pub refunded_at: i64,
+    pub session_id: u64,
+    pub rate_per_min: u64,
+    pub max_minutes: u16,
+    pub deposit: u64,
+    pub fee_bps: u16,
+    pub opened_at: i64,
+}
+
+#[event]
+pub struct SessionAccepted {
+    pub session: Pubkey,
+    pub accepted_at: i64,
+}
+
+#[event]
+pub struct SessionSettled {
+    pub session: Pubkey,
+    pub minutes: u64,
+    pub creator_amount: u64,
+    pub fee: u64,
+    pub refund: u64,
+}
+
+#[event]
+pub struct SessionRefunded {
+    pub session: Pubkey,
+    pub fan: Pubkey,
+    pub creator: Pubkey,
+    pub refund_amount: u64,
 }

@@ -26,9 +26,14 @@ function txFor(action: BinaryData, amount?: bigint): Transaction {
   const user = Keypair.generate().publicKey;
   return buildOreStakeTx({
     userPubkey: user,
-    action: action === 'deposit' || action === 'withdraw'
-      ? (action === 'deposit' ? 'deposit' : 'withdraw')
-      : (action === 'claim' ? 'claim' : 'compound'),
+    action:
+      action === 'deposit' || action === 'withdraw'
+        ? action === 'deposit'
+          ? 'deposit'
+          : 'withdraw'
+        : action === 'claim'
+          ? 'claim'
+          : 'compound',
     amount: amount ?? 1_000_000n,
   });
 }
@@ -47,9 +52,7 @@ describe('ore-stake: instruction discriminators', () => {
     expect(Buffer.from(dataFor('withdraw').subarray(0, 8))).toEqual(
       Buffer.from(sha256Disc('withdraw')),
     );
-    expect(Buffer.from(dataFor('claim').subarray(0, 8))).toEqual(
-      Buffer.from(sha256Disc('claim')),
-    );
+    expect(Buffer.from(dataFor('claim').subarray(0, 8))).toEqual(Buffer.from(sha256Disc('claim')));
     expect(Buffer.from(dataFor('compound').subarray(0, 8))).toEqual(
       Buffer.from(sha256Disc('compound')),
     );
@@ -151,4 +154,62 @@ describe('ore-stake: encodeTxBase64 round-trip', () => {
     }
     expect(found).toBe(true);
   });
+});
+
+describe('ore-stake: mainnet constants verification', () => {
+  const MAINNET_RPC = 'https://api.mainnet-beta.solana.com';
+
+  it.skipIf(!process.env.RUN_MAINNET_TESTS)(
+    'verifies ORE_MINT account exists on mainnet',
+    async () => {
+      const res = await fetch(MAINNET_RPC, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getAccountInfo',
+          params: [ORE_MINT.toBase58(), { encoding: 'base64' }],
+        }),
+      });
+      const body = (await res.json()) as { result?: { value?: unknown } };
+      expect(body.result?.value).toBeTruthy();
+    },
+  );
+
+  it.skipIf(!process.env.RUN_MAINNET_TESTS)(
+    'verifies STORE_MINT account exists on mainnet',
+    async () => {
+      const res = await fetch(MAINNET_RPC, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getAccountInfo',
+          params: [STORE_MINT.toBase58(), { encoding: 'base64' }],
+        }),
+      });
+      const body = (await res.json()) as { result?: { value?: unknown } };
+      expect(body.result?.value).toBeTruthy();
+    },
+  );
+
+  it.skipIf(!process.env.RUN_MAINNET_TESTS)(
+    'verifies ORE_STAKE_PROGRAM_ID account exists on mainnet',
+    async () => {
+      const res = await fetch(MAINNET_RPC, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getAccountInfo',
+          params: [ORE_STAKE_PROGRAM_ID.toBase58(), { encoding: 'base64' }],
+        }),
+      });
+      const body = (await res.json()) as { result?: { value?: unknown } };
+      expect(body.result?.value).toBeTruthy();
+    },
+  );
 });

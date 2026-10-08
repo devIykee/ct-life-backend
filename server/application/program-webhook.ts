@@ -24,14 +24,11 @@
  * ledger after the on-chain settlement. The on-chain movement
  * is the source of truth for real USDC.
  */
-import { createHmac } from 'node:crypto';
+import { timingSafeEqual } from 'node:crypto';
 import { PublicKey } from '@solana/web3.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import {
-  ForbiddenError,
-  ValidationFailedError,
-} from '../shared/domain/errors.js';
+import { ForbiddenError, ValidationFailedError } from '../shared/domain/errors.js';
 import { decodeCtEscrowEvent } from '../shared/solana/ct-escrow.js';
 import { configPda } from '../shared/solana/ct-escrow.js';
 import type { AppContext } from './context.js';
@@ -48,23 +45,41 @@ export interface ProgramWebhookResult {
 }
 
 /**
- * Verify the Helius signature header against the raw body.
+ * Verify the Helius webhook authorization header.
+ *
+ * Helius sends the `authHeader` you configured for the webhook back
+ * in the `Authorization` header (not `x-helius-signature`). Compare
+ * it exactly as configured using constant-time comparison to prevent
+ * timing attacks.
  */
 export function verifyProgramWebhookSignature(
   ctx: AppContext,
-  signatureHeader: string | undefined,
-  rawBody: string,
+  authorizationHeader: string | undefined,
+  _rawBody: string,
 ): void {
-  if (signatureHeader === undefined || signatureHeader === '') {
-    throw new ValidationFailedError({ reason: 'missing signature header' });
-  }
   const secret = ctx.config.helius.webhookSecret;
+
+  // Fail closed: if secret is unset, reject all requests in staging/prod
   if (secret === '') {
-    throw new ValidationFailedError({ reason: 'webhook secret not configured' });
+    if (ctx.config.appEnv === 'staging' || ctx.config.appEnv === 'prod') {
+      throw new ForbiddenError({ reason: 'webhook secret not configured' });
+    }
+    // In local/mock, allow missing secret for development
+    return;
   }
-  const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
-  if (expected !== signatureHeader) {
-    throw new ForbiddenError({ reason: 'invalid webhook signature' });
+
+  if (authorizationHeader === undefined || authorizationHeader === '') {
+    throw new ValidationFailedError({ reason: 'missing Authorization header' });
+  }
+
+  // Constant-time comparison to prevent timing attacks
+  // First check length to avoid buffer size mismatch in timingSafeEqual
+  if (authorizationHeader.length !== secret.length) {
+    throw new ForbiddenError({ reason: 'invalid webhook authorization' });
+  }
+
+  if (!timingSafeEqual(Buffer.from(authorizationHeader, 'utf8'), Buffer.from(secret, 'utf8'))) {
+    throw new ForbiddenError({ reason: 'invalid webhook authorization' });
   }
 }
 
@@ -75,11 +90,11 @@ export function verifyProgramWebhookSignature(
  */
 export async function handleProgramWebhook(
   ctx: AppContext,
-  signatureHeader: string | undefined,
+  authorizationHeader: string | undefined,
   rawBody: string,
   payload: ProgramWebhookPayload,
 ): Promise<ProgramWebhookResult> {
-  verifyProgramWebhookSignature(ctx, signatureHeader, rawBody);
+  verifyProgramWebhookSignature(ctx, authorizationHeader, rawBody);
 
   // Idempotent record: insert into webhook_events; ignore the
   // duplicate.
@@ -108,8 +123,13 @@ export async function handleProgramWebhook(
       await reconcileSettled(ctx, payload.signature, decoded);
       return { ok: true, status: 'settled' };
     }
-    await reconcileRefunded(ctx, payload.signature, decoded);
-    return { ok: true, status: 'refunded' };
+    if (decoded.kind === 'refunded') {
+      await reconcileRefunded(ctx, payload.signature, decoded);
+      return { ok: true, status: 'refunded' };
+    }
+    // opened / accepted: log them and continue. These are
+    // informational; the in-game state moves to active/settled
+    // via other paths.
   }
   return { ok: true, status: 'ignored' };
 }
@@ -125,19 +145,10 @@ async function reconcileSettled(
   // webhook payload also carries accountKeys; the row we want
   // is keyed by `onchain_session_id`. We round-trip through
   // Solana to look up the on-chain session and match.
-  const fanPk = new PublicKey(ev.fan);
-  // Fan pubkey (base58) ↔ user_id (uuid) mapping happens via
-  // the webhook payload's accountKeys + a fan_pubkey column.
-  // Until the column exists (added by a follow-up migration),
-  // we fall back to the raw on-chain values and write the ledger
-  // rows using the PubKey form.
+  void new PublicKey(ev.session);
+  // The matching row is the most recent paid_call_escrow with
+  // status='pending_onchain' and the same settlement signature.
   await runInTransaction(async (client) => {
-    // Mark the escrow row settled. The matching row is the most
-    // recent paid_call_escrow with status='pending_onchain'
-    // where the user_id-derived fan pubkey matches. We map via
-    // a temp table `paid_call_fan_pubkey` added by a follow-up
-    // migration; for now we match by the timestamp window
-    // (within the last hour) to keep the dev environment honest.
     const r = await client.query<{
       escrow_id: string;
       payer_user_id: string;
@@ -158,9 +169,9 @@ async function reconcileSettled(
     // Convert base-unit cents to in-game cents (cents == base
     // units for USDC at 6 decimals, so the conversion is the
     // identity here).
-    const feeCents = Number(ev.feeBaseUnits);
-    const netCents = Number(ev.creatorPayoutBaseUnits);
-    const grossCents = Number(ev.grossBaseUnits);
+    const feeCents = Number(ev.fee);
+    const netCents = Number(ev.creatorAmount);
+    const grossCents = Number(ev.refund) + Number(ev.creatorAmount) + Number(ev.fee);
     await client.query(
       `UPDATE paid_call_escrow
          SET status = 'settled', settled_cents = $1, ended_at = now()
@@ -176,27 +187,16 @@ async function reconcileSettled(
       await client.query(
         `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
          VALUES ($1, $2, 'cash', 'tip', 'paid_call', $3, $4)`,
-        [
-          row.payee_user_id,
-          netCents,
-          row.escrow_id,
-          `paid-call-creator:${signature.slice(0, 16)}`,
-        ],
+        [row.payee_user_id, netCents, row.escrow_id, `paid-call-creator:${signature.slice(0, 16)}`],
       );
     }
     if (feeCents > 0) {
       await client.query(
         `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
          VALUES ($1, $2, 'cash', 'fee', 'paid_call', $3, $4)`,
-        [
-          row.payer_user_id,
-          -feeCents,
-          row.escrow_id,
-          `paid-call-fee:${signature.slice(0, 16)}`,
-        ],
+        [row.payer_user_id, -feeCents, row.escrow_id, `paid-call-fee:${signature.slice(0, 16)}`],
       );
     }
-    void fanPk; // referenced for the future fan_pubkey column
     void configPda; // imported for documentation
   });
   // Best-effort: end the LiveKit room.

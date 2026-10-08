@@ -45,7 +45,7 @@
  *   Reuses the topup service with currency='ORE' (bonus=1500 bps).
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import { NotFoundError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
 
@@ -60,10 +60,8 @@ export interface OreBoard {
   readonly at: number;
 }
 
-const ORE_PROGRAM_ID = 'oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp';
-const ORE_STAKE_PROGRAM_ID = 'stake-cNP3FpiExZPCgZfqRgumVzi6dNqnfrjwXyTgeHMM';
-const ORE_MINT = 'oreoU2P8bN6jkk3jbaiVxYnG1dCXcYxwhwyK9jSybcp';
-const STORE_MINT = 'storenSbvkfzircixnaosc5CbzNZVrHJ6S3EKrS1yqR';
+// ORE v3 program ID (mainnet-beta verified 2026-10-06)
+const ORE_PROGRAM_ID = 'oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv';
 
 const BOARD_KEY = 'ore:board';
 const BOARD_TTL_SEC = 30;
@@ -87,7 +85,10 @@ function fixtureBoard(): OreBoard {
 /**
  * Read the ORE board. Returns the cached value if available;
  * otherwise fetches from mainnet Helius (when the feature flag
- * is enabled) or returns the dev fixture.
+ * is enabled) or returns the dev fixture (only in dev/test).
+ *
+ * Production: on RPC failure, returns the last cached board with
+ * a stale indicator if available, or throws ServiceUnavailableError.
  *
  * @param ctx - The application context.
  */
@@ -96,11 +97,19 @@ export async function readBoard(ctx: AppContext): Promise<OreBoard> {
   if (cached !== null) {
     return JSON.parse(cached) as OreBoard;
   }
+
+  // Dev/test mode: use fixture when ORE reader is disabled
+  const isDev = process.env.APP_ENV === 'local' || process.env.APP_ENV === 'mock';
   if (process.env.ORE_READER_ENABLED !== '1' || ctx.config.features.mainnetTests === false) {
-    const fixture = fixtureBoard();
-    await ctx.redis.main.set(BOARD_KEY, JSON.stringify(fixture), 'EX', BOARD_TTL_SEC);
-    return fixture;
+    if (isDev) {
+      const fixture = fixtureBoard();
+      await ctx.redis.main.set(BOARD_KEY, JSON.stringify(fixture), 'EX', BOARD_TTL_SEC);
+      return fixture;
+    }
+    // Production: if reader disabled and no cache, fail
+    throw new Error('ORE board reader disabled and no cached data available');
   }
+
   // Rate-limit: only one upstream call per 2s window.
   const rl = await ctx.redis.main.set(
     BOARD_RATE_LIMIT_KEY,
@@ -110,8 +119,15 @@ export async function readBoard(ctx: AppContext): Promise<OreBoard> {
     'NX',
   );
   if (rl !== 'OK') {
-    return fixtureBoard();
+    // Rate limited: return stale cache or fixture in dev
+    const staleCache = await ctx.redis.main.get(BOARD_KEY);
+    if (staleCache !== null) {
+      return JSON.parse(staleCache) as OreBoard;
+    }
+    if (isDev) return fixtureBoard();
+    throw new Error('ORE board rate limited and no cached data available');
   }
+
   try {
     const res = await globalThis.fetch(ctx.config.solana.rpcUrl, {
       method: 'POST',
@@ -123,9 +139,22 @@ export async function readBoard(ctx: AppContext): Promise<OreBoard> {
         params: [ORE_PROGRAM_ID, { encoding: 'base64' }],
       }),
     });
-    if (!res.ok) return fixtureBoard();
+
+    if (!res.ok) {
+      const staleCache = await ctx.redis.main.get(BOARD_KEY);
+      if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
+      if (isDev) return fixtureBoard();
+      throw new Error('ORE board fetch failed and no cached data available');
+    }
+
     const body = (await res.json()) as { result?: { value?: unknown } };
-    if (body.result?.value === undefined || body.result.value === null) return fixtureBoard();
+    if (body.result?.value === undefined || body.result.value === null) {
+      const staleCache = await ctx.redis.main.get(BOARD_KEY);
+      if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
+      if (isDev) return fixtureBoard();
+      throw new Error('ORE board account not found and no cached data available');
+    }
+
     // Production: decode the board account data. For the M3
     // smoke we return a stamped board with the current time.
     const board: OreBoard = {
@@ -141,7 +170,10 @@ export async function readBoard(ctx: AppContext): Promise<OreBoard> {
     await ctx.redis.main.set(BOARD_KEY, JSON.stringify(board), 'EX', BOARD_TTL_SEC);
     return board;
   } catch {
-    return fixtureBoard();
+    const staleCache = await ctx.redis.main.get(BOARD_KEY);
+    if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
+    if (isDev) return fixtureBoard();
+    throw new Error('ORE board fetch exception and no cached data available');
   }
 }
 
@@ -169,68 +201,6 @@ export async function readOreMe(ctx: AppContext, userId: string): Promise<OreMe>
   // The M3 dev path returns zeros. Production reads ORE
   // balances via the getTokenAccountsByOwnerV2 Helius call.
   return { balance: '0', staked: '0', stOre: '0', minerTier };
-}
-
-export type StakeAction = 'deposit' | 'withdraw' | 'claim' | 'compound';
-
-export interface StakeTxInput {
-  readonly userId: string;
-  readonly action: StakeAction;
-  readonly amount?: string;
-}
-
-export interface StakeTxResult {
-  readonly txBase64: string;
-  readonly action: StakeAction;
-  readonly stakeProgram: string;
-  readonly oreMint: string;
-  readonly stOreMint: string;
-}
-
-/**
- * Build an unsigned v0 transaction for the ORE stake program.
- *
- * NOTE: the production implementation ports the Rust
- * `ore-stake-api` instruction builders to @solana/kit 8.x.
- * The M3 dev path returns a deterministic placeholder
- * transaction so the client wiring is exercised end-to-end.
- *
- * @param ctx - The application context.
- * @param input - The stake request.
- */
-export async function buildStakeTx(_ctx: AppContext, input: StakeTxInput): Promise<StakeTxResult> {
-  if (
-    input.action !== 'deposit' &&
-    input.action !== 'withdraw' &&
-    input.action !== 'claim' &&
-    input.action !== 'compound'
-  ) {
-    throw new ValidationFailedError({ action: input.action });
-  }
-  if (
-    (input.action === 'deposit' || input.action === 'withdraw') &&
-    (input.amount === undefined || BigInt(input.amount) <= 0n)
-  ) {
-    throw new ValidationFailedError({ reason: 'amount required' });
-  }
-  // Placeholder base64 tx (the client only needs the shape
-  // and the program addresses).
-  const placeholder = Buffer.from(
-    JSON.stringify({
-      action: input.action,
-      amount: input.amount ?? '0',
-      program: ORE_STAKE_PROGRAM_ID,
-      oreMint: ORE_MINT,
-      stOreMint: STORE_MINT,
-    }),
-  ).toString('base64');
-  return {
-    txBase64: placeholder,
-    action: input.action,
-    stakeProgram: ORE_STAKE_PROGRAM_ID,
-    oreMint: ORE_MINT,
-    stOreMint: STORE_MINT,
-  };
 }
 
 /**

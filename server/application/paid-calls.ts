@@ -46,11 +46,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { loadKeypair } from '../shared/solana/keypair.js';
-import {
-  CT_ESCROW_PROGRAM_ID,
-  sendSettle,
-  configPda,
-} from '../shared/solana/ct-escrow.js';
+import { CT_ESCROW_PROGRAM_ID, sendSettle, configPda } from '../shared/solana/ct-escrow.js';
 import type { AppContext } from './context.js';
 
 export const PLATFORM_FEE_BPS = 500; // 5%
@@ -345,13 +341,7 @@ export async function endPaidCall(
   const sessionId = row.onchain_session_id ? BigInt(row.onchain_session_id) : null;
 
   let settlementSignature: string | null = null;
-  if (
-    settleAuthority &&
-    usdcMint &&
-    rpcUrl &&
-    sessionId !== null &&
-    isOnChainConfigured()
-  ) {
+  if (settleAuthority && usdcMint && rpcUrl && sessionId !== null && isOnChainConfigured()) {
     settlementSignature = await submitOnChainSettle({
       ctx,
       callId,
@@ -373,11 +363,7 @@ export async function endPaidCall(
              SET status = 'pending_onchain', settlement_tx_signature = $1,
                  settled_cents = $2, ended_at = now()
            WHERE call_id = $3::uuid`,
-          [
-            settlementSignature,
-            Math.ceil(secondsUsed / 60) * row.price_per_minute_cents,
-            callId,
-          ],
+          [settlementSignature, Math.ceil(secondsUsed / 60) * row.price_per_minute_cents, callId],
         ),
       );
       try {
@@ -466,15 +452,14 @@ async function submitOnChainSettle(args: {
   // destination (the settle authority is also the protocol
   // treasury in this single-key setup). Production reads
   // config.treasury off-chain.
-  const treasuryAta = getAssociatedTokenAddressSync(
-    args.usdcMint,
-    args.settleAuthority.publicKey,
-  );
+  const treasuryAta = getAssociatedTokenAddressSync(args.usdcMint, args.settleAuthority.publicKey);
   const vault = (await readConfigVault(connection, config)) ?? treasuryAta;
-  return sendSettle(connection, {
+  return sendSettle({
+    connection,
     settleAuthority: args.settleAuthority.publicKey,
     settleAuthorityKeypair: args.settleAuthority,
     fan: payerPk,
+    creator: payeePk,
     sessionId: args.sessionId,
     secondsUsed: BigInt(args.secondsUsed),
     vault,
@@ -522,9 +507,7 @@ function resolveSettleAuthority(_ctx: AppContext): Keypair | null {
  */
 function resolveUsdcMint(ctx: AppContext): PublicKey | null {
   const isMainnet = ctx.config.appEnv === 'prod';
-  const raw = isMainnet
-    ? process.env['USDC_MINT_MAINNET']
-    : process.env['USDC_MINT_DEVNET'];
+  const raw = isMainnet ? process.env['USDC_MINT_MAINNET'] : process.env['USDC_MINT_DEVNET'];
   if (!raw) return null;
   try {
     return new PublicKey(raw);
