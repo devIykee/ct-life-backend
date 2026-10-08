@@ -84,7 +84,7 @@ export async function listDms(
  * (validation) and by the DB CHECK constraint.
  */
 export async function sendDm(
-  _ctx: AppContext,
+  ctx: AppContext,
   fromUserId: string,
   toUserId: string,
   text: string,
@@ -92,8 +92,30 @@ export async function sendDm(
   if (text.length < 1 || text.length > DM_TEXT_MAX) {
     throw new ValidationFailedError({ reason: 'text length 1..500' });
   }
+  void ctx; // B25: ctx not used directly, but kept for API consistency
   const messageId = uuidv7();
   await runInTransaction(async (client) => {
+    // B25: Check if recipient exists
+    const recipientCheck = await client.query(
+      `SELECT id FROM users WHERE id = $1`,
+      [toUserId],
+    );
+    if (recipientCheck.rowCount === 0) {
+      throw new ValidationFailedError({ reason: 'recipient not found' });
+    }
+
+    // B25: Check mutual blocks (either direction blocks the DM)
+    const blockCheck = await client.query(
+      `SELECT 1 FROM blocks
+       WHERE (blocker_id = $1 AND blocked_id = $2)
+          OR (blocker_id = $2 AND blocked_id = $1)
+       LIMIT 1`,
+      [fromUserId, toUserId],
+    );
+    if (blockCheck.rowCount && blockCheck.rowCount > 0) {
+      throw new ValidationFailedError({ reason: 'blocked' });
+    }
+
     await client.query(
       `INSERT INTO dm_messages (message_id, from_user_id, to_user_id, text)
        VALUES ($1, $2, $3, $4)`,
