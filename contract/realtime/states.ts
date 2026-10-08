@@ -57,12 +57,12 @@ export class CoinState extends Schema {
   @type('string') name = '';
   /** new | final | graduated | dead */
   @type('string') stage = 'new';
-  @type('int64') priceMicros = 0n;
-  @type('int64') mcapCents = 0n;
-  @type('int64') vol5mCents = 0n;
+  @type('bigint64') priceMicros = 0n;
+  @type('bigint64') mcapCents = 0n;
+  @type('bigint64') vol5mCents = 0n;
   @type('int32') change5mBps = 0;
   @type('int32') holders = 0;
-  @type('int64') launchedAt = 0n;
+  @type('bigint64') launchedAt = 0n;
   // hidden_arc lives on the server only. Never set on the schema.
 }
 
