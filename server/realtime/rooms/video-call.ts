@@ -43,7 +43,7 @@ export class VideoCallRoom extends Room {
         const claims = await jwtIssuer.verifyAccess(tokenStr);
         userId = claims.sub; // Use verified userId from token
       } catch (err) {
-        throw new Error('INVALID_TOKEN');
+        throw new Error('INVALID_TOKEN', { cause: err });
       }
     }
     if (!userId) return;

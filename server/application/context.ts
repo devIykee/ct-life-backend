@@ -104,6 +104,14 @@ const NONCE_TTL_MS = 5 * 60 * 1000;
 export class InMemoryNonceStore implements NonceStore {
   private readonly map = new Map<string, NonceRecord>();
 
+  /**
+   * Store a nonce so it can be looked up once during sign-in.
+   * @param nonce - The nonce to store.
+   * @param ttlMs - Lifetime in milliseconds, used when expiresAt is omitted.
+   * @param issuedAt - Issue time. Defaults to now.
+   * @param expiresAt - Expiry time. Defaults to now plus ttlMs.
+   * @returns The stored nonce record.
+   */
   async put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord> {
     const now = Date.now();
     const rec: NonceRecord = {
@@ -123,6 +131,11 @@ export class InMemoryNonceStore implements NonceStore {
     return rec;
   }
 
+  /**
+   * Look up a nonce, dropping it if it has already expired.
+   * @param nonce - The nonce to look up.
+   * @returns The nonce record, or null when it is unknown or expired.
+   */
   async get(nonce: string): Promise<NonceRecord | null> {
     const rec = this.map.get(nonce);
     if (!rec) return null;
@@ -133,6 +146,13 @@ export class InMemoryNonceStore implements NonceStore {
     return rec;
   }
 
+  /**
+   * Atomically burn a nonce and bind it to the wallet that used it.
+   * @param nonce - The nonce to mark used.
+   * @param wallet - The wallet address consuming the nonce.
+   * @returns True when the nonce was live and is now burned, false when it was
+   * unknown, already used, or expired.
+   */
   async markUsed(nonce: string, wallet: string): Promise<boolean> {
     const rec = this.map.get(nonce);
     if (!rec || rec.used || rec.expiresAt < Date.now()) return false;

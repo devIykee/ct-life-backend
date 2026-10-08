@@ -17,7 +17,9 @@ export default [
       'contract/openapi/generated/**',
       'contract/realtime/generated/**',
       'contract/**/*.ts',
-      'docs/spec/**',
+      // Documentation, including vendored handoff bundles that carry their
+      // own companion scripts and are not part of the build.
+      'docs/**',
       '.github/**',
       'tools/fuzz/rest-fuzz.ts',
       'tools/load/staged-ramp.ts',

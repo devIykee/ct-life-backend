@@ -50,7 +50,7 @@ export class MarketRoom extends Room {
         const jwtIssuer = createJwtIssuer();
         await jwtIssuer.verifyAccess(tokenStr);
       } catch (err) {
-        throw new Error('INVALID_TOKEN');
+        throw new Error('INVALID_TOKEN', { cause: err });
       }
     }
   }

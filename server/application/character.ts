@@ -49,6 +49,10 @@ export interface CharacterInput {
 }
 
 export class CharacterService {
+  /**
+   * @param configCache - Cache used to load the tribes, dreams, traits, and
+   * items configs that character input is validated against.
+   */
   constructor(private readonly configCache: ConfigCache) {}
 
   /**

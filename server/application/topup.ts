@@ -150,7 +150,6 @@ export async function createTopupIntent(
 
   // B19 fix: Compute amount from pack.priceUsdc in base units (integer)
   // For non-USDC currencies, would need a price feed (not implemented, return 503)
-  let amountBaseUnits: bigint;
   if (input.currency !== 'USDC') {
     // B19: For SOL/SKR/ORE, need price feed to convert from USDC price
     throw new ValidationFailedError({ reason: `${input.currency} requires price feed (degraded)` });
@@ -158,7 +157,7 @@ export async function createTopupIntent(
   // priceUsdc is in dollars (e.g., 1 for ramen pack)
   // USDC has 6 decimals, so 1 USDC = 1_000_000 base units
   const priceUsdc = pack.priceUsdc;
-  amountBaseUnits = BigInt(priceUsdc) * 1_000_000n;
+  const amountBaseUnits = BigInt(priceUsdc) * 1_000_000n;
 
   // Topup cap: check against USDC value paid, not Cash cents
   const dayStart = new Date();

@@ -507,7 +507,7 @@ export class VenueRoom extends Room {
       const claims = await jwtIssuer.verifyAccess(token);
       return claims;
     } catch (err) {
-      throw new Error('INVALID_TOKEN');
+      throw new Error('INVALID_TOKEN', { cause: err });
     }
   }
 
