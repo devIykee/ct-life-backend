@@ -13,6 +13,7 @@
     "server/**/*.ts",
     "packages/**/*.ts",
     "programs/ct_escrow/programs/**/*.ts",
+    "contract/realtime/**/*.ts",
     "vitest.config.ts"
   ],
   "exclude": [
@@ -21,7 +22,9 @@
     "build",
     "coverage",
     "**/target",
-    "contract",
+    "contract/openapi",
+    "contract/ids",
+    "contract/config",
     "programs/ct_escrow/tests",
     "tools/fuzz/rest-fuzz.ts",
     "tools/load/staged-ramp.ts"
