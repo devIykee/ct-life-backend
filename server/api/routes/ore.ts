@@ -8,14 +8,13 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { PublicKey } from '@solana/web3.js';
+import { PublicKey, Connection, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { NotFoundError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { markStakeSubmitted, readBoard, readOreMe } from '../../application/refinery.js';
 import {
   buildOreStakeTx,
-  encodeTxBase64,
   ORE_STAKE_PROGRAM_ID,
   ORE_MINT,
   STORE_MINT,
@@ -69,13 +68,30 @@ export function registerOreRoutes(app: FastifyInstance): void {
         throw new ValidationFailedError({ reason: 'user wallet is not a valid pubkey' });
       }
       const amount = body.data.amount !== undefined ? BigInt(body.data.amount) : undefined;
-      const tx = buildOreStakeTx({
+
+      // B21 fix: Build the instruction, then create a v0 transaction with blockhash
+      const legacyTx = buildOreStakeTx({
         userPubkey,
         action: body.data.action as OreStakeAction,
         amount,
       });
+
+      // Get recent blockhash
+      const connection = new Connection(req.ctx.config.solana.rpcUrl, 'confirmed');
+      const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+      // Convert to v0 message
+      const messageV0 = new TransactionMessage({
+        payerKey: userPubkey,
+        recentBlockhash: blockhash,
+        instructions: legacyTx.instructions,
+      }).compileToV0Message();
+
+      const versionedTx = new VersionedTransaction(messageV0);
+      const tx = Buffer.from(versionedTx.serialize()).toString('base64');
+
       return reply.send({
-        txBase64: encodeTxBase64(tx),
+        tx, // B21: return as 'tx' not 'txBase64'
         action: body.data.action,
         stakeProgram: ORE_STAKE_PROGRAM_ID.toBase58(),
         oreMint: ORE_MINT.toBase58(),
