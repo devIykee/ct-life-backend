@@ -62,18 +62,18 @@ describe('SpaceRoom', () => {
     api.onJoin(host, { userId: 'h', hostUserId: 'h' });
     api.onJoin(listener, { userId: 'l', hostUserId: 'h' });
     api.onRaiseHand('l');
-    expect(room.state.handQueue).toEqual(['l']);
+    expect([...room.state.handQueue]).toEqual(['l']);
     expect(room.state.speakers.get('l')?.handRaised).toBe(true);
     api.onPromote('l');
     expect(room.state.speakers.get('l')?.role).toBe('speaker');
     expect(room.state.speakers.get('l')?.canPublish).toBe(true);
-    expect(room.state.handQueue).toEqual([]);
+    expect([...room.state.handQueue]).toEqual([]);
     api.onDemote('l');
     expect(room.state.speakers.get('l')?.role).toBe('listener');
     expect(room.state.speakers.get('l')?.canPublish).toBe(false);
     api.onRaiseHand('l');
     api.onLowerHand('l');
-    expect(room.state.handQueue).toEqual([]);
+    expect([...room.state.handQueue]).toEqual([]);
   });
 
   it('hand queue preserves insertion order', async () => {
@@ -90,7 +90,7 @@ describe('SpaceRoom', () => {
     api.onRaiseHand('a');
     api.onRaiseHand('b');
     api.onRaiseHand('c');
-    expect(room.state.handQueue).toEqual(['a', 'b', 'c']);
+    expect([...room.state.handQueue]).toEqual(['a', 'b', 'c']);
   });
 });
 
@@ -116,7 +116,7 @@ describe('VideoCallRoom', () => {
       room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => void }
     ).onJoin(guest, { userId: 'g' });
     expect(welcomeFired).toBe(true);
-    expect(room.state.participantUserIds.sort()).toEqual(['g', 'h']);
+    expect([...room.state.participantUserIds].sort()).toEqual(['g', 'h']);
     expect(room.state.kind).toBe('video');
   });
 });

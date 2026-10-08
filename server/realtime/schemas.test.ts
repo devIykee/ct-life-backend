@@ -46,7 +46,7 @@ describe('Realtime Schema Validation', () => {
     expect(player.emoteAt).toBe(12345);
     expect(player.spotId).toBe('spot1');
     expect(player.talking).toBe(true);
-    expect(player.look).toEqual(['skin1', 'head1', 'hair1', 'top1', 'bottom1', 'shoes1', 'acc1']);
+    expect([...player.look]).toEqual(['skin1', 'head1', 'hair1', 'top1', 'bottom1', 'shoes1', 'acc1']);
     expect(player.look.length).toBe(7);
   });
 
@@ -86,7 +86,7 @@ describe('Realtime Schema Validation', () => {
 
     expect(city.online).toBe(42);
     expect(city.mood).toBe(150);
-    expect(city.eventIds).toEqual(['event1', 'event2', 'event3']);
+    expect([...city.eventIds]).toEqual(['event1', 'event2', 'event3']);
     expect(city.metaId).toBe('meta1');
   });
 
@@ -172,7 +172,7 @@ describe('Realtime Schema Validation', () => {
     expect(state.players.size).toBe(1);
     expect(state.npcs.size).toBe(1);
     expect(state.players.get('session1')?.userId).toBe('user1');
-    expect(state.players.get('session1')?.look).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    expect([...(state.players.get('session1')?.look ?? [])]).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
     expect(state.npcs.get('npc-town-crier')?.archetypeId).toBe('town_crier');
   });
 
@@ -230,7 +230,7 @@ describe('Realtime Schema Validation', () => {
     expect(space.title).toBe('Test Space');
     expect(space.status).toBe('live');
     expect(space.speakers.size).toBe(1);
-    expect(space.handQueue).toEqual(['user1', 'user2']);
+    expect([...space.handQueue]).toEqual(['user1', 'user2']);
     expect(space.listenerCount).toBe(42);
   });
 
@@ -246,7 +246,7 @@ describe('Realtime Schema Validation', () => {
     expect(call.hostUserId).toBe('host456');
     expect(call.kind).toBe('paid_call');
     expect(call.status).toBe('live');
-    expect(call.participantUserIds).toEqual(['user1', 'user2', 'user3']);
+    expect([...call.participantUserIds]).toEqual(['user1', 'user2', 'user3']);
   });
 
   it('all schemas are imported from contract/realtime/', () => {
@@ -286,7 +286,7 @@ describe('Realtime Schema Validation', () => {
     const player = new PlayerState();
     player.look = ['skin', 'head', 'hair', 'top', 'bottom', 'shoes', 'acc'];
 
-    expect(Array.isArray(player.look)).toBe(true);
+    expect([...player.look]).toEqual(['skin', 'head', 'hair', 'top', 'bottom', 'shoes', 'acc']);
     expect(player.look.length).toBe(7);
     expect(player.look[0]).toBe('skin');
     expect(player.look[6]).toBe('acc');
