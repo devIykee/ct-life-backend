@@ -21,7 +21,7 @@ import {
 const OpenPerpBody = z.object({
   coinId: z.string().uuid(),
   side: z.enum(['long', 'short']),
-  leverage: z.number().int().min(1).max(25),
+  leverage: z.number().int().min(1).max(20), // B38: fix from 25 to 20
   marginCents: z.number().int().positive(),
 });
 
@@ -44,7 +44,7 @@ export function registerPerpRoutes(app: FastifyInstance): void {
       leverage: body.data.leverage,
       marginCents: body.data.marginCents,
     });
-    return reply.status(201).send(perp);
+    return reply.send(perp); // B38: return 200, not 201
   });
 
   app.post(
@@ -65,6 +65,6 @@ export function registerPerpRoutes(app: FastifyInstance): void {
       req.user!.sub,
       (q.data.status ?? null) as PerpStatus | null,
     );
-    return reply.send({ perps });
+    return reply.send(perps); // B38: return unwrapped array, not {perps}
   });
 }

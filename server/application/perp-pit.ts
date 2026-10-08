@@ -30,7 +30,7 @@
  */
 import { runInTransaction } from '../shared/db/uow.js';
 import {
-  ForbiddenError,
+  InsufficientCashError,
   LeverageNotAllowedError,
   NotFoundError,
   ValidationFailedError,
@@ -65,7 +65,7 @@ export interface OpenPerpInput {
 }
 
 const MIN_LEVERAGE = 1;
-const MAX_LEVERAGE = 25;
+const MAX_LEVERAGE = 20; // B38: fix from 25 to 20
 
 /**
  * Open a new perp position.
@@ -106,12 +106,16 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     });
   }
   return runInTransaction(async (client) => {
-    const cr = await client.query<{ coin_id: string; ticker: string; price_micros: string }>(
-      `SELECT coin_id, ticker, price_micros FROM coins WHERE coin_id = $1 FOR UPDATE`,
+    const cr = await client.query<{ coin_id: string; ticker: string; price_micros: string; stage: string }>(
+      `SELECT coin_id, ticker, price_micros, stage FROM coins WHERE coin_id = $1 FOR UPDATE`,
       [input.coinId],
     );
     if ((cr.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'coin', id: input.coinId });
     const coin = cr.rows[0]!;
+    // B38: reject dead coins
+    if (coin.stage === 'dead') {
+      throw new ValidationFailedError({ reason: 'coin is dead' });
+    }
     const entry = BigInt(coin.price_micros);
     const lev = BigInt(input.leverage);
     const liq = input.side === 'long' ? (entry * (lev - 1n)) / lev : (entry * (lev + 1n)) / lev;
@@ -122,7 +126,8 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     );
     const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');
     if (cash < BigInt(input.marginCents)) {
-      throw new ForbiddenError({ reason: 'insufficient_margin' });
+      // B38: use InsufficientCashError (402) instead of ForbiddenError
+      throw new InsufficientCashError({ have: cash.toString(), need: input.marginCents.toString() });
     }
     await client.query(
       `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now() WHERE user_id = $2`,
@@ -270,10 +275,13 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
       user_id: string;
       coin_id: string;
       side: PerpSide;
+      leverage: number;
+      margin_cents: string;
+      entry_micros: string;
       liq_micros: string;
       status: PerpStatus;
     }>(
-      `SELECT perp_id, user_id, coin_id, side, liq_micros, status
+      `SELECT perp_id, user_id, coin_id, side, leverage, margin_cents, entry_micros, liq_micros, status
        FROM perps WHERE perp_id = $1 FOR UPDATE`,
       [perpId],
     );
@@ -288,9 +296,23 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
     const liq = BigInt(perp.liq_micros);
     const crossed = perp.side === 'long' ? price <= liq : price >= liq;
     if (!crossed) return false;
+
+    // B38: Calculate realized loss (negative value)
+    const entry = BigInt(perp.entry_micros);
+    const margin = BigInt(perp.margin_cents);
+    const lev = BigInt(perp.leverage);
+    const units = margin * lev; // in cents
+    const diff =
+      perp.side === 'long'
+        ? ((price - entry) * units) / (entry === 0n ? 1n : entry)
+        : ((entry - price) * units) / (entry === 0n ? 1n : entry);
+    const realized = diff; // This will be negative (a loss)
+    const lossCents = -realized; // Positive value of the loss
+
+    // B38: Store realized_cents on liquidation
     await client.query(
-      `UPDATE perps SET status = 'liquidated', closed_at = now() WHERE perp_id = $1`,
-      [perp.perp_id],
+      `UPDATE perps SET status = 'liquidated', realized_cents = $1, closed_at = now() WHERE perp_id = $2`,
+      [realized.toString(), perp.perp_id],
     );
     // The user loses their margin; the loss is the liq_pay
     // ledger row (the user is debited 0, the loss was already
@@ -300,7 +322,7 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
        VALUES ($1, 0, 'cash', 'liq_pay', 'perp', $2, $3)`,
       [perp.user_id, perp.perp_id, `liq:${perp.perp_id}`],
     );
-    // Publish a city room event for the REKT card.
+    // B38: Publish a city room event with lossCents for the REKT card.
     await ctx.redis.main.publish(
       'city:events',
       JSON.stringify({
@@ -308,6 +330,7 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
         userId: perp.user_id,
         perpId: perp.perp_id,
         coinId: perp.coin_id,
+        lossCents: lossCents.toString(), // B38: add lossCents
         at: Date.now(),
       }),
     );
