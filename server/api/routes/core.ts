@@ -8,6 +8,7 @@
  *   POST /v1/needs/actions — eat/sleep/shower/touch_grass/party
  *   GET  /v1/users/{id}    — public profile with netWorthCents
  */
+import { createHash } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
@@ -101,8 +102,12 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       boards: cache.load<unknown>('boards'),
     };
 
-    // B34 fix: ETag support for caching
-    const etag = `"${payload.version}"`;
+    // B34 fix: ETag support for caching.
+    // Hash the payload, not the version string: version is the constant
+    // '1.0.0-rc1', so a client that once sent If-None-Match was answered
+    // 304 forever and never saw an edited economy.json or registry.
+    const body = JSON.stringify(payload);
+    const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 32)}"`;
     const clientEtag = req.headers['if-none-match'];
     if (clientEtag === etag) {
       return reply.status(304).send();
