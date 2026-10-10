@@ -96,11 +96,8 @@ export async function claimAirdrop(
       return rowToClaim(existing.rows[0]);
     }
     const sgtBonus = userRow.sgt_mint !== null;
-    let amount = BASE_AIRDROP_CENTS;
-    if (sgtBonus) {
-      amount = Math.floor((amount * (10_000 + SGT_BONUS_BPS)) / 10_000);
-    }
-    if (amount > DAILY_CAP_CENTS) amount = DAILY_CAP_CENTS;
+    const tribeBonusBps = await tribeBonusBpsFor(client, userId);
+    const amount = airdropAmountCents(sgtBonus, tribeBonusBps);
     // Ensure balance row exists, lock, credit the amount.
     await client.query(
       `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 0, 0)
@@ -211,5 +208,149 @@ function rowToClaim(r: AirdropClaimDbRow): AirdropClaimRow {
     amountCents: Number(r.amount_cents),
     sgtBonus: r.sgt_bonus,
     claimedAt: r.claimed_at.toISOString(),
+  };
+}
+
+/** The Airdrop Farmer tribe's perk, in basis points. */
+const TRIBE_FARM_BONUS_BPS = 1500; // "Farm yield +15%"
+
+/**
+ * Today's payout for a player, capped.
+ *
+ * Shared by the claim and the status endpoint so the number the client is
+ * shown is the number it will actually be paid.
+ * @param sgtBonus - Whether the wallet holds a Seeker Genesis Token.
+ * @param tribeBonusBps - Tribe perk in basis points, 0 for most tribes.
+ * @returns The amount in cents.
+ */
+export function airdropAmountCents(sgtBonus: boolean, tribeBonusBps: number): number {
+  let amount = BASE_AIRDROP_CENTS;
+  const bps = (sgtBonus ? SGT_BONUS_BPS : 0) + tribeBonusBps;
+  amount = Math.floor((amount * (10_000 + bps)) / 10_000);
+  return amount > DAILY_CAP_CENTS ? DAILY_CAP_CENTS : amount;
+}
+
+/**
+ * The caller's tribe farm bonus.
+ * @param client - An open pg client.
+ * @param userId - The user to read.
+ * @returns Basis points, 0 when the player is not an Airdrop Farmer.
+ */
+async function tribeBonusBpsFor(
+  client: { query: <T extends import('pg').QueryResultRow>(q: string, v: unknown[]) => Promise<import('pg').QueryResult<T>> },
+  userId: string,
+): Promise<number> {
+  const r = await client.query<{ tribe_id: string }>(
+    'SELECT tribe_id FROM characters WHERE user_id = $1',
+    [userId],
+  );
+  return r.rows[0]?.tribe_id === 'airdrop_farmer' ? TRIBE_FARM_BONUS_BPS : 0;
+}
+
+export interface SybilStatusRow {
+  readonly jailed: boolean;
+  readonly jailedAt: string | null;
+  readonly releaseAt: string | null;
+  readonly reasonId: string | null;
+  readonly bailCents: number | null;
+  readonly bailable: boolean;
+}
+
+/**
+ * The caller's Sybil Barn status.
+ *
+ * Only is_sybil_jailed and sybil_jailed_at are stored, so releaseAt,
+ * reasonId and bailCents are null and bailable is false until a bail
+ * flow exists. Reported rather than invented.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @returns The status.
+ */
+export async function getSybilStatus(ctx: AppContext, userId: string): Promise<SybilStatusRow> {
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{ is_sybil_jailed: boolean; sybil_jailed_at: Date | null }>(
+      'SELECT is_sybil_jailed, sybil_jailed_at FROM users WHERE id = $1',
+      [userId],
+    );
+  });
+  const row = r.rows[0];
+  if (!row) throw new NotFoundError({ kind: 'user', id: userId });
+  return {
+    jailed: row.is_sybil_jailed,
+    jailedAt: row.sybil_jailed_at ? row.sybil_jailed_at.toISOString() : null,
+    releaseAt: null,
+    reasonId: null,
+    bailCents: null,
+    bailable: false,
+  };
+}
+
+export interface FarmStatusRow {
+  readonly dayDate: string;
+  readonly claimedToday: boolean;
+  readonly nextClaimAt: string;
+  readonly baseCents: number;
+  readonly sgtBonusBps: number;
+  readonly tribeBonusBps: number;
+  readonly todayAmountCents: number;
+  readonly dailyCapCents: number;
+  readonly streakDays: number;
+  readonly sybil: SybilStatusRow;
+}
+
+/**
+ * My Airdrop Farm status for today.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @returns What today's claim is worth and whether it is already taken.
+ */
+export async function getFarmStatus(ctx: AppContext, userId: string): Promise<FarmStatusRow> {
+  const dayDate = todayUtc();
+  const out = await ctx.db.withConnection(async (c) => {
+    const u = await c.query<{ sgt_mint: string | null }>(
+      'SELECT sgt_mint FROM users WHERE id = $1',
+      [userId],
+    );
+    if (!u.rows[0]) throw new NotFoundError({ kind: 'user', id: userId });
+    const today = await c.query<{ claim_id: string }>(
+      'SELECT claim_id FROM airdrop_claims WHERE user_id = $1 AND day_date = $2',
+      [userId, dayDate],
+    );
+    const days = await c.query<{ day_date: string }>(
+      'SELECT day_date FROM airdrop_claims WHERE user_id = $1 ORDER BY day_date DESC LIMIT 400',
+      [userId],
+    );
+    const tribeBps = await tribeBonusBpsFor(c, userId);
+    return {
+      sgt: u.rows[0].sgt_mint !== null,
+      claimed: (today.rowCount ?? 0) > 0,
+      days: days.rows.map((d) => String(d.day_date).slice(0, 10)),
+      tribeBps,
+    };
+  });
+  // Streak: consecutive UTC days ending today or yesterday.
+  const seen = new Set(out.days);
+  let streak = 0;
+  const cursor = new Date(`${dayDate}T00:00:00.000Z`);
+  if (!seen.has(dayDate)) cursor.setUTCDate(cursor.getUTCDate() - 1);
+  for (;;) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (!seen.has(key)) break;
+    streak += 1;
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
+  }
+  const nextMidnight = new Date(`${dayDate}T00:00:00.000Z`);
+  nextMidnight.setUTCDate(nextMidnight.getUTCDate() + 1);
+  return {
+    dayDate,
+    claimedToday: out.claimed,
+    nextClaimAt: nextMidnight.toISOString(),
+    baseCents: BASE_AIRDROP_CENTS,
+    sgtBonusBps: out.sgt ? SGT_BONUS_BPS : 0,
+    tribeBonusBps: out.tribeBps,
+    todayAmountCents: airdropAmountCents(out.sgt, out.tribeBps),
+    dailyCapCents: DAILY_CAP_CENTS,
+    streakDays: streak,
+    sybil: await getSybilStatus(ctx, userId),
   };
 }

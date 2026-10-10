@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
-import { chatWithLlmNpc, stubLlmClient } from '../../application/llm-npcs.js';
+import { chatWithLlmNpc, getLlmQuota, stubLlmClient } from '../../application/llm-npcs.js';
 import { createAnthropicClient } from '../../shared/llm/anthropic.js';
 
 const ChatBody = z.object({
@@ -23,6 +23,17 @@ const ChatBody = z.object({
  * M7 #8 gate: "behind a feature flag").
  */
 export function registerLlmNpcRoutes(app: FastifyInstance): void {
+  // GET /v1/llm/quota - was 404 "No route". 503 LLM_DISABLED when the
+  // feature flag is off, per the spec.
+  app.get('/v1/llm/quota', { preHandler: requireAuth }, async (req, reply) => {
+    if (!req.ctx.config.features.llmEnabled) {
+      return reply.status(503).send({
+        error: { code: 'LLM_DISABLED', message: 'LLM NPC chat is disabled.', details: {} },
+      });
+    }
+    return reply.send(await getLlmQuota(req.ctx, req.user!.sub));
+  });
+
   app.post('/v1/llm/chat', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
     if (!req.ctx.config.features.llmEnabled) {
       return reply.status(503).send({

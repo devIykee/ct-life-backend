@@ -213,3 +213,135 @@ function rowToInvite(r: CabalInviteDbRow): CabalInviteRow {
     createdAt: r.created_at.toISOString(),
   };
 }
+
+export interface VenueAccessRow {
+  readonly venueId: string;
+  readonly allowed: boolean;
+  readonly reasonCode: string | null;
+  readonly requiredNetWorthCents: number | null;
+  readonly netWorthCents: number;
+  readonly membershipRequired: boolean;
+  readonly isMember: boolean;
+}
+
+/**
+ * Whether the caller may enter a gated venue, and why not.
+ *
+ * dubai_marina is net-worth gated, cabal_lounge needs membership and
+ * sybil_barn is only for jailed players. Everything else is open. The
+ * client calls this before joinOrCreate so it can explain a refusal
+ * instead of failing the join blind.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @param venueId - The venue being entered.
+ * @returns The access decision.
+ */
+export async function getVenueAccess(
+  ctx: AppContext,
+  userId: string,
+  venueId: string,
+): Promise<VenueAccessRow> {
+  const state = await ctx.db.withConnection(async (c) => {
+    const bal = await c.query<BalanceRow>(
+      'SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1',
+      [userId],
+    );
+    const jail = await c.query<{ is_sybil_jailed: boolean }>(
+      'SELECT is_sybil_jailed FROM users WHERE id = $1',
+      [userId],
+    );
+    const member = await c.query<{ invite_id: string }>(
+      `SELECT invite_id FROM cabal_invites
+        WHERE guest_user_id = $1 AND used_at IS NOT NULL
+        LIMIT 1`,
+      [userId],
+    );
+    return {
+      netWorth:
+        Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
+      jailed: jail.rows[0]?.is_sybil_jailed ?? false,
+      isMember: (member.rowCount ?? 0) > 0,
+    };
+  });
+
+  const base = {
+    venueId,
+    netWorthCents: state.netWorth,
+    requiredNetWorthCents: null as number | null,
+    membershipRequired: false,
+    isMember: state.isMember,
+  };
+
+  if (venueId === 'dubai_marina') {
+    const allowed = state.netWorth >= MARINA_GATE_CENTS;
+    return {
+      ...base,
+      requiredNetWorthCents: MARINA_GATE_CENTS,
+      allowed,
+      reasonCode: allowed ? null : 'NET_WORTH_TOO_LOW',
+    };
+  }
+  if (venueId === 'cabal_lounge') {
+    return {
+      ...base,
+      membershipRequired: true,
+      allowed: state.isMember,
+      reasonCode: state.isMember ? null : 'NOT_A_MEMBER',
+    };
+  }
+  if (venueId === 'sybil_barn') {
+    return {
+      ...base,
+      allowed: state.jailed,
+      reasonCode: state.jailed ? null : 'NOT_JAILED',
+    };
+  }
+  return { ...base, allowed: true, reasonCode: null };
+}
+
+export interface CabalMembershipRow {
+  readonly member: boolean;
+  readonly since: string | null;
+  readonly expiresAt: string | null;
+  readonly invitedByUserId: string | null;
+  readonly invitesRemaining: number;
+  readonly hostGateCents: number;
+}
+
+/** Invites a host may have outstanding at once. */
+const CABAL_INVITES_PER_HOST = 3;
+
+/**
+ * My Cabal Lounge membership and how many invites I have left.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @returns The membership record.
+ */
+export async function getMyCabal(ctx: AppContext, userId: string): Promise<CabalMembershipRow> {
+  const r = await ctx.db.withConnection(async (c) => {
+    const mine = await c.query<CabalInviteDbRow>(
+      `SELECT invite_id, host_user_id, guest_user_id, code, used_at, expires_at, created_at
+         FROM cabal_invites
+        WHERE guest_user_id = $1 AND used_at IS NOT NULL
+        ORDER BY used_at ASC
+        LIMIT 1`,
+      [userId],
+    );
+    const issued = await c.query<{ n: string }>(
+      `SELECT COUNT(*)::text AS n FROM cabal_invites
+        WHERE host_user_id = $1 AND used_at IS NULL AND expires_at > now()`,
+      [userId],
+    );
+    return { mine: mine.rows[0], issued: Number(issued.rows[0]?.n ?? '0') };
+  });
+  const row = r.mine;
+  const remaining = Math.max(0, CABAL_INVITES_PER_HOST - r.issued);
+  return {
+    member: row !== undefined,
+    since: row?.used_at ? row.used_at.toISOString() : null,
+    expiresAt: row?.expires_at ? row.expires_at.toISOString() : null,
+    invitedByUserId: row?.host_user_id ?? null,
+    invitesRemaining: remaining,
+    hostGateCents: MARINA_GATE_CENTS,
+  };
+}

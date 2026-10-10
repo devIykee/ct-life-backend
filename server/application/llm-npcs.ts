@@ -73,6 +73,7 @@ export interface LlmClient {
 }
 
 const RATE_LIMIT_PER_MIN = 5;
+const RATE_LIMIT_PER_DAY = 50;
 const RATE_LIMIT_REFUSAL = "You're sending too many messages. Try again in a minute.";
 
 /** System prompt for the LLM NPC. The hard rules are server-side
@@ -101,7 +102,52 @@ async function takeRateLimitToken(ctx: AppContext, userId: string): Promise<bool
   if (r === 1) {
     await ctx.redis.main.expire(key, 90);
   }
-  return r <= RATE_LIMIT_PER_MIN;
+  if (r > RATE_LIMIT_PER_MIN) return false;
+  // Daily ceiling as well, so GET /v1/llm/quota reports a limit that is
+  // actually enforced rather than an advisory number.
+  const dayKey = `llm:rl:day:${userId}:${new Date().toISOString().slice(0, 10)}`;
+  const d = await ctx.redis.main.incr(dayKey);
+  if (d === 1) {
+    await ctx.redis.main.expire(dayKey, 60 * 60 * 26);
+  }
+  return d <= RATE_LIMIT_PER_DAY;
+}
+
+export interface LlmQuotaRow {
+  readonly perMinuteLimit: number;
+  readonly remainingThisMinute: number;
+  readonly perDayLimit: number;
+  readonly remainingToday: number;
+  readonly resetsAt: string;
+}
+
+/**
+ * The caller's remaining LLM chat quota.
+ *
+ * Reads the same Redis counters the limiter writes, so the numbers match
+ * what the next chat turn will do. Reading does not consume quota.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @returns The remaining per-minute and per-day allowance.
+ */
+export async function getLlmQuota(ctx: AppContext, userId: string): Promise<LlmQuotaRow> {
+  const minute = Math.floor(Date.now() / 60_000);
+  const day = new Date().toISOString().slice(0, 10);
+  const [minRaw, dayRaw] = await Promise.all([
+    ctx.redis.main.get(`llm:rl:${userId}:${minute}`),
+    ctx.redis.main.get(`llm:rl:day:${userId}:${day}`),
+  ]);
+  const usedMin = Number(minRaw ?? '0');
+  const usedDay = Number(dayRaw ?? '0');
+  const nextMidnight = new Date(`${day}T00:00:00.000Z`);
+  nextMidnight.setUTCDate(nextMidnight.getUTCDate() + 1);
+  return {
+    perMinuteLimit: RATE_LIMIT_PER_MIN,
+    remainingThisMinute: Math.max(0, RATE_LIMIT_PER_MIN - usedMin),
+    perDayLimit: RATE_LIMIT_PER_DAY,
+    remainingToday: Math.max(0, RATE_LIMIT_PER_DAY - usedDay),
+    resetsAt: nextMidnight.toISOString(),
+  };
 }
 
 /**

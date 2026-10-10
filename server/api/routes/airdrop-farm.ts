@@ -14,12 +14,24 @@ import {
   clearSybilJailed,
   listAirdropClaims,
   setSybilJailed,
+  getFarmStatus,
+  getSybilStatus,
 } from '../../application/airdrop-farm.js';
 
 /**
  * Register the airdrop + sybil-jail routes on the Fastify app.
  */
 export function registerAirdropRoutes(app: FastifyInstance): void {
+  // GET /v1/airdrop/farm - was 404 "No route".
+  app.get('/v1/airdrop/farm', { preHandler: requireAuth }, async (req, reply) => {
+    return reply.send(await getFarmStatus(req.ctx, req.user!.sub));
+  });
+
+  // GET /v1/me/sybil-status - was 404 "No route".
+  app.get('/v1/me/sybil-status', { preHandler: requireAuth }, async (req, reply) => {
+    return reply.send(await getSybilStatus(req.ctx, req.user!.sub));
+  });
+
   app.post(
     '/v1/airdrop/claim',
     { preHandler: [requireAuth, withIdempotency()] },

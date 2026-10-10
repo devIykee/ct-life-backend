@@ -106,6 +106,8 @@ export async function foundProject(
   _ctx: AppContext,
   ownerUserId: string,
   kind: ProjectKind,
+  name?: string,
+  ticker?: string,
 ): Promise<ProjectRow> {
   const seedCost = SEED_COST_BY_KIND[kind];
   if (seedCost === undefined) {
@@ -140,10 +142,17 @@ export async function foundProject(
       [ownerUserId, -seedCost, projectId, `proj-seed:${projectId}:${uuidv7()}`],
     );
     const r = await client.query<ProjectDbRow>(
-      `INSERT INTO projects (project_id, owner_user_id, kind, status, cash_cents)
-       VALUES ($1, $2, $3, 'founded', $4)
+      `INSERT INTO projects (project_id, owner_user_id, kind, status, cash_cents, name, ticker)
+       VALUES ($1, $2, $3, 'founded', $4, $5, $6)
        RETURNING project_id, owner_user_id, kind, status, cash_cents, created_at`,
-      [projectId, ownerUserId, kind, seedCost],
+      [
+        projectId,
+        ownerUserId,
+        kind,
+        seedCost,
+        name ?? kind.replace(/_/g, ' ').replace(/\b\w/g, (ch) => ch.toUpperCase()),
+        ticker ?? null,
+      ],
     );
     return r.rows[0]!;
   });
@@ -292,6 +301,8 @@ void ConflictError;
 
 export interface ProjectListRow {
   readonly projectId: string;
+  readonly name: string | null;
+  readonly ticker: string | null;
   readonly kind: string;
   readonly status: string;
   readonly ownerUserId: string;
@@ -328,11 +339,13 @@ export async function listProjects(
       status: string;
       cash_cents: string;
       created_at: Date;
+      name: string | null;
+      ticker: string | null;
       owner_alias: string | null;
       member_count: string;
     }>(
       `SELECT p.project_id, p.owner_user_id, p.kind, p.status, p.cash_cents, p.created_at,
-              ch.alias AS owner_alias,
+              p.name, p.ticker, ch.alias AS owner_alias,
               (SELECT COUNT(*) FROM project_hires h WHERE h.project_id = p.project_id)::text
                 AS member_count
          FROM projects p
@@ -351,6 +364,8 @@ export async function listProjects(
   });
   return r.rows.map((row) => ({
     projectId: row.project_id,
+    name: row.name,
+    ticker: row.ticker,
     kind: row.kind,
     status: row.status,
     ownerUserId: row.owner_user_id,
@@ -358,5 +373,117 @@ export async function listProjects(
     memberCount: Number(row.member_count),
     treasuryCents: Number(row.cash_cents),
     createdAt: row.created_at.toISOString(),
+  }));
+}
+
+export interface HireOfferRow {
+  readonly offerId: string;
+  readonly projectId: string;
+  readonly projectName: string | null;
+  readonly fromUserId: string;
+  readonly toUserId: string;
+  readonly role: string;
+  readonly salaryCentsPerWeek: number;
+  readonly status: string;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+}
+
+/**
+ * Role offers sent to me.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @param status - Optional status filter.
+ * @param limit - Page size.
+ * @returns Offers, newest first.
+ */
+export async function listMyProjectOffers(
+  ctx: AppContext,
+  userId: string,
+  status: string | null,
+  limit: number,
+): Promise<HireOfferRow[]> {
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{
+      offer_id: string;
+      project_id: string;
+      project_name: string | null;
+      from_user_id: string;
+      to_user_id: string;
+      role: string;
+      salary_cents_per_week: string;
+      status: string;
+      expires_at: Date;
+      created_at: Date;
+    }>(
+      `SELECT o.offer_id, o.project_id, p.name AS project_name, o.from_user_id, o.to_user_id,
+              o.role, o.salary_cents_per_week, o.status, o.expires_at, o.created_at
+         FROM project_offers o
+         JOIN projects p ON p.project_id = o.project_id
+        WHERE o.to_user_id = $1
+          AND ($2::text IS NULL OR o.status = $2)
+        ORDER BY o.created_at DESC
+        LIMIT $3`,
+      [userId, status, limit],
+    );
+  });
+  return r.rows.map((row) => ({
+    offerId: row.offer_id,
+    projectId: row.project_id,
+    projectName: row.project_name,
+    fromUserId: row.from_user_id,
+    toUserId: row.to_user_id,
+    role: row.role,
+    salaryCentsPerWeek: Number(row.salary_cents_per_week),
+    status: row.status,
+    expiresAt: row.expires_at.toISOString(),
+    createdAt: row.created_at.toISOString(),
+  }));
+}
+
+export interface VcDealRow {
+  readonly projectId: string;
+  readonly projectName: string | null;
+  readonly vcArchetypeId: string;
+  readonly investCents: number;
+  readonly equityBps: number;
+  readonly status: string;
+  readonly at: string;
+}
+
+/**
+ * Recent VC deals for the VC Row venue board.
+ * @param ctx - The application context.
+ * @param limit - Page size.
+ * @returns Deals, newest first.
+ */
+export async function listVcDeals(ctx: AppContext, limit: number): Promise<VcDealRow[]> {
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{
+      project_id: string;
+      project_name: string | null;
+      vc_archetype_id: string;
+      invest_cents: string;
+      equity_bps: number;
+      status: string;
+      created_at: Date;
+    }>(
+      `SELECT d.project_id, p.name AS project_name, d.vc_archetype_id,
+              d.invest_cents, d.equity_bps, d.status, d.created_at
+         FROM vc_deals d
+         JOIN projects p ON p.project_id = d.project_id
+        ORDER BY d.created_at DESC
+        LIMIT $1`,
+      [limit],
+    );
+  });
+  return r.rows.map((row) => ({
+    projectId: row.project_id,
+    projectName: row.project_name,
+    vcArchetypeId: row.vc_archetype_id,
+    investCents: Number(row.invest_cents),
+    equityBps: row.equity_bps,
+    status: row.status,
+    at: row.created_at.toISOString(),
   }));
 }

@@ -16,6 +16,8 @@ import {
   createCabalInvite,
   listCabalInvites,
   marinaVisit,
+  getMyCabal,
+  getVenueAccess,
 } from '../../application/venues-gating.js';
 
 const CabalListQuery = z.object({
@@ -29,6 +31,18 @@ const CabalListQuery = z.object({
  * Register the venues-gating routes on the Fastify app.
  */
 export function registerVenuesGatingRoutes(app: FastifyInstance): void {
+  // GET /v1/venues/{venueId}/access - was 404 "No route". Lets the client
+  // explain a refusal before joinOrCreate instead of failing blind.
+  app.get('/v1/venues/:venueId/access', { preHandler: requireAuth }, async (req, reply) => {
+    const { venueId } = req.params as { venueId: string };
+    return reply.send(await getVenueAccess(req.ctx, req.user!.sub, venueId));
+  });
+
+  // GET /v1/me/cabal - was 404 "No route".
+  app.get('/v1/me/cabal', { preHandler: requireAuth }, async (req, reply) => {
+    return reply.send(await getMyCabal(req.ctx, req.user!.sub));
+  });
+
   app.post(
     '/v1/homes/:id/marina/visit',
     { preHandler: [requireAuth, withIdempotency()] },
