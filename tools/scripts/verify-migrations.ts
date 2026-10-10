@@ -65,9 +65,9 @@
  *  38. cosmetic_items.slot CHECK contains skin/head/hair/top/bottom/shoes/acc.
  *  39. cosmetic_inventory UNIQUE (user_id, item_id).
  *  40. cosmetic_inventory.source CHECK contains shop/mint/grant.
- *  41. businesses.kind CHECK contains the 5 kinds.
+ *  41. businesses.kind is not CHECK-constrained (catalog ids from businesses.json).
  *  42. business_days.kind CHECK contains normal/bad_day/great_day.
- *  43. business_days UNIQUE (business_id, day_date).
+ *  43. business_days UNIQUE (business_id, period_index).
  *  44. gig_runs.pay_cents >= 0.
  *  45. ad_slots has terms jsonb.
  *  46. ad_bookings.status CHECK contains pending_review/live/rejected.
@@ -699,14 +699,11 @@ async function main(): Promise<void> {
       record('cosmetic_inventory.source in allowed set', /shop.*mint.*grant/is.test(all));
     }
 
-    // (41) businesses.kind CHECK.
+    // (41) businesses.kind is a catalog id, validated by the service.
     {
       const cs = await checks('businesses');
       const all = cs.join('\n');
-      record(
-        'businesses.kind in allowed set',
-        /lemonade_stand.*laundromat.*cafe.*shop.*arcade/is.test(all),
-      );
+      record('businesses.kind has no hardcoded CHECK', !/lemonade_stand/i.test(all));
     }
 
     // (42) business_days.kind CHECK.
@@ -716,7 +713,7 @@ async function main(): Promise<void> {
       record('business_days.kind in allowed set', /normal.*bad_day.*great_day/is.test(all));
     }
 
-    // (43) business_days UNIQUE (business_id, day_date).
+    // (43) business_days UNIQUE (business_id, period_index).
     {
       const r = await client.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count
@@ -726,9 +723,12 @@ async function main(): Promise<void> {
            AND (SELECT array_agg(a.attname ORDER BY array_position(i.indkey, a.attnum))
                 FROM pg_attribute a
                 WHERE a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey))
-                = ARRAY['business_id','day_date']::name[]`,
+                = ARRAY['business_id','period_index']::name[]`,
       );
-      record('business_days UNIQUE (business_id, day_date)', Number(r.rows[0]?.count ?? '0') > 0);
+      record(
+        'business_days UNIQUE (business_id, period_index)',
+        Number(r.rows[0]?.count ?? '0') > 0,
+      );
     }
 
     // (44) gig_runs.pay_cents >= 0.

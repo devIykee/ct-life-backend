@@ -7,7 +7,15 @@
       "costCents": 5000000,
       "incomeRangeCents": [200000, 600000],
       "badDayChanceBps": 200,
-      "badDayMultiplier": 0.2
+      "badDayMultiplier": 0.2,
+      "payoutPeriodHours": 24,
+      "sellBackBps": 5000,
+      "maxOwned": 1,
+      "badDays": [
+        { "id": "kol_exposed", "weight": 3 },
+        { "id": "kol_wallets_leaked", "weight": 2 },
+        { "id": "exchange_hack", "weight": 1 }
+      ]
     },
     {
       "id": "audit_firm",
@@ -15,7 +23,14 @@
       "costCents": 12000000,
       "incomeRangeCents": [400000, 1500000],
       "badDayChanceBps": 100,
-      "badDayMultiplier": 0.1
+      "badDayMultiplier": 0.1,
+      "payoutPeriodHours": 24,
+      "sellBackBps": 5000,
+      "maxOwned": 1,
+      "badDays": [
+        { "id": "audit_exploited", "weight": 5 },
+        { "id": "exchange_hack", "weight": 1 }
+      ]
     },
     {
       "id": "memecoin_lab",
@@ -23,7 +38,16 @@
       "costCents": 30000000,
       "incomeRangeCents": [500000, 3000000],
       "badDayChanceBps": 350,
-      "badDayMultiplier": 0.05
+      "badDayMultiplier": 0.05,
+      "payoutPeriodHours": 24,
+      "sellBackBps": 5000,
+      "maxOwned": 1,
+      "badDays": [
+        { "id": "dev_faked_death", "weight": 2 },
+        { "id": "launch_bundled", "weight": 3 },
+        { "id": "holder_rewards_change", "weight": 2 },
+        { "id": "exchange_hack", "weight": 1 }
+      ]
     },
     {
       "id": "lounge",
@@ -31,7 +55,15 @@
       "costCents": 80000000,
       "incomeRangeCents": [1000000, 6000000],
       "badDayChanceBps": 150,
-      "badDayMultiplier": 0.15
+      "badDayMultiplier": 0.15,
+      "payoutPeriodHours": 24,
+      "sellBackBps": 5000,
+      "maxOwned": 1,
+      "badDays": [
+        { "id": "flash_crash", "weight": 5 },
+        { "id": "exchange_hack", "weight": 1 }
+      ]
     }
-  ]
+  ],
+  "maxPendingPayouts": 7
 }

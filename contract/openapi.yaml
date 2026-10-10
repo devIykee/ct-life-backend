@@ -657,6 +657,150 @@ paths:
                   roomId: { type: string, description: 'Pass to `client.joinById(roomId)`.' }
               example: { roomId: 'home:0192a1c2-...' }
 
+  /businesses:
+    get:
+      tags: [player]
+      operationId: getBusinesses
+      summary: My open businesses with their pending payouts.
+      x-phase: 4
+      responses:
+        '200':
+          description: Owned businesses, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [owned]
+                properties:
+                  owned: { type: array, items: { $ref: '#/components/schemas/Business' } }
+    post:
+      tags: [player]
+      operationId: postBusinesses
+      summary: Buy a business from config/businesses.json for its costCents.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kindId]
+              properties:
+                kindId: { type: string, description: 'A businesses.json id.' }
+      responses:
+        '201':
+          description: Bought
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Business' }
+        '402':
+          description: Cash below costCents
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'INSUFFICIENT_CASH',
+                      message: 'Cash balance is insufficient.',
+                      details: { 'have': '100', 'need': '30000000' },
+                    },
+                }
+        '403':
+          description: Already own maxOwned of this kind
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'FORBIDDEN',
+                      message: 'Forbidden.',
+                      details: { 'reason': 'max_owned', 'maxOwned': 1 },
+                    },
+                }
+
+  /businesses/{id}:
+    get:
+      tags: [player]
+      operationId: getBusinessesId
+      summary: One of my businesses and its last 30 payouts.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Business
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [business, recentDays]
+                properties:
+                  business: { $ref: '#/components/schemas/Business' }
+                  recentDays: { type: array, items: { $ref: '#/components/schemas/BusinessDay' } }
+
+  /businesses/{id}/collect:
+    post:
+      tags: [player]
+      operationId: postBusinessesIdCollect
+      summary: Move every pending payout to Cash.
+      description: |
+        A business earns one payout per payoutPeriodHours from purchase,
+        rolled against its bad-day table. At most maxPendingPayouts
+        periods pile up. Nothing pending answers collectedCents 0.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Collected
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [collectedCents, cashCents, days]
+                properties:
+                  collectedCents: { type: integer }
+                  cashCents: { type: integer }
+                  days: { type: array, items: { $ref: '#/components/schemas/BusinessDay' } }
+
+  /businesses/{id}/sell:
+    post:
+      tags: [player]
+      operationId: postBusinessesIdSell
+      summary: Sell back for sellBackBps of the cost. Pending payouts are collected first.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Sold
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [refundCents, collectedCents, cashCents]
+                properties:
+                  refundCents: { type: integer }
+                  collectedCents: { type: integer }
+                  cashCents: { type: integer }
+
   /characters/me/tribe:
     patch:
       tags: [player]
@@ -3045,6 +3189,30 @@ components:
         alias: { type: string }
         text: { type: string, maxLength: 280 }
         at: { type: string, format: date-time }
+    Business:
+      type: object
+      required:
+        [businessId, kindId, name, boughtAt, pendingCents, nextPayoutAt, sellBackCents, lastDay]
+      properties:
+        businessId: { type: string, format: uuid }
+        kindId: { type: string }
+        name: { type: string }
+        boughtAt: { type: string, format: date-time }
+        pendingCents: { type: integer, description: 'Payouts owed now; what collect would pay.' }
+        nextPayoutAt: { type: string, format: date-time }
+        sellBackCents: { type: integer }
+        lastDay:
+          oneOf:
+            - { $ref: '#/components/schemas/BusinessDay' }
+            - { type: 'null' }
+    BusinessDay:
+      type: object
+      required: [kind, payCents, at]
+      properties:
+        kind: { type: string, enum: [normal, bad_day, great_day] }
+        payCents: { type: integer }
+        eventId: { type: string, description: 'Bad-day reason id from businesses.json badDays.' }
+        at: { type: string, format: date-time, description: 'End of the payout period.' }
     DmThread:
       type: object
       required: [userId, alias, lastMessage, lastAt]

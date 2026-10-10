@@ -1,176 +1,78 @@
 /**
- * Businesses service tests.
- *
- * Covers: create (rent debit + ledger row), getBusiness with
- * recent days, runBusiness with bad_day / normal / great_day
- * outcomes, idempotency on (business_id, day_date), insufficient
- * cash refusal, and the not-the-owner 403.
+ * Business payout rules (pure). The DB flows (buy, collect, sell)
+ * run through the routes in server/api/city-routes.test.ts.
  */
-import { Pool } from 'pg';
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
-import { config as loadDotenv } from 'dotenv';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import {
+  pendingPeriods,
+  rollPeriod,
+  sellBackCents,
+  type BusinessKindConfig,
+} from './businesses.js';
 
-import { buildContext, _resetContextForTests } from './context.js';
-import { _resetConfigForTests } from '../shared/config/config.js';
-import { uuidv7 } from '../shared/domain/uuid.js';
-import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+const catalog = JSON.parse(
+  readFileSync(join(process.cwd(), 'contract/config/businesses.json'), 'utf8'),
+) as { businesses: BusinessKindConfig[] };
+const lab = catalog.businesses.find((b) => b.id === 'memecoin_lab')!;
+const DAY = 24 * 3_600_000;
 
-loadDotenv({ path: process.cwd() + '/.env' });
+describe('rollPeriod', () => {
+  it('gives the same day for the same business and period', () => {
+    expect(rollPeriod(lab, 'biz-1', 4)).toEqual(rollPeriod(lab, 'biz-1', 4));
+  });
 
-_resetConfigForTests();
-_resetContextForTests();
+  it('pays inside incomeRangeCents on a normal day', () => {
+    const [min, max] = lab.incomeRangeCents;
+    for (let i = 0; i < 500; i++) {
+      const d = rollPeriod(lab, 'biz-range', i);
+      if (d.kind !== 'normal') continue;
+      expect(d.payCents).toBeGreaterThanOrEqual(min);
+      expect(d.payCents).toBeLessThanOrEqual(max);
+      expect(d.reasonId).toBeNull();
+    }
+  });
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  it('pays floor(min * badDayMultiplier) and names a catalog reason on a bad day', () => {
+    const always = { ...lab, badDayChanceBps: 10_000 };
+    const ids = new Set(lab.badDays!.map((r) => r.id));
+    for (let i = 0; i < 50; i++) {
+      const d = rollPeriod(always, 'biz-bad', i);
+      expect(d.kind).toBe('bad_day');
+      expect(d.payCents).toBe(Math.floor(lab.incomeRangeCents[0] * lab.badDayMultiplier));
+      expect(ids.has(d.reasonId!)).toBe(true);
+    }
+  });
 
-let ownerId: string;
-let otherId: string;
-
-beforeAll(async () => {
-  ownerId = uuidv7();
-  otherId = uuidv7();
-  for (const id of [ownerId, otherId]) {
-    await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `bizUser-${id}`]);
-  }
-  await pool.query(
-    `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 1000000)
-     ON CONFLICT (user_id) DO UPDATE SET cash_cents = 1000000`,
-    [ownerId],
-  );
+  it('rolls bad days near badDayChanceBps', () => {
+    let bad = 0;
+    const n = 20_000;
+    for (let i = 0; i < n; i++) if (rollPeriod(lab, 'biz-rate', i).kind === 'bad_day') bad++;
+    expect(bad / n).toBeGreaterThan(0.025);
+    expect(bad / n).toBeLessThan(0.045); // memecoin_lab is 350 bps
+  });
 });
 
-afterAll(async () => {
-  await pool.end();
+describe('pendingPeriods', () => {
+  it('owes the whole periods since the last collect', () => {
+    expect(pendingPeriods(lab, 0, 0, 3.5 * DAY, 7)).toEqual({
+      first: 0,
+      count: 3,
+      accruedUntilMs: 3 * DAY,
+    });
+    expect(pendingPeriods(lab, 0, 3 * DAY, 3.9 * DAY, 7).count).toBe(0);
+  });
+
+  it('caps the pile at maxPendingPayouts, newest first', () => {
+    expect(pendingPeriods(lab, 0, 0, 20 * DAY, 7)).toEqual({
+      first: 13,
+      count: 7,
+      accruedUntilMs: 20 * DAY,
+    });
+  });
 });
 
-beforeEach(async () => {
-  await pool.query(
-    `DELETE FROM business_days WHERE business_id IN (SELECT business_id FROM businesses WHERE owner_user_id = $1)`,
-    [ownerId],
-  );
-  await pool.query(`DELETE FROM businesses WHERE owner_user_id = $1`, [ownerId]);
-  await pool.query(`UPDATE balances SET cash_cents = 1000000 WHERE user_id = $1`, [ownerId]);
-});
-
-describe('businesses service', () => {
-  it('createBusiness debits first week rent and writes a businesses row', async () => {
-    const ctx = buildContext();
-    const { createBusiness } = await import('./businesses.js');
-    const before = Number(
-      (
-        await pool.query<{ cash_cents: string }>(
-          `SELECT cash_cents FROM balances WHERE user_id = $1`,
-          [ownerId],
-        )
-      ).rows[0]?.cash_cents ?? '0',
-    );
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    expect(out.kind).toBe('lemonade_stand');
-    expect(out.rentCentsPerWeek).toBe(2_000);
-    const after = Number(
-      (
-        await pool.query<{ cash_cents: string }>(
-          `SELECT cash_cents FROM balances WHERE user_id = $1`,
-          [ownerId],
-        )
-      ).rows[0]?.cash_cents ?? '0',
-    );
-    expect(after).toBe(before - 2_000);
-    const led = await pool.query<{ reason: string }>(
-      `SELECT reason FROM ledger_entries WHERE user_id = $1 AND reason = 'business_rent'`,
-      [ownerId],
-    );
-    expect(led.rows.length).toBe(1);
-  });
-
-  it('insufficient cash refuses the create', async () => {
-    const ctx = buildContext();
-    const { createBusiness } = await import('./businesses.js');
-    await pool.query(`UPDATE balances SET cash_cents = 100 WHERE user_id = $1`, [ownerId]);
-    await expect(createBusiness(ctx, ownerId, 'cafe')).rejects.toBeInstanceOf(
-      ValidationFailedError,
-    );
-  });
-
-  it('runBusiness bad_day pays 0 and writes the business_days row', async () => {
-    const ctx = buildContext();
-    const { createBusiness, runBusiness } = await import('./businesses.js');
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    const before = Number(
-      (
-        await pool.query<{ cash_cents: string }>(
-          `SELECT cash_cents FROM balances WHERE user_id = $1`,
-          [ownerId],
-        )
-      ).rows[0]?.cash_cents ?? '0',
-    );
-    // Force r < badDayPct (30) so we always get bad_day.
-    const r = await runBusiness(ctx, out.businessId, ownerId, () => 0.05);
-    expect(r.kind).toBe('bad_day');
-    expect(r.payCents).toBe(0);
-    const after = Number(
-      (
-        await pool.query<{ cash_cents: string }>(
-          `SELECT cash_cents FROM balances WHERE user_id = $1`,
-          [ownerId],
-        )
-      ).rows[0]?.cash_cents ?? '0',
-    );
-    expect(after).toBe(before);
-  });
-
-  it('runBusiness great_day pays income_max', async () => {
-    const ctx = buildContext();
-    const { createBusiness, runBusiness } = await import('./businesses.js');
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    // r = 0.35 -> falls in great_day (badDayPct=30, greatDayPct=10 -> 30..40).
-    const r = await runBusiness(ctx, out.businessId, ownerId, () => 0.35);
-    expect(r.kind).toBe('great_day');
-    expect(r.payCents).toBe(out.incomeMaxCents);
-  });
-
-  it('runBusiness normal pays in [income_min, income_max]', async () => {
-    const ctx = buildContext();
-    const { createBusiness, runBusiness } = await import('./businesses.js');
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    // r = 0.5 -> falls in normal (>= badDayPct + greatDayPct = 40).
-    const r = await runBusiness(ctx, out.businessId, ownerId, () => 0.5);
-    expect(r.kind).toBe('normal');
-    expect(r.payCents).toBeGreaterThanOrEqual(out.incomeMinCents);
-    expect(r.payCents).toBeLessThanOrEqual(out.incomeMaxCents);
-  });
-
-  it('runBusiness is idempotent on (business_id, day_date)', async () => {
-    const ctx = buildContext();
-    const { createBusiness, runBusiness } = await import('./businesses.js');
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    const first = await runBusiness(ctx, out.businessId, ownerId, () => 0.35);
-    const second = await runBusiness(ctx, out.businessId, ownerId, () => 0.35);
-    expect(second.dayId).toBe(first.dayId);
-    expect(second.payCents).toBe(first.payCents);
-  });
-
-  it('runBusiness refuses non-owner with ForbiddenError', async () => {
-    const ctx = buildContext();
-    const { createBusiness, runBusiness } = await import('./businesses.js');
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    await expect(runBusiness(ctx, out.businessId, otherId, () => 0.5)).rejects.toBeInstanceOf(
-      ForbiddenError,
-    );
-  });
-
-  it('getBusiness returns the business + recent days', async () => {
-    const ctx = buildContext();
-    const { createBusiness, runBusiness, getBusiness } = await import('./businesses.js');
-    const out = await createBusiness(ctx, ownerId, 'lemonade_stand');
-    await runBusiness(ctx, out.businessId, ownerId, () => 0.35);
-    const got = await getBusiness(ctx, out.businessId);
-    expect(got.business.kind).toBe('lemonade_stand');
-    expect(got.recentDays.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('getBusiness on unknown id throws NotFoundError', async () => {
-    const ctx = buildContext();
-    const { getBusiness } = await import('./businesses.js');
-    await expect(getBusiness(ctx, uuidv7())).rejects.toBeInstanceOf(NotFoundError);
-  });
+it('sells back for sellBackBps of the cost', () => {
+  expect(sellBackCents(lab)).toBe(lab.costCents / 2);
 });

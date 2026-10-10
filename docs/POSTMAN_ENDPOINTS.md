@@ -359,7 +359,7 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 - **auth** - `GET /v1/auth/challenge`, `POST /v1/auth/dev`, `GET /v1/auth/jwks`, `POST /v1/auth/logout`, `POST /v1/auth/refresh`, `POST /v1/auth/verify`
 - **beef** - `GET POST /v1/beef`, `POST /v1/beef/:id/accept`, `POST /v1/beef/:id/decline`, `POST /v1/beef/:id/settle`, `GET /v1/beef/elo`
 - **blocks** - `POST DELETE /v1/blocks/:userId`
-- **businesses** - `POST /v1/businesses`, `GET /v1/businesses/:id`, `POST /v1/businesses/:id/run`
+- **businesses** - `GET POST /v1/businesses` (`{kindId}` from `businesses.json`), `GET /v1/businesses/:id`, `POST /v1/businesses/:id/collect`, `POST /v1/businesses/:id/sell`
 - **cabal** - `GET POST /v1/cabal/invites`, `POST /v1/cabal/invites/:id/accept`
 - **careers** - `GET /v1/careers`, `POST /v1/careers/:careerId/apply`
 - **characters** - `POST /v1/characters`
