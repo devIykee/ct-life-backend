@@ -46,6 +46,44 @@ import { z } from 'zod';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 
+/** Contract order of PlayerState.look. */
+const LOOK_SLOTS = [
+  'skinTone',
+  'headId',
+  'hairId',
+  'topId',
+  'bottomId',
+  'shoesId',
+  'accId',
+] as const;
+
+const LOOK_FALLBACK = ['0', '0', '0', '0', '0', '0', '0'];
+
+/**
+ * Flatten a stored character look into the room's string[7].
+ *
+ * `characters.look` is jsonb holding the contract `Look` object, but
+ * PlayerState.look is a string[7] in contract order. Without this the
+ * object fails an Array.isArray check and every player is broadcast
+ * wearing the placeholder look.
+ * @param raw - The jsonb value read from characters.look.
+ * @returns The seven look ids in contract order.
+ */
+function lookToArray(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    // Legacy rows that already stored an array.
+    return raw.length === LOOK_SLOTS.length ? raw.map((v) => String(v)) : [...LOOK_FALLBACK];
+  }
+  if (raw !== null && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>;
+    return LOOK_SLOTS.map((k, i) => {
+      const v = o[k];
+      return typeof v === 'string' && v !== '' ? v : LOOK_FALLBACK[i]!;
+    });
+  }
+  return [...LOOK_FALLBACK];
+}
+
 const MoveMessage = z.object({
   x: z.number().finite(),
   z: z.number().finite(),
@@ -109,6 +147,8 @@ export class VenueRoom extends Room {
   declare state: VenueState;
   private spotsCfg!: VenueConfig;
   private brains: Map<string, NpcBrain> = new Map();
+  /** npcId -> the spot the NPC belongs to when it has nowhere else to be. */
+  private npcHomeSpots: Map<string, string> = new Map();
   private spotOccupants: Map<string, string> = new Map(); // spotId -> sessionId
   private lastMoveAt = new Map<string, number>();
   private lastEmoteAt = new Map<string, number>();
@@ -424,14 +464,41 @@ export class VenueRoom extends Room {
     // a single NPC per archetype at a fixed seed spot; M3+ spawns
     // the right count per venue layout.
     const archetypes: NpcArchetype[] = this.npcArchetypesFor(this.state.venueId);
+    // Give every NPC a home spot up front. Spawning them with spotId ''
+    // left the client to guess, and it used the entrance, which is also
+    // where players spawn, so arriving players landed inside a crowd.
+    const homeSpots = this.npcHomeSpotIds();
     for (let i = 0; i < archetypes.length; i++) {
       const archetype = archetypes[i]!;
       const npc = new NpcState();
       const npcId = `npc-${i}-${archetype}`;
       npc.archetypeId = archetype;
+      const home = homeSpots.length > 0 ? homeSpots[i % homeSpots.length]! : '';
+      npc.spotId = home;
+      npc.animId = 'loco_idle';
+      if (home !== '') this.npcHomeSpots.set(npcId, home);
       this.state.npcs.set(npcId, npc);
       this.brains.set(npcId, createBrain(archetype));
     }
+  }
+
+  /**
+   * Spots in this venue an NPC can be stationed at, in config order.
+   * @returns Global spot ids of the standing kinds, or [] if the venue has none.
+   */
+  private npcHomeSpotIds(): string[] {
+    const kinds = new Set(['npc', 'standing', 'stand']);
+    return (this.spotsCfg.venues[this.state.venueId]?.spots ?? [])
+      .filter((sp) => kinds.has(sp.kind))
+      .map((sp) => sp.id);
+  }
+
+  /**
+   * Every spot id belonging to this venue.
+   * @returns A set used to reject spot ids that belong to another venue.
+   */
+  private venueSpotIds(): Set<string> {
+    return new Set((this.spotsCfg.venues[this.state.venueId]?.spots ?? []).map((sp) => sp.id));
   }
 
   private npcArchetypesFor(venueId: string): NpcArchetype[] {
@@ -472,12 +539,21 @@ export class VenueRoom extends Room {
       dtMs: 1000,
       venue,
     };
+    // Brains can name a spot from another venue (spaces_host asked for
+    // 'spaces_studio', doomposter for 'venue_exit'). The client can only
+    // resolve spots of the room it is in, so anything else falls back to
+    // the NPC's home spot.
+    const validSpots = this.venueSpotIds();
     for (const [npcId, brain] of this.brains) {
       const out: BrainOutput = brain.tick(ctx);
       const npc = this.state.npcs.get(npcId);
       if (!npc) continue;
       npc.state = out.state;
-      npc.spotId = out.targetSpotId ?? npc.spotId;
+      const target = out.targetSpotId;
+      npc.spotId =
+        target !== null && target !== undefined && validSpots.has(target)
+          ? target
+          : (this.npcHomeSpots.get(npcId) ?? npc.spotId);
       npc.lineId = out.lineId ?? '';
       npc.animId = out.animId ?? 'loco_idle';
       npc.emoteId = out.emoteId ?? '';
@@ -524,7 +600,7 @@ export class VenueRoom extends Room {
     const ctx = buildContext();
     const result = await ctx.db.withConnection(async (c) => {
       return c.query(
-        `SELECT c.name, c.skr_name, u.is_seeker, c.tribe_id, c.look
+        `SELECT c.alias, u.skr_name, u.is_seeker, u.miner_tier, c.tribe_id, c.look
          FROM characters c
          JOIN users u ON u.id = c.user_id
          WHERE c.user_id = $1
@@ -541,18 +617,18 @@ export class VenueRoom extends Room {
         isSeeker: false,
         tribeId: '',
         minerTier: 'none',
-        look: ['0', '0', '0', '0', '0', '0', '0'],
+        look: [...LOOK_FALLBACK],
       };
     }
 
     const row = result.rows[0];
     return {
-      name: row.name || 'Anon',
+      name: row.alias || 'Anon',
       skrName: row.skr_name || '',
       isSeeker: row.is_seeker || false,
       tribeId: row.tribe_id || '',
-      minerTier: 'none', // TODO: fetch from ore balances
-      look: Array.isArray(row.look) ? row.look : ['0', '0', '0', '0', '0', '0', '0'],
+      minerTier: row.miner_tier || 'none',
+      look: lookToArray(row.look),
     };
   }
 
