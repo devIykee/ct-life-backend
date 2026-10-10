@@ -28,6 +28,10 @@ interface TraitsConfig {
   traits: Array<{ id: string }>;
 }
 
+interface LotteryConfig {
+  outcomes: Record<string, { homeId: string }>;
+}
+
 interface ItemsConfig {
   items: Array<{ id: string; slot: string }>;
 }
@@ -130,6 +134,21 @@ export class CharacterService {
   }
 
   /**
+   * The home a lottery outcome lands the player in, read from
+   * lottery.json so the roll screen and the character always agree.
+   * An unknown or missing outcome falls back to exit_liquidity's home.
+   */
+  private originHomeId(outcome: string | undefined): string {
+    const lottery = this.configCache.load<LotteryConfig>('lottery');
+    const out = (outcome !== undefined ? lottery.outcomes[outcome] : undefined) ??
+      lottery.outcomes['exit_liquidity'];
+    if (out === undefined) {
+      throw new ValidationFailedError({ reason: 'lottery_outcome_unknown', outcome });
+    }
+    return out.homeId;
+  }
+
+  /**
    * Create a character for the user. Throws AliasTakenError on
    * duplicate alias and ForbiddenError if the user already has one.
    */
@@ -168,22 +187,15 @@ export class CharacterService {
         throw new ForbiddenError({ reason: 'must_roll_lottery_first' });
       }
 
-      // B13 fix: Get home_id from the lottery outcome (stored in ledger ref_id)
+      // The origin home is whatever the rolled outcome promised in
+      // lottery.json; the payout's ref_id is the outcome id.
       const lotteryEntry = await client.query<{ ref_id: string }>(
         `SELECT ref_id FROM ledger_entries
          WHERE user_id = $1 AND reason = 'lottery_payout'
          ORDER BY created_at DESC LIMIT 1`,
         [userId],
       );
-      const lotteryOutcome = lotteryEntry.rows[0]?.ref_id ?? 'exit_liquidity';
-
-      // Map outcome to home_id (from lottery.json outcomes)
-      const homeIdMap: Record<string, string> = {
-        seeker: 'penthouse',
-        insider: 'skyrise',
-        exit_liquidity: 'parents_basement',
-      };
-      const homeId = homeIdMap[lotteryOutcome] ?? 'parents_basement';
+      const homeId = this.originHomeId(lotteryEntry.rows[0]?.ref_id);
 
       const id = uuidv7();
       try {
