@@ -33,6 +33,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { TokenAmount } from '../shared/domain/token-amount.js';
 import {
   TopupCapReachedError,
   NotFoundError,
@@ -269,9 +270,15 @@ export async function createTopupIntent(
     );
   });
 
+  // Solana Pay's `amount` is in user units ("1" USDC), not base units;
+  // the intent's `amount` field and the tx stay in base units.
   const solanaPayUrl = buildSolanaPayUrl({
     recipient: ctx.config.solana.treasuryPubkey,
-    amount,
+    amount: TokenAmount.of(amountBaseUnits, {
+      symbol: input.currency,
+      decimals: currency.decimals,
+      mint: mintAddress,
+    }).toDecimalString(),
     splToken: mintAddress,
     reference,
     memo,
@@ -374,7 +381,11 @@ export async function expirePendingIntents(ctx: AppContext): Promise<number> {
   });
 }
 
-function buildSolanaPayUrl(args: {
+/**
+ * Build a Solana Pay transfer request URL. `amount` must already be in
+ * user units (a decimal string such as "1" or "0.5"), per the spec.
+ */
+export function buildSolanaPayUrl(args: {
   recipient: string;
   amount: string;
   splToken: string | null;

@@ -98,6 +98,21 @@ export class TokenAmount {
     return this._baseUnits >= other._baseUnits;
   }
 
+  /**
+   * The amount in user units as a decimal string, e.g. 1_500_000n with
+   * 6 decimals is "1.5". Trailing zeros are trimmed and there is no
+   * exponent notation, which is the form Solana Pay URLs require.
+   */
+  toDecimalString(): string {
+    const negative = this._baseUnits < 0n;
+    const abs = negative ? -this._baseUnits : this._baseUnits;
+    const scale = 10n ** BigInt(this._mint.decimals);
+    const whole = (abs / scale).toString();
+    const frac = (abs % scale).toString().padStart(this._mint.decimals, '0').replace(/0+$/, '');
+    const out = frac === '' ? whole : `${whole}.${frac}`;
+    return negative ? `-${out}` : out;
+  }
+
   toJSON(): string {
     return this._baseUnits.toString();
   }
