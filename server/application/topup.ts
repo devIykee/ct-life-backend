@@ -31,6 +31,7 @@
  *   `topup` reason in the ledger is the source). The cap is
  *   enforced at intent creation.
  */
+import { randomBytes } from 'node:crypto';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import {
   TopupCapReachedError,
@@ -185,16 +186,32 @@ export async function createTopupIntent(
   if (!mintAddress) {
     throw new ValidationFailedError({ reason: 'USDC mint address not configured' });
   }
-  const reference = uuidv7().replace(/-/g, '').slice(0, 32);
+  // Solana Pay wants the reference to be a pubkey: it rides along as a
+  // read-only key so the payment can be found on chain later. The old
+  // 32-char uuid hex was not base58, so building a PublicKey from it threw.
+  const referencePubkey = new PublicKey(randomBytes(32));
+  const reference = referencePubkey.toBase58();
   const memo = uuidv7();
   const intentId = uuidv7();
   const expiresAt = new Date(Date.now() + INTENT_TTL_SEC * 1000).toISOString();
   const bonusBps = cfg.currencyBonusBps[input.currency];
 
-  // B19 fix: Build unsigned v0 transaction
-  const userPubkey = new PublicKey(input.userId); // B19: userId is actually wallet address for now
+  // B19 fix: Build unsigned v0 transaction.
+  // input.userId is the users.id UUID, never an on-chain address, so the
+  // payer has to be looked up. Treating the UUID as a pubkey threw
+  // 'Non-base58 character' and made every intent a 500.
+  const walletRow = await ctx.db.withConnection((c) =>
+    c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [input.userId]),
+  );
+  const wallet = walletRow.rows[0]?.wallet;
+  if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: input.userId });
+  let userPubkey: PublicKey;
+  try {
+    userPubkey = new PublicKey(wallet);
+  } catch {
+    throw new ValidationFailedError({ reason: 'user wallet is not a valid pubkey' });
+  }
   const recipient = new PublicKey(ctx.config.solana.treasuryPubkey);
-  const referencePubkey = new PublicKey(Buffer.from(reference, 'hex').toString('base64'));
 
   const connection = new Connection(ctx.config.solana.rpcUrl, 'confirmed');
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
