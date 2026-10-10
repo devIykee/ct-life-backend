@@ -29,7 +29,7 @@ interface TraitsConfig {
 }
 
 interface ItemsConfig {
-  items: Record<string, { slot: string }>;
+  items: Array<{ id: string; slot: string }>;
 }
 
 export interface CharacterInput {
@@ -96,23 +96,35 @@ export class CharacterService {
       { id: input.look.accId, slot: 'acc' },
     ];
 
+    // contract/ids/items.json is the shop catalogue: `{items: [{id, slot}]}`.
+    // It holds purchasable cosmetics only, not the creator's base-look ids
+    // (head_<look>, hair_<look>, acc_none, ...), which are FE-owned and
+    // never appear here. So an id that is in the catalogue must sit in the
+    // right slot, and an id that is not is accepted as a base look. The
+    // alternative, rejecting unknown ids, fails every real character
+    // submit.
+    const slotById = new Map(items.items.map((i) => [i.id, i.slot]));
+
     for (const { id, slot } of lookItems) {
-      const item = items.items[id];
-      if (!item) {
-        throw new ValidationFailedError({ reason: 'invalid_look_item', itemId: id });
+      if (typeof id !== 'string' || id === '') {
+        throw new ValidationFailedError({ reason: 'invalid_look_item', itemId: id, slot });
       }
-      if (item.slot !== slot) {
+      const knownSlot = slotById.get(id);
+      if (knownSlot !== undefined && knownSlot !== slot) {
         throw new ValidationFailedError({
           reason: 'look_item_wrong_slot',
           itemId: id,
           expected: slot,
-          actual: item.slot,
+          actual: knownSlot,
         });
       }
     }
 
-    // Validate skinTone (skin_tone1 through skin_tone6)
-    if (!/^skin_tone[1-6]$/.test(input.look.skinTone)) {
+    // The contract types Look.skinTone as a free string (its own example
+    // is 'tan'), so only emptiness is rejected. The previous
+    // /^skin_tone[1-6]$/ rule was not in the contract and refused every
+    // tone the creator sends.
+    if (typeof input.look.skinTone !== 'string' || input.look.skinTone.trim() === '') {
       throw new ValidationFailedError({ reason: 'invalid_skin_tone', skinTone: input.look.skinTone });
     }
   }
