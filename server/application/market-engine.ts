@@ -27,6 +27,10 @@
  * `graduateMcapCents`. The engine transitions the stage atomically
  * with the new price write.
  *
+ * Death: a coin whose price falls `hiddenArc.drawdownBps` below its
+ * peak goes to `dead` and stops ticking (a 0 drawdown never dies).
+ * Each tick starts from the stored price, so trade impact is kept.
+ *
  * The engine runs as a singleton in the workers process. The API
  * reads via `GET /v1/market/coins`. The engine is paused on
  * `config.market.paused = true` (set by the runtime feature flag).
@@ -65,6 +69,8 @@ export interface CoinState {
   readonly rng: Rng;
   readonly priceHistory: Array<{ at: number; priceMicros: bigint }>;
   raisedCents: bigint;
+  /** Highest price seen since the engine loaded the coin. */
+  peakMicros: bigint;
 }
 
 /** Market engine configuration, loaded from contract/config/market.json. */
@@ -93,6 +99,12 @@ const DEFAULT_TICK_LENGTH_SEC = 2;
 const LOCK_TTL_MS = 1500;
 const SNAPSHOT_TTL_SEC = 30;
 
+/** True once `price` is `drawdownBps` or more below `peak`. A 0 drawdown never trips. */
+export function isDrawnDown(peak: bigint, price: bigint, drawdownBps: number): boolean {
+  if (drawdownBps <= 0 || peak <= 0n) return false;
+  return (peak - price) * 10_000n >= peak * BigInt(drawdownBps);
+}
+
 function makeLockKey(coinId: string): string {
   return `market:lock:${coinId}`;
 }
@@ -108,7 +120,9 @@ export class MarketEngine {
   private readonly coins = new Map<string, CoinState>();
   private readonly cfg: MarketConfig;
   private paused = false;
-  private intervalHandles: ReturnType<typeof setInterval>[] = [];
+  private running = false;
+  private readonly intervals = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly onDead: ((state: CoinState) => Promise<void>) | undefined;
 
   /**
    * @param cfg - The market config. Pass a partial in tests; defaults are applied.
@@ -116,7 +130,12 @@ export class MarketEngine {
    */
   constructor(
     cfg: Partial<MarketConfig> = {},
-    overrides: { db?: Db; redis?: Redis; clock?: Clock } = {},
+    overrides: {
+      db?: Db;
+      redis?: Redis;
+      clock?: Clock;
+      onDead?: (state: CoinState) => Promise<void>;
+    } = {},
   ) {
     this.cfg = {
       version: '1.0.0-rc1',
@@ -136,6 +155,7 @@ export class MarketEngine {
     this.db = overrides.db ?? createDb();
     this.redis = overrides.redis ?? createRedis().main;
     this.clock = overrides.clock ?? new SystemClock();
+    this.onDead = overrides.onDead;
   }
 
   /**
@@ -167,8 +187,20 @@ export class MarketEngine {
     this.coins.set(coinId, state);
     return state;
   }
+  /**
+   * Load a coin and, if the engine is running, start ticking it.
+   * No-op for a coin already tracked.
+   */
+  async track(coinId: string): Promise<void> {
+    if (this.coins.has(coinId)) return;
+    const state = await this.load(coinId);
+    if (this.running && state.stage !== 'dead') this.schedule(state, this.cfg.tickLengthSec * 1000);
+  }
   /** Remove a coin from the in-memory map (does not touch the DB). */
   forget(coinId: string): void {
+    const h = this.intervals.get(coinId);
+    if (h !== undefined) clearTimeout(h);
+    this.intervals.delete(coinId);
     this.coins.delete(coinId);
   }
   /** @returns The in-memory coin state, or null. */
@@ -191,12 +223,17 @@ export class MarketEngine {
     if (state.stage === 'dead') return false;
     const acquired = await this.acquireLock(coinId);
     if (!acquired) return false;
+    let died: boolean;
     try {
-      await this.tickLocked(state);
-      return true;
+      died = await this.tickLocked(state);
     } finally {
       await this.releaseLock(coinId);
     }
+    if (died) {
+      this.forget(coinId);
+      if (this.onDead) await this.onDead(state);
+    }
+    return true;
   }
 
   /**
@@ -205,20 +242,34 @@ export class MarketEngine {
    */
   start(): () => void {
     const tickMs = this.cfg.tickLengthSec * 1000;
+    this.running = true;
     for (const state of this.coins.values()) {
-      this.schedule(state, tickMs);
+      if (state.stage !== 'dead') this.schedule(state, tickMs);
     }
     return () => {
-      for (const h of this.intervalHandles) clearInterval(h);
-      this.intervalHandles = [];
+      this.running = false;
+      for (const h of this.intervals.values()) clearTimeout(h);
+      this.intervals.clear();
     };
   }
 
+  /**
+   * Tick a coin every `tickMs`, starting at a random offset so the
+   * coins spread across the interval instead of all hitting the DB
+   * pool on the same beat.
+   */
   private schedule(state: CoinState, tickMs: number): void {
-    const handle = setInterval(() => {
-      void this.tick(state.coinId);
-    }, tickMs);
-    this.intervalHandles.push(handle);
+    if (this.intervals.has(state.coinId)) return;
+    const run = (): void => void this.tick(state.coinId).catch(() => undefined);
+    const start = setTimeout(
+      () => {
+        if (!this.intervals.has(state.coinId)) return;
+        run();
+        this.intervals.set(state.coinId, setInterval(run, tickMs));
+      },
+      Math.floor(Math.random() * tickMs),
+    );
+    this.intervals.set(state.coinId, start);
   }
 
   private async fetchCoin(coinId: string): Promise<CoinState> {
@@ -262,6 +313,7 @@ export class MarketEngine {
       rng: new SeededRng(Number(seed & 0x7fffffffn)),
       priceHistory: [{ at: this.clock.now(), priceMicros: BigInt(row.price_micros) }],
       raisedCents: 0n,
+      peakMicros: BigInt(row.price_micros),
     };
   }
 
@@ -274,7 +326,23 @@ export class MarketEngine {
     await this.redis.del(makeLockKey(coinId));
   }
 
-  private async tickLocked(state: CoinState): Promise<void> {
+  /** One tick under the lock. @returns true when the coin died on this tick. */
+  private async tickLocked(state: CoinState): Promise<boolean> {
+    // Start from the stored row: trades move the price between ticks,
+    // and an admin may have killed the coin.
+    const stored = await this.db.withConnection((c: PoolClient) =>
+      c.query<{ price_micros: string; stage: CoinState['stage'] }>(
+        `SELECT price_micros, stage FROM coins WHERE coin_id = $1`,
+        [state.coinId],
+      ),
+    );
+    const row = stored.rows[0];
+    if (row === undefined || row.stage === 'dead') {
+      state.stage = 'dead';
+      return true;
+    }
+    state.priceMicros = BigInt(row.price_micros);
+    state.stage = row.stage;
     const noiseBps = (state.rng.float() * 2 - 1) * state.hiddenArc.noiseBps;
     const driftBps = state.hiddenArc.slopeBps + noiseBps;
     const newPriceMicros = this.applyDrift(state.priceMicros, driftBps);
@@ -290,8 +358,13 @@ export class MarketEngine {
     if (state.stage === 'new' && state.mcapCents >= BigInt(this.cfg.curve.graduateMcapCents)) {
       state.stage = 'final';
     }
+    if (state.priceMicros > state.peakMicros) state.peakMicros = state.priceMicros;
+    if (isDrawnDown(state.peakMicros, state.priceMicros, state.hiddenArc.drawdownBps)) {
+      state.stage = 'dead';
+    }
     await this.persist(state);
     await this.publishSnapshot(state);
+    return state.stage === 'dead';
   }
 
   private applyDrift(price: bigint, bps: number): bigint {

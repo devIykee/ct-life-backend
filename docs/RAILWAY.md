@@ -70,6 +70,14 @@ critical ones are:
 - `S3_*` (Cloudflare R2 or AWS S3 for ad creative uploads)
 - `SENTRY_DSN` (optional)
 - `RAILWAY_TOKEN` (only needed for CI deploys)
+- `ORE_READER_ENABLED=1` on `ctlife-api` (read-only mainnet ORE board;
+  off answers `GET /v1/ore/board` with 503 and lists `ore_reader` as
+  degraded in `/v1/config`)
+
+`ctlife-workers` runs the market simulation: it ticks every live coin
+and launches a house coin every `launchIntervalSec` from
+`contract/config/market.json` while fewer than `maxActiveCoins` are
+alive. Without the workers service the market stays empty.
 
 The build **must hard-fail at startup** if `ENABLE_DEV_AUTH=true`
 while `APP_ENV` is `staging` or `prod`. See the `Config` loader.

@@ -16,6 +16,9 @@
  *     registered as repeatable jobs so the cron expression is fixed
  *     and only the handler changes.
  *
+ *   - Market sim: ticks every live coin and launches house coins on
+ *     market.json `launchIntervalSec` (see market-sim.ts).
+ *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
  * configured `PORT_WORKERS` if non-zero.
@@ -32,6 +35,7 @@ import { handleSundayUnlock, handleWeeklyMeta } from './sunday-unlock.js';
 import { handleDistrictRollover } from './district-rollover.js';
 import { handleSeasonRollover } from './season-rollover.js';
 import { buildContext } from '../application/context.js';
+import { startMarketSim } from './market-sim.js';
 
 export interface WorkersHandle {
   redis: ReturnType<typeof createRedis>;
@@ -137,6 +141,8 @@ export async function buildWorkers(): Promise<WorkersHandle> {
     log.error({ jobId: job?.id, err: err.message }, 'season-rollover failed'),
   );
 
+  const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
+
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
   // strings are placeholders; the actual schedule is M5.
   await dailyQueue.upsertJobScheduler(
@@ -200,6 +206,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
     redis,
     healthzServer,
     async shutdown() {
+      stopMarket();
       await crierWorker.close();
       await dailyWorker.close();
       await sundayWorker.close();
