@@ -3,7 +3,9 @@
  *
  * Businesses: GET /v1/businesses lists what I own (it was a 404), POST
  * buys a catalog kind by `kindId`, collect pays the periods that
- * accrued, sell refunds `sellBackBps` of the cost.
+ * accrued, sell refunds `sellBackBps` of the cost. DMs: GET /v1/dms is
+ * the inbox thread index (it required `peerUserId` and returned one
+ * conversation).
  *
  * Time is moved by back-dating the business row. Run: `pnpm test:unit`
  * (uses the dev Postgres and Redis).
@@ -240,5 +242,46 @@ describe('businesses', () => {
     const other = await devAuth();
     expect((await call(other, 'POST', `/v1/businesses/${id}/collect`)).status).toBe(403);
     expect((await call(other, 'GET', `/v1/businesses/${id}`)).status).toBe(404);
+  });
+});
+
+describe('DM inbox', () => {
+  async function character(u: AuthedUser, alias: string): Promise<void> {
+    await sql(
+      `INSERT INTO characters (id, user_id, alias, look, tribe_id, trait_ids, dream_id, home_id)
+       VALUES ($1, $2, $3, '{}', 'trencher', '{}', 'd', 'h')`,
+      [uuidv7(), u.sub, alias],
+    );
+  }
+
+  it('lists one thread per peer, newest first, without blocked peers', async () => {
+    const me = await devAuth();
+    const ann = await devAuth();
+    const bob = await devAuth();
+    const eve = await devAuth();
+    const annAlias = `ann${uuidv7().slice(-8)}`;
+    await character(ann, annAlias);
+
+    expect((await call(me, 'POST', `/v1/dms/${ann.sub}`, { text: 'gm ann' })).status).toBe(201);
+    expect((await call(ann, 'POST', `/v1/dms/${me.sub}`, { text: 'gm back' })).status).toBe(201);
+    expect((await call(bob, 'POST', `/v1/dms/${me.sub}`, { text: 'wen' })).status).toBe(201);
+    expect((await call(eve, 'POST', `/v1/dms/${me.sub}`, { text: 'spam' })).status).toBe(201);
+    await sql(`INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2)`, [
+      me.sub,
+      eve.sub,
+    ]);
+
+    const inbox = await call(me, 'GET', '/v1/dms');
+    expect(inbox.status).toBe(200);
+    const threads = inbox.body.threads as Array<Record<string, string>>;
+    expect(threads.map((t) => t.userId)).toEqual([bob.sub, ann.sub]);
+    expect(threads[1]).toMatchObject({ alias: annAlias, lastMessage: 'gm back' });
+    expect(Date.parse(threads[0]!.lastAt!)).toBeGreaterThan(0);
+
+    // The conversation itself is GET /v1/dms/:userId, with the contract `at`.
+    const convo = await call(me, 'GET', `/v1/dms/${ann.sub}`);
+    const messages = convo.body.messages as Array<Record<string, string>>;
+    expect(messages.map((m) => m.text)).toEqual(['gm back', 'gm ann']);
+    expect(messages[0]!.at).toBe(messages[0]!.createdAt);
   });
 });

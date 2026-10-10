@@ -1632,7 +1632,8 @@ paths:
     get:
       tags: [social]
       operationId: getDms
-      summary: Threads I have open, newest first.
+      summary: My inbox, one thread per peer with its newest message, newest first.
+      description: Peers I blocked are left out. Up to 50 threads.
       x-phase: 3
       responses:
         '200':
@@ -1640,8 +1641,10 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/DmThread' }
+                type: object
+                required: [threads]
+                properties:
+                  threads: { type: array, items: { $ref: '#/components/schemas/DmThread' } }
 
   /dms/{userId}:
     get:
@@ -1664,8 +1667,10 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/DmMessage' }
+                type: object
+                required: [messages]
+                properties:
+                  messages: { type: array, items: { $ref: '#/components/schemas/DmMessage' } }
     post:
       tags: [social]
       operationId: postDmsUserId

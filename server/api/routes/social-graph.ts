@@ -1,7 +1,7 @@
 /**
  * Social routes (M3 #45).
  *
- *   GET  /v1/dms?peerUserId=&cursor=
+ *   GET  /v1/dms                  - inbox threads; ?peerUserId= reads one thread
  *   GET  /v1/dms/:userId?before=
  *   POST /v1/dms/:userId
  *   GET  /v1/feed?scope=global|following
@@ -20,6 +20,7 @@ import {
   follow,
   isFollowing,
   listDms,
+  listDmThreads,
   listFeed,
   sendDm,
   unfollow,
@@ -39,12 +40,14 @@ const PostBody = z.object({ text: z.string().min(1).max(280) });
  * @param app - The Fastify instance.
  */
 export function registerSocialGraphRoutes(app: FastifyInstance): void {
-  // GET /v1/dms?peerUserId=&cursor=
+  // GET /v1/dms: the inbox, one thread per peer. `?peerUserId=` is the
+  // older spelling of GET /v1/dms/:userId and still returns that thread.
   app.get('/v1/dms', { preHandler: requireAuth }, async (req, reply) => {
     const q = DmListQuery.safeParse(req.query);
     if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
-    if (q.data.peerUserId === undefined)
-      throw new ValidationFailedError({ reason: 'peerUserId required' });
+    if (q.data.peerUserId === undefined) {
+      return reply.send({ threads: await listDmThreads(req.ctx, req.user!.sub) });
+    }
     const dms = await listDms(req.ctx, req.user!.sub, q.data.peerUserId, q.data.before ?? null);
     return reply.send({ messages: dms });
   });

@@ -242,7 +242,7 @@ Only assigned mini-games may be scored, and a shift cannot be completed twice (`
 ```
 POST   /v1/dms/:userId        { "text": "..." }   -> 201   (max 500 chars)
 GET    /v1/dms/:userId?before=<cursor>            -> 200
-GET    /v1/dms                                    -> 200
+GET    /v1/dms                                    -> 200   { threads: [{ userId, alias, lastMessage, lastAt }] }
 POST   /v1/blocks/:userId                         -> 204
 DELETE /v1/blocks/:userId                         -> 204
 POST   /v1/follows/:userId                        -> 204

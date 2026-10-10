@@ -1,7 +1,7 @@
 /**
  * Social endpoints: DMs, Feed, Follows.
  *
- *   GET  /v1/dms?peerUserId=&cursor=
+ *   GET  /v1/dms                  - thread index (one row per peer)
  *   GET  /v1/dms/:userId?before=
  *   POST /v1/dms/:userId
  *   GET  /v1/feed?scope=global|following
@@ -25,7 +25,16 @@ export interface DmRow {
   readonly fromUserId: string;
   readonly toUserId: string;
   readonly text: string;
+  /** Contract field; `createdAt` is kept for older clients. */
+  readonly at: string;
   readonly createdAt: string;
+}
+
+export interface DmThread {
+  readonly userId: string;
+  readonly alias: string;
+  readonly lastMessage: string;
+  readonly lastAt: string;
 }
 
 const DM_TEXT_MAX = 500;
@@ -75,7 +84,42 @@ export async function listDms(
     fromUserId: row.from_user_id,
     toUserId: row.to_user_id,
     text: row.text,
+    at: row.created_at.toISOString(),
     createdAt: row.created_at.toISOString(),
+  }));
+}
+
+/**
+ * The requester's inbox: one row per peer they have exchanged a DM
+ * with, carrying the newest message, newest thread first. Peers the
+ * requester blocked are left out.
+ */
+export async function listDmThreads(ctx: AppContext, userId: string): Promise<DmThread[]> {
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{ peer: string; alias: string | null; text: string; created_at: Date }>(
+      `SELECT t.peer, ch.alias, t.text, t.created_at
+       FROM (
+         SELECT DISTINCT ON (peer) peer, text, created_at
+         FROM (
+           SELECT CASE WHEN from_user_id = $1 THEN to_user_id ELSE from_user_id END AS peer,
+                  text, created_at
+           FROM dm_messages
+           WHERE from_user_id = $1 OR to_user_id = $1
+         ) m
+         ORDER BY peer, created_at DESC
+       ) t
+       LEFT JOIN characters ch ON ch.user_id = t.peer
+       WHERE t.peer NOT IN (SELECT blocked_user_id FROM blocks WHERE blocker_user_id = $1)
+       ORDER BY t.created_at DESC
+       LIMIT $2`,
+      [userId, FEED_PAGE],
+    );
+  });
+  return r.rows.map((row) => ({
+    userId: row.peer,
+    alias: row.alias ?? '',
+    lastMessage: row.text,
+    lastAt: row.created_at.toISOString(),
   }));
 }
 
@@ -122,13 +166,8 @@ export async function sendDm(
       [messageId, fromUserId, toUserId, text],
     );
   });
-  return {
-    messageId,
-    fromUserId,
-    toUserId,
-    text,
-    createdAt: new Date().toISOString(),
-  };
+  const at = new Date().toISOString();
+  return { messageId, fromUserId, toUserId, text, at, createdAt: at };
 }
 
 export interface FeedPost {
