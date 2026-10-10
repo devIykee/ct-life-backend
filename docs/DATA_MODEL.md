@@ -74,6 +74,17 @@ Decay is computed on read from `last_action_at` against `needs.json`. The row st
 - `design smallint NOT NULL DEFAULT 1`
 - `security smallint NOT NULL DEFAULT 1`
 
+### `career_progress`
+
+- `user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE`
+- `career_id text NOT NULL` - a `careers.json` id
+- `level smallint NOT NULL DEFAULT 1` - 1 to 5
+- `xp integer NOT NULL DEFAULT 0` - progress inside the current level
+- `applied_at timestamptz`, `updated_at timestamptz`
+- `PRIMARY KEY (user_id, career_id)`
+
+Written by apply (creates the row, never resets it) and by shift completion, in the same transaction as the pay. When `xp` reaches the level's `careers.json` `levels[].xp` threshold the player is promoted and the threshold is subtracted. `GET /v1/careers` and the next shift's pay read it.
+
 ### `payment_intents` (M3)
 
 - `intent_id uuid PRIMARY KEY`
