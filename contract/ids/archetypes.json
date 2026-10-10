@@ -1,7 +1,7 @@
 {
   "_owner": "BE",
   "_provisional": false,
-  "version": "1.0.0-rc1",
+  "version": "1.0.2",
   "archetypes": [
     {
       "id": "town_crier",
@@ -108,7 +108,13 @@
       "phase": 2,
       "lines": "npc_lines.auditor"
     },
-    { "id": "vc", "name": "VC", "venueId": "vc_row", "phase": 2, "lines": "npc_lines.vc" },
+    {
+      "id": "vc",
+      "name": "VC",
+      "venueId": "vc_row",
+      "phase": 2,
+      "lines": "npc_lines.vc"
+    },
     {
       "id": "farmer",
       "name": "Farmer",
@@ -122,13 +128,6 @@
       "venueId": "airdrop_farm",
       "phase": 2,
       "lines": "npc_lines.sybil_farmer"
-    },
-    {
-      "id": "spaces_host",
-      "name": "Spaces Host (alt)",
-      "venueId": "spaces_studio",
-      "phase": 2,
-      "lines": "npc_lines.spaces_host"
     },
     {
       "id": "fake_rich_larp",
@@ -199,6 +198,20 @@
       "venueId": "prediction_pit",
       "phase": 2,
       "lines": "npc_lines.prediction_shark_npc"
+    },
+    {
+      "id": "barista",
+      "name": "Barista",
+      "venueId": "terminal_cafe",
+      "phase": 1,
+      "lines": ""
+    },
+    {
+      "id": "patron",
+      "name": "Patron",
+      "venueId": "",
+      "phase": 1,
+      "lines": ""
     }
   ]
 }

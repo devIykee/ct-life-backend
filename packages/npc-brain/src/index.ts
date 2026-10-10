@@ -34,7 +34,9 @@ export type NpcArchetype =
   | 'spaces_host'
   | 'ore_miner'
   | 'vc_npc'
-  | 'builder_npc';
+  | 'builder_npc'
+  | 'barista'
+  | 'patron';
 
 export interface VenueCtx {
   /** The venue instance id. */
@@ -137,6 +139,55 @@ export function createBrain(archetype: NpcArchetype): NpcBrain {
       return new VcNpcBrain();
     case 'builder_npc':
       return new BuilderNpcBrain();
+    case 'barista':
+    case 'patron':
+      return new StationaryBrain();
+  }
+}
+
+/**
+ * Venue dressing: an NPC that stays at the spot the room gave it.
+ *
+ * Baristas, laptop patrons, coffee drinkers and Space audiences exist to
+ * make a venue look lived in, so they hold their spot and never wander.
+ * The seat or counter anim comes from the room's spawn plan, so this brain
+ * leaves animId null rather than guessing.
+ */
+class StationaryBrain implements NpcBrain {
+  readonly archetype = 'patron' as const;
+  state: NpcState = 'act';
+  dwellUntilMs = 0;
+  followUserId: string | null = null;
+
+  reset(): void {
+    this.state = 'act';
+    this.dwellUntilMs = 0;
+    this.followUserId = null;
+  }
+
+  tick(ctx: TickCtx): BrainOutput {
+    if (ctx.nowMs < this.dwellUntilMs) return this.hold(null);
+    this.dwellUntilMs = ctx.nowMs + 8_000 + ctx.rng.int(12_000); // 8-20s
+    // A rare glance up, so they are not completely static.
+    return this.hold(ctx.rng.int(100) < 4 ? 'emote_nod' : null, ctx.venue.currentSpotId);
+  }
+
+  notify(_event: NpcEvent, _ctx: TickCtx): BrainOutput {
+    // Dressing does not react to world events; it keeps the venue busy.
+    return this.hold(null);
+  }
+
+  private hold(emoteId: string | null, spotId: string | null = null): BrainOutput {
+    return {
+      state: 'act',
+      targetSpotId: spotId,
+      lineId: null,
+      emoteId,
+      // The seat or counter anim comes from the room's spawn plan.
+      animId: null,
+      dwellMs: Math.max(0, this.dwellUntilMs - Date.now()),
+      followUserId: null,
+    };
   }
 }
 
