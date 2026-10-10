@@ -79,6 +79,24 @@ export class LotteryService {
       if (u.rows[0]!.lottery_rolled_at !== null) {
         throw new AlreadyRolledError({});
       }
+      // Second guard for accounts that rolled before lottery_rolled_at
+      // existed and were not caught by the backfill: the ledger is the
+      // real record. Without this the INSERT below trips the UNIQUE on
+      // idempotency_ref and the caller sees 500 instead of 409.
+      const prior = await client.query(
+        `SELECT 1 FROM ledger_entries
+          WHERE user_id = $1 AND (ref_type = 'lottery' OR reason = 'lottery_payout')
+          LIMIT 1`,
+        [userId],
+      );
+      if ((prior.rowCount ?? 0) > 0) {
+        // Self-heal the column so /me stops advertising an unrolled lottery.
+        await client.query(
+          'UPDATE users SET lottery_rolled_at = now() WHERE id = $1 AND lottery_rolled_at IS NULL',
+          [userId],
+        );
+        throw new AlreadyRolledError({});
+      }
       // Mark the user as having rolled
       await client.query('UPDATE users SET lottery_rolled_at = now() WHERE id = $1', [userId]);
       // The balance is the only writer of the lottery outcome. We
@@ -96,11 +114,20 @@ export class LotteryService {
       );
       // Ledger entry for the disbursement.
       const idem = `lottery:${userId}`;
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'lottery_payout', 'lottery', $3, $4)`,
-        [userId, cash, chosen, idem],
-      );
+      try {
+        await client.query(
+          `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+           VALUES ($1, $2, 'cash', 'lottery_payout', 'lottery', $3, $4)`,
+          [userId, cash, chosen, idem],
+        );
+      } catch (e) {
+        // unique_violation on idempotency_ref: two rolls raced, or an
+        // account slipped past both guards. Either way it has rolled.
+        if ((e as { code?: string }).code === '23505') {
+          throw new AlreadyRolledError({});
+        }
+        throw e;
+      }
       if (debt > 0) {
         await client.query(
           `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
