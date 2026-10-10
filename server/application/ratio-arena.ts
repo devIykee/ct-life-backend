@@ -454,3 +454,71 @@ function rowToMatch(r: BeefMatchDbRow): BeefMatchRow {
     settledAt: r.settled_at ? r.settled_at.toISOString() : null,
   };
 }
+
+export interface BeefMatchListRow {
+  readonly matchId: string;
+  readonly challengerUserId: string;
+  readonly accepterUserId: string | null;
+  readonly winnerUserId: string | null;
+  readonly stakeCents: number;
+  readonly status: string;
+  readonly openedAt: string;
+  readonly acceptedAt: string | null;
+  readonly settledAt: string | null;
+}
+
+/**
+ * List beef matches for the arena board or my own history.
+ *
+ * The spec's invitedUserId and topicId are not columns on beef_matches
+ * yet, so they are left out rather than invented.
+ * @param ctx - The application context.
+ * @param userId - The calling user, used by scope=mine.
+ * @param scope - all for the public board, mine for matches I am part of.
+ * @param status - Optional status filter.
+ * @param limit - Page size.
+ * @returns Matches, newest first.
+ */
+export async function listMatches(
+  ctx: AppContext,
+  userId: string,
+  scope: 'all' | 'mine',
+  status: string | null,
+  limit: number,
+): Promise<BeefMatchListRow[]> {
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{
+      match_id: string;
+      challenger_user_id: string;
+      accepter_user_id: string | null;
+      winner_user_id: string | null;
+      stake_cents: string;
+      status: string;
+      opened_at: Date;
+      accepted_at: Date | null;
+      settled_at: Date | null;
+    }>(
+      `SELECT match_id, challenger_user_id, accepter_user_id, winner_user_id,
+              stake_cents, status, opened_at, accepted_at, settled_at
+         FROM beef_matches
+        WHERE ($3::text IS NULL OR status = $3)
+          AND ($2::boolean IS FALSE
+               OR challenger_user_id = $1
+               OR accepter_user_id = $1)
+        ORDER BY opened_at DESC
+        LIMIT $4`,
+      [userId, scope === 'mine', status, limit],
+    );
+  });
+  return r.rows.map((row) => ({
+    matchId: row.match_id,
+    challengerUserId: row.challenger_user_id,
+    accepterUserId: row.accepter_user_id,
+    winnerUserId: row.winner_user_id,
+    stakeCents: Number(row.stake_cents),
+    status: row.status,
+    openedAt: row.opened_at.toISOString(),
+    acceptedAt: row.accepted_at ? row.accepted_at.toISOString() : null,
+    settledAt: row.settled_at ? row.settled_at.toISOString() : null,
+  }));
+}

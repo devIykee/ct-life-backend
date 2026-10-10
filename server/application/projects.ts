@@ -289,3 +289,74 @@ export async function getProject(
 }
 
 void ConflictError;
+
+export interface ProjectListRow {
+  readonly projectId: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly ownerUserId: string;
+  readonly ownerAlias: string | null;
+  readonly memberCount: number;
+  readonly treasuryCents: number;
+  readonly createdAt: string;
+}
+
+/**
+ * List projects for the Builder Hills boards.
+ *
+ * `mine` is what I founded or work for, `all` is every project that is not
+ * rugged, ordered by treasury. There is no open-role record yet, so
+ * `hiring` falls back to `all`.
+ * @param ctx - The application context.
+ * @param userId - The calling user.
+ * @param scope - mine, hiring or all.
+ * @param limit - Page size, capped by the caller.
+ * @returns The projects, newest or richest first depending on scope.
+ */
+export async function listProjects(
+  ctx: AppContext,
+  userId: string,
+  scope: 'mine' | 'hiring' | 'all',
+  limit: number,
+): Promise<ProjectListRow[]> {
+  const mine = scope === 'mine';
+  const r = await ctx.db.withConnection(async (c) => {
+    return c.query<{
+      project_id: string;
+      owner_user_id: string;
+      kind: string;
+      status: string;
+      cash_cents: string;
+      created_at: Date;
+      owner_alias: string | null;
+      member_count: string;
+    }>(
+      `SELECT p.project_id, p.owner_user_id, p.kind, p.status, p.cash_cents, p.created_at,
+              ch.alias AS owner_alias,
+              (SELECT COUNT(*) FROM project_hires h WHERE h.project_id = p.project_id)::text
+                AS member_count
+         FROM projects p
+         LEFT JOIN characters ch ON ch.user_id = p.owner_user_id
+        WHERE ($2::boolean IS FALSE AND p.status <> 'rugged')
+           OR ($2::boolean IS TRUE AND (
+                 p.owner_user_id = $1
+                 OR EXISTS (SELECT 1 FROM project_hires h
+                             WHERE h.project_id = p.project_id AND h.user_id = $1)))
+        ORDER BY CASE WHEN $2::boolean THEN p.created_at END DESC NULLS LAST,
+                 p.cash_cents DESC,
+                 p.created_at DESC
+        LIMIT $3`,
+      [userId, mine, limit],
+    );
+  });
+  return r.rows.map((row) => ({
+    projectId: row.project_id,
+    kind: row.kind,
+    status: row.status,
+    ownerUserId: row.owner_user_id,
+    ownerAlias: row.owner_alias,
+    memberCount: Number(row.member_count),
+    treasuryCents: Number(row.cash_cents),
+    createdAt: row.created_at.toISOString(),
+  }));
+}

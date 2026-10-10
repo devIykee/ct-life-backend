@@ -1,6 +1,7 @@
 /**
  * Projects routes (M5 #65).
  *
+ *   GET  /v1/projects?scope=mine|hiring|all
  *   POST /v1/projects
  *   POST /v1/projects/{id}/hire
  *   POST /v1/projects/{id}/launch
@@ -11,13 +12,24 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
-import { foundProject, getProject, hirePlayer, launchProject } from '../../application/projects.js';
+import {
+  foundProject,
+  getProject,
+  hirePlayer,
+  launchProject,
+  listProjects,
+} from '../../application/projects.js';
 
 const KINDS = ['memecoin', 'dex', 'nft_studio', 'perps_venue', 'l2'] as const;
 const ROLES = ['dev', 'mod', 'kol', 'auditor'] as const;
 
 const FoundBody = z.object({
   kind: z.enum(KINDS),
+});
+
+const ListQuery = z.object({
+  scope: z.enum(['mine', 'hiring', 'all']).default('mine'),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
 const HireBody = z.object({
@@ -30,6 +42,15 @@ const HireBody = z.object({
  * Register the projects routes.
  */
 export function registerProjectRoutes(app: FastifyInstance): void {
+  // GET /v1/projects - the Builder Hills boards. Was never registered, so
+  // every scope answered 404 "No route".
+  app.get('/v1/projects', { preHandler: requireAuth }, async (req, reply) => {
+    const q = ListQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+    const projects = await listProjects(req.ctx, req.user!.sub, q.data.scope, q.data.limit);
+    return reply.send({ projects, nextCursor: null });
+  });
+
   app.post('/v1/projects', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
     const body = FoundBody.safeParse(req.body);
     if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });

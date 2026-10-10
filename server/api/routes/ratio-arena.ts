@@ -18,6 +18,7 @@ import {
   acceptMatch,
   declineMatch,
   getElo,
+  listMatches,
   openMatch,
   settleMatch,
 } from '../../application/ratio-arena.js';
@@ -34,10 +35,31 @@ const SettleBody = z.object({
   winnerUserId: z.string().uuid(),
 });
 
+const BeefListQuery = z.object({
+  scope: z.enum(['all', 'mine']).default('all'),
+  status: z.enum(['open', 'active', 'voting', 'closed', 'declined', 'cancelled', 'expired']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
 /**
  * Register the ratio-arena routes on the Fastify app.
  */
 export function registerRatioArenaRoutes(app: FastifyInstance): void {
+  // GET /v1/beef - documented in this file's header but never registered,
+  // so the arena board and my-history both answered 404 "No route".
+  app.get('/v1/beef', { preHandler: requireAuth }, async (req, reply) => {
+    const q = BeefListQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+    const matches = await listMatches(
+      req.ctx,
+      req.user!.sub,
+      q.data.scope,
+      q.data.status ?? null,
+      q.data.limit,
+    );
+    return reply.send({ matches, nextCursor: null });
+  });
+
   app.post('/v1/beef', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
     const body = OpenBody.safeParse(req.body);
     if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });

@@ -142,15 +142,27 @@ export async function getTribe(ctx: AppContext, tribeId: string): Promise<TribeR
 
 /** List every district. */
 export async function listDistricts(ctx: AppContext): Promise<DistrictRow[]> {
-  const r = await ctx.db.withConnection(async (c) => {
-    return c.query<DistrictDbRow>(
-      `SELECT district_id, slug, name, lore, current_owner_tribe_id, controlled_since,
-              default_holder_tribe_id, base_score_per_day
-       FROM districts
-       ORDER BY slug`,
-    );
-  });
-  return r.rows.map(rowToDistrict);
+  const read = async (): Promise<DistrictDbRow[]> => {
+    const r = await ctx.db.withConnection(async (c) => {
+      return c.query<DistrictDbRow>(
+        `SELECT district_id, slug, name, lore, current_owner_tribe_id, controlled_since,
+                default_holder_tribe_id, base_score_per_day
+         FROM districts
+         ORDER BY slug`,
+      );
+    });
+    return r.rows;
+  };
+  let rows = await read();
+  if (rows.length === 0) {
+    // Nothing ever called ensureDistricts outside the tests, so the table
+    // stayed empty and GET /v1/districts answered an empty list forever.
+    // The seed is ON CONFLICT DO NOTHING, so healing here is safe and only
+    // costs anything on the very first read.
+    await ensureDistricts(ctx);
+    rows = await read();
+  }
+  return rows.map(rowToDistrict);
 }
 
 /** Get a district by id. */
