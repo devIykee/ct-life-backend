@@ -250,8 +250,13 @@ export function loadConfig(): Config {
     },
 
     siws: {
-      domain: optionalEnv('SIWS_DOMAIN', 'ctlife.dev'),
-      uri: optionalEnv('SIWS_URI', 'https://ctlife.dev'),
+      // The real domain. verifySignedMessage compares the SIWS message's
+      // domain and URI to these exactly, so the Unity client's MWA
+      // identity (EnvConfig.AppIdentityUri) must be the same string or
+      // every sign-in is rejected. Override per environment if the client
+      // needs a transition window.
+      domain: optionalEnv('SIWS_DOMAIN', 'ctlife.fun'),
+      uri: optionalEnv('SIWS_URI', 'https://ctlife.fun/'),
     },
 
     solana: {
