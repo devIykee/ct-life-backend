@@ -50,9 +50,9 @@ GET /v1/auth/challenge?wallet=<BASE58_PUBKEY>
 
 200 {
   "nonce": "<32 hex chars, no hyphens>",
-  "domain": "ctlife.dev",
+  "domain": "ctlife.fun",
   "statement": "Sign in to CT Life.",
-  "uri": "https://ctlife.dev",
+  "uri": "https://ctlife.fun/",
   "version": "1",
   "chainId": "solana:devnet",
   "issuedAt": "2026-10-08T19:00:00.000Z",
@@ -174,7 +174,8 @@ present, empty when no kill switch is set) and every registry and game
 config file. `emotes` is derived from the `emote_` prefixed ids in
 `contract/ids/anims.json`; there is no `emotes.json`.
 
-Send `If-None-Match: "<version>"` to get `304`. Sending an
+The `ETag` is a hash of the payload, so it changes when any registry or
+config file changes. Send `If-None-Match: "<etag>"` to get `304`. Sending an
 `X-Client-Version` below `minClientVersion` answers `426 UPGRADE_REQUIRED`.
 
 ### Me, lottery, character
@@ -312,13 +313,17 @@ each participant mints their own.
 
 ```json
 // POST /v1/rtc/token
-{ "kind": "video", "roomId": "<callId>", "canPublish": true, "canSubscribe": true }
+{ "kind": "video", "id": "<callId>", "canPublish": true, "canSubscribe": true }
 ```
 
+The room is `id` (the contract field). `roomId` is still accepted as a
+deprecated alias. `expiresAt` comes back as an ISO date-time string.
+
 `kind` is one of `proximity`, `space`, `call`, `venue`, `video`,
-`paid_call`. For `call`, `video` and `paid_call` the server checks the
-caller is an active speaker in that room and answers `403 not_participant`
-otherwise.
+`paid_call` - a superset of the contract's `[venue, space, call]`,
+because the call flow uses `video` and `paid_call`. For `call`, `video`
+and `paid_call` the server checks the caller is an active speaker in that
+room and answers `403 not_participant` otherwise.
 
 > **Staging note:** `LIVEKIT_*` on Railway are placeholders, so tokens are
 > minted locally but no real LiveKit will accept them. These endpoints

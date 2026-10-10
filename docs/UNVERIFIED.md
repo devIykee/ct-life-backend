@@ -21,7 +21,7 @@
 
 ## M3 and beyond (anticipated)
 
-- **D4: SIWS domain placeholder (ctlife.dev).** The configured SIWS domain and URI (`SIWS_DOMAIN=ctlife.dev`, `SIWS_URI=https://ctlife.dev`) are placeholders for a domain not yet purchased or controlled by the team. This weakens phishing resistance because users cannot verify domain ownership. **Required before production**: Purchase real domain, update env vars, verify domain matches deployed service. See docs/SECURITY.md for details.
+- **D4: SIWS domain (ctlife.fun).** `SIWS_DOMAIN=ctlife.fun` / `SIWS_URI=https://ctlife.fun/` is the team's real domain. The Unity client's MWA app identity must be the identical string or SIWS verification rejects every sign-in. **Required before production**: confirm the domain resolves to the deployed service and that the client identity matches. See docs/SECURITY.md.
 - Real ORE mainnet stake test (gated by `RUN_MAINNET_TESTS=1`).
 - LiveKit voice round-trip with two real Seeker phones (manual, not automated).
 - Push notifications on Seeker (requires Google Play services confirmation).

@@ -34,10 +34,10 @@ The game moves real money (USDC, SOL, SKR, ORE) for top-ups, cosmetics, tips, pa
 
 ### D4: SIWS Domain Placeholder **[SECURITY RISK]**
 
-**Current values**: `SIWS_DOMAIN=ctlife.dev`, `SIWS_URI=https://ctlife.dev`
+**Current values**: `SIWS_DOMAIN=ctlife.fun`, `SIWS_URI=https://ctlife.fun/`
 
 ⚠️ **WARNING**: These are placeholder values for a domain we do not control. This weakens phishing resistance because:
-- An attacker could register ctlife.dev if it's available
+- The domain is owned by the team, so it cannot be registered by an attacker
 - Users cannot verify domain ownership
 - The SIWS message cannot be trusted to prove the correct service
 
