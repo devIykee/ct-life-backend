@@ -5,11 +5,12 @@
  * are short-lived and do not survive process restart. M5 will
  * move them to Redis with a TTL.
  *
- * Start creates a shift with `endsAt = now + shiftSec` and the
- * career's level-1 mini-game set. Complete returns SHIFT_NOT_FINISHED
- * if the shift has not yet ended, computes the pay from the
- * mini-game score (capped at the maxScore from mini_games.json),
- * and writes a ledger entry.
+ * Start creates a shift with `endsAt = now + shiftSec` from the
+ * player's current level in that career (`career_progress`). Complete
+ * returns SHIFT_NOT_FINISHED if the shift has not yet ended, computes
+ * the pay from the mini-game score (capped at the maxScore from
+ * mini_games.json), and in one transaction writes the ledger entry and
+ * the earned XP, promoting the player when the level threshold is hit.
  */
 import {
   NotFoundError,
@@ -23,6 +24,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
+import { addCareerXp, readCareerProgress, type CareersConfig } from './careers.js';
 import type { AppContext } from './context.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -33,6 +35,7 @@ interface Shift {
   readonly careerId: string;
   readonly miniGameId: string;
   readonly payCents: number;
+  readonly level: number;
   readonly startedAt: number;
   readonly endsAt: number;
   readonly completed: boolean;
@@ -60,22 +63,21 @@ export class ShiftsService {
   }
 
   /**
-   * Start a shift. M2 uses the level-1 pay and mini-game from the
-   * career config; the player's level is fixed at 1.
+   * Start a shift at the player's current level in the career: that
+   * level's pay, length and mini-game.
    */
   async start(
     userId: string,
     careerId: string,
   ): Promise<{ shiftId: string; miniGameIds: string[]; endsAt: string }> {
-    const careers = this.ctx.configCache.load<{
-      careers: Array<{
-        id: string;
-        levels: Array<{ level: number; payCents: number; shiftSec: number; miniGameId: string }>;
-      }>;
-    }>('careers');
+    const careers = this.ctx.configCache.load<CareersConfig>('careers');
     const career = careers.careers.find((c) => c.id === careerId);
     if (!career) throw new NotFoundError({ kind: 'career', id: careerId });
-    const lvl = career.levels[0];
+    const progress = await this.ctx.db.withConnection((c) =>
+      readCareerProgress(c, userId, careerId),
+    );
+    const level = Math.min(progress.level, career.levels.length);
+    const lvl = career.levels[level - 1];
     if (!lvl) throw new ValidationFailedError({ career: careerId });
     const shiftId = uuidv7();
     const now = Date.now();
@@ -86,6 +88,7 @@ export class ShiftsService {
       careerId,
       miniGameId: lvl.miniGameId,
       payCents: lvl.payCents,
+      level,
       startedAt: now,
       endsAt,
       completed: false,
@@ -141,24 +144,46 @@ export class ShiftsService {
     }
     const ratio = maxPossible > 0 ? totalScore / maxPossible : 0;
     const payCents = Math.round(shift.payCents * ratio);
-    // Persist the payment in a SERIALIZABLE transaction with a
-    // ledger entry.
-    await runInTransaction(async (client) => {
-      await client.query(
-        `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
-        [userId, payCents],
-      );
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'shift_pay', 'shift', $3, $4)`,
-        [userId, payCents, shiftId, `shift:${shiftId}`],
-      );
-      // B18 fix: Update last_action_at to shift completion time so decay doesn't accumulate during shift
-      await client.query(`UPDATE needs SET last_action_at = now() WHERE user_id = $1`, [userId]);
-    });
+    const xp = Math.round(ratio * 100);
+    const career = this.ctx.configCache
+      .load<CareersConfig>('careers')
+      .careers.find((c) => c.id === shift.careerId);
+    if (!career) throw new NotFoundError({ kind: 'career', id: shift.careerId });
+    // Claim the shift before the first await so a second complete with
+    // a different Idempotency-Key cannot pay or award XP twice.
     _shifts.set(shiftId, { ...shift, completed: true });
-    return { payCents, xp: Math.round(ratio * 100), promoted: false };
+    let promoted = false;
+    try {
+      // Pay, ledger entry and XP land together in one SERIALIZABLE
+      // transaction.
+      await runInTransaction(async (client) => {
+        await client.query(
+          `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
+          [userId, payCents],
+        );
+        await client.query(
+          `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+           VALUES ($1, $2, 'cash', 'shift_pay', 'shift', $3, $4)`,
+          [userId, payCents, shiftId, `shift:${shiftId}`],
+        );
+        const before = await readCareerProgress(client, userId, shift.careerId, true);
+        const after = addCareerXp(career.levels, before, xp);
+        promoted = after.promoted;
+        await client.query(
+          `INSERT INTO career_progress (user_id, career_id, level, xp) VALUES ($1, $2, $3, $4)
+           ON CONFLICT (user_id, career_id)
+           DO UPDATE SET level = EXCLUDED.level, xp = EXCLUDED.xp, updated_at = now()`,
+          [userId, shift.careerId, after.level, after.xp],
+        );
+        // B18 fix: Update last_action_at to shift completion time so decay doesn't accumulate during shift
+        await client.query(`UPDATE needs SET last_action_at = now() WHERE user_id = $1`, [userId]);
+      });
+    } catch (e) {
+      _shifts.set(shiftId, shift);
+      throw e;
+    }
+    return { payCents, xp, promoted };
   }
 
   private loadMiniGames(): MiniGameDef[] {
