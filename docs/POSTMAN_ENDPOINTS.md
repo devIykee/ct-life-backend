@@ -352,10 +352,10 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 
 - **admin** - `POST /v1/admin/ads/bookings/:id/approve`, `POST /v1/admin/ads/bookings/:id/reject`, `POST /v1/admin/meta`, `POST DELETE /v1/admin/users/:id/sybil_jail`
 - **ads** - `GET POST /v1/ads/bookings`, `GET /v1/ads/live`, `GET /v1/ads/slots`
-- **airdrop** - `POST /v1/airdrop/claim`, `GET /v1/airdrop/claims`
+- **airdrop** - `POST /v1/airdrop/claim`, `GET /v1/airdrop/claims`, `GET /v1/airdrop/farm`
 - **alpha-calls** - `GET POST /v1/alpha-calls`
 - **auth** - `GET /v1/auth/challenge`, `POST /v1/auth/dev`, `GET /v1/auth/jwks`, `POST /v1/auth/logout`, `POST /v1/auth/refresh`, `POST /v1/auth/verify`
-- **beef** - `POST /v1/beef`, `POST /v1/beef/:id/accept`, `POST /v1/beef/:id/decline`, `POST /v1/beef/:id/settle`, `GET /v1/beef/elo`
+- **beef** - `GET POST /v1/beef`, `POST /v1/beef/:id/accept`, `POST /v1/beef/:id/decline`, `POST /v1/beef/:id/settle`, `GET /v1/beef/elo`
 - **blocks** - `POST DELETE /v1/blocks/:userId`
 - **businesses** - `POST /v1/businesses`, `GET /v1/businesses/:id`, `POST /v1/businesses/:id/run`
 - **cabal** - `GET POST /v1/cabal/invites`, `POST /v1/cabal/invites/:id/accept`
@@ -373,10 +373,10 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 - **inventory** - `GET /v1/inventory`
 - **leaderboards** - `GET /v1/leaderboards/:boardId`
 - **leagues** - `GET /v1/leagues`, `GET /v1/leagues/:slug`
-- **llm** - `POST /v1/llm/chat`
+- **llm** - `POST /v1/llm/chat`, `GET /v1/llm/quota`
 - **lottery** - `POST /v1/lottery/roll`
 - **market** - `GET /v1/market/coins`, `GET /v1/market/coins/:coinId`, `POST /v1/market/launchpad`, `POST /v1/market/launchpad/:coinId/buy`, `GET /v1/market/positions`, `POST /v1/market/trades`
-- **me** - `GET /v1/me`, `GET /v1/me/league`, `POST /v1/me/smart-money`, `POST /v1/me/tribe`
+- **me** - `GET /v1/me`, `GET /v1/me/cabal`, `GET /v1/me/league`, `GET /v1/me/project-offers`, `POST /v1/me/smart-money`, `GET /v1/me/sybil-status`, `POST /v1/me/tribe`
 - **meta** - `GET /v1/meta/current`
 - **needs** - `POST /v1/needs/actions`
 - **nft** - `GET /v1/nft/inventory`, `POST /v1/nft/mint`
@@ -386,7 +386,7 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 - **payments** - `POST /v1/payments/intents`, `GET /v1/payments/intents/:id`, `POST /v1/payments/intents/:id/submitted`
 - **perps** - `GET POST /v1/perps`, `POST /v1/perps/:perpId/close`
 - **predictions** - `GET POST /v1/predictions`
-- **projects** - `POST /v1/projects`, `GET /v1/projects/:id`, `POST /v1/projects/:id/hire`, `POST /v1/projects/:id/launch`
+- **projects** - `GET POST /v1/projects`, `GET /v1/projects/:id`, `POST /v1/projects/:id/hire`, `POST /v1/projects/:id/launch`
 - **push** - `POST /v1/push/register`
 - **rekt** - `GET /v1/rekt/tombstones`
 - **reports** - `POST /v1/reports`
@@ -400,11 +400,13 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 - **tribes** - `GET /v1/tribes`, `GET /v1/tribes/:id`, `GET /v1/tribes/:id/districts`
 - **uploads** - `POST /v1/uploads`
 - **users** - `GET /v1/users/:id`
+- **vc-row** - `GET /v1/vc-row/deals`
+- **venues** - `GET /v1/venues/:venueId/access`
 - **video-calls** - `GET POST /v1/video-calls`, `POST /v1/video-calls/:id/end`
 - **webhooks** - `POST /v1/webhooks/helius`, `POST /v1/webhooks/helius-program`
 - **x** - `GET /v1/x/link`, `GET /v1/x/link/callback`, `GET /v1/x/link/start`
 
-_126 distinct paths._
+_133 distinct paths._
 
 ---
 
@@ -472,3 +474,30 @@ while the first request is still running returns `409 IN_FLIGHT`.
 ---
 
 **Related**: `contract/openapi.yaml` is the source of truth; `GET /docs` renders it.
+
+---
+
+## Realtime rooms
+
+`joinOrCreate(<room>, {token, ...})`. The token is verified on join and the
+player profile is read from the database, never from the join options.
+
+| Room | Filter | Notes |
+| --- | --- | --- |
+| `city` | none | one per server; also the delivery point for targeted messages |
+| `market` | none | `coins` syncs from the coins table every 2s |
+| `venue` | `venueId` | players + NPCs; NPCs spawn on their own venue's spots |
+| `home` | `homeId` | one per home, host and guests |
+| `space` | per instance | audio Space state |
+| `video_call` | per instance | call participants |
+
+### Targeted messages
+
+The api and realtime are separate processes, so handlers publish to a Redis
+channel and the city room forwards to that user's sessions. A `userId` of
+`*` is a city-wide broadcast. Nothing is queued: an offline player misses
+the message and refetches on join.
+
+Currently produced: `call_invite` when a video call starts, and `event`
+(`evt_coin_launch`, `evt_mood_change`) from the launchpad and the market
+mood.
