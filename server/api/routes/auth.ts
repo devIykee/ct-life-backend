@@ -32,7 +32,36 @@ const RefreshBody = z.object({ refreshToken: z.string().min(1) });
 const LogoutBody = z.object({ refreshToken: z.string().min(1) });
 
 /**
+ * Shape an authenticated user as the contract's AuthVerifyResponse.
  *
+ * The contract returns `{accessToken, refreshToken, user}`. The flat
+ * fields are kept alongside it so callers written against the old
+ * response keep working.
+ * @param user - The authenticated user from the auth service.
+ * @param hasCharacter - Whether the account already created a character.
+ * @returns The response body for verify, dev and refresh.
+ */
+function authResponse(
+  user: { id: string; wallet: string; isSeeker: boolean; accessToken: string; refreshToken: string },
+  hasCharacter: boolean,
+): Record<string, unknown> {
+  return {
+    ...user,
+    hasCharacter,
+    accessToken: user.accessToken,
+    refreshToken: user.refreshToken,
+    user: {
+      id: user.id,
+      wallet: user.wallet,
+      isSeeker: user.isSeeker,
+      hasCharacter,
+    },
+  };
+}
+
+/**
+ * Register the auth routes.
+ * @param app - The Fastify instance.
  */
 export function registerAuthRoutes(app: FastifyInstance): void {
   const auth = (req: FastifyRequest): AuthService => new AuthService(req.ctx);
@@ -107,7 +136,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
         const input = VerifyInputSchema.parse(req.body);
         const user = await auth(req).verifyAndAuthenticate(input);
         const hasCharacter = await checkHasCharacter(req, user.id);
-        return reply.send({ ...user, hasCharacter });
+        return reply.send(authResponse(user, hasCharacter));
       } finally {
         const sem = (req as unknown as { __sem?: GlobalLoginSemaphore }).__sem;
         if (sem) await sem.release();
@@ -126,7 +155,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       try {
         const out = await auth(req).refresh(body.data.refreshToken);
-        return reply.send(out);
+        const hasCharacter = await checkHasCharacter(req, out.id);
+        return reply.send(authResponse(out, hasCharacter));
       } catch (e) {
         // The JWT layer throws plain Errors for malformed/invalid
         // tokens ("Invalid Compact JWS", "Not a refresh token",
@@ -167,7 +197,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
     const user = await auth(req).devAuthenticate(body.data.wallet);
     const hasCharacter = await checkHasCharacter(req, user.id);
-    return reply.send({ ...user, hasCharacter });
+    return reply.send(authResponse(user, hasCharacter));
   });
 
   // GET /v1/auth/jwks

@@ -195,8 +195,11 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       is_sybil_jailed: boolean;
       sybil_jailed_at: Date | null;
       lottery_rolled_at: Date | null;
+      miner_tier: string;
     }>(
-      'SELECT id, wallet, is_seeker, skr_name, is_sybil_jailed, sybil_jailed_at, lottery_rolled_at FROM users WHERE id = $1',
+      `SELECT id, wallet, is_seeker, skr_name, is_sybil_jailed, sybil_jailed_at,
+              lottery_rolled_at, miner_tier
+         FROM users WHERE id = $1`,
       [userId],
     );
     if (u.rowCount === 0) throw new NotFoundError({ kind: 'user', id: userId });
@@ -269,6 +272,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
         id: uRow.id,
         wallet: uRow.wallet,
         isSeeker: uRow.is_seeker,
+        // The contract marks hasCharacter required on User. It is also
+        // left in flags, which the client already reads.
+        hasCharacter: chRow !== undefined,
         skrName: uRow.skr_name,
         isSybilJailed: uRow.is_sybil_jailed,
         sybilJailedAt: uRow.sybil_jailed_at ? uRow.sybil_jailed_at.toISOString() : null,
@@ -288,7 +294,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       cashCents: Number(balRow.cash_cents),
       debtCents: Number(balRow.debt_cents),
       homeId: chRow?.home_id ?? 'parents_basement',
-      minerTier: 'none',
+      minerTier: uRow.miner_tier || 'none',
       flags: {
         lotteryRolled: uRow.lottery_rolled_at !== null,
         hasCharacter: chRow !== undefined,

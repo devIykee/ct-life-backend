@@ -80,7 +80,10 @@ export class CareersService {
    * Apply to a career. Validates the skill gates; the player's
    * level is recorded for the shift scoring.
    */
-  async apply(userId: string, careerId: string): Promise<{ id: string; level: number }> {
+  async apply(
+    userId: string,
+    careerId: string,
+  ): Promise<{ careerId: string; level: number; xp: number; id: string }> {
     const cfg = this.ctx.configCache.load<CareersConfig>('careers');
     const career = cfg.careers.find((c) => c.id === careerId);
     if (!career) throw new NotFoundError({ kind: 'career', id: careerId });
@@ -97,7 +100,10 @@ export class CareersService {
         });
       }
     }
-    return { id: career.id, level: 1 };
+    // The contract's Job is {careerId, level, xp}. level and xp are still
+    // the M2 placeholders that list() uses; only the shape is fixed here,
+    // since the client could not parse {id, level}.
+    return { careerId: career.id, level: 1, xp: 0, id: career.id };
   }
 
   private async getUserSkills(_userId: string): Promise<Record<string, number>> {

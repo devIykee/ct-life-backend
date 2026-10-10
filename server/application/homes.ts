@@ -177,16 +177,29 @@ export async function payRent(
 ): Promise<HomeRow> {
   let result: HomeRow | null = null;
   await runInTransaction(async (client) => {
+    // home_id is an instance id ('home:<uuid>'), but clients hold the home
+    // *kind* ('studio'), which 404'd. Match the instance id first, then fall
+    // back to the caller's own home of that kind.
     const r = await client.query<{
+      home_id: string;
       owner_user_id: string;
       rent_cents_per_week: string;
       last_rent_paid_at: Date | null;
     }>(
-      `SELECT owner_user_id, rent_cents_per_week, last_rent_paid_at FROM homes WHERE home_id = $1 FOR UPDATE`,
-      [homeId],
+      `SELECT home_id, owner_user_id, rent_cents_per_week, last_rent_paid_at
+         FROM homes
+        WHERE home_id = $1
+           OR (kind = $1 AND owner_user_id = $2)
+        ORDER BY (home_id = $1) DESC
+        LIMIT 1
+          FOR UPDATE`,
+      [homeId, callerUserId],
     );
     const row = r.rows[0];
     if (!row) throw new NotFoundError({ resource: 'home', id: homeId });
+    // Everything below must use the resolved instance id, never the raw
+    // path param, which may be a kind.
+    const resolvedHomeId = row.home_id;
     if (row.owner_user_id !== callerUserId) {
       throw new ValidationFailedError({ reason: 'only owner can pay rent' });
     }
@@ -215,9 +228,11 @@ export async function payRent(
     await client.query(
       `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
        VALUES ($1, $2, 'cash', 'rent', 'home', $3, $4)`,
-      [callerUserId, -rent, homeId, `home-rent:${uuidv7()}`],
+      [callerUserId, -rent, resolvedHomeId, `home-rent:${uuidv7()}`],
     );
-    await client.query(`UPDATE homes SET last_rent_paid_at = now() WHERE home_id = $1`, [homeId]);
+    await client.query(`UPDATE homes SET last_rent_paid_at = now() WHERE home_id = $1`, [
+      resolvedHomeId,
+    ]);
     const after = await client.query<{
       home_id: string;
       owner_user_id: string;
@@ -229,10 +244,10 @@ export async function payRent(
     }>(
       `SELECT home_id, owner_user_id, kind, rent_cents_per_week, decorated_at, last_rent_paid_at, created_at
        FROM homes WHERE home_id = $1`,
-      [homeId],
+      [resolvedHomeId],
     );
     const r2 = after.rows[0];
-    if (!r2) throw new NotFoundError({ resource: 'home', id: homeId });
+    if (!r2) throw new NotFoundError({ resource: 'home', id: resolvedHomeId });
     result = {
       homeId: r2.home_id,
       ownerUserId: r2.owner_user_id,
@@ -253,21 +268,31 @@ export async function recordVisit(
   homeId: string,
   visitorUserId: string,
 ): Promise<VisitRow> {
-  // Ensure the home exists.
-  const exists = await ctx.db.withConnection(async (c) => {
-    return c.query<{ home_id: string }>(`SELECT home_id FROM homes WHERE home_id = $1`, [homeId]);
+  // The route passes the path param of POST /v1/homes/{ownerId}/visit, so
+  // this is an owner's user id, not a home id. Resolving it as home_id
+  // meant every visit 404'd. Owner first, then an instance id or kind so a
+  // caller holding either still works.
+  const found = await ctx.db.withConnection(async (c) => {
+    return c.query<{ home_id: string }>(
+      `SELECT home_id FROM homes
+        WHERE owner_user_id::text = $1 OR home_id = $1 OR kind = $1
+        ORDER BY (owner_user_id::text = $1) DESC, created_at ASC
+        LIMIT 1`,
+      [homeId],
+    );
   });
-  if (exists.rows.length === 0) throw new NotFoundError({ resource: 'home', id: homeId });
+  const resolvedHomeId = found.rows[0]?.home_id;
+  if (resolvedHomeId === undefined) throw new NotFoundError({ resource: 'home', id: homeId });
   const visitId = uuidv7();
   await ctx.db.withConnection(async (c) => {
     await c.query(
       `INSERT INTO home_visits (visit_id, home_id, visitor_user_id) VALUES ($1, $2, $3)`,
-      [visitId, homeId, visitorUserId],
+      [visitId, resolvedHomeId, visitorUserId],
     );
   });
   return {
     visitId,
-    homeId,
+    homeId: resolvedHomeId,
     visitorUserId,
     visitedAt: new Date().toISOString(),
   };

@@ -149,7 +149,15 @@ export class AuthService {
   }
 
   /** Refresh: re-mint an access token. Revokes the old refresh token (single-use). */
-  async refresh(refreshToken: string): Promise<{ accessToken: string; refreshToken: string }> {
+  async refresh(
+    refreshToken: string,
+  ): Promise<{
+    id: string;
+    wallet: string;
+    isSeeker: boolean;
+    accessToken: string;
+    refreshToken: string;
+  }> {
     const claims = await this.ctx.jwt.verifyRefresh(refreshToken);
     const jti = claims.jti;
     if (jti === undefined) throw new SignatureInvalidError({ reason: 'no_jti' });
@@ -161,7 +169,10 @@ export class AuthService {
     // Look up the user to get the wallet.
     const user = await this.findUser(claims.sub);
     if (user === null) throw new SignatureInvalidError({ reason: 'no_user' });
-    return this.mintTokens(user);
+    // The contract answers refresh with a user as well, so return the row
+    // the rotation already had to load.
+    const tokens = await this.mintTokens(user);
+    return { ...user, ...tokens };
   }
 
   /** Logout: mark the refresh token used. Best-effort. */
