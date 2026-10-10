@@ -23,6 +23,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
+import { publishToUser } from './realtime-bus.js';
 
 const MAX_PARTICIPANTS = 8;
 
@@ -95,6 +96,16 @@ export async function startVideoCall(
       );
     }
   });
+  // Ring the invitees. POST /v1/video-calls returned a callId and nobody
+  // was ever told, so a call could be created but never connect.
+  for (const participantId of participants) {
+    if (participantId === hostUserId) continue;
+    await publishToUser(ctx, participantId, 'call_invite', {
+      callId,
+      fromUserId: hostUserId,
+      paid: false,
+    });
+  }
   // B3 fix: only mint token for the caller (host), not all participants
   const t = await ctx.livekit.mintRtcToken({
     userId: hostUserId,

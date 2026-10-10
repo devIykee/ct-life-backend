@@ -29,6 +29,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { ammQuote } from './amm.js';
 import { sampleHiddenArc, type HiddenArc } from './hidden-arc.js';
 import type { AppContext } from './context.js';
+import { publishWorldEvent } from './realtime-bus.js';
 
 const COIN_SUPPLY = 1_000_000_000n; // 1B base units
 const BASE_PRICE_MICROS = 1_000n; // 0.001 USDC per base unit at launch
@@ -97,6 +98,12 @@ export async function launchCoin(ctx: AppContext, input: LaunchInput): Promise<L
       }
       throw e;
     }
+  });
+  // Tell the city. The contract has evt_coin_launch but nothing ever
+  // emitted it, so a launch was invisible to everyone not on the board.
+  await publishWorldEvent(ctx, 'evt_coin_launch', {
+    coinId,
+    ticker: input.ticker.toUpperCase(),
   });
   return {
     coinId,
