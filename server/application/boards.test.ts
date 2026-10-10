@@ -3,7 +3,9 @@
  *
  * Covers the new scope=friends|league support. The M2 global
  * scope is unchanged. Friends reads the caller's follow list;
- * league reads the caller's current season league cohort.
+ * league reads the caller's current season league cohort. The Anon
+ * tribe is hidden from the rich-list boards in every scope and only
+ * sees itself through the private `me` row.
  */
 import { Pool } from 'pg';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -39,6 +41,9 @@ async function resetBoardTestData(): Promise<void> {
     `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
   await pool.query(
+    `DELETE FROM skills WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
+  );
+  await pool.query(
     `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
   await pool.query(`DELETE FROM users WHERE wallet LIKE 'boardsUser-%'`);
@@ -47,14 +52,14 @@ async function resetBoardTestData(): Promise<void> {
   await pool.query(`DELETE FROM season_rollover_log WHERE season_iso > '2026-W40'`);
 }
 
-async function newUser(alias: string): Promise<string> {
+async function newUser(alias: string, tribeId = 'trencher'): Promise<string> {
   const id = uuidv7();
   await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `boardsUser-${id}`]);
   await pool.query(
     `INSERT INTO characters (id, user_id, alias, look, tribe_id, trait_ids, dream_id, home_id, age_confirmed_at)
-     VALUES ($1, $2, $3, '{}'::jsonb, 'anon', ARRAY[]::text[], 'be_rich', 'studio', now())
+     VALUES ($1, $2, $3, '{}'::jsonb, $4, ARRAY[]::text[], 'be_rich', 'studio', now())
      ON CONFLICT (user_id) DO NOTHING`,
-    [uuidv7(), id, `${alias}-${id.slice(0, 8)}`],
+    [uuidv7(), id, `${alias}-${id.slice(0, 8)}`, tribeId],
   );
   return id;
 }
@@ -191,5 +196,77 @@ describe('boards service', () => {
     await expect(svc.top('net_worth', 'friends', 50)).rejects.toBeInstanceOf(
       (await import('../shared/domain/errors.js')).ValidationFailedError,
     );
+  });
+
+  it('drops Anon from net_worth before LIMIT, in the global scope', async () => {
+    const ctx = buildContext();
+    const anon = await newUser('anon', 'anon');
+    const visible = await newUser('visible');
+    await setBalance(anon, 999_999_999_999);
+    await setBalance(visible, 999_999_999_998);
+    const svc = new BoardsService(ctx);
+    const entries = await svc.top('net_worth', 'global', 1, visible);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.userId).toBe(visible);
+    expect(entries[0]!.rank).toBe(1);
+  });
+
+  it('drops Anon from weekly_pnl', async () => {
+    // The ledger is append-only, so this test writes no entries (the
+    // reset could not delete the users); everyone sits at a 0 PnL.
+    const ctx = buildContext();
+    const anon = await newUser('anon', 'anon');
+    const visible = await newUser('visible');
+    const svc = new BoardsService(ctx);
+    const ids = (await svc.top('weekly_pnl', 'global', 100_000, anon)).map((e) => e.userId);
+    expect(ids).toContain(visible);
+    expect(ids).not.toContain(anon);
+  });
+
+  it("drops Anon from a second account's friends and league boards", async () => {
+    const ctx = buildContext();
+    const viewer = await newUser('viewer');
+    const anon = await newUser('anon', 'anon');
+    await setBalance(viewer, 50_000);
+    await setBalance(anon, 60_000);
+    await follow(viewer, anon);
+    await runSeasonRollover(ctx, currentSeasonIso());
+    const svc = new BoardsService(ctx);
+    for (const scope of ['friends', 'league'] as const) {
+      const ids = (await svc.top('net_worth', scope, 100_000, viewer)).map((e) => e.userId);
+      expect(ids).toContain(viewer);
+      expect(ids).not.toContain(anon);
+    }
+  });
+
+  it('gives Anon their own standing only through the private me row', async () => {
+    const ctx = buildContext();
+    const anon = await newUser('anon', 'anon');
+    const richer = await newUser('richer');
+    await setBalance(anon, 999_999_999_998);
+    await setBalance(richer, 999_999_999_999);
+    const svc = new BoardsService(ctx);
+    const entries = await svc.top('net_worth', 'global', 50, anon);
+    expect(entries.map((e) => e.userId)).not.toContain(anon);
+    const me = await svc.mine('net_worth', 'global', anon);
+    expect(me).toMatchObject({ userId: anon, rank: 2, value: 999_999_999_998 });
+  });
+
+  it("me row matches the caller's entry for a visible player", async () => {
+    const ctx = buildContext();
+    const me = await newUser('me');
+    await setBalance(me, 999_999_999_999);
+    const svc = new BoardsService(ctx);
+    const [top] = await svc.top('net_worth', 'global', 1, me);
+    expect(await svc.mine('net_worth', 'global', me)).toEqual(top);
+  });
+
+  it('keeps Anon on the clout board, which is not the rich list', async () => {
+    const ctx = buildContext();
+    const anon = await newUser('anon', 'anon');
+    await pool.query(`INSERT INTO skills (user_id, clout) VALUES ($1, 10)`, [anon]);
+    const svc = new BoardsService(ctx);
+    const ids = (await svc.top('clout', 'friends', 50, anon)).map((e) => e.userId);
+    expect(ids).toContain(anon);
   });
 });
