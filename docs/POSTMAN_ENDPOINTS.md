@@ -325,9 +325,11 @@ because the call flow uses `video` and `paid_call`. For `call`, `video`
 and `paid_call` the server checks the caller is an active speaker in that
 room and answers `403 not_participant` otherwise.
 
-> **Staging note:** `LIVEKIT_*` on Railway are placeholders, so tokens are
-> minted locally but no real LiveKit will accept them. These endpoints
-> still return 2xx, so they will not surface the misconfiguration.
+> **Staging:** wired to a real LiveKit Cloud project, so these tokens are
+> accepted. The `url` in the reply is the room's websocket endpoint; join
+> it with the returned `token`. Locally, `pnpm dev:up` runs LiveKit on
+> `ws://localhost:7880` with the dev key, which is what `.env.example`
+> points at.
 
 ---
 
