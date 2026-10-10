@@ -19,6 +19,7 @@ import { MarketRoom } from './rooms/market.js';
 import { VenueRoom } from './rooms/venue.js';
 import { SpaceRoom } from './rooms/space.js';
 import { VideoCallRoom } from './rooms/video-call.js';
+import { HomeRoom } from './rooms/home.js';
 import { createRedis } from '../shared/redis/client.js';
 
 export interface RealtimeHandle {
@@ -56,6 +57,8 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
     maxClients: 50,
     filterBy: () => true, // every space is its own instance
   });
+  // One room per home so a host and their guests share it.
+  gameServer.define('home', HomeRoom).filterBy(['homeId']);
   gameServer.define('video_call', VideoCallRoom, {
     maxClients: 8,
     filterBy: () => true,
