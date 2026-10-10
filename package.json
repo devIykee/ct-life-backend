@@ -22,6 +22,7 @@
     "test:e2e": "pnpm -r --parallel run test:e2e",
     "smoke": "tsx tools/scripts/smoke.ts",
     "db:migrate": "node-pg-migrate -f .pgmigrate.json -m db/migrations up",
+    "db:migrate:env": "node-pg-migrate -d DATABASE_URL -m db/migrations -j sql up",
     "db:rollback": "node-pg-migrate -f .pgmigrate.json -m db/migrations down",
     "db:status": "node-pg-migrate -f .pgmigrate.json -m db/migrations",
     "db:verify": "tsx tools/scripts/verify-migrations.ts",
