@@ -39,12 +39,14 @@ import {
   type VenueCtx,
   type BrainOutput,
 } from '../../../packages/npc-brain/src/index.js';
+import type { NpcEvent } from '../../../packages/npc-brain/src/index.js';
 import { SeededRng } from '../../../packages/npc-brain/src/rng.js';
 import { SimulatedClock } from '../../../packages/npc-brain/src/clock.js';
 import { VenueState, NpcState, PlayerState } from '../../../contract/realtime/states.js';
 import { z } from 'zod';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
+import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
 
 /** Contract order of PlayerState.look. */
 const LOOK_SLOTS = [
@@ -114,6 +116,8 @@ const NpcTapMessage = z.object({
 });
 
 const MOVE_MAX_SPEED_M_PER_S = 6;
+/** How often the venue re-reads the world pulse. */
+const PULSE_REFRESH_MS = 15_000;
 const SAY_MAX_LENGTH = 140;
 const SAY_COOLDOWN_MS = 2_000;
 const EMOTE_COOLDOWN_MS = 1_000;
@@ -149,6 +153,12 @@ export class VenueRoom extends Room {
   private brains: Map<string, NpcBrain> = new Map();
   /** npcId -> the spot the NPC belongs to when it has nowhere else to be. */
   private npcHomeSpots: Map<string, string> = new Map();
+  /** npcId -> the anim the NPC plays while it holds its home spot. */
+  private npcHomeAnims: Map<string, string> = new Map();
+  /** Latest world pulse, refreshed off the tick so the tick stays sync. */
+  private moodBps = 0;
+  private recentEvents: NpcEvent[] = [];
+  private pulseAt = 0;
   private spotOccupants: Map<string, string> = new Map(); // spotId -> sessionId
   private lastMoveAt = new Map<string, number>();
   private lastEmoteAt = new Map<string, number>();
@@ -463,6 +473,25 @@ export class VenueRoom extends Room {
     // Each venue has a small set of archetypes. For M2 we spawn
     // a single NPC per archetype at a fixed seed spot; M3+ spawns
     // the right count per venue layout.
+    const plan = this.npcSpawnPlan(this.state.venueId);
+    if (plan.length > 0) {
+      const valid = this.venueSpotIds();
+      for (let i = 0; i < plan.length; i++) {
+        const seat = plan[i]!;
+        // Never publish a spot the client cannot resolve.
+        if (!valid.has(seat.spotId)) continue;
+        const npc = new NpcState();
+        const npcId = `npc-${i}-${seat.archetype}`;
+        npc.archetypeId = seat.archetype;
+        npc.spotId = seat.spotId;
+        npc.animId = seat.animId;
+        this.npcHomeSpots.set(npcId, seat.spotId);
+        this.npcHomeAnims.set(npcId, seat.animId);
+        this.state.npcs.set(npcId, npc);
+        this.brains.set(npcId, createBrain(seat.archetype));
+      }
+      return;
+    }
     const archetypes: NpcArchetype[] = this.npcArchetypesFor(this.state.venueId);
     // Give every NPC a home spot up front. Spawning them with spotId ''
     // left the client to guess, and it used the entrance, which is also
@@ -501,6 +530,47 @@ export class VenueRoom extends Room {
     return new Set((this.spotsCfg.venues[this.state.venueId]?.spots ?? []).map((sp) => sp.id));
   }
 
+  /**
+   * B17 venue patrons: who stands where, per the FE seating table.
+   *
+   * Spot ids are the global ids from spots.json and the anims come from
+   * anims.json, so the client can walk a seated NPC to the seat's approach
+   * point. Venues without a plan fall back to the round-robin below.
+   * @param venueId - The venue being created.
+   * @returns The spawn plan, or [] when the venue has none.
+   */
+  private npcSpawnPlan(
+    venueId: string,
+  ): Array<{ archetype: NpcArchetype; spotId: string; animId: string }> {
+    switch (venueId) {
+      case 'terminal_cafe':
+        return [
+          { archetype: 'barista', spotId: 'terminal_cafe.counter', animId: 'loco_idle' },
+          { archetype: 'patron', spotId: 'terminal_cafe.terminal_1', animId: 'act_type' },
+          { archetype: 'patron', spotId: 'terminal_cafe.terminal_2', animId: 'act_type' },
+          { archetype: 'patron', spotId: 'terminal_cafe.terminal_3', animId: 'act_type' },
+          // The twin-monitor desks are the traders' side of the room.
+          { archetype: 'patron', spotId: 'terminal_cafe.terminal_5', animId: 'act_type' },
+          { archetype: 'patron', spotId: 'terminal_cafe.table_1', animId: 'act_sit' },
+          { archetype: 'patron', spotId: 'terminal_cafe.table_2', animId: 'act_sit' },
+          // The wallet tracker keeps its own brain and its own terminal.
+          { archetype: 'wallet_tracker', spotId: 'terminal_cafe.pulse_screen', animId: 'loco_idle' },
+        ];
+      case 'spaces_studio':
+        return [
+          { archetype: 'spaces_host', spotId: 'spaces_studio.stage_host', animId: 'loco_idle' },
+          { archetype: 'patron', spotId: 'spaces_studio.stage_4', animId: 'act_sit' },
+          { archetype: 'patron', spotId: 'spaces_studio.stage_5', animId: 'act_sit' },
+          { archetype: 'patron', spotId: 'spaces_studio.seat_1', animId: 'act_sit' },
+          { archetype: 'patron', spotId: 'spaces_studio.seat_2', animId: 'act_sit' },
+          { archetype: 'patron', spotId: 'spaces_studio.seat_3', animId: 'act_sit' },
+          { archetype: 'patron', spotId: 'spaces_studio.seat_4', animId: 'act_sit' },
+        ];
+      default:
+        return [];
+    }
+  }
+
   private npcArchetypesFor(venueId: string): NpcArchetype[] {
     switch (venueId) {
       case 'timeline_square':
@@ -518,12 +588,34 @@ export class VenueRoom extends Room {
     }
   }
 
+  /**
+   * Refresh the cached world pulse. Called from the tick without awaiting
+   * so a slow read never stalls the simulation; the brains use the last
+   * known values until it lands.
+   */
+  private refreshPulse(): void {
+    const now = Date.now();
+    if (now - this.pulseAt < PULSE_REFRESH_MS) return;
+    this.pulseAt = now;
+    const anchor = this.npcHomeSpots.values().next().value ?? '';
+    void (async (): Promise<void> => {
+      const { buildContext } = await import('../../application/context.js');
+      const ctx = buildContext();
+      const [mood, events] = await Promise.all([getMoodBps(ctx), getRecentEvents(ctx, anchor)]);
+      this.moodBps = mood;
+      this.recentEvents = events;
+    })().catch(() => {
+      // Keep the last known pulse; the brains must not stall on a read.
+    });
+  }
+
   private tickNpcs(_dt: number): void {
+    this.refreshPulse();
     const venue: VenueCtx = {
       instanceId: this.state.instanceId,
-      moodBps: 0,
+      moodBps: this.moodBps,
       richest: this.richestPlayers(),
-      recentEvents: [],
+      recentEvents: this.recentEvents,
       currentSpotId: null,
       followUserId: null,
       walkableSpots: (this.spotsCfg.venues[this.state.venueId]?.walkable ?? []).map(
@@ -555,7 +647,7 @@ export class VenueRoom extends Room {
           ? target
           : (this.npcHomeSpots.get(npcId) ?? npc.spotId);
       npc.lineId = out.lineId ?? '';
-      npc.animId = out.animId ?? 'loco_idle';
+      npc.animId = out.animId ?? this.npcHomeAnims.get(npcId) ?? 'loco_idle';
       npc.emoteId = out.emoteId ?? '';
       npc.targetUserId = out.followUserId ?? '';
       npc.startedAt = ctx.nowMs;

@@ -9,6 +9,7 @@
  *   GET  /v1/users/{id}    — public profile with netWorthCents
  */
 import { createHash } from 'node:crypto';
+import { getDreamProgress } from '../../application/world-pulse.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
@@ -267,6 +268,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       security: 1,
     };
     const balRow = bal.rows[0] ?? { cash_cents: '0', debt_cents: '0' };
+    const dreamProgress = chRow
+      ? await getDreamProgress(req.ctx, userId, chRow.dream_id)
+      : null;
     return {
       user: {
         id: uRow.id,
@@ -298,6 +302,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       flags: {
         lotteryRolled: uRow.lottery_rolled_at !== null,
         hasCharacter: chRow !== undefined,
+        // Optional per the contract: omitted when the dream's metric has no
+        // data source yet, so the client keeps the bar hidden.
+        ...(dreamProgress ? { dreamProgress } : {}),
       },
     };
   });

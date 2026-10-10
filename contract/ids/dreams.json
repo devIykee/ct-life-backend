@@ -1,15 +1,71 @@
 {
   "_owner": "BE",
   "_provisional": false,
-  "version": "1.0.0-rc1",
+  "version": "1.0.1",
   "dreams": [
-    { "id": "make_10k", "label": "Make $10K", "phase": 1 },
-    { "id": "top_rich_list", "label": "Top of the rich list", "phase": 1 },
-    { "id": "rug_survivor", "label": "Survive a rug", "phase": 1 },
-    { "id": "build_a_project", "label": "Build a project", "phase": 2 },
-    { "id": "get_rugged_by_creator", "label": "Get rugged by your own coin", "phase": 2 },
-    { "id": "host_a_space", "label": "Host a Space with 100 listeners", "phase": 2 },
-    { "id": "stake_ore", "label": "Stake 10+ ORE", "phase": 2 },
-    { "id": "call_a_top", "label": "Call a top on someone else's coin", "phase": 2 }
+    {
+      "id": "make_10k",
+      "label": "Make $10K",
+      "phase": 1,
+      "metric": "net_worth_cents",
+      "target": 1000000,
+      "unit": "cents"
+    },
+    {
+      "id": "top_rich_list",
+      "label": "Top of the rich list",
+      "phase": 1,
+      "metric": "rich_list_rank",
+      "target": 1,
+      "unit": "rank"
+    },
+    {
+      "id": "rug_survivor",
+      "label": "Survive a rug",
+      "phase": 1,
+      "metric": "rugs_survived",
+      "target": 1,
+      "unit": "count"
+    },
+    {
+      "id": "build_a_project",
+      "label": "Build a project",
+      "phase": 2,
+      "metric": "projects_launched",
+      "target": 1,
+      "unit": "count"
+    },
+    {
+      "id": "get_rugged_by_creator",
+      "label": "Get rugged by your own coin",
+      "phase": 2,
+      "metric": "own_coins_rugged",
+      "target": 1,
+      "unit": "count"
+    },
+    {
+      "id": "host_a_space",
+      "label": "Host a Space with 100 listeners",
+      "phase": 2,
+      "metric": "space_peak_listeners",
+      "target": 100,
+      "unit": "count"
+    },
+    {
+      "id": "stake_ore",
+      "label": "Stake 10+ ORE",
+      "phase": 2,
+      "metric": "ore_staked",
+      "target": 10,
+      "unit": "ore"
+    },
+    {
+      "id": "call_a_top",
+      "label": "Call a top on someone else's coin",
+      "phase": 2,
+      "metric": "tops_called",
+      "target": 1,
+      "unit": "count"
+    }
   ]
 }
