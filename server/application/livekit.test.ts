@@ -94,6 +94,7 @@ function makeContext(overrides: Partial<AppContext> = {}): AppContext {
         pushEnabled: false,
         xLinkEnabled: false,
         mainnetTests: false,
+        oreReader: false,
       },
     } as AppContext['config'],
     db: {} as AppContext['db'],

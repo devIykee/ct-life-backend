@@ -2342,6 +2342,20 @@ paths:
                 motherlodeOre: '55000000000'
                 cityStakedOre: '120000000000'
                 priceUsd: '135.20'
+        '503':
+          description: ORE reader off, or mainnet unreadable with no board from the last 10 minutes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'SERVER_BUSY',
+                      message: 'Server is at capacity. Retry-After header carries the wait time.',
+                      details: { reason: 'ore_reader' },
+                    },
+                }
 
   /ore/me:
     get:

@@ -104,6 +104,8 @@ export interface Config {
     readonly pushEnabled: boolean;
     readonly xLinkEnabled: boolean;
     readonly mainnetTests: boolean;
+    /** Read the ORE board from mainnet (read-only). ORE_READER_ENABLED. */
+    readonly oreReader: boolean;
   };
 
   readonly llmModel: string;
@@ -324,6 +326,7 @@ export function loadConfig(): Config {
       pushEnabled: asBool('PUSH_ENABLED', false),
       xLinkEnabled: asBool('X_LINK_ENABLED', false),
       mainnetTests: asBool('RUN_MAINNET_TESTS', false),
+      oreReader: asBool('ORE_READER_ENABLED', false),
     },
 
     llmModel: process.env.LLM_MODEL ?? 'claude-opus-4-6',

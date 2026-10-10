@@ -13,15 +13,11 @@
  *
  * Board reader:
  *
- *   The board reader is a polling worker. It calls the ORE
- *   mainnet board every `boardCacheSec` (default 2) seconds
- *   and writes a JSON snapshot to Redis at `ore:board`. The
- *   reader is allowed to fail; on failure it returns the last
- *   cached value. The reader is rate-limited to 1 call / 2 s.
- *
- *   When `ORE_DEVNET_USE_MAINNET_CACHE` is set, the seeder uses
- *   the cached mainnet value for dev (ORE has no devnet
- *   deployment; the spec marks this [Unverified]).
+ *   Read on demand: a request with no fresh `ore:board` reads
+ *   the mainnet Board, Round and Treasury accounts (decoded in
+ *   shared/solana/ore-board.ts) and caches the result for
+ *   `boardCacheSec`. At most one mainnet read per 2 s; failures
+ *   serve the last good board. Gated by ORE_READER_ENABLED.
  *
  * Stake tx builder:
  *
@@ -45,72 +41,98 @@
  *   Reuses the topup service with currency='ORE' (bonus=1500 bps).
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import { NotFoundError } from '../shared/domain/errors.js';
+import { NotFoundError, ServerBusyError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { createLogger } from '../shared/logger/logger.js';
+import {
+  fetchLiveOreBoard,
+  fetchTokenBalance,
+  ORE_SQUARES,
+  type LiveOreBoard,
+} from '../shared/solana/ore-board.js';
+import { ORE_MINT, STORE_MINT } from '../shared/solana/ore-stake.js';
 import type { AppContext } from './context.js';
 
-export interface OreBoard {
-  readonly roundId: string;
-  readonly endsAt: number; // epoch ms
-  readonly endsAtSlot: number;
-  readonly squares: number[]; // 5 squares, each in deployed lamports
-  readonly motherlodeOre: string;
+/** The contract `OreBoard`, plus `at` (when the board was read, epoch ms). */
+export interface OreBoard extends LiveOreBoard {
   readonly cityStakedOre: string;
-  readonly priceUsd: number;
+  readonly priceUsd: string;
   readonly at: number;
 }
 
-// ORE v3 program ID (mainnet-beta verified 2026-10-06)
-const ORE_PROGRAM_ID = 'oreV3EG1i9BEgiAJ8b177Z2S2rMarzak4NMv1kULvWv';
-
+/** Fresh board, served to every caller for `boardCacheSec`. */
 const BOARD_KEY = 'ore:board';
-const BOARD_TTL_SEC = 30;
+/** Last good board, served while the RPC is failing, up to `maxRoundAgeSec`. */
+const BOARD_LAST_KEY = 'ore:board:last';
 const BOARD_RATE_LIMIT_KEY = 'ore:board:rl';
 const RATE_LIMIT_INTERVAL_MS = 2_000;
+const RETRY_AFTER_MS = 5_000;
 
-/** Mock ORE board used in dev (no ORE on devnet). */
-function fixtureBoard(): OreBoard {
+interface OreConfig {
+  readonly boardCacheSec: number;
+  readonly maxRoundAgeSec: number;
+}
+
+function oreConfig(ctx: AppContext): OreConfig {
+  const cfg = ctx.configCache.loadOptional<Partial<OreConfig>>('ore');
+  return { boardCacheSec: cfg?.boardCacheSec ?? 2, maxRoundAgeSec: cfg?.maxRoundAgeSec ?? 600 };
+}
+
+function isLocalEnv(): boolean {
+  return process.env.APP_ENV === 'local' || process.env.APP_ENV === 'mock';
+}
+
+/** Dev board (no ORE on devnet). Only served in local/mock. */
+function fixtureBoard(now: number): OreBoard {
   return {
-    roundId: 'dev-fixture',
-    endsAt: Date.now() + 60_000,
+    roundId: 0,
+    endsAt: new Date(now + 60_000).toISOString(),
     endsAtSlot: 0,
-    squares: [1_000_000_000, 1_000_000_000, 1_000_000_000, 1_000_000_000, 1_000_000_000],
+    squares: Array.from({ length: ORE_SQUARES }, () => ({ deployedLamports: '1000000000' })),
     motherlodeOre: '0',
     cityStakedOre: '0',
-    priceUsd: 0,
-    at: Date.now(),
+    priceUsd: '0',
+    at: now,
   };
 }
 
+/** The ORE reader is off, or the board cannot be read and nothing is cached. */
+function boardUnavailable(reason: string): ServerBusyError {
+  return new ServerBusyError(RETRY_AFTER_MS, { reason: 'ore_reader', detail: reason });
+}
+
 /**
- * Read the ORE board. Returns the cached value if available;
- * otherwise fetches from mainnet Helius (when the feature flag
- * is enabled) or returns the dev fixture (only in dev/test).
+ * Whether the board can be served live. `/v1/config` lists
+ * `ore_reader` in `degraded` when it cannot.
+ */
+export function oreReaderAvailable(ctx: AppContext): boolean {
+  return ctx.config.features.oreReader || isLocalEnv();
+}
+
+/**
+ * Read the ORE board.
  *
- * Production: on RPC failure, returns the last cached board with
- * a stale indicator if available, or throws ServiceUnavailableError.
+ *   1. A board read in the last `boardCacheSec` is served as is.
+ *   2. With `ORE_READER_ENABLED=1`, at most one caller per 2 s reads
+ *      mainnet (Board, Treasury, Round) and refreshes both caches.
+ *   3. If that read fails or is rate limited, the last good board
+ *      (up to `maxRoundAgeSec` old) is served.
+ *   4. Otherwise 503 SERVER_BUSY `{reason: 'ore_reader'}`; never a fake
+ *      board outside local/mock.
  *
- * @param ctx - The application context.
+ * `cityStakedOre` and `priceUsd` are "0": no city stake index or ORE
+ * price feed exists yet.
  */
 export async function readBoard(ctx: AppContext): Promise<OreBoard> {
   const cached = await ctx.redis.main.get(BOARD_KEY);
-  if (cached !== null) {
-    return JSON.parse(cached) as OreBoard;
+  if (cached !== null) return JSON.parse(cached) as OreBoard;
+
+  const now = Date.now();
+  if (!ctx.config.features.oreReader) {
+    if (isLocalEnv()) return fixtureBoard(now);
+    throw boardUnavailable('ORE_READER_ENABLED is off');
   }
 
-  // Dev/test mode: use fixture when ORE reader is disabled
-  const isDev = process.env.APP_ENV === 'local' || process.env.APP_ENV === 'mock';
-  if (process.env.ORE_READER_ENABLED !== '1' || ctx.config.features.mainnetTests === false) {
-    if (isDev) {
-      const fixture = fixtureBoard();
-      await ctx.redis.main.set(BOARD_KEY, JSON.stringify(fixture), 'EX', BOARD_TTL_SEC);
-      return fixture;
-    }
-    // Production: if reader disabled and no cache, fail
-    throw new Error('ORE board reader disabled and no cached data available');
-  }
-
-  // Rate-limit: only one upstream call per 2s window.
   const rl = await ctx.redis.main.set(
     BOARD_RATE_LIMIT_KEY,
     '1',
@@ -118,63 +140,27 @@ export async function readBoard(ctx: AppContext): Promise<OreBoard> {
     RATE_LIMIT_INTERVAL_MS,
     'NX',
   );
-  if (rl !== 'OK') {
-    // Rate limited: return stale cache or fixture in dev
-    const staleCache = await ctx.redis.main.get(BOARD_KEY);
-    if (staleCache !== null) {
-      return JSON.parse(staleCache) as OreBoard;
-    }
-    if (isDev) return fixtureBoard();
-    throw new Error('ORE board rate limited and no cached data available');
-  }
+  if (rl !== 'OK') return lastGoodBoard(ctx, 'rate limited');
 
+  const cfg = oreConfig(ctx);
+  let live: LiveOreBoard;
   try {
-    const res = await globalThis.fetch(ctx.config.solana.rpcUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 'ore-board',
-        method: 'getAccountInfo',
-        params: [ORE_PROGRAM_ID, { encoding: 'base64' }],
-      }),
-    });
-
-    if (!res.ok) {
-      const staleCache = await ctx.redis.main.get(BOARD_KEY);
-      if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
-      if (isDev) return fixtureBoard();
-      throw new Error('ORE board fetch failed and no cached data available');
-    }
-
-    const body = (await res.json()) as { result?: { value?: unknown } };
-    if (body.result?.value === undefined || body.result.value === null) {
-      const staleCache = await ctx.redis.main.get(BOARD_KEY);
-      if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
-      if (isDev) return fixtureBoard();
-      throw new Error('ORE board account not found and no cached data available');
-    }
-
-    // Production: decode the board account data. For the M3
-    // smoke we return a stamped board with the current time.
-    const board: OreBoard = {
-      roundId: 'live',
-      endsAt: Date.now() + 60_000,
-      endsAtSlot: 0,
-      squares: [0, 0, 0, 0, 0],
-      motherlodeOre: '0',
-      cityStakedOre: '0',
-      priceUsd: 0,
-      at: Date.now(),
-    };
-    await ctx.redis.main.set(BOARD_KEY, JSON.stringify(board), 'EX', BOARD_TTL_SEC);
-    return board;
-  } catch {
-    const staleCache = await ctx.redis.main.get(BOARD_KEY);
-    if (staleCache !== null) return JSON.parse(staleCache) as OreBoard;
-    if (isDev) return fixtureBoard();
-    throw new Error('ORE board fetch exception and no cached data available');
+    live = await fetchLiveOreBoard(ctx.config.helius.rpcUrlMainnet, now);
+  } catch (e) {
+    createLogger().warn({ err: (e as Error).message }, 'ore board read failed');
+    return lastGoodBoard(ctx, (e as Error).name);
   }
+  const board: OreBoard = { ...live, cityStakedOre: '0', priceUsd: '0', at: now };
+  const json = JSON.stringify(board);
+  await ctx.redis.main.set(BOARD_KEY, json, 'EX', cfg.boardCacheSec);
+  await ctx.redis.main.set(BOARD_LAST_KEY, json, 'EX', cfg.maxRoundAgeSec);
+  return board;
+}
+
+async function lastGoodBoard(ctx: AppContext, reason: string): Promise<OreBoard> {
+  const last = await ctx.redis.main.get(BOARD_LAST_KEY);
+  if (last !== null) return JSON.parse(last) as OreBoard;
+  throw boardUnavailable(reason);
 }
 
 export type MinerTier = 'none' | 'prospector' | 'miner' | 'refiner';
@@ -187,20 +173,34 @@ export interface OreMe {
 }
 
 /**
- * Return the user's ORE state. Production reads from on-chain
- * via Helius; the M3 dev path uses the `users.miner_tier`
- * column and a stub balance.
+ * Return the user's ORE state. With the reader on, `balance` (ORE)
+ * and `stOre` (stORE) are the wallet's mainnet SPL balances in base
+ * units. `staked` is "0": the stake account layout is not decoded
+ * yet. `minerTier` is the stored tier.
  */
 export async function readOreMe(ctx: AppContext, userId: string): Promise<OreMe> {
   const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{ miner_tier: MinerTier }>(`SELECT miner_tier FROM users WHERE id = $1`, [
-      userId,
-    ]);
+    return c.query<{ miner_tier: MinerTier; wallet: string }>(
+      `SELECT miner_tier, wallet FROM users WHERE id = $1`,
+      [userId],
+    );
   });
   const minerTier = r.rows[0]?.miner_tier ?? 'none';
-  // The M3 dev path returns zeros. Production reads ORE
-  // balances via the getTokenAccountsByOwnerV2 Helius call.
-  return { balance: '0', staked: '0', stOre: '0', minerTier };
+  const wallet = r.rows[0]?.wallet;
+  if (!ctx.config.features.oreReader || wallet === undefined) {
+    return { balance: '0', staked: '0', stOre: '0', minerTier };
+  }
+  const rpcUrl = ctx.config.helius.rpcUrlMainnet;
+  try {
+    const [balance, stOre] = await Promise.all([
+      fetchTokenBalance(rpcUrl, wallet, ORE_MINT.toBase58()),
+      fetchTokenBalance(rpcUrl, wallet, STORE_MINT.toBase58()),
+    ]);
+    return { balance: balance.toString(), staked: '0', stOre: stOre.toString(), minerTier };
+  } catch (e) {
+    createLogger().warn({ err: (e as Error).message }, 'ore balance read failed');
+    throw boardUnavailable('balance read failed');
+  }
 }
 
 /**

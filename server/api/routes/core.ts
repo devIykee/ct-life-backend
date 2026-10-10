@@ -19,6 +19,7 @@ import { LotteryService } from '../../application/lottery.js';
 import { CharacterService } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
 import { PublicProfileService } from '../../application/public-profile.js';
+import { oreReaderAvailable } from '../../application/refinery.js';
 
 /**
  * B34: Compare semver versions. Returns true if clientVersion < minVersion.
@@ -70,10 +71,9 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const payload = {
       version: '1.0.0-rc1',
       minClientVersion: '1.0.0',
-      // Kill-switch list. No kill-switch mechanism exists yet, so nothing
-      // is ever degraded; the contract marks the field required, so it is
-      // always present rather than omitted.
-      degraded: [] as string[],
+      // Kill-switch list. Only `ore_reader` is wired: it is listed when
+      // GET /v1/ore/board cannot serve a live board (ORE_READER_ENABLED off).
+      degraded: oreReaderAvailable(req.ctx) ? [] : ['ore_reader'],
       // Registries (subset for M2). Optional per the contract's
       // ConfigResponse, so a missing file yields null instead of failing
       // the whole response.
