@@ -15,6 +15,7 @@ import {
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { ConfigCache } from './context.js';
+import { validateCharacterPalette } from '../shared/domain/character-palettes.js';
 
 interface TribesConfig {
   tribes: Array<{ id: string }>;
@@ -37,6 +38,7 @@ interface ItemsConfig {
 }
 
 export interface CharacterInput {
+  readonly likenessJobId?: string;
   readonly alias: string;
   readonly look: {
     readonly skinTone: string;
@@ -63,6 +65,7 @@ export class CharacterService {
    * B13 fix: Validate tribe/dream/trait/look IDs against contract configs
    */
   private validateInput(input: CharacterInput): void {
+    validateCharacterPalette(input.look);
     const tribes = this.configCache.load<TribesConfig>('tribes');
     const dreams = this.configCache.load<DreamsConfig>('dreams');
     const traits = this.configCache.load<TraitsConfig>('traits');
@@ -129,7 +132,10 @@ export class CharacterService {
     // /^skin_tone[1-6]$/ rule was not in the contract and refused every
     // tone the creator sends.
     if (typeof input.look.skinTone !== 'string' || input.look.skinTone.trim() === '') {
-      throw new ValidationFailedError({ reason: 'invalid_skin_tone', skinTone: input.look.skinTone });
+      throw new ValidationFailedError({
+        reason: 'invalid_skin_tone',
+        skinTone: input.look.skinTone,
+      });
     }
   }
 
@@ -162,6 +168,7 @@ export class CharacterService {
     traitIds: string[];
     dreamId: string;
     homeId: string;
+    likenessJobId: string | null;
   }> {
     // B13 fix: Validate all IDs before attempting creation
     this.validateInput(input);
@@ -198,11 +205,32 @@ export class CharacterService {
       const homeId = this.originHomeId(lotteryEntry.rows[0]?.ref_id);
 
       const id = uuidv7();
+      if (input.likenessJobId) {
+        const owned = await client.query(
+          `SELECT j.id FROM likeness_jobs j JOIN likeness_selections s ON s.job_id=j.id AND s.user_id=j.user_id
+           WHERE j.id=$1 AND j.user_id=$2 AND j.status='succeeded' AND j.phase='completed'
+           AND j.asset_validated_at IS NOT NULL AND j.asset_manifest IS NOT NULL
+           AND j.artifact_cleanup_at IS NULL AND j.model_id=$3 FOR UPDATE OF j`,
+          [input.likenessJobId, userId, input.look.headId],
+        );
+        if (!owned.rowCount)
+          throw new ForbiddenError({ reason: 'owned_accepted_likeness_required' });
+      }
       try {
         await client.query(
-          `INSERT INTO characters (id, user_id, alias, look, tribe_id, trait_ids, dream_id, age_confirmed_at, home_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8)`,
-          [id, userId, input.alias, input.look, input.tribeId, input.traitIds, input.dreamId, homeId],
+          `INSERT INTO characters (id, user_id, alias, look, tribe_id, trait_ids, dream_id, age_confirmed_at, home_id,likeness_job_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, now(), $8,$9)`,
+          [
+            id,
+            userId,
+            input.alias,
+            input.look,
+            input.tribeId,
+            input.traitIds,
+            input.dreamId,
+            homeId,
+            input.likenessJobId ?? null,
+          ],
         );
       } catch (e) {
         if ((e as { code?: string }).code === '23505') {
@@ -228,6 +256,7 @@ export class CharacterService {
         traitIds: [...input.traitIds],
         dreamId: input.dreamId,
         homeId,
+        likenessJobId: input.likenessJobId ?? null,
       };
     });
   }

@@ -20,6 +20,7 @@ import { CharacterService } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
 import { PublicProfileService } from '../../application/public-profile.js';
 import { oreReaderAvailable } from '../../application/refinery.js';
+import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 
 /**
  * B34: Compare semver versions. Returns true if clientVersion < minVersion.
@@ -38,8 +39,9 @@ function isVersionOutdated(clientVersion: string, minVersion: string): boolean {
 }
 
 const CharacterBody = z.object({
+  likenessJobId: z.uuid().optional(),
   alias: z.string().min(3).max(24),
-  look: z.object({
+  look: z.strictObject({
     skinTone: z.string(),
     headId: z.string(),
     hairId: z.string(),
@@ -87,6 +89,7 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       anims: anims ?? null,
       sfx: cache.loadOptional<unknown>('sfx'),
       items: cache.loadOptional<unknown>('items'),
+      characterPalettes: CHARACTER_PALETTES,
       spots: cache.loadOptional<unknown>('spots'), // B34: add spots
       // B34: emotes. There is no emotes.json and there is not meant to be:
       // the emote ids are published in the FE-owned contract/ids/anims.json
@@ -212,8 +215,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       trait_ids: string[];
       dream_id: string;
       home_id: string;
+      likeness_job_id: string | null;
     }>(
-      `SELECT alias, look, tribe_id, trait_ids, dream_id, home_id
+      `SELECT alias, look, tribe_id, trait_ids, dream_id, home_id,likeness_job_id
        FROM characters WHERE user_id = $1`,
       [userId],
     );
@@ -224,9 +228,10 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       hygiene: number;
       sanity: number;
       last_action_at: Date;
-    }>('SELECT energy, hunger, fun, hygiene, sanity, last_action_at FROM needs WHERE user_id = $1', [
-      userId,
-    ]);
+    }>(
+      'SELECT energy, hunger, fun, hygiene, sanity, last_action_at FROM needs WHERE user_id = $1',
+      [userId],
+    );
     const sk = await c.query<{
       clout: number;
       coding: number;
@@ -268,9 +273,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       security: 1,
     };
     const balRow = bal.rows[0] ?? { cash_cents: '0', debt_cents: '0' };
-    const dreamProgress = chRow
-      ? await getDreamProgress(req.ctx, userId, chRow.dream_id)
-      : null;
+    const dreamProgress = chRow ? await getDreamProgress(req.ctx, userId, chRow.dream_id) : null;
     return {
       user: {
         id: uRow.id,
@@ -291,6 +294,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
             traitIds: chRow.trait_ids,
             dreamId: chRow.dream_id,
             homeId: chRow.home_id,
+            likenessJobId: chRow.likeness_job_id ?? null,
           }
         : null,
       needs: needRow,
@@ -313,7 +317,10 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
 /**
  * B16: Check if user has an active shift (not completed)
  */
-async function checkActiveShift(_req: import('fastify').FastifyRequest, userId: string): Promise<boolean> {
+async function checkActiveShift(
+  _req: import('fastify').FastifyRequest,
+  userId: string,
+): Promise<boolean> {
   // Import the shifts module to access the in-memory _shifts Map
   // Since shifts are in-memory, we need to check via the ShiftsService
   // For now, we'll import the internal _shifts Map

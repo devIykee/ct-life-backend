@@ -220,3 +220,20 @@ These are the hard rules the ledger must always satisfy. Tests assert each one. 
 8. **No reliance on Redis for money.** Money is only in Postgres. Losing Redis loses no money; presence and rate limits are lost instead.
 9. **Bounded growth.** `ledger_entries` is monthly-partitioned; old partitions are detached and archived per the retention policy. Hot indexes are `(user_id, created_at DESC)` and `(ref_type, ref_id)`.
 10. **Statement timeout.** Every transaction sets `statement_timeout` and `lock_timeout`. No query holds a lock for more than a few seconds.
+
+## Likeness preparation
+
+Migration `1700000075000_likeness_jobs.sql` adds dedicated verified purchase entitlements, private upload metadata and owned generation jobs. No existing game-cash payment is repurposed. Public generation stays disabled. See [Character likeness](CHARACTER_LIKENESS.md) for constraints, rollout and outstanding delivery work.
+
+### Private likeness pipeline (migration 076)
+
+`likeness_upload_sessions` journals normalized private ingestion, request hash,
+consent, processing lease, deletion state and 24-hour expiry. A partial unique index
+allows one active photo per owner. `likeness_jobs` adds leased queue phases,
+reference approval hash/time, owned artifact keys/hashes, bounded failure counters
+and retention/cleanup state. `likeness_provider_attempts` permits only one submission
+reservation per job/stage and retains provider task IDs, terminal state and actual
+consumed credits for reconciliation. `likeness_action_receipts` stores owner/key/
+operation hashes for durable approval, cancellation and deletion replay. No table
+contains original photo bytes, public photo URLs, provider credentials or client
+payment assertions. See [character likeness](CHARACTER_LIKENESS.md).

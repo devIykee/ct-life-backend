@@ -45,6 +45,8 @@ import { registerAirdropRoutes } from './routes/airdrop-farm.js';
 import { registerVenuesGatingRoutes } from './routes/venues-gating.js';
 import { registerLlmNpcRoutes } from './routes/llm-npcs.js';
 import { registerXLinkRoutes } from './routes/x-link.js';
+import { registerLikenessRoutes } from './routes/likeness.js';
+import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
 declare module 'fastify' {
@@ -164,6 +166,8 @@ export async function buildServer(): Promise<ServerHandle> {
   registerVenuesGatingRoutes(app);
   registerLlmNpcRoutes(app);
   registerXLinkRoutes(app);
+  const likeness = await buildLikenessRuntime(ctx.config, ctx.db);
+  registerLikenessRoutes(app, (_db, userId) => likeness.forOwner(userId));
 
   // /healthz, /readyz are registered in ops routes.
 

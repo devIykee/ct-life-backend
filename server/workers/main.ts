@@ -36,6 +36,10 @@ import { handleDistrictRollover } from './district-rollover.js';
 import { handleSeasonRollover } from './season-rollover.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
+import { startLikenessScheduler } from './likeness.js';
+import { buildLikenessRuntime } from '../application/likeness-runtime.js';
+import type { LikenessGenerationWorker } from '../application/likeness-worker.js';
+import type { LikenessPhotoService } from '../application/likeness-photos.js';
 
 export interface WorkersHandle {
   redis: ReturnType<typeof createRedis>;
@@ -72,11 +76,25 @@ function newClient(redis: ReturnType<typeof createRedis>): IORedis {
 /**
  *
  */
-export async function buildWorkers(): Promise<WorkersHandle> {
+export async function buildWorkers(likeness?: {
+  worker: LikenessGenerationWorker;
+  photos: LikenessPhotoService;
+}): Promise<WorkersHandle> {
   const cfg = loadConfig();
   const redis = createRedis();
   const log = createLogger().child({ mod: 'workers' });
   const conn = redisConnection(redis);
+  if (!likeness) {
+    const assembled = await buildLikenessRuntime(cfg, buildContext().db);
+    if (assembled.worker && assembled.photos)
+      likeness = { worker: assembled.worker, photos: assembled.photos };
+  }
+  // Cleanup remains active with configured private storage even when new generation is off.
+  const likenessScheduler = likeness
+    ? startLikenessScheduler(likeness.worker, likeness.photos, () =>
+        log.error('likeness bounded sweep failed'),
+      )
+    : undefined;
 
   // Queues.
   // B12 fix: Queue names without colons (BullMQ rejects ":")
@@ -207,6 +225,7 @@ export async function buildWorkers(): Promise<WorkersHandle> {
     healthzServer,
     async shutdown() {
       stopMarket();
+      await likenessScheduler?.stop();
       await crierWorker.close();
       await dailyWorker.close();
       await sundayWorker.close();

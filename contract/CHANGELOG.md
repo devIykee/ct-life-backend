@@ -1,3 +1,22 @@
+## 2026-10-11 - Owned avatar delivery and dedicated USDC checkout
+
+Added owned job resume, validated manifest/acceptance and optional `character.likenessJobId` persistence. Added immutable3-USDC checkout, finalized receipt verification, interrupted-payment recovery and delivery-owed/manual-review states. New generation and checkout remain disabled pending explicit provider end-user permission and runtime/storage provisioning. No Cash top-up behavior changes.
+
+## 2026-10-11 - Private likeness pipeline contract
+
+Added authenticated, default-disabled private photo ingestion/deletion, exact-preview
+approval, job cancellation, private preview/result reads and durable job phase/hash
+fields. Writes require idempotency keys. Rigged output remains awaiting validation;
+no public generation, purchase or playable-result activation is included.
+
+## 2026-10-11 - Dex/Nova palette capabilities
+
+Added optional `characterPalettes` to `GET /v1/config`: finite per-head allowlists
+for independently recolouring the existing UBC bodies. No new look slots or paid
+shop items. Tightened character writes to reject extra look properties (breaking
+for callers sending undocumented fields) and reject unknown/cross-body UBC
+palette combinations. Existing seven-field authored looks remain compatible.
+
 # Changelog
 
 > Every change to the contract, in the order it is signed. Both teams read this before upgrading.
@@ -26,6 +45,12 @@ The first release candidate. Establishes the contract surface that the Unity cli
 - **Anon is hidden from the rich list.** `net_worth`, `weekly_pnl` and `weekly_return` exclude the `anon` tribe from `entries` in every scope. `GET /v1/leaderboards/{boardId}` now fills `me` with the caller's own row (their value and the rank they would hold), so an Anon player still sees their standing privately. (GitHub #4)
 - **Origin home follows the lottery config.** Character creation sets `homeId` from `lottery.json` `outcomes[outcome].homeId` (insider → `studio`, seeker → `hacker_house`), not a hardcoded `skyrise` / `penthouse`. (GitHub #4)
 - **Solana Pay URL amount is in user units.** `solanaPayUrl`'s `amount` is now `1` for 1 USDC; the intent's `amount` field and the unsigned `tx` stay in base units. (GitHub #4)
+
+### Additive (character likeness preparation)
+
+- Authenticated `GET /likeness`, `POST /likeness/jobs`, and `GET /likeness/jobs/{id}`. Public submission is disabled until provider, private upload, verified paid fulfillment, and runtime delivery are ready. A connected wallet is authentication only.
+- `LIKENESS_UNAVAILABLE` (503) for the inactive provider path. Dedicated durable likeness entitlement/upload/job records do not reuse game-cash top-ups.
+
 
 ### Additive (FE-owned registries)
 

@@ -14,6 +14,7 @@ CT Life is a social metaverse where players build their identity, earn through m
 ## Features
 
 ### Core Gameplay
+
 - Character creation with customizable looks, tribes, dreams, and traits
 - Lottery-based home assignment system
 - Work shifts with mini-game scoring and crypto rewards
@@ -21,6 +22,7 @@ CT Life is a social metaverse where players build their identity, earn through m
 - Skill progression across 6 categories
 
 ### Economy & Payments
+
 - Multi-currency support (USDC, SOL, SKR, ORE)
 - Secure payment flows with webhook verification
 - Ledger-based transaction system with ACID guarantees
@@ -28,12 +30,14 @@ CT Life is a social metaverse where players build their identity, earn through m
 - Debt management
 
 ### Social Features
+
 - Direct messaging between players
 - Friend system with requests and acceptance
 - Bidirectional blocking for privacy
 - Public profiles and user discovery
 
 ### Voice & Video
+
 - Voice Spaces (audio-only group calls)
 - Video calls with up to 10 participants
 - Proximity voice in game venues
@@ -41,6 +45,7 @@ CT Life is a social metaverse where players build their identity, earn through m
 - Secure per-user token minting
 
 ### Advanced Features
+
 - Venue system with entrance spawning
 - NPC interactions with state machines
 - Admin tools for ratio arena and airdrops
@@ -163,11 +168,13 @@ tsx server/workers/main.ts
 ### Authentication
 
 All authenticated endpoints require:
+
 ```
 Authorization: Bearer YOUR_ACCESS_TOKEN
 ```
 
 All write operations (POST/PUT/PATCH/DELETE) require:
+
 ```
 Idempotency-Key: UNIQUE_UUID_V4
 ```
@@ -175,11 +182,13 @@ Idempotency-Key: UNIQUE_UUID_V4
 ### Key Endpoints
 
 **Authentication**
+
 - `POST /v1/auth/nonce` - Get SIWS nonce
 - `POST /v1/auth/verify` - Sign in with wallet signature
 - `POST /v1/auth/refresh` - Refresh access token
 
 **Core Gameplay**
+
 - `GET /v1/config` - Get all game configuration
 - `GET /v1/me` - Get current user profile
 - `POST /v1/lottery/roll` - Roll lottery (once per user)
@@ -189,16 +198,19 @@ Idempotency-Key: UNIQUE_UUID_V4
 - `POST /v1/needs/actions` - Apply needs action
 
 **Social**
+
 - `POST /v1/dms` - Send direct message
 - `POST /v1/friends/:userId/request` - Send friend request
 - `POST /v1/blocks/:userId` - Block user
 
 **Voice/Video**
+
 - `POST /v1/spaces` - Start voice space
 - `POST /v1/video-calls` - Start video call
 - `POST /v1/rtc/token` - Get RTC participant token
 
 **Payments**
+
 - `POST /v1/payments/intents` - Create payment intent
 - `POST /v1/payments/verify` - Verify payment
 
@@ -209,29 +221,34 @@ Idempotency-Key: UNIQUE_UUID_V4
 ## Security Features
 
 ### Authentication & Authorization
+
 - Sign-In with Solana (SIWS) implementation
 - Redis-backed nonce validation with 10-minute TTL
 - JWT tokens with RS256 signing
 - Admin wallet allowlist for protected endpoints
 
 ### Payment Security
+
 - Recipient address verification on webhooks
 - Base-unit amount validation
 - HMAC signature verification (Helius webhooks)
 - Idempotency keys prevent double-spend
 
 ### Rate Limiting
+
 - Token bucket algorithm (20 req/s per user)
 - Redis-backed for distributed systems
 - Automatic 429 responses with `Retry-After` header
 
 ### Realtime Security
+
 - JWT authentication on all 5 realtime rooms
 - Per-user RTC token minting
 - Participant validation for voice/video calls
 - DB-backed profile verification
 
 ### Database Integrity
+
 - SERIALIZABLE transaction isolation
 - CHECK constraints prevent negative balances
 - UNIQUE constraints on idempotency keys
@@ -269,28 +286,39 @@ ct-life-backend/
 
 ### Required
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `APP_ENV` | Deployment environment | `local`, `staging`, `prod` |
-| `DATABASE_URL` | PostgreSQL connection string | `postgres://user:pass@localhost:5432/ctlife` |
-| `REDIS_URL` | Redis connection string | `redis://localhost:6379/0` |
-| `JWT_PRIVATE_KEY` | RS256 private key (PEM) | `/path/to/jwt-private.pem` |
-| `SOLANA_RPC_URL` | Solana RPC endpoint | `https://api.mainnet-beta.solana.com` |
-| `SOLANA_TREASURY_PUBKEY` | Treasury wallet address | `YOUR_TREASURY_PUBKEY` |
-| `HELIUS_WEBHOOK_SECRET` | Webhook HMAC secret | `your-webhook-secret` |
-| `LIVEKIT_API_KEY` | LiveKit API key | `your-livekit-key` |
-| `LIVEKIT_API_SECRET` | LiveKit API secret | `your-livekit-secret` |
+| Variable                 | Purpose                      | Example                                      |
+| ------------------------ | ---------------------------- | -------------------------------------------- |
+| `APP_ENV`                | Deployment environment       | `local`, `staging`, `prod`                   |
+| `DATABASE_URL`           | PostgreSQL connection string | `postgres://user:pass@localhost:5432/ctlife` |
+| `REDIS_URL`              | Redis connection string      | `redis://localhost:6379/0`                   |
+| `JWT_PRIVATE_KEY`        | RS256 private key (PEM)      | `/path/to/jwt-private.pem`                   |
+| `SOLANA_RPC_URL`         | Solana RPC endpoint          | `https://api.mainnet-beta.solana.com`        |
+| `SOLANA_TREASURY_PUBKEY` | Treasury wallet address      | `YOUR_TREASURY_PUBKEY`                       |
+| `HELIUS_WEBHOOK_SECRET`  | Webhook HMAC secret          | `your-webhook-secret`                        |
+| `LIVEKIT_API_KEY`        | LiveKit API key              | `your-livekit-key`                           |
+| `LIVEKIT_API_SECRET`     | LiveKit API secret           | `your-livekit-secret`                        |
 
 ### Optional
 
-| Variable | Purpose | Default |
-|----------|---------|---------|
-| `PORT_API` | API server port | `4010` |
-| `PORT_REALTIME` | Realtime server port | `2567` |
-| `ENABLE_DEV_AUTH` | Enable dev auth (local only) | `false` |
-| `LLM_ENABLED` | Enable LLM NPCs | `false` |
-| `ANTHROPIC_API_KEY` | Anthropic API key | - |
-| `X_LINK_ENABLED` | Enable X account linking | `false` |
+| Variable                               | Purpose                                                                                                 | Default |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------- |
+| `PORT_API`                             | API server port                                                                                         | `4010`  |
+| `PORT_REALTIME`                        | Realtime server port                                                                                    | `2567`  |
+| `ENABLE_DEV_AUTH`                      | Enable dev auth (local only)                                                                            | `false` |
+| `LLM_ENABLED`                          | Enable LLM NPCs                                                                                         | `false` |
+| `ANTHROPIC_API_KEY`                    | Anthropic API key                                                                                       | -       |
+| `X_LINK_ENABLED`                       | Enable X account linking                                                                                | `false` |
+| `TRIPO_API_KEY`                        | Server-only key for an explicitly authorized operator likeness trial; does not enable public generation | unset   |
+| `LIKENESS_PRICE_USDC_CENTS`            | Approved retail price in integer USDC cents; never a client-supplied price                              | 300     |
+| `LIKENESS_GENERATION_ENABLED`          | Allow configured generation; requires all other gates and owned entitlement                             | false   |
+| `TRIPO_END_USER_AGREEMENT_CONFIRMED`   | Verified written Tripo end-user authorization                                                           | false   |
+| `LIKENESS_OPERATOR_EVALUATION_ENABLED` | Separately authorized account-owner evaluation only                                                     | false   |
+| `LIKENESS_OPERATOR_USER_IDS`           | Exact server user UUID allowlist for that evaluation                                                    | unset   |
+| `LIKENESS_RUNTIME_PROFILE_CONFIRMED`   | Actual Unity/mobile acceptance of the supported Mixamo profile                                          | false   |
+| `LIKENESS_PRIVATE_STORAGE_CONFIRMED`   | Verified dedicated private bucket policy/encryption                                                     | false   |
+| `LIKENESS_PRIVATE_BUCKET`              | Private likeness bucket, distinct from advertising storage                                              | unset   |
+| `LIKENESS_REFERENCE_MANIFEST`          | Absolute path to reviewed body-reference paths and hashes                                               | unset   |
+| `LIKENESS_LOCAL_DIRECTORY`             | Private local development storage; refuses production                                                   | unset   |
 
 **Complete list**: See [`.env.example`](.env.example)
 
@@ -327,11 +355,11 @@ pnpm contract:check
 
 ### Environments
 
-| Environment | API | Realtime | Blockchain |
-|-------------|-----|----------|------------|
-| **Local** | `localhost:4010` | `localhost:2567` | Devnet |
-| **Staging** | Railway | Railway | Devnet + Mainnet (testing) |
-| **Production** | Railway | Railway | Mainnet |
+| Environment    | API              | Realtime         | Blockchain                 |
+| -------------- | ---------------- | ---------------- | -------------------------- |
+| **Local**      | `localhost:4010` | `localhost:2567` | Devnet                     |
+| **Staging**    | Railway          | Railway          | Devnet + Mainnet (testing) |
+| **Production** | Railway          | Railway          | Mainnet                    |
 
 ### Database Migrations
 
@@ -366,6 +394,7 @@ pnpm db:status
 ## Contributing
 
 We welcome contributions! Please see [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
+
 - Coding standards
 - Branch and commit conventions
 - Pull request process
@@ -376,6 +405,7 @@ We welcome contributions! Please see [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
 ## Tech Stack
 
 **Backend**
+
 - [Fastify 5](https://fastify.dev/) - High-performance REST API
 - [Colyseus 0.18](https://colyseus.io/) - Multiplayer game server
 - [BullMQ 6](https://bullmq.io/) - Background job processing
@@ -383,14 +413,17 @@ We welcome contributions! Please see [`CONTRIBUTING.md`](CONTRIBUTING.md) for:
 - [Redis 7](https://redis.io/) - Caching & rate limiting
 
 **Blockchain**
+
 - [Solana](https://solana.com/) - Layer 1 blockchain
 - [Anchor 0.31](https://www.anchor-lang.com/) - Solana smart contracts
 - [@solana/web3.js](https://solana-labs.github.io/solana-web3.js/) - Solana SDK
 
 **Real-time Communication**
+
 - [LiveKit](https://livekit.io/) - Voice & video infrastructure
 
 **TypeScript**
+
 - Strict mode enabled
 - ESLint + Prettier
 - Vitest for testing

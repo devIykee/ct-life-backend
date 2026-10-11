@@ -61,6 +61,427 @@ security:
   - bearerAuth: []
 
 paths:
+  /likeness:
+    get:
+      tags: [player]
+      operationId: getLikenessAvailability
+      summary: Read paid likeness availability before character creation.
+      description: Authenticated; no photo collection or payment. The current provider pipeline is inactive.
+      x-phase: 1
+      responses:
+        '200':
+          description: Availability and supported base identities
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessAvailability' }
+              example:
+                enabled: false
+                reason: provider_not_configured
+                provider: null
+                photoUploadEnabled: false
+                price: { amount: '3.00', currency: USDC, display: '3.00 USDC' }
+                modes: [human, stylized]
+                consentVersion: likeness-v1
+                supportedModels:
+                  [
+                    {
+                      modelId: head_snow,
+                      mode: human,
+                      enabled: false,
+                      reason: provider_not_configured,
+                    },
+                  ]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /likeness/checkout:
+    post:
+      tags: [player]
+      operationId: postLikenessCheckout
+      summary: Create an immutable server-priced USDC payment quote.
+      description: Disabled until public generation is configured and permitted. Wallet signs the returned unsigned transaction. Existing owed delivery blocks a new charge.
+      x-phase: 1
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [modelId]
+              properties:
+                modelId: { type: string, enum: [head_snow, head_rain, head_ubc_m, head_ubc_f] }
+      responses:
+        '200':
+          description: Immutable unsigned payment quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessCheckoutQuote' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /likeness/checkout/current:
+    get:
+      tags: [player]
+      operationId: getCurrentLikenessCheckout
+      summary: Resume owned payment and recover finalized reference payments after app termination.
+      x-phase: 1
+      responses:
+        '200':
+          description: Last owned active receipt or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [checkout]
+                properties:
+                  checkout:
+                    oneOf:
+                      - { type: 'null' }
+                      - { $ref: '#/components/schemas/LikenessCheckoutStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /likeness/checkout/{id}:
+    get:
+      tags: [player]
+      operationId: getLikenessCheckout
+      summary: Verify the owned finalized payment and report delivery state.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Owned receipt state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessCheckoutStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /likeness/checkout/{id}/submitted:
+    post:
+      tags: [player]
+      operationId: submitLikenessPaymentSignature
+      summary: Record a wallet signature; only finalized verified payment grants entitlement.
+      x-phase: 1
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [signature]
+              properties:
+                signature: { type: string, pattern: '^[1-9A-HJ-NP-Za-km-z]{64,88}$' }
+      responses:
+        '200':
+          description: Verified or pending owned receipt
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessCheckoutStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /likeness/jobs:
+    get:
+      tags: [player]
+      operationId: listLikenessJobs
+      summary: Resume up to twenty owned jobs, including while new generation is disabled.
+      x-phase: 1
+      responses:
+        '200':
+          description: Owned jobs and accepted selection
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [jobs, acceptedJobId]
+                properties:
+                  jobs: { type: array, items: { $ref: '#/components/schemas/LikenessJob' } }
+                  acceptedJobId: { type: [string, 'null'], format: uuid }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [player]
+      operationId: postLikenessJob
+      summary: Reserve one generation job against a verified likeness purchase.
+      description: |
+        Requires a server-verified dedicated purchase and verified owned private upload.
+        Server derives mode from the approved model registry. No image URL, payment claim,
+        provider key or user ID is accepted. The current production composition returns 503
+        and never uploads, charges or submits generation. Durable per-owner idempotency
+        outlives the generic response cache; each entitlement can create only one job.
+      x-phase: 1
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LikenessRequest' }
+      responses:
+        '202':
+          description: The durable job, including the same job on an identical retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessJob' }
+              example:
+                {
+                  id: '00000000-0000-4000-8000-000000000001',
+                  modelId: head_snow,
+                  mode: human,
+                  status: queued,
+                  phase: sources,
+                  referenceSha256: null,
+                  failureReason: null,
+                  createdAt: '2026-10-11T12:00:00Z',
+                  updatedAt: '2026-10-11T12:00:00Z',
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /likeness/jobs/{id}:
+    get:
+      tags: [player]
+      operationId: getLikenessJob
+      summary: Read an owned likeness job.
+      description: Does not expose private upload keys, provider credentials, payment proof or another user's job. Owned status remains readable when new generation is disabled.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Owned job state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessJob' }
+              example:
+                {
+                  id: '00000000-0000-4000-8000-000000000001',
+                  modelId: head_snow,
+                  mode: human,
+                  status: queued,
+                  phase: sources,
+                  referenceSha256: null,
+                  failureReason: null,
+                  createdAt: '2026-10-11T12:00:00Z',
+                  updatedAt: '2026-10-11T12:00:00Z',
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
+    delete:
+      tags: [player]
+      operationId: cancelLikenessJob
+      summary: Cancel an owned likeness job and queue private artifact cleanup.
+      description: Stops new stages. A provider request already in flight is retained for reconciliation; no provider refund is implied.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '204': { description: Owned job cancelled or identical request replayed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /likeness/photos:
+    post:
+      tags: [player]
+      operationId: postLikenessPhoto
+      summary: Normalize one consented photo into private, expiring storage.
+      description: |
+        Authenticated before buffering. The default composition returns 503 before
+        decoding or storing photos. When explicitly configured, accepts PNG/JPEG bytes
+        only (8 MiB maximum), decodes and strips metadata, and stores a normalized JPEG
+        under an opaque private key. One active photo per owner. Identical retries
+        replay the original upload; changed bytes with the same key are rejected.
+      x-phase: 1
+      parameters:
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+        - {
+            name: X-Likeness-Consent-Version,
+            in: header,
+            required: true,
+            schema: { type: string, const: likeness-v1 },
+          }
+        - {
+            name: X-Likeness-Own-Photo,
+            in: header,
+            required: true,
+            schema: { type: string, const: 'true' },
+          }
+        - {
+            name: X-Likeness-Share-With-Provider,
+            in: header,
+            required: true,
+            schema: { type: string, const: 'true' },
+          }
+      requestBody:
+        required: true
+        content:
+          image/jpeg: { schema: { type: string, format: binary } }
+          image/png: { schema: { type: string, format: binary } }
+      responses:
+        '201':
+          description: Owned normalized photo; raw originals are not retained
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [uploadId, expiresAt]
+                properties:
+                  uploadId: { type: string, format: uuid }
+                  expiresAt: { type: string, format: date-time }
+              example:
+                {
+                  uploadId: '00000000-0000-4000-8000-000000000001',
+                  expiresAt: '2026-10-12T12:00:00Z',
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: IN_FLIGHT while the same upload is processing; retry the identical request
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '413': { $ref: '#/components/responses/ValidationFailed' }
+        '415': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /likeness/photos/{id}:
+    delete:
+      tags: [player]
+      operationId: deleteLikenessPhoto
+      summary: Withdraw source consent and delete an owned private photo.
+      description: Blocks subsequent generation stages before deletion; failed deletion remains journaled for cleanup. Does not claim to delete copies already held by the provider.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      responses:
+        '204': { description: Owned source deletion completed or already completed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /likeness/jobs/{id}/reference:
+    get:
+      tags: [player]
+      operationId: getLikenessReference
+      summary: Read the owned conditioned character preview before 3D generation.
+      description: Authenticated private JPEG; no public URL or provider token. Failed/cancelled jobs are inaccessible.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Private normalized reference with Cache-Control private,no-store and X-Content-Sha256
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /likeness/jobs/{id}/reference/approve:
+    post:
+      tags: [player]
+      operationId: approveLikenessReference
+      summary: Approve the exact owned preview before mesh generation.
+      description: Durable idempotency and content hash bind consent to the preview actually shown. Does not start a second purchase or accept payment claims.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [referenceSha256]
+              properties:
+                referenceSha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+      responses:
+        '204': { description: Approval recorded or identical request replayed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /likeness/jobs/{id}/result:
+    get:
+      tags: [player]
+      operationId: getLikenessResult
+      summary: Read an owned, validated playable GLB result.
+      description: |
+        Only status succeeded and phase completed can return bytes. The current worker
+        stops at awaiting_asset_validation; structural checks are insufficient for
+        runtime readiness, so those files cannot be downloaded through this endpoint.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Private validated GLB with Cache-Control private,no-store and X-Content-Sha256
+          content:
+            model/gltf-binary: { schema: { type: string, format: binary } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /likeness/jobs/{id}/manifest:
+    get:
+      tags: [player]
+      operationId: getLikenessManifest
+      summary: Read the owned validated humanoid manifest.
+      x-phase: 1
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Validated artifact identity, limits and exact bone mapping
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessManifest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /likeness/jobs/{id}/accept:
+    post:
+      tags: [player]
+      operationId: acceptLikenessAsset
+      summary: Persist an owned validated personal avatar selection.
+      description: Accepts an empty object. Does not validate assets, grant purchases or trigger generation. Client must first build and validate its runtime Humanoid Avatar.
+      x-phase: 1
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        '200':
+          description: Persisted selection manifest
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LikenessManifest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /likeness/jobs/{id}/preview:
+    get:
+      tags: [player]
+      operationId: getLikenessMeshPreview
+      summary: Read an owned generated GLB before humanoid acceptance.
+      description: A preview is not approval for gameplay. Private, no-store; X-Content-Sha256 identifies the bytes.
+      x-phase: 1
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        '200':
+          description: Private mesh preview
+          content:
+            model/gltf-binary:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/LikenessUnavailable' }
   /auth/challenge:
     get:
       tags: [auth]
@@ -2787,6 +3208,17 @@ components:
       description: Opaque cursor returned by the previous call.
       schema: { type: string }
   responses:
+    LikenessUnavailable:
+      description: Likeness pipeline is inactive; do not collect photos or initiate payment.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            error:
+              code: LIKENESS_UNAVAILABLE
+              message: Character likeness is not available yet. No photo or payment was accepted.
+              details:
+                reason: provider_not_configured
     Unauthorized:
       description: Missing or invalid access token
       content:
@@ -2866,6 +3298,159 @@ components:
                 },
             }
   schemas:
+    LikenessCheckoutStatus:
+      type: object
+      required: [intentId, modelId, status, entitlementId]
+      properties:
+        intentId: { type: string, format: uuid }
+        modelId: { type: string }
+        status: { type: string, enum: [pending, confirmed, expired, manual_review] }
+        entitlementId: { type: [string, 'null'], format: uuid }
+        resolution:
+          {
+            type: string,
+            enum: [delivery_owed, delivered, manual_review, refunded, payment_review],
+          }
+    LikenessCheckoutQuote:
+      type: object
+      required:
+        [
+          intentId,
+          modelId,
+          currency,
+          amountBaseUnits,
+          amount,
+          cluster,
+          mint,
+          recipient,
+          reference,
+          transactionBase64,
+          expiresAt,
+        ]
+      properties:
+        intentId: { type: string, format: uuid }
+        modelId: { type: string }
+        currency: { type: string, const: USDC }
+        amountBaseUnits: { type: string, example: '3000000' }
+        amount: { type: string, example: '3.000000' }
+        cluster: { type: string, enum: [mainnet, devnet] }
+        mint: { type: string }
+        recipient: { type: string }
+        reference: { type: string }
+        transactionBase64: { type: string }
+        expiresAt: { type: string, format: date-time }
+    LikenessAvailability:
+      type: object
+      required:
+        [
+          enabled,
+          reason,
+          provider,
+          photoUploadEnabled,
+          price,
+          modes,
+          consentVersion,
+          supportedModels,
+        ]
+      properties:
+        checkoutAvailable: { type: boolean }
+        entitlement:
+          oneOf:
+            - { type: 'null' }
+            - type: object
+              required: [id, source]
+              properties:
+                id: { type: string, format: uuid }
+                source: { type: string, enum: [operator_evaluation, verified_purchase] }
+        enabled: { type: boolean }
+        reason: { type: [string, 'null'] }
+        provider: { type: [string, 'null'] }
+        photoUploadEnabled: { type: boolean }
+        price:
+          oneOf:
+            - { type: 'null' }
+            - type: object
+              required: [amount, currency, display]
+              properties:
+                amount: { type: string, example: '3.00' }
+                currency: { type: string, const: USDC }
+                display: { type: string, example: '3.00 USDC' }
+        modes: { type: array, items: { type: string, enum: [human, stylized] } }
+        consentVersion: { type: string, const: likeness-v1 }
+        supportedModels:
+          type: array
+          items:
+            type: object
+            required: [modelId, mode, enabled, reason]
+            properties:
+              modelId: { type: string }
+              mode: { type: string, enum: [human, stylized] }
+              enabled: { type: boolean }
+              reason: { type: [string, 'null'] }
+    LikenessRequest:
+      type: object
+      additionalProperties: false
+      required: [modelId, uploadId, entitlementId, consent]
+      properties:
+        modelId: { type: string, pattern: '^[a-z][a-z0-9_]{1,63}$' }
+        uploadId: { type: string, format: uuid }
+        entitlementId: { type: string, format: uuid }
+        consent:
+          type: object
+          additionalProperties: false
+          required: [version, ownPhoto, shareWithProvider]
+          properties:
+            version: { type: string, const: likeness-v1 }
+            ownPhoto: { type: boolean, const: true }
+            shareWithProvider: { type: boolean, const: true }
+    LikenessJob:
+      type: object
+      required:
+        [id, modelId, mode, status, phase, referenceSha256, failureReason, createdAt, updatedAt]
+      properties:
+        source: { type: string, enum: [operator_evaluation, verified_purchase] }
+        id: { type: string, format: uuid }
+        modelId: { type: string }
+        mode: { type: string, enum: [human, stylized] }
+        status: { type: string, enum: [queued, processing, succeeded, failed, cancelled] }
+        phase:
+          {
+            type: string,
+            description: Durable pipeline phase; awaiting_reference_approval needs owner approval; awaiting_asset_validation is not playable completion; reconciliation_required must not be resubmitted.,
+          }
+        referenceSha256:
+          { type: [string, 'null'], description: SHA-256 of the preview being approved }
+        failureReason:
+          {
+            type: [string, 'null'],
+            description: Stable sanitized reason; never provider response text,
+          }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    LikenessManifest:
+      type: object
+      required:
+        [
+          jobId,
+          modelId,
+          sha256,
+          bytes,
+          triangles,
+          joints,
+          humanoidBones,
+          heightMeters,
+          validatorVersion,
+        ]
+      properties:
+        jobId: { type: string, format: uuid }
+        modelId: { type: string }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
+        bytes: { type: integer, minimum: 1, maximum: 16777216 }
+        triangles: { type: integer, minimum: 1, maximum: 12000 }
+        joints: { type: integer, minimum: 15, maximum: 150 }
+        humanoidBones: { type: object, additionalProperties: { type: string } }
+        heightMeters: { type: number, const: 1.75 }
+        validatorVersion: { type: string, const: ctlife-human-glb-v1 }
     Error:
       type: object
       required: [error]
@@ -2930,6 +3515,12 @@ components:
       type: object
       required: [alias, look, tribeId, traitIds, dreamId]
       properties:
+        likenessJobId:
+          {
+            type: [string, 'null'],
+            format: uuid,
+            description: Owned accepted personal avatar; stock Look remains its declared base.,
+          }
         alias: { type: string }
         look: { $ref: '#/components/schemas/Look' }
         tribeId: { type: string }
@@ -2937,6 +3528,7 @@ components:
         dreamId: { type: string }
     Look:
       type: object
+      additionalProperties: false
       required: [skinTone, headId, hairId, topId, bottomId, shoesId, accId]
       properties:
         skinTone: { type: string }
@@ -3030,6 +3622,29 @@ components:
         ads: { type: object, additionalProperties: true }
         ore: { type: object, additionalProperties: true }
         meta: { type: object, additionalProperties: true }
+        characterPalettes:
+          $ref: '#/components/schemas/CharacterPalettes'
+    CharacterPalettes:
+      type: object
+      additionalProperties: false
+      required: [version, models]
+      properties:
+        version: { type: integer, const: 1 }
+        models:
+          type: array
+          description: Finite independent recolour choices bound to an authored head/body identity. A fresh server response confirms support; cache alone does not.
+          items:
+            type: object
+            additionalProperties: false
+            required: [headId, skinTones, hairIds, topIds, bottomIds, shoesIds, accIds]
+            properties:
+              headId: { type: string, enum: [head_ubc_m, head_ubc_f] }
+              skinTones: { type: array, items: { type: string }, uniqueItems: true }
+              hairIds: { type: array, items: { type: string }, uniqueItems: true }
+              topIds: { type: array, items: { type: string }, uniqueItems: true }
+              bottomIds: { type: array, items: { type: string }, uniqueItems: true }
+              shoesIds: { type: array, items: { type: string }, uniqueItems: true }
+              accIds: { type: array, items: { type: string, const: acc_none }, uniqueItems: true }
     PublicProfile:
       type: object
       required: [id, alias, skrName, isSeeker, tribeId, minerTier, look, netWorthCents]

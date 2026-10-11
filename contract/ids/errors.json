@@ -5,6 +5,11 @@
   "_note": "Every error code used in the API or realtime protocol. The contract:check tool asserts every code here is referenced in openapi.yaml and every realtime message documents the codes it can return. Add codes here first, then use them.",
   "codes": [
     {
+      "code": "LIKENESS_UNAVAILABLE",
+      "httpStatus": 503,
+      "message": "Character likeness is not available. No purchase or upload is accepted."
+    },
+    {
       "code": "NONCE_INVALID",
       "httpStatus": 401,
       "message": "Nonce is missing, used, or expired."

@@ -33,6 +33,19 @@ loadDotenv();
 export type AppEnv = 'local' | 'staging' | 'prod';
 
 export interface Config {
+  readonly likeness: {
+    readonly priceUsdcCents: number;
+    readonly generationEnabled: boolean;
+    readonly endUserAgreementConfirmed: boolean;
+    readonly operatorEvaluationEnabled: boolean;
+    readonly operatorUserIds: readonly string[];
+    readonly runtimeProfileConfirmed: boolean;
+    readonly privateStorageConfirmed: boolean;
+    readonly apiKey: string;
+    readonly localDirectory: string;
+    readonly privateBucket: string;
+    readonly referenceManifest: string;
+  };
   readonly appEnv: AppEnv;
   readonly nodeEnv: 'development' | 'production' | 'test';
   readonly port: number;
@@ -228,6 +241,22 @@ export function loadConfig(): Config {
   }
 
   const cfg: Config = {
+    likeness: {
+      priceUsdcCents: asInt('LIKENESS_PRICE_USDC_CENTS', 300),
+      generationEnabled: asBool('LIKENESS_GENERATION_ENABLED', false),
+      endUserAgreementConfirmed: asBool('TRIPO_END_USER_AGREEMENT_CONFIRMED', false),
+      operatorEvaluationEnabled: asBool('LIKENESS_OPERATOR_EVALUATION_ENABLED', false),
+      operatorUserIds: optionalEnv('LIKENESS_OPERATOR_USER_IDS', '')
+        .split(',')
+        .map((x) => x.trim())
+        .filter(Boolean),
+      runtimeProfileConfirmed: asBool('LIKENESS_RUNTIME_PROFILE_CONFIRMED', false),
+      privateStorageConfirmed: asBool('LIKENESS_PRIVATE_STORAGE_CONFIRMED', false),
+      apiKey: optionalEnv('TRIPO_API_KEY', ''),
+      localDirectory: optionalEnv('LIKENESS_LOCAL_DIRECTORY', ''),
+      privateBucket: optionalEnv('LIKENESS_PRIVATE_BUCKET', ''),
+      referenceManifest: optionalEnv('LIKENESS_REFERENCE_MANIFEST', ''),
+    },
     appEnv,
     nodeEnv,
     port: asInt('PORT', asInt('PORT_API', appEnv === 'local' ? 4010 : 8080)),
