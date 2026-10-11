@@ -44,6 +44,14 @@ export interface Config {
     readonly apiKey: string;
     readonly localDirectory: string;
     readonly privateBucket: string;
+    /** Bucket-scoped keys for the private bucket; never the ads bucket keys. */
+    readonly privateS3: {
+      readonly endpoint: string;
+      readonly region: string;
+      readonly forcePathStyle: boolean;
+      readonly accessKey: string;
+      readonly secretKey: string;
+    };
     readonly referenceManifest: string;
   };
   readonly appEnv: AppEnv;
@@ -255,6 +263,16 @@ export function loadConfig(): Config {
       apiKey: optionalEnv('TRIPO_API_KEY', ''),
       localDirectory: optionalEnv('LIKENESS_LOCAL_DIRECTORY', ''),
       privateBucket: optionalEnv('LIKENESS_PRIVATE_BUCKET', ''),
+      privateS3: {
+        endpoint: optionalEnv(
+          'LIKENESS_S3_ENDPOINT',
+          optionalEnv('S3_ENDPOINT', 'http://localhost:9000'),
+        ),
+        region: optionalEnv('LIKENESS_S3_REGION', optionalEnv('S3_REGION', 'us-east-1')),
+        forcePathStyle: asBool('LIKENESS_S3_FORCE_PATH_STYLE', asBool('S3_FORCE_PATH_STYLE', true)),
+        accessKey: optionalEnv('LIKENESS_S3_ACCESS_KEY', ''),
+        secretKey: optionalEnv('LIKENESS_S3_SECRET_KEY', ''),
+      },
       referenceManifest: optionalEnv('LIKENESS_REFERENCE_MANIFEST', ''),
     },
     appEnv,

@@ -49,6 +49,11 @@ There is no public entitlement-grant, operator-bypass or completion endpoint.
 
 ## Private ingestion and retention
 
+Hosted storage uses a dedicated bucket (`LIKENESS_PRIVATE_BUCKET`) with its own
+bucket-scoped keys (`LIKENESS_S3_ACCESS_KEY` / `LIKENESS_S3_SECRET_KEY`). The runtime
+refuses the ads bucket and the ads keys. Endpoint, region and path style fall back
+to the shared `S3_*` values.
+
 Sharp 0.35.5 decodes real PNG/JPEG input with strict truncation checks, bounded
 pixel/dimension/processing limits, orientation correction and metadata stripping.
 Only a normalized JPEG (maximum 2048-pixel edge / 4 MiB) enters storage. Original

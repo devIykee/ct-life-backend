@@ -72,14 +72,21 @@ export async function buildLikenessRuntime(config: Config, db: Db) {
   else if (c.privateBucket && c.privateStorageConfirmed) {
     if (c.privateBucket === config.s3.bucketAds)
       throw new Error('Likeness storage must use a dedicated private bucket');
+    const s3 = c.privateS3;
+    if (!s3.accessKey || !s3.secretKey)
+      throw new Error(
+        'Likeness storage requires LIKENESS_S3_ACCESS_KEY and LIKENESS_S3_SECRET_KEY',
+      );
+    if (s3.accessKey === config.s3.accessKey)
+      throw new Error('Likeness storage must not reuse the ads bucket credentials');
     storage = createS3LikenessStorage({
       bucket: c.privateBucket,
       prefix: 'likeness-private/',
       client: new S3Client({
-        endpoint: config.s3.endpoint,
-        region: config.s3.region,
-        forcePathStyle: config.s3.forcePathStyle,
-        credentials: { accessKeyId: config.s3.accessKey, secretAccessKey: config.s3.secretKey },
+        endpoint: s3.endpoint,
+        region: s3.region,
+        forcePathStyle: s3.forcePathStyle,
+        credentials: { accessKeyId: s3.accessKey, secretAccessKey: s3.secretKey },
       }),
     });
   }
