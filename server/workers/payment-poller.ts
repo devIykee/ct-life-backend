@@ -1,15 +1,17 @@
 /**
  * Payment poller.
  *
- * The Helius webhook is the primary path to credit a topup.
- * This poller is a backstop: it expires any pending intent
- * older than 15 minutes. It runs every 30 s.
+ * The Helius webhook is the fast path to credit a topup. This
+ * poller is the backstop: every 30 s it reconciles open top-ups
+ * against finalized chain data (reported signature + reference
+ * history), so a missed webhook still credits once, and expires
+ * only what never reached the chain.
  *
  * No mocks: this worker talks to the real DB and the real
  * Helius client.
  */
 import { buildContext } from '../application/context.js';
-import { expirePendingIntents } from '../application/topup.js';
+import { expirePendingIntents, reconcileOpenIntents } from '../application/topup.js';
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -26,6 +28,12 @@ export function startPaymentPoller(): () => void {
     if (running) return;
     running = true;
     try {
+      const topups = await reconcileOpenIntents(ctx);
+      if (topups.confirmed + topups.expired + topups.failed > 0) {
+        console.info(
+          `[payment-poller] top-ups confirmed=${topups.confirmed} expired=${topups.expired} failed=${topups.failed}`,
+        );
+      }
       const expired = await expirePendingIntents(ctx);
       if (expired > 0) {
         console.info(`[payment-poller] expired ${expired} pending intent(s)`);

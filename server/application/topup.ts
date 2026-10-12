@@ -41,6 +41,8 @@ import {
   PaymentExpiredError,
 } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
+import { runInTransaction } from '../shared/db/uow.js';
+import { verifyUsdcTransfer } from '../shared/solana/likeness-payment.js';
 import {
   PublicKey,
   TransactionMessage,
@@ -48,10 +50,7 @@ import {
   TransactionInstruction,
   Connection,
 } from '@solana/web3.js';
-import {
-  createTransferCheckedInstruction,
-  getAssociatedTokenAddressSync,
-} from '@solana/spl-token';
+import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
 
 export type Currency = 'USDC' | 'SOL' | 'SKR' | 'ORE';
 export type TopupSku = 'ramen' | 'bag' | 'whale' | 'cabal' | 'custom';
@@ -303,8 +302,10 @@ export async function createTopupIntent(
 }
 
 /**
- * Get a payment intent by id (for the owner only).
- * Returns status, signature if confirmed, and throws 410 if expired.
+ * Get a payment intent by id (for the owner only). Status wins over the
+ * clock: a confirmed intent stays confirmed after its expiry, and a pending
+ * intent with a reported signature stays pending while it is reconciled.
+ * 410 only for an intent that expired with nothing on chain.
  */
 export async function getPaymentIntent(
   ctx: AppContext,
@@ -321,12 +322,13 @@ export async function getPaymentIntent(
     throw new NotFoundError({ kind: 'payment_intent', id: intentId });
   }
   const intent = r.rows[0]!;
-
-  // B19: Return 410 if expired
-  if (new Date() > new Date(intent.expires_at)) {
+  const unsignedPastExpiry =
+    intent.status === 'pending' &&
+    intent.signature === null &&
+    Date.now() > new Date(intent.expires_at).getTime();
+  if (intent.status === 'expired' || unsignedPastExpiry) {
     throw new PaymentExpiredError({ intentId });
   }
-
   return {
     status: intent.status,
     signature: intent.signature ?? undefined,
@@ -334,9 +336,10 @@ export async function getPaymentIntent(
 }
 
 /**
- * Mark a topup intent as submitted by the client. The webhook
- * and the poller are the actual crediting paths; this endpoint
- * only updates the local record so the UI can show "submitted".
+ * Record the wallet's signature for an intent and try to reconcile it at
+ * once. Reporting never credits by itself: only a finalized, verified
+ * transfer does. The first reported signature is kept; a different one
+ * is ignored (reconciliation also scans the intent's reference).
  */
 export async function markSubmitted(
   ctx: AppContext,
@@ -344,7 +347,7 @@ export async function markSubmitted(
   intentId: string,
   signature: string,
 ): Promise<void> {
-  await ctx.db.withConnection(async (c) => {
+  const record = await ctx.db.withConnection(async (c) => {
     const r = await c.query<{ user_id: string; status: string; signature: string | null }>(
       `SELECT user_id, status, signature FROM payment_intents WHERE intent_id = $1`,
       [intentId],
@@ -352,19 +355,216 @@ export async function markSubmitted(
     if ((r.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'intent', id: intentId });
     const row = r.rows[0]!;
     if (row.user_id !== userId) throw new NotFoundError({ kind: 'intent', id: intentId });
-    if (row.status !== 'pending') return;
+    if (row.status === 'confirmed' || row.status === 'failed') return false;
     if (row.signature === null) {
-      await c.query(
-        `UPDATE payment_intents SET signature = $1 WHERE intent_id = $2 AND signature IS NULL`,
-        [signature, intentId],
+      try {
+        await c.query(
+          `UPDATE payment_intents SET signature = $1 WHERE intent_id = $2 AND signature IS NULL`,
+          [signature, intentId],
+        );
+      } catch (e) {
+        // Another intent already holds this signature; it cannot be ours.
+        if ((e as { code?: string }).code !== '23505') throw e;
+      }
+    }
+    return true;
+  });
+  if (record) {
+    try {
+      await reconcileTopupIntent(ctx, intentId);
+    } catch {
+      // RPC trouble: the poller retries.
+    }
+  }
+}
+
+export type ReconcileOutcome = 'confirmed' | 'pending' | 'expired' | 'failed' | 'unchanged';
+
+/** How long a reported-but-unfinalized payment keeps being reconciled. */
+const RECONCILE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+/** Grace past expiry before an unsigned intent with no chain activity expires. */
+const EXPIRY_GRACE_MS = 5 * 60 * 1000;
+
+interface OpenIntent {
+  intent_id: string;
+  user_id: string;
+  kind: string;
+  status: string;
+  signature: string | null;
+  reference: string;
+  memo: string;
+  mint: string;
+  recipient: string;
+  amount: string;
+  cash_cents: string;
+  bonus_bps: number;
+  expires_at: Date;
+  wallet: string;
+}
+
+/**
+ * Reconcile one top-up intent against finalized chain data. Candidates are
+ * the reported signature (or `signatureHint`, e.g. from the webhook) plus
+ * the reference's finalized history, so a missed webhook or a missing report
+ * still credits. Each candidate must be a successful transfer of the exact
+ * amount, mint and recipient with this intent's reference and memo, signed
+ * by the owner's wallet. Credits once, even after the displayed expiry.
+ */
+export async function reconcileTopupIntent(
+  ctx: AppContext,
+  intentId: string,
+  signatureHint?: string,
+): Promise<ReconcileOutcome> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<OpenIntent>(
+      `SELECT p.intent_id, p.user_id, p.kind, p.status, p.signature, p.reference, p.memo,
+              p.mint, p.recipient, p.amount, p.cash_cents, p.bonus_bps, p.expires_at, u.wallet
+       FROM payment_intents p JOIN users u ON u.id = p.user_id
+       WHERE p.intent_id = $1`,
+      [intentId],
+    ),
+  );
+  const intent = r.rows[0];
+  if (!intent || intent.kind !== 'topup' || intent.status === 'confirmed') return 'unchanged';
+
+  const candidates = new Set<string>();
+  if (signatureHint) candidates.add(signatureHint);
+  if (intent.signature) candidates.add(intent.signature);
+  const history = await ctx.helius.rpc<Array<{ signature: string; err: unknown }> | null>(
+    'getSignaturesForAddress',
+    [intent.reference, { commitment: 'finalized', limit: 20 }],
+  );
+  for (const h of history ?? []) candidates.add(h.signature);
+
+  let reportedFailed = false;
+  for (const signature of candidates) {
+    const raw = await ctx.helius.rpc<unknown>('getTransaction', [
+      signature,
+      { encoding: 'jsonParsed', commitment: 'finalized', maxSupportedTransactionVersion: 0 },
+    ]);
+    if (raw === null || raw === undefined) continue; // not finalized (yet)
+    const error = verifyUsdcTransfer(raw, {
+      payer: intent.wallet,
+      recipient: intent.recipient,
+      mint: intent.mint,
+      reference: intent.reference,
+      memo: intent.memo,
+      amount_base_units: intent.amount,
+    });
+    if (error === null) return creditVerifiedTopup(intent.intent_id, signature);
+    if (signature === intent.signature && error === 'transaction_failed') reportedFailed = true;
+  }
+
+  const now = Date.now();
+  const expiresAt = new Date(intent.expires_at).getTime();
+  if (reportedFailed && (history ?? []).length === 0) {
+    // The wallet's own transfer failed on chain and nothing else paid it.
+    await ctx.db.withConnection((c) =>
+      c.query(
+        `UPDATE payment_intents SET status = 'failed' WHERE intent_id = $1 AND status = 'pending'`,
+        [intent.intent_id],
+      ),
+    );
+    return 'failed';
+  }
+  if (
+    intent.status === 'pending' &&
+    intent.signature === null &&
+    (history ?? []).length === 0 &&
+    now > expiresAt + EXPIRY_GRACE_MS
+  ) {
+    await ctx.db.withConnection((c) =>
+      c.query(
+        `UPDATE payment_intents SET status = 'expired' WHERE intent_id = $1 AND status = 'pending'`,
+        [intent.intent_id],
+      ),
+    );
+    return 'expired';
+  }
+  return 'pending';
+}
+
+async function creditVerifiedTopup(intentId: string, signature: string): Promise<ReconcileOutcome> {
+  return runInTransaction(async (client) => {
+    const r = await client.query<{
+      user_id: string;
+      status: string;
+      cash_cents: string;
+      bonus_bps: number;
+    }>(
+      `SELECT user_id, status, cash_cents, bonus_bps FROM payment_intents
+       WHERE intent_id = $1 FOR UPDATE`,
+      [intentId],
+    );
+    const intent = r.rows[0];
+    if (!intent || intent.status === 'confirmed') return 'unchanged';
+    // An unverified report elsewhere must not block the verified owner.
+    await client.query(
+      `UPDATE payment_intents SET signature = NULL
+       WHERE signature = $1 AND intent_id <> $2 AND status <> 'confirmed'`,
+      [signature, intentId],
+    );
+    const bonus = (BigInt(intent.cash_cents) * BigInt(intent.bonus_bps)) / 10_000n;
+    const total = BigInt(intent.cash_cents) + bonus;
+    const ledger = await client.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+       VALUES ($1, $2, 'cash', 'topup', 'payment_intent', $3, $4)
+       ON CONFLICT (idempotency_ref) DO NOTHING`,
+      [intent.user_id, total.toString(), intentId, `topup:${intentId}`],
+    );
+    if ((ledger.rowCount ?? 0) > 0) {
+      await client.query(
+        `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
+        [intent.user_id, total.toString()],
       );
     }
+    await client.query(
+      `UPDATE payment_intents SET status = 'confirmed', signature = $1 WHERE intent_id = $2`,
+      [signature, intentId],
+    );
+    return 'confirmed';
   });
 }
 
 /**
- * Mark all pending intents past their expires_at as 'expired'.
- * The poller runs this every 30 s.
+ * Poller pass: reconcile open top-ups (pending, or expired within the
+ * reconcile window in case a payment landed late) and expire the rest.
+ * Returns per-outcome counts.
+ */
+export async function reconcileOpenIntents(
+  ctx: AppContext,
+  limit = 50,
+): Promise<Record<ReconcileOutcome, number>> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{ intent_id: string }>(
+      `SELECT intent_id FROM payment_intents
+       WHERE kind = 'topup'
+         AND (status = 'pending' OR (status = 'expired' AND expires_at > $1))
+       ORDER BY created_at ASC LIMIT $2`,
+      [new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString(), limit],
+    ),
+  );
+  const counts: Record<ReconcileOutcome, number> = {
+    confirmed: 0,
+    pending: 0,
+    expired: 0,
+    failed: 0,
+    unchanged: 0,
+  };
+  for (const row of r.rows) {
+    try {
+      counts[await reconcileTopupIntent(ctx, row.intent_id)] += 1;
+    } catch {
+      counts.pending += 1; // RPC trouble: try again next pass
+    }
+  }
+  return counts;
+}
+
+/**
+ * Expire unsigned non-top-up intents past their expires_at. Top-ups are
+ * expired only by reconcileOpenIntents, after the chain has been checked.
  */
 export async function expirePendingIntents(ctx: AppContext): Promise<number> {
   return ctx.db.withConnection(async (c) => {
@@ -372,7 +572,8 @@ export async function expirePendingIntents(ctx: AppContext): Promise<number> {
       `WITH expired AS (
          UPDATE payment_intents
          SET status = 'expired'
-         WHERE status = 'pending' AND expires_at < now()
+         WHERE status = 'pending' AND kind <> 'topup' AND signature IS NULL
+           AND expires_at < now()
          RETURNING intent_id
        )
        SELECT COUNT(*)::text AS count FROM expired`,

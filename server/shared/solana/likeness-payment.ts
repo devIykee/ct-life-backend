@@ -57,6 +57,22 @@ export function verifyLikenessPayment(raw: unknown, expected: LikenessPaymentPro
     tx.blockTime * 1000 > expected.expires_at.getTime()
   )
     return 'payment_outside_quote_window';
+  return verifyUsdcTransfer(raw, expected);
+}
+
+export type UsdcTransferProof = Omit<LikenessPaymentProof, 'created_at' | 'expires_at'>;
+
+/**
+ * Verify one exact USDC transferChecked from payer to recipient carrying the
+ * reference and memo, with a matching recipient balance increase. No time
+ * window: callers that quote a deadline check it themselves. Caller MUST
+ * request finalized commitment.
+ */
+export function verifyUsdcTransfer(raw: unknown, expected: UsdcTransferProof): string | null {
+  const parsed = ParsedTransaction.safeParse(raw);
+  if (!parsed.success) return 'invalid_finalized_transaction';
+  const tx = parsed.data;
+  if (tx.meta.err !== null) return 'transaction_failed';
   const accounts = tx.transaction.message.accountKeys;
   if (accounts[0]?.pubkey !== expected.payer || accounts[0]?.signer !== true)
     return 'payer_mismatch';
