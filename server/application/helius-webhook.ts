@@ -14,7 +14,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import type { HeliusClient } from '../shared/solana/helius.js';
 import type { AppContext } from './context.js';
-import { reconcileTopupIntent } from './topup.js';
+import { reconcilePaymentIntent } from './topup.js';
 
 export interface HeliusWebhookPayload {
   readonly signature: string;
@@ -101,7 +101,7 @@ export async function handleHeliusWebhook(
   if (!intentId) return { ok: true, status: 'ignored' };
   // The payload only names the transaction; crediting re-reads and verifies
   // it from finalized chain data (same path as the poller).
-  const credited = (await reconcileTopupIntent(ctx, intentId, payload.signature)) === 'confirmed';
+  const credited = (await reconcilePaymentIntent(ctx, intentId, payload.signature)) === 'confirmed';
   return { ok: true, status: credited ? 'credited' : 'ignored' };
 }
 

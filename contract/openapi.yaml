@@ -2193,8 +2193,13 @@ paths:
       operationId: postRtcToken
       summary: Mint a LiveKit access token.
       description: |
-        Returns a token scoped to the room `{kind}:{id}`. `canPublish` is
-        true only for hosts and promoted speakers.
+        Returns a token scoped to the room `{kind}:{id}`; `id` may be bare or
+        carry its own single `{kind}:` prefix (Space ids are `space:<uuid>`),
+        and a prefix of another kind is rejected. Grants are server-derived:
+        for a Space, `canPublish` is true only for the host and promoted
+        speakers, everyone else joins subscribe-only, and an ended, missing or
+        blocked Space mints nothing (403/404). Space tokens last 10 minutes so
+        each new token re-checks the role. Client permission flags are ignored.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2715,8 +2720,13 @@ paths:
                 properties:
                   status: { type: string, enum: [pending, confirmed, expired, failed] }
                   signature: { type: string, nullable: true }
+              description: |
+                Status wins over the clock: confirmed stays confirmed after the
+                quote's expiry, and a pending intent with a reported signature
+                stays pending while the server reconciles it from finalized chain
+                data (reported signature + reference history).
         '410':
-          description: Intent expired before confirmation
+          description: Expired with no reported signature and nothing found on chain
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2833,38 +2843,53 @@ paths:
     post:
       tags: [ads]
       operationId: postUploads
-      summary: Upload an ad creative (PNG/JPG <= 1 MB). EXIF is stripped.
+      summary: Upload an ad creative (raw PNG/JPEG body <= 1 MiB).
+      description: |
+        The body is the raw image bytes with `Content-Type: image/png` or
+        `image/jpeg`. The server decodes and re-encodes it (metadata such as
+        EXIF is dropped) and binds the upload to the caller; bookings read
+        MIME, size and object key from this record.
       x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
         content:
-          multipart/form-data:
-            schema:
-              type: object
-              required: [file]
-              properties:
-                file:
-                  type: string
-                  format: binary
+          image/png:
+            schema: { type: string, format: binary }
+          image/jpeg:
+            schema: { type: string, format: binary }
       responses:
-        '200':
+        '201':
           description: Uploaded
           content:
             application/json:
               schema:
                 type: object
-                required: [uploadId, url]
+                required: [uploadId, url, imageKey, mimeType, sizeBytes, uploadedAt]
                 properties:
                   uploadId: { type: string, format: uuid }
-                  url: { type: string }
+                  creativeId: { type: string, format: uuid, description: 'Same as uploadId.' }
+                  url: { type: string, description: 'Short-lived signed URL of the stored image.' }
+                  imageKey: { type: string }
+                  mimeType: { type: string, enum: [image/png, image/jpeg] }
+                  sizeBytes: { type: integer }
+                  uploadedAt: { type: string, format: date-time }
+        '400': { description: Not a valid single-frame PNG/JPEG }
+        '413': { description: Larger than 1 MiB }
+        '415': { description: Not image/png or image/jpeg }
 
   /ads/bookings:
     post:
       tags: [ads]
       operationId: postAdsBookings
       summary: Book an ad slot (builds the payment intent).
+      description: |
+        Reserves the slot's next free window for an owned, unused upload and
+        returns a server-priced USDC intent. The booking stays
+        `awaiting_payment` until the payment is verified on chain, then moves
+        to `pending_review`; only an admin approval makes it `live`. Unpaid
+        holds expire with their intent and free the window.
       x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -2874,23 +2899,106 @@ paths:
           application/json:
             schema:
               type: object
-              required: [slotId, termId, uploadId]
+              required: [slotId, termId, uploadId, link]
               properties:
                 slotId: { type: string }
                 termId: { type: string }
                 uploadId: { type: string, format: uuid }
-                link: { type: string, description: 'Stored only; never fetched (SSRF safety).' }
+                link:
+                  type: string
+                  description: 'http(s) URL, stored only; never fetched (SSRF safety).'
       responses:
-        '200':
+        '201':
           description: Booking
           content:
             application/json:
               schema:
                 type: object
-                required: [bookingId, intent]
+                required: [bookingId, intent, booking]
                 properties:
                   bookingId: { type: string, format: uuid }
                   intent: { $ref: '#/components/schemas/PaymentIntent' }
+                  booking: { $ref: '#/components/schemas/AdBooking' }
+                  creative: { type: object }
+    get:
+      tags: [ads]
+      operationId: getAdsBookings
+      summary: My bookings, newest first.
+      x-phase: 5
+      responses:
+        '200':
+          description: Bookings
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  bookings: { type: array, items: { $ref: '#/components/schemas/AdBooking' } }
+
+  /ads/bookings/{id}:
+    get:
+      tags: [ads]
+      operationId: getAdsBookingsId
+      summary: One of my bookings, including any refund receipt.
+      x-phase: 5
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Booking
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdBooking' }
+        '404': { description: Not found or not mine }
+
+  /ads/bookings/{id}/cancel:
+    post:
+      tags: [ads]
+      operationId: postAdsBookingsIdCancel
+      summary: Cancel before the ad is live.
+      description: Frees the window. A paid booking records its price as an owed refund.
+      x-phase: 5
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Cancelled booking
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AdBooking' }
+        '403': { description: Already live or decided }
+
+  /ads/slots/{id}/availability:
+    get:
+      tags: [ads]
+      operationId: getAdsSlotsIdAvailability
+      summary: The window and price a booking made now would get.
+      x-phase: 5
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: termId, in: query, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Availability
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slotId, available, nextStartAt, terms]
+                properties:
+                  slotId: { type: string }
+                  available: { type: boolean }
+                  nextStartAt: { type: string, format: date-time }
+                  terms:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        termId: { type: string }
+                        priceUsdc: { type: number }
+                        startsAt: { type: string, format: date-time }
+                        endsAt: { type: string, format: date-time }
 
   /ore/board:
     get:
@@ -3876,6 +3984,32 @@ components:
         minutesUsed: { type: integer }
         creatorAmount: { type: string, nullable: true }
         refundAmount: { type: string, nullable: true }
+    AdBooking:
+      type: object
+      required: [bookingId, slotId, termId, uploadId, link, status, createdAt]
+      properties:
+        bookingId: { type: string, format: uuid }
+        userId: { type: string, format: uuid }
+        slotId: { type: string }
+        termId: { type: string }
+        uploadId: { type: string, format: uuid }
+        link: { type: string }
+        status:
+          type: string
+          enum: [awaiting_payment, pending_review, live, rejected, cancelled, expired]
+        createdAt: { type: string, format: date-time }
+        intentId: { type: string, format: uuid, nullable: true }
+        priceCents: { type: integer, nullable: true }
+        startsAt: { type: string, format: date-time, nullable: true }
+        endsAt: { type: string, format: date-time, nullable: true }
+        paidAt: { type: string, format: date-time, nullable: true }
+        refund:
+          type: object
+          nullable: true
+          properties:
+            status: { type: string, enum: [due, refunded] }
+            cents: { type: integer }
+            signature: { type: string, nullable: true }
     PaymentIntent:
       type: object
       required: [intentId, currency, recipient, amount, reference, memo, tx, expiresAt]

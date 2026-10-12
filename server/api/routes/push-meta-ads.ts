@@ -9,8 +9,12 @@
  *   POST /v1/uploads
  *   POST /v1/ads/bookings
  *   GET  /v1/ads/bookings
+ *   GET  /v1/ads/slots/{id}/availability
+ *   GET  /v1/ads/bookings/{id}
+ *   POST /v1/ads/bookings/{id}/cancel
  *   POST /v1/admin/ads/bookings/{id}/approve
  *   POST /v1/admin/ads/bookings/{id}/reject
+ *   POST /v1/admin/ads/bookings/{id}/refund
  *
  * Admin routes require an admin role from the JWT.
  */
@@ -24,9 +28,14 @@ import { getCurrentMeta, setCurrentMeta } from '../../application/meta.js';
 import {
   approveBooking,
   bookAd,
+  cancelBooking,
+  getBooking,
+  getSlotAvailability,
   listAdSlots,
   listLiveAds,
   listMyBookings,
+  MAX_UPLOAD_BYTES,
+  recordRefund,
   rejectBooking,
   uploadCreative,
 } from '../../application/ads.js';
@@ -42,15 +51,16 @@ const MetaBody = z.object({
   value: z.unknown(),
 });
 
+// imageKey/mimeType/sizeBytes may still be echoed by older clients; the
+// server ignores them and reads the owned upload record instead.
 const BookingBody = z.object({
   slotId: z.string().min(1),
   termId: z.string().min(1),
   uploadId: z.string().uuid(),
-  imageKey: z.string().min(1),
-  mimeType: z.enum(['image/png', 'image/jpeg']),
-  sizeBytes: z.number().int().min(1).max(1_048_576),
   link: z.string().min(1).max(500),
 });
+
+const RefundBody = z.object({ signature: z.string().min(64).max(128) });
 
 /**
  * Register the push + meta + ads routes.
@@ -101,23 +111,48 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
     return reply.send({ slots: rows });
   });
 
-  // Upload a creative. The body is raw bytes; the
-  // content-type parser stores the Buffer in `req.body`.
-  app.post('/v1/uploads', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
-    const mime = (req.headers['content-type'] as string | undefined) ?? '';
-    if (mime !== 'image/png' && mime !== 'image/jpeg') {
-      throw new ValidationFailedError({ reason: 'Content-Type must be image/png or image/jpeg' });
-    }
-    const bytes = req.body as Buffer;
-    if (!Buffer.isBuffer(bytes)) {
-      throw new ValidationFailedError({ reason: 'upload body must be raw bytes' });
-    }
-    const out = await uploadCreative(req.ctx, req.user!.sub, {
-      mimeType: mime,
-      bytes,
-      filename: 'creative',
-    });
-    return reply.status(201).send(out);
+  app.get('/v1/ads/slots/:id/availability', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { termId } = req.query as { termId?: string };
+    return reply.send(await getSlotAvailability(req.ctx, id, termId));
+  });
+
+  // Upload a creative as raw PNG/JPEG bytes. The parser is scoped to this
+  // route, capped at 1 MiB, and auth runs before any bytes are buffered.
+  app.register(async (uploads) => {
+    uploads.addContentTypeParser(
+      ['image/png', 'image/jpeg'],
+      { parseAs: 'buffer' },
+      (_req, body, done) => done(null, body),
+    );
+    uploads.post(
+      '/v1/uploads',
+      {
+        bodyLimit: MAX_UPLOAD_BYTES,
+        onRequest: async (req, reply) => {
+          await requireAuth(req, reply);
+        },
+        preHandler: [withIdempotency()],
+      },
+      async (req, reply) => {
+        const mime = req.headers['content-type']?.split(';')[0]?.trim() ?? '';
+        if (mime !== 'image/png' && mime !== 'image/jpeg') {
+          throw new ValidationFailedError({
+            reason: 'Content-Type must be image/png or image/jpeg',
+          });
+        }
+        const bytes = req.body as Buffer;
+        if (!Buffer.isBuffer(bytes)) {
+          throw new ValidationFailedError({ reason: 'upload body must be raw bytes' });
+        }
+        const out = await uploadCreative(req.ctx, req.user!.sub, {
+          mimeType: mime,
+          bytes,
+          filename: 'creative',
+        });
+        return reply.status(201).send(out);
+      },
+    );
   });
 
   app.post(
@@ -127,7 +162,12 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
       const body = BookingBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       const out = await bookAd(req.ctx, req.user!.sub, body.data);
-      return reply.status(201).send({ booking: out.booking, creative: out.creative });
+      return reply.status(201).send({
+        bookingId: out.booking.bookingId,
+        intent: out.intent,
+        booking: out.booking,
+        creative: out.creative,
+      });
     },
   );
 
@@ -136,6 +176,20 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
     const rows = await listMyBookings(req.ctx, req.user!.sub, limit);
     return reply.send({ bookings: rows });
   });
+
+  app.get('/v1/ads/bookings/:id', { preHandler: requireAuth }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    return reply.send(await getBooking(req.ctx, req.user!.sub, id));
+  });
+
+  app.post(
+    '/v1/ads/bookings/:id/cancel',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      return reply.send(await cancelBooking(req.ctx, req.user!.sub, id));
+    },
+  );
 
   app.post(
     '/v1/admin/ads/bookings/:id/approve',
@@ -154,6 +208,17 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
       const { id } = req.params as { id: string };
       const out = await rejectBooking(req.ctx, id);
       return reply.send(out);
+    },
+  );
+
+  app.post(
+    '/v1/admin/ads/bookings/:id/refund',
+    { preHandler: [requireAdmin, withIdempotency()] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = RefundBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      return reply.send(await recordRefund(req.ctx, id, body.data.signature));
     },
   );
 }

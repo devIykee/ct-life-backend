@@ -17,7 +17,7 @@ import {
   getPaymentIntent,
   markSubmitted,
   reconcileOpenIntents,
-  reconcileTopupIntent,
+  reconcilePaymentIntent,
 } from './topup.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
@@ -173,7 +173,7 @@ describe('top-up reconciliation', () => {
 
     await reconcileOpenIntents(ctx(), 500);
     await reconcileOpenIntents(ctx(), 500);
-    expect(await reconcileTopupIntent(ctx(), i.intentId, s)).toBe('unchanged');
+    expect(await reconcilePaymentIntent(ctx(), i.intentId, s)).toBe('unchanged');
 
     expect(await status(i.intentId)).toBe('confirmed');
     expect(await cash(i.userId)).toBe(1000n);
@@ -183,7 +183,7 @@ describe('top-up reconciliation', () => {
     const i = await newIntent(1_000);
     const s = sig();
     finalized.set(s, paymentTx(i));
-    expect(await reconcileTopupIntent(ctx(), i.intentId, s)).toBe('confirmed');
+    expect(await reconcilePaymentIntent(ctx(), i.intentId, s)).toBe('confirmed');
     await pool.query(
       `UPDATE payment_intents SET expires_at = now() - interval '1 day' WHERE intent_id = $1`,
       [i.intentId],
@@ -234,7 +234,7 @@ describe('top-up reconciliation', () => {
     const s = sig();
     finalized.set(s, paymentTx(i, opts));
     history.set(i.reference, [s]);
-    expect(await reconcileTopupIntent(ctx(), i.intentId, s)).toBe('pending');
+    expect(await reconcilePaymentIntent(ctx(), i.intentId, s)).toBe('pending');
     expect(await cash(i.userId)).toBe(0n);
   });
 
@@ -254,7 +254,7 @@ describe('top-up reconciliation', () => {
     await markSubmitted(ctx(), squatter.userId, squatter.intentId, s);
     finalized.set(s, paymentTx(victim));
     history.set(victim.reference, [s]);
-    expect(await reconcileTopupIntent(ctx(), victim.intentId)).toBe('confirmed');
+    expect(await reconcilePaymentIntent(ctx(), victim.intentId)).toBe('confirmed');
     expect(await cash(victim.userId)).toBe(1000n);
     expect(await cash(squatter.userId)).toBe(0n);
   });

@@ -181,30 +181,64 @@ export async function createTopupIntent(
     });
   }
 
+  const prepared = await prepareUsdcIntent(ctx, {
+    userId: input.userId,
+    kind: input.kind,
+    amountBaseUnits,
+    cashCents,
+    bonusBps: cfg.currencyBonusBps[input.currency],
+    message: 'Cash top-up',
+  });
+  await ctx.db.withConnection((c) => insertPreparedIntent(c, prepared));
+  return prepared.result;
+}
+
+/** A built, unsigned USDC intent that has not been stored yet. */
+export interface PreparedIntent {
+  readonly userId: string;
+  readonly kind: TopupKind;
+  readonly result: IntentResult;
+}
+
+/**
+ * Build a USDC payment intent for `amountBaseUnits` to the treasury: a fresh
+ * reference key, memo and unsigned v0 transfer the owner's wallet signs.
+ * Call insertPreparedIntent (possibly inside a larger transaction) to keep it.
+ */
+export async function prepareUsdcIntent(
+  ctx: AppContext,
+  args: {
+    userId: string;
+    kind: TopupKind;
+    amountBaseUnits: bigint;
+    cashCents: number;
+    bonusBps: number;
+    message: string;
+  },
+): Promise<PreparedIntent> {
+  const cfg = ctx.configCache.load<EconomyConfig>('economy');
+  const currency = cfg.currencies.USDC;
+  const { amountBaseUnits } = args;
   const amount = amountBaseUnits.toString(); // B19: integer string, not decimal
-  const mintAddress = currency.devnetMint ?? currency.mint; // input.currency is 'USDC' here
+  const mintAddress = currency.devnetMint ?? currency.mint;
   if (!mintAddress) {
     throw new ValidationFailedError({ reason: 'USDC mint address not configured' });
   }
   // Solana Pay wants the reference to be a pubkey: it rides along as a
-  // read-only key so the payment can be found on chain later. The old
-  // 32-char uuid hex was not base58, so building a PublicKey from it threw.
+  // read-only key so the payment can be found on chain later.
   const referencePubkey = new PublicKey(randomBytes(32));
   const reference = referencePubkey.toBase58();
   const memo = uuidv7();
   const intentId = uuidv7();
   const expiresAt = new Date(Date.now() + INTENT_TTL_SEC * 1000).toISOString();
-  const bonusBps = cfg.currencyBonusBps[input.currency];
 
-  // B19 fix: Build unsigned v0 transaction.
   // input.userId is the users.id UUID, never an on-chain address, so the
-  // payer has to be looked up. Treating the UUID as a pubkey threw
-  // 'Non-base58 character' and made every intent a 500.
+  // payer has to be looked up.
   const walletRow = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [input.userId]),
+    c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [args.userId]),
   );
   const wallet = walletRow.rows[0]?.wallet;
-  if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: input.userId });
+  if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: args.userId });
   let userPubkey: PublicKey;
   try {
     userPubkey = new PublicKey(wallet);
@@ -216,7 +250,6 @@ export async function createTopupIntent(
   const connection = new Connection(ctx.config.solana.rpcUrl, 'confirmed');
   const { blockhash } = await connection.getLatestBlockhash('confirmed');
 
-  // SPL token transfer (USDC only for now)
   const mintPubkey = new PublicKey(mintAddress);
   const userAta = getAssociatedTokenAddressSync(mintPubkey, userPubkey);
   const recipientAta = getAssociatedTokenAddressSync(mintPubkey, recipient);
@@ -247,34 +280,12 @@ export async function createTopupIntent(
   const versionedTx = new VersionedTransaction(messageV0);
   const tx = Buffer.from(versionedTx.serialize()).toString('base64');
 
-  await ctx.db.withConnection(async (c) => {
-    await c.query(
-      `INSERT INTO payment_intents
-       (intent_id, user_id, kind, currency, amount, recipient, mint, reference, memo, cash_cents, bonus_bps, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)`,
-      [
-        intentId,
-        input.userId,
-        input.kind,
-        input.currency,
-        amount,
-        ctx.config.solana.treasuryPubkey,
-        mintAddress,
-        reference,
-        memo,
-        cashCents,
-        bonusBps,
-        expiresAt,
-      ],
-    );
-  });
-
   // Solana Pay's `amount` is in user units ("1" USDC), not base units;
   // the intent's `amount` field and the tx stay in base units.
   const solanaPayUrl = buildSolanaPayUrl({
     recipient: ctx.config.solana.treasuryPubkey,
     amount: TokenAmount.of(amountBaseUnits, {
-      symbol: input.currency,
+      symbol: 'USDC',
       decimals: currency.decimals,
       mint: mintAddress,
     }).toDecimalString(),
@@ -282,23 +293,54 @@ export async function createTopupIntent(
     reference,
     memo,
     label: 'CT Life',
-    message: 'Cash top-up',
+    message: args.message,
   });
 
   return {
-    intentId,
-    recipient: ctx.config.solana.treasuryPubkey,
-    mint: mintAddress,
-    amount,
-    reference,
-    memo,
-    tx, // B19: add unsigned transaction
-    currency: input.currency, // B19: add currency
-    cashCents, // B19: add cashCents
-    bonusBps, // B19: add bonusBps
-    solanaPayUrl,
-    expiresAt,
+    userId: args.userId,
+    kind: args.kind,
+    result: {
+      intentId,
+      recipient: ctx.config.solana.treasuryPubkey,
+      mint: mintAddress,
+      amount,
+      reference,
+      memo,
+      tx, // B19: add unsigned transaction
+      currency: 'USDC',
+      cashCents: args.cashCents,
+      bonusBps: args.bonusBps,
+      solanaPayUrl,
+      expiresAt,
+    },
   };
+}
+
+/** Store a prepared intent as 'pending'. */
+export async function insertPreparedIntent(
+  c: { query: (sql: string, params: unknown[]) => Promise<unknown> },
+  p: PreparedIntent,
+): Promise<void> {
+  const r = p.result;
+  await c.query(
+    `INSERT INTO payment_intents
+     (intent_id, user_id, kind, currency, amount, recipient, mint, reference, memo, cash_cents, bonus_bps, status, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)`,
+    [
+      r.intentId,
+      p.userId,
+      p.kind,
+      r.currency,
+      r.amount,
+      r.recipient,
+      r.mint,
+      r.reference,
+      r.memo,
+      r.cashCents,
+      r.bonusBps,
+      r.expiresAt,
+    ],
+  );
 }
 
 /**
@@ -371,7 +413,7 @@ export async function markSubmitted(
   });
   if (record) {
     try {
-      await reconcileTopupIntent(ctx, intentId);
+      await reconcilePaymentIntent(ctx, intentId);
     } catch {
       // RPC trouble: the poller retries.
     }
@@ -379,6 +421,9 @@ export async function markSubmitted(
 }
 
 export type ReconcileOutcome = 'confirmed' | 'pending' | 'expired' | 'failed' | 'unchanged';
+
+/** Intent kinds settled from chain data: top-ups credit Cash, ads advance a booking. */
+const RECONCILED_KINDS: readonly string[] = ['topup', 'ad'];
 
 /** How long a reported-but-unfinalized payment keeps being reconciled. */
 const RECONCILE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -403,14 +448,14 @@ interface OpenIntent {
 }
 
 /**
- * Reconcile one top-up intent against finalized chain data. Candidates are
+ * Reconcile one top-up or ad intent against finalized chain data. Candidates are
  * the reported signature (or `signatureHint`, e.g. from the webhook) plus
  * the reference's finalized history, so a missed webhook or a missing report
  * still credits. Each candidate must be a successful transfer of the exact
  * amount, mint and recipient with this intent's reference and memo, signed
- * by the owner's wallet. Credits once, even after the displayed expiry.
+ * by the owner's wallet. Settles once, even after the displayed expiry.
  */
-export async function reconcileTopupIntent(
+export async function reconcilePaymentIntent(
   ctx: AppContext,
   intentId: string,
   signatureHint?: string,
@@ -425,7 +470,9 @@ export async function reconcileTopupIntent(
     ),
   );
   const intent = r.rows[0];
-  if (!intent || intent.kind !== 'topup' || intent.status === 'confirmed') return 'unchanged';
+  if (!intent || !RECONCILED_KINDS.includes(intent.kind) || intent.status === 'confirmed') {
+    return 'unchanged';
+  }
 
   const candidates = new Set<string>();
   if (signatureHint) candidates.add(signatureHint);
@@ -451,7 +498,7 @@ export async function reconcileTopupIntent(
       memo: intent.memo,
       amount_base_units: intent.amount,
     });
-    if (error === null) return creditVerifiedTopup(intent.intent_id, signature);
+    if (error === null) return settleVerifiedIntent(intent.intent_id, signature);
     if (signature === intent.signature && error === 'transaction_failed') reportedFailed = true;
   }
 
@@ -484,15 +531,19 @@ export async function reconcileTopupIntent(
   return 'pending';
 }
 
-async function creditVerifiedTopup(intentId: string, signature: string): Promise<ReconcileOutcome> {
+async function settleVerifiedIntent(
+  intentId: string,
+  signature: string,
+): Promise<ReconcileOutcome> {
   return runInTransaction(async (client) => {
     const r = await client.query<{
       user_id: string;
+      kind: string;
       status: string;
       cash_cents: string;
       bonus_bps: number;
     }>(
-      `SELECT user_id, status, cash_cents, bonus_bps FROM payment_intents
+      `SELECT user_id, kind, status, cash_cents, bonus_bps FROM payment_intents
        WHERE intent_id = $1 FOR UPDATE`,
       [intentId],
     );
@@ -504,20 +555,34 @@ async function creditVerifiedTopup(intentId: string, signature: string): Promise
        WHERE signature = $1 AND intent_id <> $2 AND status <> 'confirmed'`,
       [signature, intentId],
     );
-    const bonus = (BigInt(intent.cash_cents) * BigInt(intent.bonus_bps)) / 10_000n;
-    const total = BigInt(intent.cash_cents) + bonus;
-    const ledger = await client.query(
-      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-       VALUES ($1, $2, 'cash', 'topup', 'payment_intent', $3, $4)
-       ON CONFLICT (idempotency_ref) DO NOTHING`,
-      [intent.user_id, total.toString(), intentId, `topup:${intentId}`],
-    );
-    if ((ledger.rowCount ?? 0) > 0) {
+    if (intent.kind === 'ad') {
+      // Paid in time: on to review. Paid after the hold lapsed or the owner
+      // cancelled: the money is owed back.
       await client.query(
-        `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
-        [intent.user_id, total.toString()],
+        `UPDATE ad_bookings SET
+           paid_at = now(),
+           status = CASE WHEN status = 'awaiting_payment' THEN 'pending_review' ELSE status END,
+           refund_status = CASE WHEN status = 'awaiting_payment' THEN refund_status ELSE 'due' END,
+           refund_cents = CASE WHEN status = 'awaiting_payment' THEN refund_cents ELSE price_cents END
+         WHERE intent_id = $1 AND paid_at IS NULL`,
+        [intentId],
       );
+    } else {
+      const bonus = (BigInt(intent.cash_cents) * BigInt(intent.bonus_bps)) / 10_000n;
+      const total = BigInt(intent.cash_cents) + bonus;
+      const ledger = await client.query(
+        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+         VALUES ($1, $2, 'cash', 'topup', 'payment_intent', $3, $4)
+         ON CONFLICT (idempotency_ref) DO NOTHING`,
+        [intent.user_id, total.toString(), intentId, `topup:${intentId}`],
+      );
+      if ((ledger.rowCount ?? 0) > 0) {
+        await client.query(
+          `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
+           ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
+          [intent.user_id, total.toString()],
+        );
+      }
     }
     await client.query(
       `UPDATE payment_intents SET status = 'confirmed', signature = $1 WHERE intent_id = $2`,
@@ -528,7 +593,7 @@ async function creditVerifiedTopup(intentId: string, signature: string): Promise
 }
 
 /**
- * Poller pass: reconcile open top-ups (pending, or expired within the
+ * Poller pass: reconcile open top-up and ad intents (pending, or expired within the
  * reconcile window in case a payment landed late) and expire the rest.
  * Returns per-outcome counts.
  */
@@ -539,7 +604,7 @@ export async function reconcileOpenIntents(
   const r = await ctx.db.withConnection((c) =>
     c.query<{ intent_id: string }>(
       `SELECT intent_id FROM payment_intents
-       WHERE kind = 'topup'
+       WHERE kind IN ('topup', 'ad')
          AND (status = 'pending' OR (status = 'expired' AND expires_at > $1))
        ORDER BY created_at ASC LIMIT $2`,
       [new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString(), limit],
@@ -554,7 +619,7 @@ export async function reconcileOpenIntents(
   };
   for (const row of r.rows) {
     try {
-      counts[await reconcileTopupIntent(ctx, row.intent_id)] += 1;
+      counts[await reconcilePaymentIntent(ctx, row.intent_id)] += 1;
     } catch {
       counts.pending += 1; // RPC trouble: try again next pass
     }
@@ -563,8 +628,8 @@ export async function reconcileOpenIntents(
 }
 
 /**
- * Expire unsigned non-top-up intents past their expires_at. Top-ups are
- * expired only by reconcileOpenIntents, after the chain has been checked.
+ * Expire unsigned intents of other kinds past their expires_at. Top-up and
+ * ad intents expire only in reconcileOpenIntents, after a chain check.
  */
 export async function expirePendingIntents(ctx: AppContext): Promise<number> {
   return ctx.db.withConnection(async (c) => {
@@ -572,7 +637,7 @@ export async function expirePendingIntents(ctx: AppContext): Promise<number> {
       `WITH expired AS (
          UPDATE payment_intents
          SET status = 'expired'
-         WHERE status = 'pending' AND kind <> 'topup' AND signature IS NULL
+         WHERE status = 'pending' AND kind NOT IN ('topup', 'ad') AND signature IS NULL
            AND expires_at < now()
          RETURNING intent_id
        )

@@ -1,3 +1,10 @@
+## 2026-10-12 - Server-derived Space grants, spot pricing, payment reconciliation, paid ads
+
+- `POST /rtc/token` derives Space publish rights from the stored role (host/speaker publish, everyone else subscribe-only), refuses ended or blocked Spaces, normalizes `space:` ids to one prefix and ignores client permission flags. Space tokens last 10 minutes.
+- Spot trades price `price_micros` as micro-USD per base unit on both sides; a small buy then sell passes the same slippage cap. Response shapes are unchanged.
+- `GET /payments/intents/{id}`: confirmed stays confirmed after expiry; a pending intent with a reported signature stays pending while it is reconciled from finalized chain data. 410 only when nothing was reported or found on chain.
+- `POST /uploads` takes the raw `image/png`/`image/jpeg` body (was 415), re-encodes it without metadata and binds it to the uploader. `POST /ads/bookings` returns `{bookingId, intent, booking}` with a server-priced USDC intent; bookings go `awaiting_payment` -> `pending_review` (after a verified payment) -> `live` (admin). Added `GET /ads/bookings/{id}`, `POST /ads/bookings/{id}/cancel` and `GET /ads/slots/{id}/availability`; live ads carry a signed `imageUrl`. Rejected or cancelled paid bookings expose an owed-refund receipt.
+
 ## 2026-10-11 - Owned avatar delivery and dedicated USDC checkout
 
 Added owned job resume, validated manifest/acceptance and optional `character.likenessJobId` persistence. Added immutable3-USDC checkout, finalized receipt verification, interrupted-payment recovery and delivery-owed/manual-review states. New generation and checkout remain disabled pending explicit provider end-user permission and runtime/storage provisioning. No Cash top-up behavior changes.

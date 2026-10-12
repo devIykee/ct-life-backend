@@ -12,6 +12,7 @@
  */
 import { buildContext } from '../application/context.js';
 import { expirePendingIntents, reconcileOpenIntents } from '../application/topup.js';
+import { expireAdBookings } from '../application/ads.js';
 
 const POLL_INTERVAL_MS = 30_000;
 
@@ -37,6 +38,10 @@ export function startPaymentPoller(): () => void {
       const expired = await expirePendingIntents(ctx);
       if (expired > 0) {
         console.info(`[payment-poller] expired ${expired} pending intent(s)`);
+      }
+      const ads = await expireAdBookings(ctx);
+      if (ads > 0) {
+        console.info(`[payment-poller] expired ${ads} ad booking(s)`);
       }
     } catch (e) {
       console.error('[payment-poller] error:', (e as Error).message);
