@@ -249,6 +249,76 @@ export interface TradeResult {
   readonly newUnits: string;
 }
 
+/** Micro-USD per base unit -> cents: 1 cent = 10,000 micros. */
+const MICROS_PER_CENT = 10_000n;
+
+/** Cash value in cents of `units` base units at `priceMicros` per unit. */
+export function centsForUnits(priceMicros: bigint, units: bigint): bigint {
+  return (priceMicros * units) / MICROS_PER_CENT;
+}
+
+export interface SpotQuote {
+  /** Base units bought (buy) or sold (sell). */
+  readonly units: bigint;
+  /** Cash debited (buy, fee included) or credited (sell, fee deducted). */
+  readonly cashCents: bigint;
+  readonly feeCents: bigint;
+  /** AMM price per base unit before fees, in micros. */
+  readonly ammPriceMicros: bigint;
+  /** All-in cash per base unit, in micros. */
+  readonly effectivePriceMicros: bigint;
+  /** How much worse the AMM price is than the quote price. */
+  readonly slippageBps: bigint;
+}
+
+/**
+ * Price a spot trade against a constant-product curve centred on the coin's
+ * current price. `price_micros` is micro-USD per base unit; the curve's quote
+ * reserve is `depthCents` and its base reserve is sized so the spot price is
+ * exactly `priceMicros`, so a small trade executes near the quote at any
+ * coin price. Buys take `amountIn` cents, sells take `amountIn` base units.
+ */
+export function quoteSpotTrade(args: {
+  side: TradeSide;
+  priceMicros: bigint;
+  amountIn: bigint;
+  depthCents: bigint;
+  feeBps: bigint;
+}): SpotQuote {
+  const { side, priceMicros, amountIn, depthCents, feeBps } = args;
+  const reserves = { x: (depthCents * MICROS_PER_CENT) / priceMicros, y: depthCents };
+  if (reserves.x <= 0n) throw new ValidationFailedError({ reason: 'coin price too high' });
+  let units: bigint;
+  let grossCents: bigint;
+  let feeCents: bigint;
+  let cashCents: bigint;
+  if (side === 'buy') {
+    feeCents = (amountIn * feeBps) / 10_000n;
+    grossCents = amountIn - feeCents;
+    // Round the new base reserve up so the pool, not the buyer, keeps the dust.
+    const k = reserves.x * reserves.y;
+    const newY = reserves.y + grossCents;
+    units = grossCents > 0n ? reserves.x - (k + newY - 1n) / newY : 0n;
+    cashCents = amountIn;
+  } else {
+    units = amountIn;
+    grossCents = ammQuote('sell', units, reserves).amountOut;
+    feeCents = (grossCents * feeBps) / 10_000n;
+    cashCents = grossCents - feeCents;
+  }
+  if (units <= 0n || grossCents <= 0n) {
+    throw new ValidationFailedError({ reason: 'trade too small' });
+  }
+  const ammPriceMicros = (grossCents * MICROS_PER_CENT) / units;
+  const effectivePriceMicros = (cashCents * MICROS_PER_CENT) / units;
+  // Compare exactly (cross-multiplied) so integer prices never fake slippage.
+  const atQuote = priceMicros * units; // micros
+  const atAmm = grossCents * MICROS_PER_CENT; // micros
+  const worse = side === 'buy' ? atAmm - atQuote : atQuote - atAmm;
+  const slippageBps = worse > 0n ? (worse * 10_000n + atQuote - 1n) / atQuote : 0n;
+  return { units, cashCents, feeCents, ammPriceMicros, effectivePriceMicros, slippageBps };
+}
+
 /**
  * Execute a trade. The server computes the execution price via
  * the AMM; the user's maxSlippageBps is the cap on divergence
@@ -260,7 +330,7 @@ export interface TradeResult {
  * @param ctx - The application context.
  * @param input - The trade request.
  */
-export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise<TradeResult> {
+export async function executeTrade(ctx: AppContext, input: TradeInput): Promise<TradeResult> {
   if (input.side === 'buy' && (input.cashCents === undefined || input.cashCents <= 0)) {
     throw new ValidationFailedError({ reason: 'cashCents required for buy' });
   }
@@ -290,79 +360,28 @@ export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise
       throw new ValidationFailedError({ reason: 'coin price is not positive' });
     }
 
-    // B20 fix: Derive virtual reserves from the coin's current price so the curve's
-    // spot price equals price_micros before the trade.
-    // Fixed config reserves: x=1M, y=30M (from market.json)
-    // For any coin price P (micros), scale reserves: x'=1M, y'=x' * P
-    // This ensures y'/x' = P before any trade.
-    const baseReserveX = 1_000_000n;
-    const reserves = {
-      x: baseReserveX,
-      y: (baseReserveX * quotePriceMicros) / 1_000_000n, // Convert micros to cents for y
-    };
-
-    // B20 fix: Apply fees from market.json (100 bps each side)
-    const FEE_BPS_BUY = 100n;
-    const FEE_BPS_SELL = 100n;
-
-    let amountOut: bigint;
-    let amountInCents: bigint;
-    let feeCents: bigint;
-
-    if (input.side === 'buy') {
-      amountInCents = BigInt(input.cashCents!);
-      // Apply buy fee: fee is taken from the input
-      feeCents = (amountInCents * FEE_BPS_BUY) / 10_000n;
-      const amountAfterFee = amountInCents - feeCents;
-
-      // cents -> USDC base units (6dp): units = cents * 10_000 (since 1 USDC = 100 cents = 1_000_000 base units)
-      const usdcBaseUnits = amountAfterFee * 10_000n;
-      const q = ammQuote('buy', usdcBaseUnits, reserves);
-      amountOut = q.amountOut;
-    } else {
-      const units = BigInt(input.units!);
-      const q = ammQuote('sell', units, reserves);
-      amountOut = q.amountOut;
-      // USDC base units (6dp) -> cents
-      const amountOutCents = (amountOut * 100n) / 1_000_000n;
-      // Apply sell fee: fee is taken from the output
-      feeCents = (amountOutCents * FEE_BPS_SELL) / 10_000n;
-      amountInCents = amountOutCents - feeCents;
-    }
-
-    // B20 fix: Calculate execution price and check slippage one-sided
-    // Execution price = total cash in / units out (for buy), or total cash out / units in (for sell)
-    let executionPriceMicros: bigint;
-    if (input.side === 'buy') {
-      // Buy: execution price = (cashCents + fee) / unitsOut * 1M
-      executionPriceMicros = amountOut > 0n
-        ? (amountInCents * 1_000_000n) / amountOut
-        : 0n;
-    } else {
-      // Sell: execution price = (cashCents - fee) / unitsIn * 1M
-      const units = BigInt(input.units!);
-      executionPriceMicros = units > 0n
-        ? (amountInCents * 1_000_000n) / units
-        : 0n;
-    }
-
-    // Slippage check: one-sided (only worse prices fail)
-    // For buy: worse = higher price (paying more per unit)
-    // For sell: worse = lower price (receiving less per unit)
-    let slippageBps = 0n;
-    if (input.side === 'buy' && executionPriceMicros > quotePriceMicros) {
-      slippageBps = ((executionPriceMicros - quotePriceMicros) * 10_000n) / quotePriceMicros;
-    } else if (input.side === 'sell' && executionPriceMicros < quotePriceMicros) {
-      slippageBps = ((quotePriceMicros - executionPriceMicros) * 10_000n) / quotePriceMicros;
-    }
-
-    if (slippageBps > BigInt(input.maxSlippageBps)) {
+    const curve = ctx.configCache.load<{
+      curve: { virtualReservesY: number };
+      feesBps: { buy: number; sell: number };
+    }>('market');
+    const q = quoteSpotTrade({
+      side: input.side,
+      priceMicros: quotePriceMicros,
+      amountIn: input.side === 'buy' ? BigInt(input.cashCents!) : BigInt(input.units!),
+      depthCents: BigInt(curve.curve.virtualReservesY),
+      feeBps: BigInt(input.side === 'buy' ? curve.feesBps.buy : curve.feesBps.sell),
+    });
+    // Only a worse AMM price counts as slippage; the fixed fee is disclosed
+    // separately in feeCents.
+    if (q.slippageBps > BigInt(input.maxSlippageBps)) {
       throw new SlippageExceededError({
         expected: quotePriceMicros.toString(),
-        actual: executionPriceMicros.toString(),
+        actual: q.ammPriceMicros.toString(),
         maxSlippageBps: input.maxSlippageBps,
       });
     }
+    const { feeCents, cashCents: amountInCents, units: tradedUnits } = q;
+    const executionPriceMicros = q.effectivePriceMicros;
     // Lock the user's balance + position.
     const bal = await client.query<{ cash_cents: string; debt_cents: string }>(
       `SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
@@ -411,8 +430,10 @@ export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise
     let realizedCents = 0n;
     if ((pos.rowCount ?? 0) === 0) {
       positionId = uuidv7();
-      newUnits = input.side === 'buy' ? amountOut : -amountOut;
-      if (newUnits < 0n) throw new InsufficientCashError({ reason: 'would sell more than held' });
+      if (input.side === 'sell') {
+        throw new InsufficientCashError({ reason: 'would sell more than held' });
+      }
+      newUnits = tradedUnits;
       await client.query(
         `INSERT INTO positions (position_id, user_id, coin_id, units, cost_basis_cents)
          VALUES ($1, $2, $3, $4, $5)`,
@@ -430,26 +451,22 @@ export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise
       const prevCost = BigInt(pos.rows[0]!.cost_basis_cents);
       const prevRealized = BigInt(pos.rows[0]!.realized_cents);
       if (input.side === 'buy') {
-        newUnits = prevUnits + amountOut;
+        newUnits = prevUnits + tradedUnits;
         const newCost = prevCost + amountInCents;
         await client.query(
           `UPDATE positions SET units = $1, cost_basis_cents = $2 WHERE position_id = $3`,
           [newUnits.toString(), newCost.toString(), positionId],
         );
       } else {
-        if (prevUnits < amountOut) {
+        if (prevUnits < tradedUnits) {
           throw new InsufficientCashError({ reason: 'would sell more than held' });
         }
-        newUnits = prevUnits - amountOut;
-        // Realized: (price - cost_basis) * units_sold, where price is the executed sell price in cents.
-        // price_cents = amountInCents / amountOut; cost_basis_cents per unit = prevCost / prevUnits.
-        const sellPricePerUnitCents =
-          amountOut === 0n ? 0n : (amountInCents * 1_000_000n) / (amountOut * 1_000_000n);
-        const costBasisPerUnitCents =
-          prevUnits === 0n ? 0n : (prevCost * 1_000_000n) / (prevUnits * 1_000_000n);
-        realizedCents = ((sellPricePerUnitCents - costBasisPerUnitCents) * amountOut) / 1_000_000n;
+        newUnits = prevUnits - tradedUnits;
+        // Realized = net proceeds minus the average cost of the units sold.
+        const costSold = prevUnits === 0n ? 0n : (prevCost * tradedUnits) / prevUnits;
+        realizedCents = amountInCents - costSold;
         const totalRealized = prevRealized + realizedCents;
-        const newCost = prevCost === 0n ? 0n : (prevCost * newUnits) / prevUnits;
+        const newCost = prevCost - costSold;
         await client.query(
           `UPDATE positions SET units = $1, cost_basis_cents = $2, realized_cents = $3 WHERE position_id = $4`,
           [newUnits.toString(), newCost.toString(), totalRealized.toString(), positionId],
@@ -461,8 +478,8 @@ export async function executeTrade(_ctx: AppContext, input: TradeInput): Promise
       tradeId: positionId,
       coinId: input.coinId,
       side: input.side,
-      units: amountOut.toString(),
-      priceMicros: executionPriceMicros.toString(), // B20: execution price, not post-trade marginal
+      units: tradedUnits.toString(),
+      priceMicros: executionPriceMicros.toString(), // all-in price per base unit, fee included
       feeCents: feeCents.toString(), // B20: add fee to response
       cashCents: amountInCents.toString(), // B20: net cash (after fee for buy, after fee for sell)
       realizedCents: realizedCents.toString(),
@@ -495,8 +512,7 @@ export async function listPositions(ctx: AppContext, userId: string): Promise<Po
     const units = BigInt(row.units);
     const costBasis = BigInt(row.cost_basis_cents);
     const price = BigInt(row.price_micros);
-    // Unrealized in cents: (current_price_micros * units / 1_000_000) - cost_basis.
-    const currentValueCents = (price * units) / 1_000_000n;
+    const currentValueCents = centsForUnits(price, units);
     const unrealizedCents = currentValueCents - costBasis;
     return {
       coinId: row.coin_id,
