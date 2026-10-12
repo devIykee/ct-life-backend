@@ -239,3 +239,21 @@ describe('livekit room service client', () => {
     }
   });
 });
+
+describe('canonicalRoomName', () => {
+  it('adds the kind prefix exactly once', async () => {
+    const { canonicalRoomName } = await import('../shared/livekit/token.js');
+    expect(canonicalRoomName('space', 'abc')).toBe('space:abc');
+    expect(canonicalRoomName('space', 'space:abc')).toBe('space:abc');
+    expect(roomName('video', 'video:abc')).toBe('video:abc');
+  });
+
+  it('rejects empty ids, double prefixes and other kinds', async () => {
+    const { canonicalRoomName } = await import('../shared/livekit/token.js');
+    expect(canonicalRoomName('space', '')).toBeNull();
+    expect(canonicalRoomName('space', 'space:')).toBeNull();
+    expect(canonicalRoomName('space', 'space:space:abc')).toBeNull();
+    expect(canonicalRoomName('space', 'video:abc')).toBeNull();
+    expect(() => roomName('space', 'paid_call:abc')).toThrow();
+  });
+});

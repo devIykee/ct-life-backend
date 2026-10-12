@@ -12,7 +12,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { randomUUID } from 'node:crypto';
 
-import { buildContext, _resetContextForTests } from './context.js';
+import { buildContext, _resetContextForTests, type AppContext } from './context.js';
+import { roomName, type LiveKitService } from './livekit.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 
@@ -43,6 +44,8 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  livekitCalls = [];
+  livekitFailures = 0;
   // Clean spaces for these two test users; cascades free the
   // speaker rows.
   await pool.query(
@@ -56,8 +59,39 @@ beforeEach(async () => {
   ]);
 });
 
-async function makeCtx() {
-  return buildContext();
+interface LiveKitCall {
+  op: 'publish' | 'end';
+  room: string;
+  identity?: string;
+  canPublish?: boolean;
+}
+
+let livekitCalls: LiveKitCall[] = [];
+let livekitFailures = 0;
+
+/** Real DB, recording LiveKit: tests never need a media server. */
+async function makeCtx(): Promise<AppContext> {
+  const ctx = buildContext();
+  const failOrRecord = (call: LiveKitCall) => {
+    if (livekitFailures > 0) {
+      livekitFailures -= 1;
+      return Promise.reject(new Error('livekit down'));
+    }
+    livekitCalls.push(call);
+    return Promise.resolve();
+  };
+  const livekit: LiveKitService = {
+    ...ctx.livekit,
+    setParticipantCanPublish: (_c, a) =>
+      failOrRecord({
+        op: 'publish',
+        room: roomName(a.kind, a.id),
+        identity: a.identity,
+        canPublish: a.canPublish,
+      }),
+    endRoom: (_c, a) => failOrRecord({ op: 'end', room: roomName(a.kind, a.id) }),
+  };
+  return { ...ctx, livekit };
 }
 
 describe('spaces service', () => {
@@ -187,6 +221,98 @@ describe('spaces service', () => {
     await raiseHand(ctx, space.spaceId, ids[2]!);
     const s = await getSpace(ctx, space.spaceId);
     expect(s.handUserIds).toEqual(ids);
+  });
+});
+
+describe('spaces RTC access and LiveKit sync', () => {
+  async function addUser(tag: string): Promise<string> {
+    const id = uuidv7();
+    await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `${tag}-${id}`]);
+    return id;
+  }
+
+  it('derives publish rights from the stored role, never the caller', async () => {
+    const ctx = await makeCtx();
+    const { createSpace, raiseHand, promoteSpeaker, demoteSpeaker, spaceRtcAccess } =
+      await import('./spaces.js');
+    const space = await createSpace(ctx, hostId, { title: 'test-rtc-roles' });
+    const listener = await addUser('rtc-listener');
+    const stranger = await addUser('rtc-stranger');
+    await raiseHand(ctx, space.spaceId, listener);
+
+    expect(await spaceRtcAccess(ctx, space.spaceId, hostId)).toEqual({
+      spaceId: space.spaceId,
+      canPublish: true,
+    });
+    expect((await spaceRtcAccess(ctx, space.spaceId, listener)).canPublish).toBe(false);
+    expect((await spaceRtcAccess(ctx, space.spaceId, stranger)).canPublish).toBe(false);
+
+    await promoteSpeaker(ctx, space.spaceId, hostId, listener);
+    expect((await spaceRtcAccess(ctx, space.spaceId, listener)).canPublish).toBe(true);
+    await demoteSpeaker(ctx, space.spaceId, hostId, listener);
+    expect((await spaceRtcAccess(ctx, space.spaceId, listener)).canPublish).toBe(false);
+
+    expect(livekitCalls).toEqual([
+      { op: 'publish', room: space.spaceId, identity: listener, canPublish: true },
+      { op: 'publish', room: space.spaceId, identity: listener, canPublish: false },
+    ]);
+  });
+
+  it('accepts a bare uuid and rejects another kind of room id', async () => {
+    const ctx = await makeCtx();
+    const { createSpace, spaceRtcAccess } = await import('./spaces.js');
+    const space = await createSpace(ctx, hostId, { title: 'test-rtc-ids' });
+    const bare = space.spaceId.slice('space:'.length);
+    expect((await spaceRtcAccess(ctx, bare, hostId)).spaceId).toBe(space.spaceId);
+    await expect(spaceRtcAccess(ctx, `video:${bare}`, hostId)).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+    });
+    await expect(spaceRtcAccess(ctx, `space:space:${bare}`, hostId)).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+    });
+    await expect(spaceRtcAccess(ctx, `space:${uuidv7()}`, hostId)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('refuses ended Spaces and blocked callers', async () => {
+    const ctx = await makeCtx();
+    const { createSpace, endSpace, spaceRtcAccess } = await import('./spaces.js');
+    const blocked = await addUser('rtc-blocked');
+    await pool.query(
+      `INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2), ($2, $1)`,
+      [hostId, blocked],
+    );
+    const space = await createSpace(ctx, hostId, { title: 'test-rtc-ended' });
+    await expect(spaceRtcAccess(ctx, space.spaceId, blocked)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+    await endSpace(ctx, space.spaceId, hostId);
+    expect(livekitCalls).toEqual([{ op: 'end', room: space.spaceId }]);
+    await expect(spaceRtcAccess(ctx, space.spaceId, hostId)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
+  });
+
+  it('surfaces a failed LiveKit update and lets the host retry', async () => {
+    const ctx = await makeCtx();
+    const { createSpace, raiseHand, promoteSpeaker } = await import('./spaces.js');
+    const space = await createSpace(ctx, hostId, { title: 'test-rtc-retry' });
+    const listener = await addUser('rtc-retry');
+    await raiseHand(ctx, space.spaceId, listener);
+    livekitFailures = 3;
+    await expect(promoteSpeaker(ctx, space.spaceId, hostId, listener)).rejects.toMatchObject({
+      code: 'SERVER_BUSY',
+    });
+    await promoteSpeaker(ctx, space.spaceId, hostId, listener);
+    expect(livekitCalls).toEqual([
+      { op: 'publish', room: space.spaceId, identity: listener, canPublish: true },
+    ]);
+    const roles = await pool.query<{ role: string }>(
+      `SELECT role FROM voice_speakers WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL`,
+      [space.spaceId, listener],
+    );
+    expect(roles.rows).toEqual([{ role: 'speaker' }]);
   });
 });
 

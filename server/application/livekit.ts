@@ -29,7 +29,9 @@
  */
 import { RoomServiceClient } from 'livekit-server-sdk';
 import type { AppContext } from './context.js';
+import { ValidationFailedError } from '../shared/domain/errors.js';
 import {
+  canonicalRoomName,
   createRtcTokenIssuer,
   type MintOptions,
   type RtcTokenIssuer,
@@ -59,7 +61,7 @@ export interface MintedRtcToken {
 export interface LiveKitService {
   /** Mint a LiveKit access token for `{kind}:{id}` with identity=userId. */
   mintRtcToken(args: MintRtcTokenArgs): Promise<MintedRtcToken>;
-  /** Set `canPublish` on a participant in a LiveKit room. */
+  /** Set `canPublish` on a participant in a LiveKit room; absent participants are a no-op. */
   setParticipantCanPublish(
     ctx: AppContext,
     args: { kind: RtcKind; id: string; identity: string; canPublish: boolean },
@@ -75,7 +77,9 @@ export interface LiveKitService {
  * code and the contract endpoints can derive the same string.
  */
 export function roomName(kind: RtcKind, id: string): string {
-  return `${kind}:${id}`;
+  const name = canonicalRoomName(kind, id);
+  if (!name) throw new ValidationFailedError({ reason: 'invalid_room_id', kind });
+  return name;
 }
 
 /**
@@ -133,11 +137,16 @@ export function createLiveKitService(): LiveKitService {
     async setParticipantCanPublish(ctx, args) {
       const rs = client(ctx);
       const name = roomName(args.kind, args.id);
-      await rs.updateParticipant(name, args.identity, undefined, {
-        canPublish: args.canPublish,
-        canSubscribe: true,
-        canPublishData: true,
-      });
+      try {
+        await rs.updateParticipant(name, args.identity, undefined, {
+          canPublish: args.canPublish,
+          canSubscribe: true,
+          canPublishData: true,
+        });
+      } catch (e) {
+        // Not in the room right now: their next token carries the role.
+        if (!isNotFound(e)) throw e;
+      }
     },
 
     async endRoom(ctx, args) {

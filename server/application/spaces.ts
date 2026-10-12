@@ -29,8 +29,14 @@
  * Promotion beyond `max_speakers` is rejected with VALIDATION_FAILED.
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import {
+  ForbiddenError,
+  NotFoundError,
+  ServerBusyError,
+  ValidationFailedError,
+} from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { canonicalRoomName } from '../shared/livekit/token.js';
 import type { AppContext } from './context.js';
 
 export interface SpaceRow {
@@ -51,6 +57,16 @@ export interface CreateSpaceArgs {
 }
 
 const TITLE_MAX = 80;
+/** Space join tokens are short-lived so a new token re-checks role and status. */
+export const SPACE_TOKEN_TTL_SEC = 10 * 60;
+const LIVEKIT_SYNC_ATTEMPTS = 3;
+
+/** Normalize a bare uuid or `space:<uuid>` to the stored room id. */
+export function spaceRoomId(id: string): string {
+  const name = canonicalRoomName('space', id);
+  if (!name) throw new ValidationFailedError({ reason: 'invalid_space_id' });
+  return name;
+}
 
 async function selectRoom(
   ctx: AppContext,
@@ -73,7 +89,7 @@ async function selectRoom(
       max_speakers: number;
     }>(
       `SELECT host_user_id, status, started_at, ended_at, title, max_speakers
-       FROM voice_rooms WHERE room_id = $1`,
+       FROM voice_rooms WHERE room_id = $1 AND kind = 'space'`,
       [spaceId],
     );
     const row = r.rows[0];
@@ -163,7 +179,8 @@ export async function listLiveSpaces(ctx: AppContext): Promise<SpaceRow[]> {
 }
 
 /** Look up a single space. Throws NotFoundError if missing. */
-export async function getSpace(ctx: AppContext, spaceId: string): Promise<SpaceRow> {
+export async function getSpace(ctx: AppContext, rawSpaceId: string): Promise<SpaceRow> {
+  const spaceId = spaceRoomId(rawSpaceId);
   const row = await selectRoom(ctx, spaceId);
   if (!row) {
     throw new NotFoundError({ resource: 'space', id: spaceId });
@@ -259,7 +276,12 @@ async function countListeners(ctx: AppContext, spaceId: string): Promise<number>
  * UNIQUE (room_id, user_id) WHERE left_at IS NULL ensures we
  * don't double-write.
  */
-export async function raiseHand(ctx: AppContext, spaceId: string, userId: string): Promise<void> {
+export async function raiseHand(
+  ctx: AppContext,
+  rawSpaceId: string,
+  userId: string,
+): Promise<void> {
+  const spaceId = spaceRoomId(rawSpaceId);
   const room = await selectRoom(ctx, spaceId);
   if (!room) throw new NotFoundError({ resource: 'space', id: spaceId });
   if (room.status !== 'live') {
@@ -279,7 +301,12 @@ export async function raiseHand(ctx: AppContext, spaceId: string, userId: string
 }
 
 /** Lower your hand. */
-export async function lowerHand(ctx: AppContext, spaceId: string, userId: string): Promise<void> {
+export async function lowerHand(
+  ctx: AppContext,
+  rawSpaceId: string,
+  userId: string,
+): Promise<void> {
+  const spaceId = spaceRoomId(rawSpaceId);
   await ctx.db.withConnection(async (c) => {
     await c.query(
       `UPDATE voice_speakers SET hand_raised_at = NULL
@@ -290,7 +317,8 @@ export async function lowerHand(ctx: AppContext, spaceId: string, userId: string
 }
 
 /** List current speakers. Public read. */
-export async function getSpeakers(ctx: AppContext, spaceId: string): Promise<SpeakerRow[]> {
+export async function getSpeakers(ctx: AppContext, rawSpaceId: string): Promise<SpeakerRow[]> {
+  const spaceId = spaceRoomId(rawSpaceId);
   return listSpeakers(ctx, spaceId);
 }
 
@@ -301,10 +329,11 @@ export async function getSpeakers(ctx: AppContext, spaceId: string): Promise<Spe
  */
 export async function promoteSpeaker(
   ctx: AppContext,
-  spaceId: string,
+  rawSpaceId: string,
   callerUserId: string,
   targetUserId: string,
 ): Promise<void> {
+  const spaceId = spaceRoomId(rawSpaceId);
   const room = await selectRoom(ctx, spaceId);
   if (!room) throw new NotFoundError({ resource: 'space', id: spaceId });
   if (room.host !== callerUserId) {
@@ -313,7 +342,17 @@ export async function promoteSpeaker(
   if (room.status !== 'live') {
     throw new ValidationFailedError({ reason: 'space is not live' });
   }
+  if (await blockedBetween(ctx, room.host, targetUserId)) {
+    throw new ForbiddenError({ reason: 'blocked' });
+  }
   await runInTransaction(async (client) => {
+    const target = await client.query<{ role: string }>(
+      `SELECT role FROM voice_speakers
+       WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL FOR UPDATE`,
+      [spaceId, targetUserId],
+    );
+    const role = target.rows[0]?.role;
+    if (role === 'host' || role === 'speaker') return;
     const cur = await client.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM voice_speakers
        WHERE room_id = $1 AND left_at IS NULL AND role IN ('host','speaker')`,
@@ -322,34 +361,40 @@ export async function promoteSpeaker(
     if (Number(cur.rows[0]?.count ?? '0') >= room.maxSpeakers) {
       throw new ValidationFailedError({ reason: 'max_speakers reached' });
     }
-    await client.query(
-      `UPDATE voice_speakers SET role = 'speaker', hand_raised_at = NULL
-       WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL`,
-      [spaceId, targetUserId],
-    );
+    if (role === undefined) {
+      await client.query(
+        `INSERT INTO voice_speakers (speaker_id, room_id, user_id, role)
+         VALUES ($1, $2, $3, 'speaker')`,
+        [uuidv7(), spaceId, targetUserId],
+      );
+    } else {
+      await client.query(
+        `UPDATE voice_speakers SET role = 'speaker', hand_raised_at = NULL
+         WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL`,
+        [spaceId, targetUserId],
+      );
+    }
   });
-  // Reflect the change in LiveKit so the promoted participant
-  // gets canPublish=true. Failure is logged but does not roll
-  // back the DB write — the realtime room re-syncs on next tick.
-  try {
-    await ctx.livekit.setParticipantCanPublish(ctx, {
+  // The DB role is authoritative; a failed LiveKit update surfaces as
+  // SERVER_BUSY so the host retries (promotion is idempotent).
+  await syncLiveKit(() =>
+    ctx.livekit.setParticipantCanPublish(ctx, {
       kind: 'space',
       id: spaceId,
       identity: targetUserId,
       canPublish: true,
-    });
-  } catch {
-    /* LiveKit best-effort; DB is source of truth */
-  }
+    }),
+  );
 }
 
 /** Host demotes a speaker back to listener. */
 export async function demoteSpeaker(
   ctx: AppContext,
-  spaceId: string,
+  rawSpaceId: string,
   callerUserId: string,
   targetUserId: string,
 ): Promise<void> {
+  const spaceId = spaceRoomId(rawSpaceId);
   const room = await selectRoom(ctx, spaceId);
   if (!room) throw new NotFoundError({ resource: 'space', id: spaceId });
   if (room.host !== callerUserId) {
@@ -365,24 +410,24 @@ export async function demoteSpeaker(
       [spaceId, targetUserId],
     );
   });
-  try {
-    await ctx.livekit.setParticipantCanPublish(ctx, {
+  // Revoking canPublish also unpublishes the member's tracks.
+  await syncLiveKit(() =>
+    ctx.livekit.setParticipantCanPublish(ctx, {
       kind: 'space',
       id: spaceId,
       identity: targetUserId,
       canPublish: false,
-    });
-  } catch {
-    /* best-effort */
-  }
+    }),
+  );
 }
 
 /** End the space; close every open speaker row, close LiveKit room. */
 export async function endSpace(
   ctx: AppContext,
-  spaceId: string,
+  rawSpaceId: string,
   callerUserId: string,
 ): Promise<void> {
+  const spaceId = spaceRoomId(rawSpaceId);
   const room = await selectRoom(ctx, spaceId);
   if (!room) throw new NotFoundError({ resource: 'space', id: spaceId });
   if (room.host !== callerUserId) {
@@ -399,9 +444,66 @@ export async function endSpace(
       [spaceId],
     );
   });
-  try {
-    await ctx.livekit.endRoom(ctx, { kind: 'space', id: spaceId });
-  } catch {
-    /* best-effort */
+  // Ended Spaces mint no tokens; closing the media room is retried by
+  // repeating the (idempotent) end call.
+  await syncLiveKit(() => ctx.livekit.endRoom(ctx, { kind: 'space', id: spaceId }));
+}
+
+/**
+ * Server-derived RTC access for a Space. Only a live Space the caller is
+ * not blocked from yields a token; host and speaker rows may publish,
+ * everyone else joins subscribe-only. Client permission flags are ignored.
+ */
+export async function spaceRtcAccess(
+  ctx: AppContext,
+  rawSpaceId: string,
+  userId: string,
+): Promise<{ spaceId: string; canPublish: boolean }> {
+  const spaceId = spaceRoomId(rawSpaceId);
+  const room = await selectRoom(ctx, spaceId);
+  if (!room) throw new NotFoundError({ resource: 'space', id: spaceId });
+  if (room.status !== 'live') throw new ForbiddenError({ reason: 'space_ended' });
+  if (await blockedBetween(ctx, room.host, userId)) {
+    throw new ForbiddenError({ reason: 'blocked' });
   }
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{ role: string }>(
+      `SELECT role FROM voice_speakers
+       WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL`,
+      [spaceId, userId],
+    ),
+  );
+  const role = r.rows[0]?.role;
+  return { spaceId, canPublish: role === 'host' || role === 'speaker' };
+}
+
+async function blockedBetween(ctx: AppContext, a: string, b: string): Promise<boolean> {
+  if (a === b) return false;
+  const r = await ctx.db.withConnection((c) =>
+    c.query(
+      `SELECT 1 FROM blocks
+       WHERE (blocker_user_id = $1 AND blocked_user_id = $2)
+          OR (blocker_user_id = $2 AND blocked_user_id = $1)
+       LIMIT 1`,
+      [a, b],
+    ),
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+async function syncLiveKit(op: () => Promise<void>): Promise<void> {
+  let last: unknown;
+  for (let attempt = 1; attempt <= LIVEKIT_SYNC_ATTEMPTS; attempt++) {
+    try {
+      await op();
+      return;
+    } catch (e) {
+      last = e;
+      if (attempt < LIVEKIT_SYNC_ATTEMPTS) await new Promise((r) => setTimeout(r, 200 * attempt));
+    }
+  }
+  throw new ServerBusyError(2000, {
+    reason: 'livekit_sync',
+    cause: last instanceof Error ? last.message : String(last),
+  });
 }
