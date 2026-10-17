@@ -19,6 +19,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
+import { publishToUser } from './realtime-bus.js';
 
 export interface DmRow {
   readonly messageId: string;
@@ -136,9 +137,8 @@ export async function sendDm(
   if (text.length < 1 || text.length > DM_TEXT_MAX) {
     throw new ValidationFailedError({ reason: 'text length 1..500' });
   }
-  void ctx; // B25: ctx not used directly, but kept for API consistency
   const messageId = uuidv7();
-  await runInTransaction(async (client) => {
+  const createdAt = await runInTransaction(async (client) => {
     // B25: Check if recipient exists
     const recipientCheck = await client.query(
       `SELECT id FROM users WHERE id = $1`,
@@ -160,13 +160,23 @@ export async function sendDm(
       throw new ValidationFailedError({ reason: 'blocked' });
     }
 
-    await client.query(
+    const inserted = await client.query<{ created_at: Date }>(
       `INSERT INTO dm_messages (message_id, from_user_id, to_user_id, text)
-       VALUES ($1, $2, $3, $4)`,
+       VALUES ($1, $2, $3, $4)
+       RETURNING created_at`,
       [messageId, fromUserId, toUserId, text],
     );
+    return inserted.rows[0]!.created_at;
   });
-  const at = new Date().toISOString();
+  // Push only after commit, so a recipient never sees a message the
+  // thread fetch cannot return. Blocked pairs threw above and never get here.
+  await publishToUser(ctx, toUserId, 'dm', {
+    messageId,
+    fromUserId,
+    text,
+    at: createdAt.getTime(),
+  });
+  const at = createdAt.toISOString();
   return { messageId, fromUserId, toUserId, text, at, createdAt: at };
 }
 
