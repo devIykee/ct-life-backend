@@ -19,6 +19,7 @@ import { LotteryService } from '../../application/lottery.js';
 import { CharacterService } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
 import { PublicProfileService } from '../../application/public-profile.js';
+import { debtSchedule } from '../../application/bank.js';
 import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 
@@ -301,6 +302,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       skills: skRow,
       cashCents: Number(balRow.cash_cents),
       debtCents: Number(balRow.debt_cents),
+      ...debtSchedule(req.ctx, Number(balRow.debt_cents)),
       homeId: chRow?.home_id ?? 'parents_basement',
       minerTier: uRow.miner_tier || 'none',
       flags: {

@@ -116,6 +116,14 @@ export class InsufficientCashError extends DomainError {
   }
 }
 
+export class NothingToRepayError extends DomainError {
+  readonly code = 'NOTHING_TO_REPAY';
+  constructor(details: Record<string, unknown> = {}) {
+    super('There is no debt to repay.', details);
+    this.httpStatus = 409;
+  }
+}
+
 export class LeverageNotAllowedError extends DomainError {
   readonly code = 'LEVERAGE_NOT_ALLOWED';
   constructor(details: Record<string, unknown> = {}) {

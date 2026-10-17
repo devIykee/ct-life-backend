@@ -54,6 +54,7 @@
       "message": "Rate limit exceeded; try again later."
     },
     { "code": "INSUFFICIENT_CASH", "httpStatus": 402, "message": "Cash balance is insufficient." },
+    { "code": "NOTHING_TO_REPAY", "httpStatus": 409, "message": "There is no debt to repay." },
     {
       "code": "LEVERAGE_NOT_ALLOWED",
       "httpStatus": 400,

@@ -30,6 +30,7 @@ import { registerCreatorRoutes } from './routes/creator.js';
 import { registerPaidCallRoutes } from './routes/paid-calls.js';
 import { registerHomeRoutes } from './routes/homes.js';
 import { registerTipRoutes } from './routes/tips.js';
+import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
@@ -151,6 +152,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPaidCallRoutes(app);
   registerHomeRoutes(app);
   registerTipRoutes(app);
+  registerBankRoutes(app);
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
   registerDailyClueRoutes(app);

@@ -2187,6 +2187,102 @@ paths:
       responses:
         '204': { description: Recorded }
 
+  /bank/repay:
+    post:
+      tags: [player]
+      operationId: postBankRepay
+      summary: Repay debt from Cash.
+      description: |
+        Moves `amountCents` from Cash onto debt in one ledger transaction
+        (`loan_repay` on both accounts). An amount above the outstanding
+        debt is capped to it; `repaidCents` is what was actually paid. A
+        replayed Idempotency-Key never pays twice.
+      x-phase: 3
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amountCents]
+              properties:
+                amountCents: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Repaid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repaidCents, cashCents, debtCents]
+                properties:
+                  repaidCents: { type: integer }
+                  cashCents: { type: integer }
+                  debtCents: { type: integer }
+        '402':
+          description: Insufficient cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'INSUFFICIENT_CASH',
+                      message: 'Cash balance is insufficient.',
+                      details: { 'shortfallCents': 11000 },
+                    },
+                }
+        '409':
+          description: No debt outstanding
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: NOTHING_TO_REPAY
+                  message: There is no debt to repay.
+                  details: {}
+
+  /ledger:
+    get:
+      tags: [player]
+      operationId: getLedger
+      summary: My Cash history, newest first.
+      description: |
+        The Cash side of the ledger. `kind` is the ledger reason code
+        (`topup`, `shift_pay`, `gig_pay`, `rent`, `tip`, `tip_out`,
+        `trade_buy`, `trade_sell`, `perp_margin`, `perp_close`,
+        `prediction`, `prediction_payout`, `business_pay`, `loan_repay`, ...);
+        treat unknown kinds as generic and show `label`. Zero-amount rows
+        are omitted. Pass `next` back as `before` for the next page; `next`
+        is null on the last page.
+      x-phase: 3
+      parameters:
+        - name: before
+          in: query
+          required: false
+          schema: { type: string, pattern: '^[0-9]+$' }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
+      responses:
+        '200':
+          description: A page of ledger entries
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/LedgerItem' }
+                  next: { type: string, nullable: true }
+
   /rtc/token:
     post:
       tags: [voice]
@@ -3616,6 +3712,21 @@ components:
         skills: { $ref: '#/components/schemas/Skills' }
         cashCents: { type: integer }
         debtCents: { type: integer }
+        debtDueAt:
+          {
+            type: string,
+            format: date-time,
+            nullable: true,
+            description: Next instalment deadline (Sunday Unlock,
+            Sun 20:00 UTC); null with no debt.,
+          }
+        debtWeeklyDueCents:
+          {
+            type: integer,
+            nullable: true,
+            description: Instalment due by debtDueAt,
+            capped at debtCents; null with no debt.,
+          }
         homeId: { type: string }
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
         flags: { type: 'object', additionalProperties: true }
@@ -3841,6 +3952,26 @@ components:
         status: { type: string, enum: [open, closed, liquidated] }
         realizedCents: { type: integer }
         closedAt: { type: string, format: date-time, nullable: true }
+        markMicros:
+          {
+            type: integer,
+            description: Open perps only. Current coin price,
+            the same one liquidation reads.,
+          }
+        unrealizedPnlCents:
+          {
+            type: integer,
+            description: Open perps only. PnL if closed at markMicros now; equals realizedCents on close.,
+          }
+    LedgerItem:
+      type: object
+      required: [id, kind, amountCents, label, at]
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        amountCents: { type: integer, description: 'Signed: credits positive, debits negative.' }
+        label: { type: string }
+        at: { type: string, format: date-time }
     PredictionMarket:
       type: object
       required: [id, question, outcomes, closesAt, status]

@@ -54,6 +54,10 @@ export interface PerpRow {
   readonly realizedCents: string | null;
   readonly closedAt: string | null;
   readonly createdAt: string;
+  /** Open perps only: the coin's current price, the one liquidation reads. */
+  readonly markMicros?: string;
+  /** Open perps only: PnL if closed at `markMicros` now. */
+  readonly unrealizedPnlCents?: string;
 }
 
 export interface OpenPerpInput {
@@ -66,6 +70,28 @@ export interface OpenPerpInput {
 
 const MIN_LEVERAGE = 1;
 const MAX_LEVERAGE = 20; // B38: fix from 25 to 20
+
+/**
+ * PnL in cents of a perp at `markMicros`. One formula for close,
+ * liquidation and the open-positions list, so the PnL a player sees
+ * is the PnL they settle at.
+ *   long  : (mark - entry) * notional / entry
+ *   short : (entry - mark) * notional / entry
+ * where notional = margin * leverage, in cents.
+ */
+export function perpPnlCents(
+  side: PerpSide,
+  entryMicros: bigint,
+  markMicros: bigint,
+  marginCents: bigint,
+  leverage: bigint,
+): bigint {
+  const notional = marginCents * leverage;
+  const denom = entryMicros === 0n ? 1n : entryMicros;
+  return side === 'long'
+    ? ((markMicros - entryMicros) * notional) / denom
+    : ((entryMicros - markMicros) * notional) / denom;
+}
 
 /**
  * Open a new perp position.
@@ -208,17 +234,14 @@ export async function closePerp(
       [perp.coin_id],
     );
     const close = BigInt(cr.rows[0]?.price_micros ?? '0');
-    const entry = BigInt(perp.entry_micros);
-    const lev = BigInt(perp.leverage);
     const margin = BigInt(perp.margin_cents);
-    const units = margin * lev; // in cents
-    // realized in cents: (close - entry) * units / entry for long;
-    // (entry - close) * units / entry for short.
-    const diff =
-      perp.side === 'long'
-        ? ((close - entry) * units) / (entry === 0n ? 1n : entry)
-        : ((entry - close) * units) / (entry === 0n ? 1n : entry);
-    const realized = diff;
+    const realized = perpPnlCents(
+      perp.side,
+      BigInt(perp.entry_micros),
+      close,
+      margin,
+      BigInt(perp.leverage),
+    );
     // Settle: credit the margin + realized back to the user.
     const payout = margin + realized;
     if (payout < 0n) {
@@ -298,15 +321,13 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
     if (!crossed) return false;
 
     // B38: Calculate realized loss (negative value)
-    const entry = BigInt(perp.entry_micros);
-    const margin = BigInt(perp.margin_cents);
-    const lev = BigInt(perp.leverage);
-    const units = margin * lev; // in cents
-    const diff =
-      perp.side === 'long'
-        ? ((price - entry) * units) / (entry === 0n ? 1n : entry)
-        : ((entry - price) * units) / (entry === 0n ? 1n : entry);
-    const realized = diff; // This will be negative (a loss)
+    const realized = perpPnlCents(
+      perp.side,
+      BigInt(perp.entry_micros),
+      price,
+      BigInt(perp.margin_cents),
+      BigInt(perp.leverage),
+    ); // This will be negative (a loss)
     const lossCents = -realized; // Positive value of the loss
 
     // B38: Store realized_cents on liquidation
@@ -366,9 +387,11 @@ export async function listPerps(
       realized_cents: string | null;
       closed_at: Date | null;
       created_at: Date;
+      price_micros: string;
     }>(
       `SELECT p.perp_id, p.coin_id, c.ticker, p.side, p.leverage, p.margin_cents,
-              p.entry_micros, p.liq_micros, p.status, p.realized_cents, p.closed_at, p.created_at
+              p.entry_micros, p.liq_micros, p.status, p.realized_cents, p.closed_at, p.created_at,
+              c.price_micros
        FROM perps p
        JOIN coins c ON c.coin_id = p.coin_id
        WHERE ${where}
@@ -390,5 +413,17 @@ export async function listPerps(
     realizedCents: row.realized_cents,
     closedAt: row.closed_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
+    ...(row.status === 'open'
+      ? {
+          markMicros: row.price_micros,
+          unrealizedPnlCents: perpPnlCents(
+            row.side,
+            BigInt(row.entry_micros),
+            BigInt(row.price_micros),
+            BigInt(row.margin_cents),
+            BigInt(row.leverage),
+          ).toString(),
+        }
+      : {}),
   }));
 }

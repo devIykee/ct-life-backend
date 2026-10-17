@@ -357,6 +357,7 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 - **airdrop** - `POST /v1/airdrop/claim`, `GET /v1/airdrop/claims`, `GET /v1/airdrop/farm`
 - **alpha-calls** - `GET POST /v1/alpha-calls`
 - **auth** - `GET /v1/auth/challenge`, `POST /v1/auth/dev`, `GET /v1/auth/jwks`, `POST /v1/auth/logout`, `POST /v1/auth/refresh`, `POST /v1/auth/verify`
+- **bank** - `POST /v1/bank/repay`
 - **beef** - `GET POST /v1/beef`, `POST /v1/beef/:id/accept`, `POST /v1/beef/:id/decline`, `POST /v1/beef/:id/settle`, `GET /v1/beef/elo`
 - **blocks** - `POST DELETE /v1/blocks/:userId`
 - **businesses** - `GET POST /v1/businesses` (`{kindId}` from `businesses.json`), `GET /v1/businesses/:id`, `POST /v1/businesses/:id/collect`, `POST /v1/businesses/:id/sell`
@@ -374,6 +375,7 @@ There is no `/v1/admin/ratio-arena/stats` or `/v1/admin/airdrop/trigger`.
 - **homes** - `GET POST /v1/homes`, `POST /v1/homes/:homeId/rent`, `GET /v1/homes/:id`, `POST /v1/homes/:id/marina/visit`, `POST /v1/homes/:ownerId/visit`
 - **inventory** - `GET /v1/inventory`
 - **leaderboards** - `GET /v1/leaderboards/:boardId`
+- **ledger** - `GET /v1/ledger`
 - **leagues** - `GET /v1/leagues`, `GET /v1/leagues/:slug`
 - **llm** - `POST /v1/llm/chat`, `GET /v1/llm/quota`
 - **lottery** - `POST /v1/lottery/roll`
