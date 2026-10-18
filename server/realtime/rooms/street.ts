@@ -17,9 +17,11 @@
  * teleport-check against stale data. After `vehicle_exit` the first move
  * at the vehicle's last position is accepted without the walking rule.
  *
- * A player with no recent position anywhere (fresh login, or back from a
- * venue more than 30 s later) is placed by their first in-bounds move.
- * They are not shown to others until then.
+ * A player with no recent position anywhere (fresh login, or more than
+ * 30 s since their last move in any room) is placed by their first
+ * in-bounds move. They are not shown to others until then. Venue rooms
+ * on CT Island record positions too, so walking out of a venue is
+ * checked like any other move.
  */
 import { Room, Client } from 'colyseus';
 import { readFileSync } from 'node:fs';
@@ -44,7 +46,7 @@ import {
   encodePos,
   getIslandGeometry,
   newAnchor,
-  pointInPolygon,
+  onLand,
   stepMove,
   TokenBucket,
   type DistrictId,
@@ -86,7 +88,7 @@ interface StreetSession {
 export class StreetRoom extends Room {
   declare state: StreetState;
   private polygon: Polygon = [];
-  private island: Polygon = [];
+  private island: readonly Polygon[] = [];
   private anims: readonly string[] = [];
   private sessions = new Map<string, StreetSession>();
   /** userId -> vehicle exit position, from the vehicles room. */
@@ -103,7 +105,7 @@ export class StreetRoom extends Room {
     }
     const geo = getIslandGeometry();
     const poly = geo.districts[district as DistrictId] ?? [];
-    if (poly.length < 3 || geo.island.length < 3) {
+    if (poly.length < 3 || geo.island.length === 0) {
       throw new Error(`District bounds not set: ${district}`);
     }
     this.polygon = poly;
@@ -214,6 +216,10 @@ export class StreetRoom extends Room {
     s.player.x = pos.x;
     s.player.z = pos.z;
     if (parsed.data.rotY !== undefined) s.player.rotY = parsed.data.rotY;
+    // Street x/z are already island metres; mirror them for clients that read ix/iz.
+    s.player.ix = pos.x;
+    s.player.iz = pos.z;
+    s.player.irotY = s.player.rotY;
     s.player.anim = pos.dist > 0 ? 'loco_walk' : 'loco_idle';
     if (!s.placed) {
       s.placed = true;
@@ -295,9 +301,7 @@ export class StreetRoom extends Room {
   // --- Helpers -----------------------------------------------------
 
   private inBounds(x: number, z: number): boolean {
-    return (
-      pointInPolygon(this.island, x, z) && distanceToPolygon(this.polygon, x, z) <= STREET_BORDER_M
-    );
+    return onLand(this.island, x, z) && distanceToPolygon(this.polygon, x, z) <= STREET_BORDER_M;
   }
 
   private async readPos(userId: string): Promise<IslandPos | null> {

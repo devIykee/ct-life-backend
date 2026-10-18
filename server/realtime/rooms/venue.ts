@@ -17,6 +17,12 @@
  * from the last accepted move (see ../movement.ts). A move past the
  * budget is clamped, applied, and the client gets `corrected {x, z}`.
  *
+ * Island coordinates: `move { ..., island: true }` sends x/z/rotY in
+ * island metres; the server converts them with the venue's placement
+ * from `contract/ids/districts.json` and replies (`corrected`,
+ * `rejected`) in the same frame. Every player also carries `ix/iz/irotY`
+ * (island pose), and accepted moves are recorded for the street rooms.
+ *
  * Walkable validation: every move's `(x, z)` is checked against
  * the venue's walkable rectangles from `contract/ids/spots.json`.
  * A move outside any rectangle is rejected.
@@ -42,7 +48,7 @@ import {
 import type { NpcEvent } from '../../../packages/npc-brain/src/index.js';
 import { SeededRng } from '../../../packages/npc-brain/src/rng.js';
 import { SimulatedClock } from '../../../packages/npc-brain/src/clock.js';
-import { VenueState, NpcState } from '../../../contract/realtime/states.js';
+import { VenueState, NpcState, type PlayerState } from '../../../contract/realtime/states.js';
 import { z } from 'zod';
 import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
 import {
@@ -53,13 +59,29 @@ import {
   SAY_COOLDOWN_MS,
   EMOTE_COOLDOWN_MS,
 } from '../player.js';
-import { newAnchor, stepMove, TokenBucket, type MoveAnchor } from '../movement.js';
+import {
+  POS_HASH,
+  encodePos,
+  getIslandGeometry,
+  islandToVenue,
+  newAnchor,
+  stepMove,
+  TokenBucket,
+  venueToIsland,
+  type MoveAnchor,
+  type VenuePlacement,
+} from '../movement.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
   z: z.number().finite(),
   rotY: z.number().finite().optional(),
+  /** x/z/rotY are island coordinates; the server converts them. */
+  island: z.boolean().optional(),
 });
+
+/** Minimum gap between writes of a player's island position to presence. */
+const POS_WRITE_MS = 250;
 
 const SitMessage = z.object({
   spotId: z.string().min(1),
@@ -133,6 +155,10 @@ export class VenueRoom extends Room {
   private moveBuckets = new Map<string, TokenBucket>();
   private lastEmoteAt = new Map<string, number>();
   private lastSayAt = new Map<string, number>();
+  /** Where this venue sits on CT Island, or null if it is not placed. */
+  private placement: VenuePlacement | null = null;
+  /** sessionId -> last presence write; only set once the player has moved here. */
+  private posWrittenAt = new Map<string, number>();
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
@@ -153,6 +179,7 @@ export class VenueRoom extends Room {
     }
 
     this.state.venueId = venueId;
+    this.placement = getIslandGeometry().venues?.[venueId] ?? null;
     this.state.instanceId = this.roomId ? this.roomId : 'inst-' + Date.now().toString(36);
     // Message handlers. 'welcome' is server-to-client only (sent in onJoin).
     this.onMessage('move', (client, msg) => this.handleMove(client, msg));
@@ -193,12 +220,15 @@ export class VenueRoom extends Room {
     }
     this.anchors.set(client.sessionId, newAnchor(player.x, player.z, Date.now()));
     this.moveBuckets.set(client.sessionId, new TokenBucket(10, 5));
+    this.syncIsland(player);
 
     this.state.players.set(client.sessionId, player);
     // Welcome the joiner.
+    const p = this.placement;
     client.send('welcome', {
       serverNow: Date.now(),
       instanceId: this.state.instanceId,
+      ...(p ? { island: { x: p.origin[0], y: p.origin[1], z: p.origin[2], yaw: p.yaw } } : {}),
     });
   }
 
@@ -210,6 +240,9 @@ export class VenueRoom extends Room {
     if (player && player.spotId) {
       this.spotOccupants.delete(player.spotId);
     }
+    // Hand the street rooms the spot the player walked out from.
+    if (player && this.posWrittenAt.has(client.sessionId)) this.writePos(player, Date.now());
+    this.posWrittenAt.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.anchors.delete(client.sessionId);
     this.moveBuckets.delete(client.sessionId);
@@ -230,34 +263,83 @@ export class VenueRoom extends Room {
     const player = this.state.players.get(client.sessionId);
     const anchor = this.anchors.get(client.sessionId);
     if (!player || !anchor) return;
+    // Island-frame moves are converted to the venue's own frame; replies
+    // go back in the frame the client used.
+    const island = parsed.data.island === true;
+    const p = this.placement;
+    if (island && !p) {
+      client.send('rejected', { type: 'move', code: 'VALIDATION_FAILED' });
+      return;
+    }
+    const [tx, tz] = island
+      ? islandToVenue(p!, parsed.data.x, parsed.data.z)
+      : [parsed.data.x, parsed.data.z];
+    const out = (x: number, z: number): { x: number; z: number; island?: true } => {
+      if (!island) return { x, z };
+      const [ix, iz] = venueToIsland(p!, x, z);
+      return { x: ix, z: iz, island: true };
+    };
     const rects = this.spotsCfg.venues[this.state.venueId]?.walkable ?? [];
     const inside = (x: number, z: number): boolean =>
       rects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1);
-    if (!inside(parsed.data.x, parsed.data.z)) {
-      client.send('rejected', { type: 'move', code: 'OUT_OF_BOUNDS', x: player.x, z: player.z });
+    if (!inside(tx, tz)) {
+      client.send('rejected', { type: 'move', code: 'OUT_OF_BOUNDS', ...out(player.x, player.z) });
       return;
     }
     // Clamp to the distance budget. The clamped point lies on the segment
     // from the last accepted point, which can cross a gap between two
     // rectangles; keep the player where they were in that case.
     const prev = { ...anchor };
-    const step = stepMove(anchor, parsed.data.x, parsed.data.z, now);
+    const step = stepMove(anchor, tx, tz, now);
     if (step.clamped && !inside(step.x, step.z)) {
       Object.assign(anchor, prev, { at: now });
-      client.send('corrected', { x: player.x, z: player.z });
+      client.send('corrected', out(player.x, player.z));
       return;
     }
-    if (step.clamped) client.send('corrected', { x: step.x, z: step.z });
+    if (step.clamped) client.send('corrected', out(step.x, step.z));
     player.x = step.x;
     player.z = step.z;
     const dist = step.dist;
-    if (parsed.data.rotY !== undefined) player.rotY = parsed.data.rotY;
+    if (parsed.data.rotY !== undefined) {
+      player.rotY = island && p ? parsed.data.rotY - (p.yaw * Math.PI) / 180 : parsed.data.rotY;
+    }
+    this.syncIsland(player);
+    if (now - (this.posWrittenAt.get(client.sessionId) ?? 0) >= POS_WRITE_MS) {
+      this.posWrittenAt.set(client.sessionId, now);
+      this.writePos(player, now);
+    }
     // If seated, stand up.
     if (player.spotId) {
       this.spotOccupants.delete(player.spotId);
       player.spotId = '';
     }
     player.anim = dist > 0 ? 'loco_walk' : 'loco_idle';
+  }
+
+  /**
+   * Fill the player's island pose from their venue pose.
+   * @param player - The player to update.
+   */
+  private syncIsland(player: PlayerState): void {
+    const p = this.placement;
+    if (!p) return;
+    const [ix, iz] = venueToIsland(p, player.x, player.z);
+    player.ix = ix;
+    player.iz = iz;
+    player.irotY = player.rotY + (p.yaw * Math.PI) / 180;
+  }
+
+  /**
+   * Record the player's island position for the street and vehicles rooms.
+   * @param player - The player.
+   * @param now - Server time in ms.
+   */
+  private writePos(player: PlayerState, now: number): void {
+    if (!this.placement) return;
+    const value = encodePos({ x: player.ix, z: player.iz, at: now });
+    void Promise.resolve(this.presence?.hset(POS_HASH, player.userId, value)).catch(() => {
+      // Presence is best effort.
+    });
   }
 
   private handleSit(client: Client, msg: unknown): void {

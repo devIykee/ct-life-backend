@@ -1,0 +1,7 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "0.0.1",
+  "_note": "Server-owned parked vehicles for the vehicles room: one vehicle per bay, its id is the bay id. Island metres, yaw in radians (same as VehicleState). kind is compact | suv | sports | moped | roadstar | heli | drone. Empty until the frontend exports its parking bays; clients can still register their own parked cars with vehicle_enter.",
+  "bays": []
+}

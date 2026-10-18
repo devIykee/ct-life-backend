@@ -19,6 +19,8 @@ export const MoveMessage = z.object({
   x: z.number().finite(),
   z: z.number().finite(),
   rotY: z.number().finite(),
+  /** Venue rooms: true when x/z/rotY are island coordinates (converted by the server). */
+  island: z.boolean().optional(),
 });
 export type MoveMessage = z.infer<typeof MoveMessage>;
 
@@ -127,6 +129,8 @@ export type VehicleHitMessage = z.infer<typeof VehicleHitMessage>;
 export const CorrectedMessage = z.object({
   x: z.number().finite(),
   z: z.number().finite(),
+  /** Set when the position is in island coordinates (the move was sent with `island: true`). */
+  island: z.boolean().optional(),
 });
 export type CorrectedMessage = z.infer<typeof CorrectedMessage>;
 
@@ -160,6 +164,15 @@ export type VehicleHitRelayMessage = z.infer<typeof VehicleHitRelayMessage>;
 export const WelcomeMessage = z.object({
   serverNow: z.number().int().nonnegative(),
   instanceId: z.string().min(1),
+  /** Venue rooms placed on CT Island: where the venue's local frame sits. */
+  island: z
+    .object({
+      x: z.number().finite(),
+      y: z.number().finite(),
+      z: z.number().finite(),
+      yaw: z.number().finite(),
+    })
+    .optional(),
 });
 export type WelcomeMessage = z.infer<typeof WelcomeMessage>;
 

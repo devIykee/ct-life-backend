@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalPresence } from 'colyseus';
 import { Encoder, type Schema } from '@colyseus/schema';
 import { PlayerState } from '../../../contract/realtime/states.js';
-import { setIslandGeometry, POS_HASH, encodePos } from '../movement.js';
+import { setIslandGeometry, setParkingBays, POS_HASH, encodePos, DISTRICTS } from '../movement.js';
 
 vi.mock('../player.js', async (orig) => {
   const real = await orig<typeof import('../player.js')>();
@@ -83,19 +83,28 @@ function msg(room: AnyRoom, name: string, client: unknown, payload: unknown): Pr
 
 let now = 1_000_000;
 beforeEach(() => {
-  setIslandGeometry({ island: ISLAND, districts: { timeline: TIMELINE } });
+  setIslandGeometry({ island: [ISLAND], districts: { timeline: TIMELINE } });
+  setParkingBays([]);
   vi.spyOn(Date, 'now').mockImplementation(() => now);
 });
 afterEach(() => {
   setIslandGeometry(null);
+  setParkingBays(null);
   vi.restoreAllMocks();
 });
 
 describe('StreetRoom', () => {
-  it('refuses a district whose polygon is not set yet', async () => {
-    await expect(boot(TestStreet, new LocalPresence(), { district: 'trenches' })).rejects.toThrow(
+  it('refuses a district whose polygon is not set', async () => {
+    await expect(boot(TestStreet, new LocalPresence(), { district: 'islet' })).rejects.toThrow(
       /bounds not set/,
     );
+  });
+
+  it('opens a room for every district in the real districts.json', async () => {
+    setIslandGeometry(null);
+    for (const district of DISTRICTS) {
+      await expect(boot(TestStreet, new LocalPresence(), { district })).resolves.toBeDefined();
+    }
   });
 
   it('places on first move, clamps a teleport and stays in bounds', async () => {
@@ -203,6 +212,43 @@ describe('VehiclesRoom', () => {
     expect(v.driver).toBe('');
     await new Promise((r) => setTimeout(r, 0));
     expect(exits).toHaveLength(1);
+  });
+
+  it('parks a server car on each valid bay and brings an abandoned one back', async () => {
+    setParkingBays([
+      { id: 'bay_1', kind: 'compact', x: 10, y: 0, z: 0, yaw: 0 },
+      { id: 'bay_bad', kind: 'tank', x: 0, y: 0, z: 0, yaw: 0 },
+    ]);
+    const { room, presence } = await setup();
+    const vehicles = (
+      room as unknown as { state: { vehicles: Map<string, { x: number; driver: string }> } }
+    ).state.vehicles;
+    expect([...vehicles.keys()]).toEqual(['bay_1']);
+
+    await presence.hset(POS_HASH, 'u1', encodePos({ x: 10, z: 0, at: now }));
+    const c = fakeClient('s1');
+    await room.onJoin!(c, { userId: 'u1' });
+    await msg(room, 'vehicle_enter', c, { id: 'bay_1' });
+    expect(vehicles.get('bay_1')?.driver).toBe('u1');
+    for (let i = 1; i <= 10; i++) {
+      now += 1000;
+      await msg(room, 'vehicle_move', c, {
+        id: 'bay_1',
+        x: 10 + i * 50,
+        y: 0,
+        z: 0,
+        yaw: 0,
+        pitch: 0,
+        roll: 0,
+        speed: 50,
+      });
+    }
+    await msg(room, 'vehicle_exit', c, { id: 'bay_1', x: vehicles.get('bay_1')!.x, z: 0, yaw: 0 });
+    room.onLeave!(c);
+    await presence.hdel(POS_HASH, 'u1');
+    now += 11 * 60_000;
+    await (room as unknown as { tick: (t: number) => Promise<void> }).tick(now);
+    expect(vehicles.get('bay_1')?.x).toBe(10);
   });
 
   it('rejects a taken vehicle and a far one', async () => {

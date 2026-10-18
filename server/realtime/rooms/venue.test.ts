@@ -64,7 +64,7 @@ describe('venue room (M2 stub)', () => {
 });
 
 describe('venue room movement', () => {
-  async function joined(): Promise<{
+  async function joined(presence: unknown = undefined): Promise<{
     room: VenueRoom;
     player: PlayerState;
     sent: Array<{ type: string; payload: Record<string, unknown> }>;
@@ -79,6 +79,7 @@ describe('venue room movement', () => {
       sessionId: 's1',
       send: (type: string, payload: Record<string, unknown>) => sent.push({ type, payload }),
     };
+    r.presence = presence;
     await room.onJoin(client as never, {});
     const player = room.state.players.get('s1')!;
     const move = (m: unknown): void =>
@@ -111,6 +112,59 @@ describe('venue room movement', () => {
       move({ x: 0, z: 10 });
       expect(player.z).toBeLessThan(-8);
       expect(sent.at(-1)?.type).toBe('corrected');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('venue room island coordinates', () => {
+  it('accepts island-frame moves, fills ix/iz and answers in the same frame', async () => {
+    let now = 2_000_000;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const { LocalPresence } = await import('colyseus');
+      const { venueToIsland, getIslandGeometry, POS_HASH, decodePos } =
+        await import('../movement.js');
+      const presence = new LocalPresence();
+      const room = new VenueRoom();
+      const r = room as unknown as Record<string, unknown>;
+      r.setSimulationInterval = () => undefined;
+      r.presence = presence;
+      await room.onCreate({ venueId: 'timeline_square' });
+      const sent: Array<{ type: string; payload: Record<string, unknown> }> = [];
+      const client = {
+        sessionId: 's1',
+        send: (type: string, payload: Record<string, unknown>) => sent.push({ type, payload }),
+      };
+      await room.onJoin(client as never, {});
+      expect(sent[0]?.payload.island).toMatchObject({ yaw: 354 });
+      const move = (m: unknown): void =>
+        (r.handleMove as (c: unknown, m: unknown) => void).call(room, client, m);
+      const placement = getIslandGeometry().venues!['timeline_square']!;
+      const player = room.state.players.get('s1')!;
+
+      now += 200;
+      const [ix, iz] = venueToIsland(placement, 0, -13);
+      move({ x: ix, z: iz, rotY: 1, island: true });
+      expect(player.x).toBeCloseTo(0, 3);
+      expect(player.z).toBeCloseTo(-13, 3);
+      expect(player.ix).toBeCloseTo(ix, 3);
+      expect(player.iz).toBeCloseTo(iz, 3);
+      expect(player.irotY).toBeCloseTo(1, 5);
+
+      now += 100;
+      const [fx, fz] = venueToIsland(placement, 0, 10);
+      move({ x: fx, z: fz, island: true });
+      const c = sent.at(-1)!;
+      expect(c.type).toBe('corrected');
+      expect(c.payload.island).toBe(true);
+      expect(c.payload.x).toBeCloseTo(player.ix, 3);
+
+      // Leaving hands the island position to the street rooms.
+      room.onLeave(client as never);
+      const pos = decodePos(await presence.hget(POS_HASH, 'u1'));
+      expect(pos?.x).toBeCloseTo(player.ix, 1);
     } finally {
       spy.mockRestore();
     }

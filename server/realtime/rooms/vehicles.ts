@@ -6,6 +6,10 @@
  * receives the vehicles within 250 m of them (dropped again past 300 m),
  * plus the one they drive; interest is refreshed at 1 Hz.
  *
+ * Server-owned parked vehicles: one per bay in `contract/ids/parking.json`
+ * (id = bay id). A bay car left elsewhere for 10 minutes goes back to its
+ * bay once nobody is within 150 m of it or the bay.
+ *
  * A client's position comes from the street rooms (presence hash
  * `ctl:pos`) or, while driving, from their vehicle. Clients send no
  * position of their own here.
@@ -32,6 +36,7 @@ import {
   VehicleHitMessage,
   VehicleMoveMessage,
   VEHICLE_MAX_SPEED_M_PER_S,
+  VEHICLE_KINDS,
   VEHICLE_MAX_Y_M,
   type VehicleKind,
 } from '../../../contract/realtime/messages.js';
@@ -41,11 +46,13 @@ import {
   VEHICLE_EXIT_CHANNEL,
   WALK_SPEED_M_PER_S,
   decodePos,
-  distanceToPolygon,
+  distanceToLand,
   encodePos,
   getIslandGeometry,
+  getParkingBays,
   TokenBucket,
   type IslandPos,
+  type ParkingBay,
   type Polygon,
 } from '../movement.js';
 
@@ -61,7 +68,12 @@ const POS_STALE_MS = 5_000;
 const HIT_RADIUS_M = 8;
 const HIT_MIN_SPEED_M_PER_S = 3;
 const VICTIM_COOLDOWN_MS = 1_500;
+/** Cap on client-registered vehicles (server-owned bay cars are extra). */
 const MAX_VEHICLES = 400;
+/** A bay car left elsewhere this long goes back to its bay... */
+const BAY_RETURN_MS = 10 * 60_000;
+/** ...once nobody is this close to it or to the bay. */
+const BAY_RETURN_CLEAR_M = 150;
 const MAX_SPAWNED_PER_USER = 2;
 /** Client-registered vehicles nobody has driven for this long are removed. */
 const SPAWNED_IDLE_MS = 10 * 60_000;
@@ -80,6 +92,8 @@ interface VehicleSession {
 interface VehicleMeta {
   /** userId that registered it, or null for server-owned vehicles. */
   spawnedBy: string | null;
+  /** The bay a server-owned vehicle belongs to. */
+  bay: ParkingBay | null;
   spawnedAt: number;
   driverSession: string | null;
   /** Last accepted move time and remaining distance budget (metres). */
@@ -90,7 +104,7 @@ interface VehicleMeta {
 
 export class VehiclesRoom extends Room {
   declare state: VehiclesState;
-  private island: Polygon = [];
+  private island: readonly Polygon[] = [];
   private sessions = new Map<string, VehicleSession>();
   private meta = new Map<string, VehicleMeta>();
   private lastHitAt = new Map<string, number>();
@@ -101,11 +115,12 @@ export class VehiclesRoom extends Room {
    */
   override async onCreate(_options: unknown): Promise<void> {
     const geo = getIslandGeometry();
-    if (geo.island.length < 3) throw new Error('Island outline not set');
+    if (geo.island.length === 0) throw new Error('Island outline not set');
     this.island = geo.island;
     this.maxClients = 1_000;
     this.patchRate = 100;
     this.state = new VehiclesState();
+    this.seedBays(Date.now());
     this.onMessage('vehicle_enter', (c, m) => void this.handleEnter(c, m));
     this.onMessage('vehicle_move', (c, m) => this.handleMove(c, m));
     this.onMessage('vehicle_exit', (c, m) => this.handleExit(c, m));
@@ -179,6 +194,7 @@ export class VehiclesRoom extends Room {
       this.state.vehicles.set(m.id, v);
       this.meta.set(m.id, {
         spawnedBy: s.userId,
+        bay: null,
         spawnedAt: now,
         driverSession: null,
         at: now,
@@ -211,7 +227,7 @@ export class VehiclesRoom extends Room {
       client.send('rejected', { type: 'vehicle_move', code: 'NOT_DRIVER', id: m.id });
       return;
     }
-    if (distanceToPolygon(this.island, m.x, m.z) > WATER_MARGIN_M) {
+    if (distanceToLand(this.island, m.x, m.z) > WATER_MARGIN_M) {
       client.send('rejected', { type: 'vehicle_move', code: 'OUT_OF_BOUNDS', id: m.id });
       client.send('vehicle_corrected', { id: v.id, x: v.x, y: v.y, z: v.z });
       return;
@@ -331,15 +347,16 @@ export class VehiclesRoom extends Room {
         else if (has && !own && d > INTEREST_DROP_M) s.view.remove(v);
       }
     }
+    const observers = Object.values(all)
+      .map(decodePos)
+      .filter((p): p is IslandPos => p !== null && now - p.at <= 10_000);
     for (const [id, meta] of this.meta) {
       const v = this.state.vehicles.get(id);
-      if (
-        meta.spawnedBy !== null &&
-        v &&
-        v.driver === '' &&
-        now - meta.idleSince > SPAWNED_IDLE_MS
-      ) {
+      if (!v || v.driver !== '') continue;
+      if (meta.spawnedBy !== null && now - meta.idleSince > SPAWNED_IDLE_MS) {
         this.despawn(id);
+      } else if (meta.bay && now - meta.idleSince > BAY_RETURN_MS) {
+        this.returnToBay(v, meta.bay, observers);
       }
     }
     if (this.ticks % POS_SWEEP_EVERY_TICKS === 0) {
@@ -414,7 +431,64 @@ export class VehiclesRoom extends Room {
       if (!parked) return false;
       this.despawn(parked[0]);
     }
-    return this.state.vehicles.size < MAX_VEHICLES;
+    let spawned = 0;
+    for (const m of this.meta.values()) if (m.spawnedBy !== null) spawned++;
+    return spawned < MAX_VEHICLES;
+  }
+
+  /**
+   * Park one server-owned vehicle on each bay from parking.json.
+   * @param now - Server time in ms.
+   */
+  private seedBays(now: number): void {
+    for (const bay of getParkingBays()) {
+      const ok =
+        typeof bay.id === 'string' &&
+        bay.id !== '' &&
+        (VEHICLE_KINDS as readonly string[]).includes(bay.kind) &&
+        [bay.x, bay.y, bay.z, bay.yaw].every((n) => Number.isFinite(n));
+      if (!ok || this.state.vehicles.has(bay.id)) continue;
+      const v = new VehicleState();
+      v.id = bay.id;
+      v.kind = bay.kind;
+      v.x = bay.x;
+      v.y = bay.y;
+      v.z = bay.z;
+      v.yaw = bay.yaw;
+      this.state.vehicles.set(bay.id, v);
+      this.meta.set(bay.id, {
+        spawnedBy: null,
+        bay,
+        spawnedAt: now,
+        driverSession: null,
+        at: now,
+        budget: 0,
+        idleSince: now,
+      });
+    }
+  }
+
+  /**
+   * Put an abandoned bay car back on its bay, unless someone would see it jump.
+   * @param v - The vehicle.
+   * @param bay - Its bay.
+   * @param observers - Recent player positions.
+   */
+  private returnToBay(v: VehicleState, bay: ParkingBay, observers: IslandPos[]): void {
+    if (Math.hypot(v.x - bay.x, v.z - bay.z) < 2) return;
+    const seen = observers.some(
+      (o) =>
+        Math.hypot(o.x - v.x, o.z - v.z) < BAY_RETURN_CLEAR_M ||
+        Math.hypot(o.x - bay.x, o.z - bay.z) < BAY_RETURN_CLEAR_M,
+    );
+    if (seen) return;
+    v.x = bay.x;
+    v.y = bay.y;
+    v.z = bay.z;
+    v.yaw = bay.yaw;
+    v.pitch = 0;
+    v.roll = 0;
+    v.flags = 0;
   }
 
   private despawn(id: string): void {

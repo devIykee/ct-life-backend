@@ -157,21 +157,37 @@ export function distanceToPolygon(poly: Polygon, x: number, z: number): number {
 
 // --- Island geometry -------------------------------------------------
 
+/** District ids, as in the frontend island plan. */
 export const DISTRICTS = [
   'timeline',
   'trenches',
-  'builder_hills',
-  'airdrop_farm',
   'dubai_marina',
+  'boardwalk',
+  'airdrop_farm',
+  'builder_hills',
+  'breakpoint',
   'residences',
-  'beachfront',
   'mountain',
+  'islet',
 ] as const;
 export type DistrictId = (typeof DISTRICTS)[number];
 
+/** Where a venue's local frame sits on the island. */
+export interface VenuePlacement {
+  readonly district: string;
+  /** Island [x, y, z] of venue-local (0, 0). */
+  readonly origin: readonly [number, number, number];
+  /** Degrees clockwise from north (Unity +Y rotation). */
+  readonly yaw: number;
+  /** Island [x, z] of the door. */
+  readonly door: Point;
+}
+
 export interface IslandGeometry {
-  readonly island: Polygon;
+  /** Land polygons (coast, islet, causeway). */
+  readonly island: readonly Polygon[];
   readonly districts: Partial<Record<DistrictId, Polygon>>;
+  readonly venues?: Readonly<Record<string, VenuePlacement>>;
 }
 
 let geometry: IslandGeometry | null = null;
@@ -184,9 +200,64 @@ export function getIslandGeometry(): IslandGeometry {
   if (geometry) return geometry;
   const raw = JSON.parse(
     readFileSync(join(process.cwd(), 'contract', 'ids', 'districts.json'), 'utf8'),
-  ) as { island?: Polygon; districts?: Partial<Record<DistrictId, Polygon>> };
-  geometry = { island: raw.island ?? [], districts: raw.districts ?? {} };
+  ) as Partial<IslandGeometry>;
+  geometry = {
+    island: (raw.island ?? []).filter((p) => p.length >= 3),
+    districts: raw.districts ?? {},
+    venues: raw.venues ?? {},
+  };
   return geometry;
+}
+
+/**
+ * Venue-local x/z to island x/z. Same formula as the client's
+ * IslandVenue.ToIsland.
+ * @param v - The venue placement.
+ * @param x - Local x.
+ * @param z - Local z.
+ * @returns Island [x, z].
+ */
+export function venueToIsland(v: VenuePlacement, x: number, z: number): Point {
+  const a = (v.yaw * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  return [v.origin[0] + x * c + z * s, v.origin[2] - x * s + z * c];
+}
+
+/**
+ * Island x/z to venue-local x/z (IslandVenue.ToLocal).
+ * @param v - The venue placement.
+ * @param x - Island x.
+ * @param z - Island z.
+ * @returns Local [x, z].
+ */
+export function islandToVenue(v: VenuePlacement, x: number, z: number): Point {
+  const a = (v.yaw * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const dx = x - v.origin[0];
+  const dz = z - v.origin[2];
+  return [dx * c - dz * s, dx * s + dz * c];
+}
+
+/**
+ * @param land - Land polygons.
+ * @param x - Point x.
+ * @param z - Point z.
+ * @returns True when the point is on any of them.
+ */
+export function onLand(land: readonly Polygon[], x: number, z: number): boolean {
+  return land.some((p) => pointInPolygon(p, x, z));
+}
+
+/**
+ * @param land - Land polygons.
+ * @param x - Point x.
+ * @param z - Point z.
+ * @returns Metres to the nearest land, zero when on land.
+ */
+export function distanceToLand(land: readonly Polygon[], x: number, z: number): number {
+  return land.reduce((best, p) => Math.min(best, distanceToPolygon(p, x, z)), Infinity);
 }
 
 /**
@@ -195,6 +266,41 @@ export function getIslandGeometry(): IslandGeometry {
  */
 export function setIslandGeometry(g: IslandGeometry | null): void {
   geometry = g;
+}
+
+// --- Parking bays ----------------------------------------------------
+
+/** A bay where the server keeps a parked vehicle. Island metres, yaw in radians. */
+export interface ParkingBay {
+  readonly id: string;
+  readonly kind: string;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly yaw: number;
+}
+
+let bays: readonly ParkingBay[] | null = null;
+
+/**
+ * Parking bays from `contract/ids/parking.json` (frontend-owned).
+ * @returns The bays, or [] when none have been exported yet.
+ */
+export function getParkingBays(): readonly ParkingBay[] {
+  if (bays) return bays;
+  const raw = JSON.parse(
+    readFileSync(join(process.cwd(), 'contract', 'ids', 'parking.json'), 'utf8'),
+  ) as { bays?: ParkingBay[] };
+  bays = raw.bays ?? [];
+  return bays;
+}
+
+/**
+ * Replace the bays (tests only).
+ * @param b - Bays to use, or null to re-read the file.
+ */
+export function setParkingBays(b: readonly ParkingBay[] | null): void {
+  bays = b;
 }
 
 // --- Last known island position (shared across rooms) -----------------

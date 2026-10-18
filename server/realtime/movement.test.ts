@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
+  DISTRICTS,
   decodePos,
+  distanceToLand,
+  getIslandGeometry,
+  islandToVenue,
+  venueToIsland,
+  onLand,
+  setIslandGeometry,
   distanceToPolygon,
   encodePos,
   newAnchor,
@@ -82,5 +90,50 @@ describe('polygons', () => {
   it('position encoding round-trips', () => {
     expect(decodePos(encodePos({ x: 1.234, z: -5, at: 42 }))).toEqual({ x: 1.23, z: -5, at: 42 });
     expect(decodePos('nope')).toBeNull();
+  });
+});
+
+describe('contract/ids/districts.json', () => {
+  setIslandGeometry(null);
+  const geo = getIslandGeometry();
+
+  it('has a polygon for every district', () => {
+    for (const id of DISTRICTS) expect(geo.districts[id]?.length ?? 0).toBeGreaterThanOrEqual(3);
+  });
+
+  it('puts the plaza, the islet and the causeway on land, and the open sea off it', () => {
+    expect(onLand(geo.island, 0, 0)).toBe(true);
+    expect(onLand(geo.island, 800, -646)).toBe(true);
+    expect(onLand(geo.island, 802, -532)).toBe(true);
+    expect(onLand(geo.island, 2000, 0)).toBe(false);
+    expect(distanceToLand(geo.island, 2000, 0)).toBeGreaterThan(1000);
+  });
+});
+
+describe('venue placement', () => {
+  setIslandGeometry(null);
+  const v = getIslandGeometry().venues!['terminal_cafe']!;
+
+  it('round-trips venue and island coordinates', () => {
+    const [ix, iz] = venueToIsland(v, 3, -4);
+    const [lx, lz] = islandToVenue(v, ix, iz);
+    expect(lx).toBeCloseTo(3);
+    expect(lz).toBeCloseTo(-4);
+  });
+
+  it('puts each venue entrance spot near its door on the island', () => {
+    const spots = JSON.parse(readFileSync('contract/ids/spots.json', 'utf8')) as {
+      venues: Record<string, { spots: Array<{ id: string; x?: number; z?: number }> }>;
+    };
+    const venues = getIslandGeometry().venues!;
+    let checked = 0;
+    for (const [id, p] of Object.entries(venues)) {
+      const e = spots.venues[id]?.spots.find((s) => s.id.endsWith('.entrance'));
+      if (e?.x === undefined || e.z === undefined) continue;
+      const [ix, iz] = venueToIsland(p, e.x, e.z);
+      expect(Math.hypot(ix - p.door[0], iz - p.door[1]), id).toBeLessThan(4);
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(10);
   });
 });

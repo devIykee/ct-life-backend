@@ -29,6 +29,13 @@ export class PlayerState extends Schema {
   @type('number') emoteAt = 0;
   @type('string') spotId = '';
   @type('boolean') talking = false;
+  /**
+   * Island pose, server-filled: the same as x/z/rotY in street rooms, the
+   * converted position in venue rooms placed on CT Island (0 otherwise).
+   */
+  @type('float32') ix = 0;
+  @type('float32') iz = 0;
+  @type('float32') irotY = 0;
 }
 
 export class NpcState extends Schema {
@@ -57,7 +64,7 @@ export class VenueState extends Schema {
  * (+X east, +Z north, origin at the downtown plaza).
  */
 export class StreetState extends Schema {
-  /** timeline | trenches | builder_hills | airdrop_farm | dubai_marina | residences | beachfront | mountain */
+  /** timeline | trenches | dubai_marina | boardwalk | airdrop_farm | builder_hills | breakpoint | residences | mountain | islet */
   @type('string') district = '';
   @type('string') instanceId = '';
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
