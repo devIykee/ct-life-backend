@@ -8,7 +8,7 @@
  * The hidden arc on a coin (stealth / hype / peak / outcome) lives only
  * on the server. It is never put in a state field.
  */
-import { MapSchema, Schema, type } from '@colyseus/schema';
+import { MapSchema, Schema, type, view } from '@colyseus/schema';
 
 export class PlayerState extends Schema {
   @type('string') userId = '';
@@ -49,6 +49,45 @@ export class VenueState extends Schema {
   @type('string') instanceId = '';
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
   @type({ map: NpcState }) npcs = new MapSchema<NpcState>();
+}
+
+/**
+ * Street room: one per district, players walking between venues.
+ * Same PlayerState as venues, but x/z are island metres
+ * (+X east, +Z north, origin at the downtown plaza).
+ */
+export class StreetState extends Schema {
+  /** timeline | trenches | builder_hills | airdrop_farm | dubai_marina | residences | beachfront | mountain */
+  @type('string') district = '';
+  @type('string') instanceId = '';
+  @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
+}
+
+/** One vehicle in the island-wide vehicles room. Island metres and radians. */
+export class VehicleState extends Schema {
+  @type('string') id = '';
+  /** compact | suv | sports | moped | roadstar | heli | drone */
+  @type('string') kind = '';
+  /** userId of the driver, '' when parked. */
+  @type('string') driver = '';
+  @type('float32') x = 0;
+  @type('float32') y = 0;
+  @type('float32') z = 0;
+  @type('float32') yaw = 0;
+  @type('float32') pitch = 0;
+  @type('float32') roll = 0;
+  /** m/s as reported by the driver, capped per kind. */
+  @type('float32') speed = 0;
+  /** Client-defined bits (lights, horn, ...). 0..65535. */
+  @type('uint16') flags = 0;
+}
+
+/**
+ * Vehicles room: one island-wide room. Each client only receives the
+ * vehicles within about 250 m of them (plus their own).
+ */
+export class VehiclesState extends Schema {
+  @view() @type({ map: VehicleState }) vehicles = new MapSchema<VehicleState>();
 }
 
 export class CoinState extends Schema {

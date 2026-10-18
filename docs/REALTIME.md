@@ -6,12 +6,14 @@ The full content lives in M1 onward. M0 ships the directory layout and the messa
 
 ## Rooms
 
-| Ph  | Room     | One per                           | Max clients | Patch rate | State                                    |
-| --- | -------- | --------------------------------- | ----------- | ---------- | ---------------------------------------- |
-| 1   | `city`   | Whole game, sharded at 1,000      | 1,000       | 1 Hz       | online count, Market Mood, active events |
-| 1   | `venue`  | Venue instance (filterBy venueId) | 50          | 10 Hz      | players and NPCs in that venue           |
-| 2   | `market` | Whole game, sharded (M3)          | 2,000       | 0.5 Hz     | live coins                               |
-| 4   | `home`   | Player home, created on visit     | 12          | 10 Hz      | same schema as venue                     |
+| Ph  | Room       | One per                           | Max clients | Patch rate | State                                              |
+| --- | ---------- | --------------------------------- | ----------- | ---------- | -------------------------------------------------- |
+| 1   | `city`     | Whole game, sharded at 1,000      | 1,000       | 1 Hz       | online count, Market Mood, active events           |
+| 1   | `venue`    | Venue instance (filterBy venueId) | 50          | 10 Hz      | players and NPCs in that venue                     |
+| 2   | `market`   | Whole game, sharded (M3)          | 2,000       | 0.5 Hz     | live coins                                         |
+| 4   | `home`     | Player home, created on visit     | 12          | 10 Hz      | same schema as venue                               |
+| 7   | `street`   | District (filterBy district)      | 100         | 10 Hz      | players walking that district, island metres       |
+| 7   | `vehicles` | Whole island, one room            | 1,000       | 10 Hz      | vehicles; each client sees only those within 250 m |
 
 ## State (will be filled in M1)
 
@@ -21,6 +23,14 @@ The M1 milestone produces `contract/realtime/*.ts` with `@colyseus/schema` class
 - `MarketState` — `coins` (map of `CoinState` by coinId).
 - `CityState` — `online`, `mood`, `eventIds`, `metaId`.
 - `HomeState` — same as VenueState.
+- `StreetState` - `district`, `instanceId`, `players` (map of `PlayerState` by sessionId). x/z are island metres (+X east, +Z north, origin at the downtown plaza).
+- `VehiclesState` - `vehicles` (map of `VehicleState` by id, filtered per client with `@view()`: within 250 m in, past 300 m out, refreshed at 1 Hz; your own vehicle always).
+
+`VehicleState`:
+
+- `id, kind, driver: string` - `kind` is `compact | suv | sports | moped | roadstar | heli | drone`; `driver` is the driver's userId or `''` when parked.
+- `x, y, z, yaw, pitch, roll, speed: float32` - island metres, radians, m/s.
+- `flags: uint16` - client-defined bits.
 
 `PlayerState` (M1):
 
@@ -58,32 +68,40 @@ The M1 milestone produces the `messages.ts` types with Zod validation:
 
 ### Client → server
 
-| Room    | Type      | Payload          | Limit / validation                                                                         |
-| ------- | --------- | ---------------- | ------------------------------------------------------------------------------------------ |
-| `venue` | `move`    | `{ x, z, rotY }` | 10/s; server rejects speeds > 6 m/s and points outside walkable rectangles in `spots.json` |
-| `venue` | `sit`     | `{ spotId }`     | spot exists and free, else `SPOT_TAKEN`                                                    |
-| `venue` | `stand`   | `{}`             | —                                                                                          |
-| `venue` | `emote`   | `{ emoteId }`    | once per second; id must be in `anims.json`                                                |
-| `venue` | `say`     | `{ text }`       | 140 chars, once per 2 s; strip links and phone numbers; profanity filter                   |
-| `venue` | `talking` | `{ on }`         | mirrors LiveKit                                                                            |
-| `venue` | `npc_tap` | `{ npcId }`      | Phase 1: tapping Giveaway Guy's "drop wallet" costs $50 Cash, sends `toast_drained`        |
+| Room              | Type                      | Payload                                            | Limit / validation                                                                                                                                                                                                                                                                                                                                                                                |
+| ----------------- | ------------------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `venue`, `street` | `move`                    | `{ x, z, rotY }`                                   | 10/s sustained, bursts of 5. Distance budget from the last accepted move: refills at 6.5 m/s, 0.5 m slack, at most 1 s banked. Past the budget the move is clamped, applied and answered with `corrected`. Venue: target must be inside a walkable rectangle in `spots.json`. Street: inside the island outline and within 30 m of the district polygon in `districts.json`, else `OUT_OF_BOUNDS` |
+| `venue`           | `sit`                     | `{ spotId }`                                       | spot exists and free, else `SPOT_TAKEN`                                                                                                                                                                                                                                                                                                                                                           |
+| `venue`           | `stand`                   | `{}`                                               | -                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `venue`           | `emote`                   | `{ emoteId }`                                      | once per second; id must be in `anims.json`                                                                                                                                                                                                                                                                                                                                                       |
+| `venue`           | `say`                     | `{ text }`                                         | 140 chars, once per 2 s; strip links and phone numbers; profanity filter                                                                                                                                                                                                                                                                                                                          |
+| `venue`           | `talking`                 | `{ on }`                                           | mirrors LiveKit                                                                                                                                                                                                                                                                                                                                                                                   |
+| `venue`           | `npc_tap`                 | `{ npcId }`                                        | Phase 1: tapping Giveaway Guy's "drop wallet" costs $50 Cash, sends `toast_drained`                                                                                                                                                                                                                                                                                                               |
+| `street`          | `emote`, `say`, `talking` | as venue                                           | as venue                                                                                                                                                                                                                                                                                                                                                                                          |
+| `vehicles`        | `vehicle_enter`           | `{ id, kind?, x?, y?, z?, yaw? }`                  | Vehicle free (`VEHICLE_TAKEN`), within 4 m of the player's street position (`VEHICLE_TOO_FAR`; `POSITION_UNKNOWN` if none in the last 5 s), not already driving (`ALREADY_DRIVING`). Unknown `id` with `kind` + pose registers a client-parked car there (2 per player, 400 total, `VEHICLE_LIMIT`; removed after 10 min unused). 2/s                                                             |
+| `vehicles`        | `vehicle_move`            | `{ id, x, y, z, yaw, pitch, roll, speed, flags? }` | Driver only (`NOT_DRIVER`), 10 Hz. Distance budget at the kind's cap (cars 60, moped 25, roadstar 70, heli 60, drone 20 m/s; 1 s banked), `speed` capped, y in -20..214. Clamped moves get `vehicle_corrected`. More than 50 m outside the island outline is `OUT_OF_BOUNDS`                                                                                                                      |
+| `vehicles`        | `vehicle_exit`            | `{ id, x, z, yaw }`                                | Driver only. Final parked pose (x/z ignored if more than 6 m from the last move). The street rooms accept the player's next move within 5 m of it without the walking rule (15 s). Disconnecting while driving parks the vehicle the same way                                                                                                                                                     |
+| `vehicles`        | `vehicle_hit`             | `{ victim, velocity: {x,y,z} }`                    | Sender must be driving at >= 3 m/s; impact <= min(kind cap, vehicle speed + 5); victim within 8 m of the vehicle (plus drift for their position's age). One hit per victim per 1.5 s; 2/s per sender. Relayed to the victim only                                                                                                                                                                  |
 
 ### Server → client
 
-| Room     | Type                | To                                | Payload                                                                                  |
-| -------- | ------------------- | --------------------------------- | ---------------------------------------------------------------------------------------- |
-| any      | `welcome`           | joiner                            | `{ serverNow, instanceId }`                                                              |
-| `venue`  | `said`              | everyone (except blocked senders) | `{ messageId, userId, sessionId, text, at }`                                             |
-| `venue`  | `toast`             | one player                        | `{ textId, params }`                                                                     |
-| `venue`  | `rejected`          | one player                        | `{ type, code }` (e.g. `SPOT_TAKEN`, `RATE_LIMITED`)                                     |
-| `city`   | `event`             | everyone                          | `{ eventId, params, at }` — liquidations, rugs, launches, exploits, mood, ORE motherlode |
-| `city`   | `liquidated`        | one player                        | `{ perpId, coinId, lossCents, at }` (REKT card)                                          |
-| `city`   | `payment_confirmed` | one player                        | `{ intentId, cashCents }`                                                                |
-| `city`   | `space_update`      | everyone in that space            | `{ spaceId }`                                                                            |
-| `city`   | `dm`                | one player                        | `{ messageId, fromUserId, text, at }`                                                    |
-| `city`   | `call_invite`       | one player                        | `{ callId, fromUserId, paid }`                                                           |
-| `city`   | `kicked`            | one player                        | `{ reasonId }`                                                                           |
-| `market` | `tape`              | everyone                          | `{ coinId, side, cashCents, name }` (trades >= $1,000 only)                              |
+| Room              | Type                | To                                | Payload                                                                                                        |
+| ----------------- | ------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| any               | `welcome`           | joiner                            | `{ serverNow, instanceId }`                                                                                    |
+| `venue`           | `said`              | everyone (except blocked senders) | `{ messageId, userId, sessionId, text, at }`                                                                   |
+| `venue`           | `toast`             | one player                        | `{ textId, params }`                                                                                           |
+| `venue`           | `rejected`          | one player                        | `{ type, code }` (e.g. `SPOT_TAKEN`, `RATE_LIMITED`); a rejected `move` adds the server `x, z` when known      |
+| `venue`, `street` | `corrected`         | one player                        | `{ x, z }`: the server clamped your move to this position; snap to it                                          |
+| `vehicles`        | `vehicle_corrected` | the driver                        | `{ id, x, y, z }`: same, for the vehicle                                                                       |
+| `vehicles`        | `vehicle_hit`       | the victim                        | `{ victim, velocity, by, vehicleId, at }`: ragdoll locally (schema `vehicle_hit_relay`, sent as `vehicle_hit`) |
+| `city`            | `event`             | everyone                          | `{ eventId, params, at }` - liquidations, rugs, launches, exploits, mood, ORE motherlode                       |
+| `city`            | `liquidated`        | one player                        | `{ perpId, coinId, lossCents, at }` (REKT card)                                                                |
+| `city`            | `payment_confirmed` | one player                        | `{ intentId, cashCents }`                                                                                      |
+| `city`            | `space_update`      | everyone in that space            | `{ spaceId }`                                                                                                  |
+| `city`            | `dm`                | one player                        | `{ messageId, fromUserId, text, at }`                                                                          |
+| `city`            | `call_invite`       | one player                        | `{ callId, fromUserId, paid }`                                                                                 |
+| `city`            | `kicked`            | one player                        | `{ reasonId }`                                                                                                 |
+| `market`          | `tape`              | everyone                          | `{ coinId, side, cashCents, name }` (trades >= $1,000 only)                                                    |
 
 ## Join and reconnection
 
@@ -111,18 +129,23 @@ sequenceDiagram
 - `venue` is sharded at 50. A full venue overflows into a parallel instance of the same venue; the new instance is announced on the city room.
 - `market` is sharded in M3; market rooms are read-only subscribers to the leader via Redis pub/sub. The contract change is additive (multiple `market` rooms instead of one) and is recorded in `contract/CHANGELOG.md`.
 - `home` is one room per visit, max 12 clients.
+- `street` is one room per district, overflowing at 100. A street room refuses to open until its polygon is in `contract/ids/districts.json`.
+- `vehicles` is a single island-wide room; interest management keeps each client's patches to nearby vehicles.
+- A player may be in two venue/street rooms at once (the client joins the next room about 1 s before leaving the last). Rooms do not de-duplicate users.
 
 ## Rate limits
 
-| Action                             | Limit         | Returned on exceed                |
-| ---------------------------------- | ------------- | --------------------------------- |
-| REST, per user                     | 20 req/s      | `RATE_LIMITED`                    |
-| `move`                             | 10/s          | `RATE_LIMITED` (rejected message) |
-| `say`                              | 1 per 2 s     | `RATE_LIMITED`                    |
-| `emote`                            | 1/s           | `RATE_LIMITED`                    |
-| Login, per IP                      | 5 in 60 s     | `RATE_LIMITED`                    |
-| Account/character creation, per IP | 3 in 60 s     | `RATE_LIMITED`                    |
-| Global login concurrency           | 200 in flight | `SERVER_BUSY` with `Retry-After`  |
+| Action                             | Limit         | Returned on exceed               |
+| ---------------------------------- | ------------- | -------------------------------- |
+| REST, per user                     | 20 req/s      | `RATE_LIMITED`                   |
+| `move`                             | 10/s, burst 5 | dropped silently                 |
+| `vehicle_move`                     | 12/s, burst 6 | dropped silently                 |
+| `vehicle_enter`, `vehicle_hit`     | 2/s, burst 3  | `RATE_LIMITED` / dropped         |
+| `say`                              | 1 per 2 s     | `RATE_LIMITED`                   |
+| `emote`                            | 1/s           | `RATE_LIMITED`                   |
+| Login, per IP                      | 5 in 60 s     | `RATE_LIMITED`                   |
+| Account/character creation, per IP | 3 in 60 s     | `RATE_LIMITED`                   |
+| Global login concurrency           | 200 in flight | `SERVER_BUSY` with `Retry-After` |
 
 ## Chat filter
 

@@ -20,6 +20,8 @@ import { VenueRoom } from './rooms/venue.js';
 import { SpaceRoom } from './rooms/space.js';
 import { VideoCallRoom } from './rooms/video-call.js';
 import { HomeRoom } from './rooms/home.js';
+import { StreetRoom } from './rooms/street.js';
+import { VehiclesRoom } from './rooms/vehicles.js';
 import { createRedis } from '../shared/redis/client.js';
 
 export interface RealtimeHandle {
@@ -59,6 +61,10 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   });
   // One room per home so a host and their guests share it.
   gameServer.define('home', HomeRoom).filterBy(['homeId']);
+  // One street room per district (instances overflow at 100 players).
+  gameServer.define('street', StreetRoom).filterBy(['district']);
+  // One island-wide room for vehicles; clients only receive nearby ones.
+  gameServer.define('vehicles', VehiclesRoom);
   gameServer.define('video_call', VideoCallRoom, {
     maxClients: 8,
     filterBy: () => true,

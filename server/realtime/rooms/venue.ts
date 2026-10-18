@@ -9,12 +9,13 @@
  * keyed by sessionId.
  *
  * Rate limits (per session, enforced in the message handlers):
- *   - move    10 / s
+ *   - move    10 / s sustained, bursts of 5 pass (network jitter)
  *   - emote    1 / s
  *   - say      1 / 2 s
  *
- * Velocity cap: 6 m/s on move. Speeds above the cap are clamped and
- * the message is rejected.
+ * Speed: distance budget refilled at 6.5 m/s plus 0.5 m slack, measured
+ * from the last accepted move (see ../movement.ts). A move past the
+ * budget is clamped, applied, and the client gets `corrected {x, z}`.
  *
  * Walkable validation: every move's `(x, z)` is checked against
  * the venue's walkable rectangles from `contract/ids/spots.json`.
@@ -28,7 +29,6 @@
  * applies the `BrainOutput` to the NpcState for that NPC.
  */
 import { Room, Client } from 'colyseus';
-import { type JWTPayload } from 'jose';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -42,49 +42,18 @@ import {
 import type { NpcEvent } from '../../../packages/npc-brain/src/index.js';
 import { SeededRng } from '../../../packages/npc-brain/src/rng.js';
 import { SimulatedClock } from '../../../packages/npc-brain/src/clock.js';
-import { VenueState, NpcState, PlayerState } from '../../../contract/realtime/states.js';
+import { VenueState, NpcState } from '../../../contract/realtime/states.js';
 import { z } from 'zod';
-import { createJwtIssuer } from '../../shared/auth/jwt.js';
-import { loadConfig } from '../../shared/config/config.js';
 import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
-
-/** Contract order of PlayerState.look. */
-const LOOK_SLOTS = [
-  'skinTone',
-  'headId',
-  'hairId',
-  'topId',
-  'bottomId',
-  'shoesId',
-  'accId',
-] as const;
-
-const LOOK_FALLBACK = ['0', '0', '0', '0', '0', '0', '0'];
-
-/**
- * Flatten a stored character look into the room's string[7].
- *
- * `characters.look` is jsonb holding the contract `Look` object, but
- * PlayerState.look is a string[7] in contract order. Without this the
- * object fails an Array.isArray check and every player is broadcast
- * wearing the placeholder look.
- * @param raw - The jsonb value read from characters.look.
- * @returns The seven look ids in contract order.
- */
-function lookToArray(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    // Legacy rows that already stored an array.
-    return raw.length === LOOK_SLOTS.length ? raw.map((v) => String(v)) : [...LOOK_FALLBACK];
-  }
-  if (raw !== null && typeof raw === 'object') {
-    const o = raw as Record<string, unknown>;
-    return LOOK_SLOTS.map((k, i) => {
-      const v = o[k];
-      return typeof v === 'string' && v !== '' ? v : LOOK_FALLBACK[i]!;
-    });
-  }
-  return [...LOOK_FALLBACK];
-}
+import {
+  authenticateJoin,
+  loadPlayerState,
+  filterSay,
+  newMessageId,
+  SAY_COOLDOWN_MS,
+  EMOTE_COOLDOWN_MS,
+} from '../player.js';
+import { newAnchor, stepMove, TokenBucket, type MoveAnchor } from '../movement.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -115,15 +84,8 @@ const NpcTapMessage = z.object({
   npcId: z.string().min(1),
 });
 
-const MOVE_MAX_SPEED_M_PER_S = 6;
 /** How often the venue re-reads the world pulse. */
 const PULSE_REFRESH_MS = 15_000;
-const SAY_MAX_LENGTH = 140;
-const SAY_COOLDOWN_MS = 2_000;
-const EMOTE_COOLDOWN_MS = 1_000;
-
-const LINK_REGEX = /(?:https?:\/\/|www\.)[^\s]+|\b[\w.+-]+@[\w-]+\.[\w.-]+\b/gi;
-const PHONE_REGEX = /(?:\+?\d{1,3}[\s-]?)?(?:\(\d{3}\)|\d{3})[\s-]?\d{3}[\s-]?\d{4}/g;
 
 interface VenueSpots {
   readonly walkable: ReadonlyArray<{
@@ -132,7 +94,13 @@ interface VenueSpots {
     readonly x1: number;
     readonly z1: number;
   }>;
-  readonly spots: ReadonlyArray<{ readonly id: string; readonly kind: string }>;
+  readonly spots: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly x?: number;
+    readonly z?: number;
+    readonly rotY?: number;
+  }>;
 }
 
 interface VenueConfig {
@@ -160,11 +128,11 @@ export class VenueRoom extends Room {
   private recentEvents: NpcEvent[] = [];
   private pulseAt = 0;
   private spotOccupants: Map<string, string> = new Map(); // spotId -> sessionId
-  private lastMoveAt = new Map<string, number>();
+  /** sessionId -> last accepted position and remaining move budget. */
+  private anchors = new Map<string, MoveAnchor>();
+  private moveBuckets = new Map<string, TokenBucket>();
   private lastEmoteAt = new Map<string, number>();
   private lastSayAt = new Map<string, number>();
-  private lastX = new Map<string, number>();
-  private lastZ = new Map<string, number>();
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
@@ -205,43 +173,26 @@ export class VenueRoom extends Room {
    *
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    const tokenStr = String((options as { token?: string })?.token ?? '');
-    // B5 fix: Reject if no token provided and not in dev mode
-    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
-      throw new Error('AUTH_REQUIRED');
-    }
-    const claims = await this.verifyToken(tokenStr);
-    const userId = claims.sub ?? '';
+    // Identity and look come from the database, never from join options.
+    const userId = await authenticateJoin(options);
+    const player = await loadPlayerState(userId);
 
-    // B5 fix: Fetch player data from DB, never trust join options
-    const playerData = await this.fetchPlayerProfile(userId);
-
-    const player = new PlayerState();
-    player.userId = userId;
-    player.name = playerData.name;
-    player.skrName = playerData.skrName;
-    player.isSeeker = playerData.isSeeker;
-    player.tribeId = playerData.tribeId;
-    player.minerTier = playerData.minerTier;
-    if (Array.isArray(playerData.look) && playerData.look.length === 7) {
-      player.look = playerData.look;
-    }
-
-    // B10 fix: Place player at venue entrance spot
+    // Place the player on the venue's entrance spot. Joining a second
+    // venue (or a street room) while still in another is allowed; rooms
+    // do not de-duplicate users.
     const venueSpots = this.spotsCfg.venues[this.state.venueId];
-    if (venueSpots) {
-      const entranceSpot = venueSpots.spots.find((s: { id: string }) =>
-        s.id.endsWith('.entrance')
-      );
-      if (entranceSpot) {
-        // Parse entrance position from spots.json (simplified - assumes x,z in walkable[0])
-        const walkable = venueSpots.walkable[0];
-        if (walkable) {
-          player.x = walkable.x0;
-          player.z = walkable.z0;
-        }
-      }
+    const entrance = venueSpots?.spots.find((s) => s.id.endsWith('.entrance'));
+    const fallback = venueSpots?.walkable[0];
+    if (entrance && typeof entrance.x === 'number' && typeof entrance.z === 'number') {
+      player.x = entrance.x;
+      player.z = entrance.z;
+      if (typeof entrance.rotY === 'number') player.rotY = entrance.rotY;
+    } else if (fallback) {
+      player.x = (fallback.x0 + fallback.x1) / 2;
+      player.z = (fallback.z0 + fallback.z1) / 2;
     }
+    this.anchors.set(client.sessionId, newAnchor(player.x, player.z, Date.now()));
+    this.moveBuckets.set(client.sessionId, new TokenBucket(10, 5));
 
     this.state.players.set(client.sessionId, player);
     // Welcome the joiner.
@@ -260,11 +211,10 @@ export class VenueRoom extends Room {
       this.spotOccupants.delete(player.spotId);
     }
     this.state.players.delete(client.sessionId);
-    this.lastMoveAt.delete(client.sessionId);
+    this.anchors.delete(client.sessionId);
+    this.moveBuckets.delete(client.sessionId);
     this.lastEmoteAt.delete(client.sessionId);
     this.lastSayAt.delete(client.sessionId);
-    this.lastX.delete(client.sessionId);
-    this.lastZ.delete(client.sessionId);
   }
 
   // --- Message handlers -------------------------------------------
@@ -276,38 +226,31 @@ export class VenueRoom extends Room {
       return;
     }
     const now = Date.now();
-    const last = this.lastMoveAt.get(client.sessionId) ?? 0;
-    if (now - last < 90) return; // 10/s cap
-    this.lastMoveAt.set(client.sessionId, now);
+    if (!this.moveBuckets.get(client.sessionId)?.take(now)) return;
     const player = this.state.players.get(client.sessionId);
-    if (!player) return;
-    // Velocity cap. Compare to last known position.
-    const lastX = this.lastX.get(client.sessionId) ?? player.x;
-    const lastZ = this.lastZ.get(client.sessionId) ?? player.z;
-    const dx = parsed.data.x - lastX;
-    const dz = parsed.data.z - lastZ;
-    const dist = Math.hypot(dx, dz);
-    const dt = Math.max(1, now - last);
-    const speed = (dist / dt) * 1000;
-    if (speed > MOVE_MAX_SPEED_M_PER_S) {
-      client.send('rejected', { type: 'move', code: 'SPEED_EXCEEDED' });
-      return;
-    }
-    // Walkable validation.
+    const anchor = this.anchors.get(client.sessionId);
+    if (!player || !anchor) return;
     const rects = this.spotsCfg.venues[this.state.venueId]?.walkable ?? [];
-    const inside = rects.some(
-      (r) =>
-        parsed.data.x >= r.x0 &&
-        parsed.data.x <= r.x1 &&
-        parsed.data.z >= r.z0 &&
-        parsed.data.z <= r.z1,
-    );
-    if (!inside) {
-      client.send('rejected', { type: 'move', code: 'OUT_OF_BOUNDS' });
+    const inside = (x: number, z: number): boolean =>
+      rects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1);
+    if (!inside(parsed.data.x, parsed.data.z)) {
+      client.send('rejected', { type: 'move', code: 'OUT_OF_BOUNDS', x: player.x, z: player.z });
       return;
     }
-    player.x = parsed.data.x;
-    player.z = parsed.data.z;
+    // Clamp to the distance budget. The clamped point lies on the segment
+    // from the last accepted point, which can cross a gap between two
+    // rectangles; keep the player where they were in that case.
+    const prev = { ...anchor };
+    const step = stepMove(anchor, parsed.data.x, parsed.data.z, now);
+    if (step.clamped && !inside(step.x, step.z)) {
+      Object.assign(anchor, prev, { at: now });
+      client.send('corrected', { x: player.x, z: player.z });
+      return;
+    }
+    if (step.clamped) client.send('corrected', { x: step.x, z: step.z });
+    player.x = step.x;
+    player.z = step.z;
+    const dist = step.dist;
     if (parsed.data.rotY !== undefined) player.rotY = parsed.data.rotY;
     // If seated, stand up.
     if (player.spotId) {
@@ -315,8 +258,6 @@ export class VenueRoom extends Room {
       player.spotId = '';
     }
     player.anim = dist > 0 ? 'loco_walk' : 'loco_idle';
-    this.lastX.set(client.sessionId, parsed.data.x);
-    this.lastZ.set(client.sessionId, parsed.data.z);
   }
 
   private handleSit(client: Client, msg: unknown): void {
@@ -405,11 +346,7 @@ export class VenueRoom extends Room {
       client.send('rejected', { type: 'say', code: 'VALIDATION_FAILED' });
       return;
     }
-    let text = parsed.data.text.slice(0, SAY_MAX_LENGTH);
-    text = text.replace(LINK_REGEX, '[link]').replace(PHONE_REGEX, '[phone]');
-    // Profanity filter: a minimal stub. Production wires a real
-    // dictionary; M2 just lower-cases and trims to a printable set.
-    text = text.replace(/[^\x20-\x7e]/g, '');
+    const text = filterSay(parsed.data.text);
     const now = Date.now();
     const last = this.lastSayAt.get(client.sessionId) ?? 0;
     if (now - last < SAY_COOLDOWN_MS) {
@@ -419,8 +356,7 @@ export class VenueRoom extends Room {
     this.lastSayAt.set(client.sessionId, now);
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
-    const id =
-      'msg-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
+    const id = newMessageId();
     // Broadcast to every other client in the room; block-aware
     // filtering happens in M5. M2 fans out to everyone.
     this.broadcast(
@@ -554,7 +490,11 @@ export class VenueRoom extends Room {
           { archetype: 'patron', spotId: 'terminal_cafe.table_1', animId: 'act_sit' },
           { archetype: 'patron', spotId: 'terminal_cafe.table_2', animId: 'act_sit' },
           // The wallet tracker keeps its own brain and its own terminal.
-          { archetype: 'wallet_tracker', spotId: 'terminal_cafe.pulse_screen', animId: 'loco_idle' },
+          {
+            archetype: 'wallet_tracker',
+            spotId: 'terminal_cafe.pulse_screen',
+            animId: 'loco_idle',
+          },
         ];
       case 'spaces_studio':
         return [
@@ -659,69 +599,6 @@ export class VenueRoom extends Room {
       .map((p) => ({ userId: p.userId, netWorthCents: 0 }))
       .sort((a, b) => b.netWorthCents - a.netWorthCents)
       .slice(0, 5);
-  }
-
-  // --- Auth --------------------------------------------------------
-
-  private async verifyToken(token: string): Promise<JWTPayload> {
-    // B5 fix: Actually verify the JWT instead of returning unverified claim
-    if (token === '') {
-      // Dev mode: synthesize a fake claim from a random ID
-      // Only allowed when devAuthEnabled is true (checked in onJoin)
-      return { sub: `dev-${Math.floor(Math.random() * 1e9).toString(36)}` } as JWTPayload;
-    }
-    try {
-      const jwtIssuer = createJwtIssuer();
-      const claims = await jwtIssuer.verifyAccess(token);
-      return claims;
-    } catch (err) {
-      throw new Error('INVALID_TOKEN', { cause: err });
-    }
-  }
-
-  // B5: Fetch player profile from DB, never trust join options
-  private async fetchPlayerProfile(userId: string): Promise<{
-    name: string;
-    skrName: string;
-    isSeeker: boolean;
-    tribeId: string;
-    minerTier: string;
-    look: string[];
-  }> {
-    const { buildContext } = await import('../../application/context.js');
-    const ctx = buildContext();
-    const result = await ctx.db.withConnection(async (c) => {
-      return c.query(
-        `SELECT c.alias, u.skr_name, u.is_seeker, u.miner_tier, c.tribe_id, c.look
-         FROM characters c
-         JOIN users u ON u.id = c.user_id
-         WHERE c.user_id = $1
-         LIMIT 1`,
-        [userId],
-      );
-    });
-
-    if (result.rowCount === 0) {
-      // No character yet, return defaults
-      return {
-        name: 'Anon',
-        skrName: '',
-        isSeeker: false,
-        tribeId: '',
-        minerTier: 'none',
-        look: [...LOOK_FALLBACK],
-      };
-    }
-
-    const row = result.rows[0];
-    return {
-      name: row.alias || 'Anon',
-      skrName: row.skr_name || '',
-      isSeeker: row.is_seeker || false,
-      tribeId: row.tribe_id || '',
-      minerTier: row.miner_tier || 'none',
-      look: lookToArray(row.look),
-    };
   }
 
   // --- Config loaders ---------------------------------------------

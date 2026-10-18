@@ -1,0 +1,18 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "0.0.1",
+  "_note": "CT Island v2 bounds for the street and vehicles rooms. Island metres, +X east, +Z north, origin at the downtown plaza. Each polygon is a list of [x, z] vertices in order (either winding). The frontend owns the numbers; an empty polygon means it has not been sent yet, and the matching street room refuses to open until it is filled in. The vehicles room needs `island`.",
+  "units": "island metres",
+  "island": [],
+  "districts": {
+    "timeline": [],
+    "trenches": [],
+    "builder_hills": [],
+    "airdrop_farm": [],
+    "dubai_marina": [],
+    "residences": [],
+    "beachfront": [],
+    "mountain": []
+  }
+}

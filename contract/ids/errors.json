@@ -96,6 +96,56 @@
       "code": "SERVER_BUSY",
       "httpStatus": 503,
       "message": "Server is at capacity. Retry-After header carries the wait time."
+    },
+    {
+      "code": "OUT_OF_BOUNDS",
+      "httpStatus": 400,
+      "message": "Realtime: position is outside the room bounds; the payload carries the server position."
+    },
+    {
+      "code": "UNKNOWN_EMOTE",
+      "httpStatus": 400,
+      "message": "Realtime: emote id is not in anims.json."
+    },
+    {
+      "code": "SPOT_NOT_FOUND",
+      "httpStatus": 404,
+      "message": "Realtime: spot id does not belong to this venue."
+    },
+    {
+      "code": "NPC_NOT_FOUND",
+      "httpStatus": 404,
+      "message": "Realtime: NPC id is not in this room."
+    },
+    {
+      "code": "VEHICLE_TAKEN",
+      "httpStatus": 409,
+      "message": "Realtime: the vehicle already has a driver."
+    },
+    {
+      "code": "VEHICLE_TOO_FAR",
+      "httpStatus": 400,
+      "message": "Realtime: the player is more than 4 m from the vehicle."
+    },
+    {
+      "code": "VEHICLE_LIMIT",
+      "httpStatus": 503,
+      "message": "Realtime: too many vehicles on the island; try again shortly."
+    },
+    {
+      "code": "NOT_DRIVER",
+      "httpStatus": 403,
+      "message": "Realtime: only the driver can move or leave this vehicle."
+    },
+    {
+      "code": "ALREADY_DRIVING",
+      "httpStatus": 409,
+      "message": "Realtime: the player is already driving another vehicle."
+    },
+    {
+      "code": "POSITION_UNKNOWN",
+      "httpStatus": 409,
+      "message": "Realtime: the server has no recent street position for the player."
     }
   ]
 }

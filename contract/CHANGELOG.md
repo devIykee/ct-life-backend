@@ -1,3 +1,11 @@
+## 2026-10-18 - Street rooms, island-wide vehicles, venue move fixes
+
+- Venue `move`: players now join on the `.entrance` spot's own x/z. Speed is a distance budget from the last accepted move (refills at 6.5 m/s, 0.5 m slack, at most 1 s banked) instead of speed between arrivals; moves past it are clamped and applied, and the sender gets the new `corrected {x, z}`. Messages under 90 ms apart are no longer dropped (10/s with bursts of 5). A rejected `move` carries the server `x, z` when known.
+- A player may hold two venue/street rooms at once; rooms do not de-duplicate users.
+- Added the `street` room (`joinOrCreate("street", { token, district })`), one per district: `timeline | trenches | builder_hills | airdrop_farm | dubai_marina | residences | beachfront | mountain`. `StreetState { district, instanceId, players }`, same `PlayerState` and `move`/`emote`/`say`/`talking` as venues, x/z in island metres. Bounds come from the new FE-owned `contract/ids/districts.json` (island outline + district polygons, currently empty); a district room refuses to open until its polygon is filled in. Players within 30 m outside the polygon are still tracked so border crossings do not pop.
+- Added the `vehicles` room (`joinOrCreate("vehicles", { token })`), one for the island. `VehiclesState.vehicles` is a map of `VehicleState { id, kind, driver, x, y, z, yaw, pitch, roll, speed, flags }`, filtered per client to vehicles within 250 m. Messages `vehicle_enter`, `vehicle_move`, `vehicle_exit`, `vehicle_hit`; server sends `vehicle_corrected` and relays `vehicle_hit` to the victim only. Per-kind caps and limits are in `docs/REALTIME.md`.
+- New realtime error codes: `OUT_OF_BOUNDS`, `UNKNOWN_EMOTE`, `SPOT_NOT_FOUND`, `NPC_NOT_FOUND` (already sent, now registered), `VEHICLE_TAKEN`, `VEHICLE_TOO_FAR`, `VEHICLE_LIMIT`, `NOT_DRIVER`, `ALREADY_DRIVING`, `POSITION_UNKNOWN`.
+
 ## 2026-10-17 - DM push, debt repayment, cash history, live perp PnL
 
 - `POST /dms/{userId}` now pushes a realtime `dm` (`DmMessage`, `at` in epoch ms) to the recipient after the message commits. Blocked pairs still get `400` and nothing is pushed.
