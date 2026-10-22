@@ -100,6 +100,21 @@ describe('entitlements', () => {
     expect(await hasEntitlement(buildContext(), userId, HOVERCAR)).toBe(true);
   });
 
+  it('one pass unlocks one account: a new holder revokes the previous one', async () => {
+    const other = uuidv7();
+    await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [other, `buyer-${other}`]);
+    try {
+      const ctx = buildContext();
+      await grantEntitlement(ctx, userId, HOVERCAR, 'nft', 'PassAsset1');
+      expect(await grantEntitlement(ctx, other, HOVERCAR, 'nft', 'PassAsset1')).toBe(true);
+      expect(await hasEntitlement(ctx, userId, HOVERCAR)).toBe(false);
+      expect(await hasEntitlement(ctx, other, HOVERCAR)).toBe(true);
+    } finally {
+      await pool.query(`DELETE FROM player_entitlements WHERE user_id = $1`, [other]);
+      await pool.query(`DELETE FROM users WHERE id = $1`, [other]);
+    }
+  });
+
   it('wallet sync is off without HOVERCAR_COLLECTION', async () => {
     const base = buildContext();
     const ctx = { ...base, config: { ...base.config, entitlements: { hovercarCollection: '' } } };

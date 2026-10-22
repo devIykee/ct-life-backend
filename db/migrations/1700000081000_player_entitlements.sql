@@ -16,6 +16,8 @@
 -- `reference` is the asset address for 'nft' rows, or a free-text note
 -- for 'grant' rows. One live row per (user_id, item_key): the partial
 -- unique index ignores revoked rows, so a re-grant after a sale works.
+-- One live 'nft' row per asset: a pass unlocks one account at a time,
+-- and a new holder's claim revokes the previous holder's row.
 
 -- Up Migration
 CREATE TABLE player_entitlements (
@@ -31,6 +33,10 @@ CREATE TABLE player_entitlements (
 CREATE UNIQUE INDEX player_entitlements_live_idx
   ON player_entitlements (user_id, item_key)
   WHERE revoked_at IS NULL;
+
+CREATE UNIQUE INDEX player_entitlements_live_asset_idx
+  ON player_entitlements (item_key, reference)
+  WHERE source = 'nft' AND revoked_at IS NULL;
 
 -- Down Migration
 DROP TABLE IF EXISTS player_entitlements;

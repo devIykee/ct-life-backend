@@ -168,10 +168,13 @@ export class VehiclesRoom extends Room {
     if (!s.actionBucket.take(Date.now())) return reject('RATE_LIMITED');
     if (s.driving) return reject('ALREADY_DRIVING');
     const m = parsed.data;
-    const kind = this.state.vehicles.get(m.id)?.kind ?? m.kind;
-    if (kind === 'roadstar' && !(await this.ownsHovercar(s.userId))) {
-      return reject('NOT_ENTITLED');
-    }
+    // Checked before the awaits and again on the re-read vehicle below:
+    // a kind that becomes roadstar meanwhile was never verified.
+    const hovercarOk =
+      (this.state.vehicles.get(m.id)?.kind ?? m.kind) === 'roadstar'
+        ? await this.ownsHovercar(s.userId)
+        : null;
+    if (hovercarOk === false) return reject('NOT_ENTITLED');
     const where = await this.readPos(s.userId);
     // Re-read everything after the await; another message may have landed.
     const now = Date.now();
@@ -182,6 +185,7 @@ export class VehiclesRoom extends Room {
     const reach = ENTER_RADIUS_M + WALK_SPEED_M_PER_S * Math.min(1, (now - where.at) / 1000);
 
     let v = this.state.vehicles.get(m.id);
+    if ((v ? v.kind : m.kind) === 'roadstar' && hovercarOk !== true) return reject('NOT_ENTITLED');
     if (v) {
       if (v.driver !== '') return reject('VEHICLE_TAKEN');
       if (Math.hypot(v.x - where.x, v.z - where.z) > reach) return reject('VEHICLE_TOO_FAR');
@@ -216,13 +220,20 @@ export class VehiclesRoom extends Room {
     if (!s.view.has(v)) s.view.add(v);
   }
 
-  /** The roadstar (hovercar) needs the player's vehicle.hovercar entitlement. */
+  /**
+   * The roadstar (hovercar) needs the player's vehicle.hovercar
+   * entitlement. The wallet is re-synced here (throttled to once a
+   * minute) so a sold pass stops working even if the seller never
+   * calls GET /v1/me/entitlements.
+   */
   private async ownsHovercar(userId: string): Promise<boolean> {
-    const [{ buildContext }, { hasEntitlement, HOVERCAR }] = await Promise.all([
+    const [{ buildContext }, { hasEntitlement, syncFromWallet, HOVERCAR }] = await Promise.all([
       import('../../application/context.js'),
       import('../../application/entitlements.js'),
     ]);
-    return hasEntitlement(buildContext(), userId, HOVERCAR);
+    const ctx = buildContext();
+    await syncFromWallet(ctx, userId);
+    return hasEntitlement(ctx, userId, HOVERCAR);
   }
 
   private handleMove(client: Client, msg: unknown): void {

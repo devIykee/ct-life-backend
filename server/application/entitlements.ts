@@ -16,11 +16,16 @@
  * Money rule: there is no Cash path. Game Cash can be won, so it can
  * never buy anything backed by a tradable NFT.
  *
- * Wallet sync runs on GET at most once per SYNC_INTERVAL_MS per user
- * per instance, and only when HOVERCAR_COLLECTION is set. A Helius
- * failure keeps the existing rows: an outage never revokes.
+ * Wallet sync runs at most once per SYNC_INTERVAL_MS per user per
+ * instance, and only when HOVERCAR_COLLECTION is set: on GET and again
+ * where the entitlement is enforced (the vehicles room's roadstar
+ * lease), so a sold pass stops working within a minute even if the
+ * seller never opens the app. A Helius failure keeps the existing rows:
+ * an outage never revokes. One pass unlocks one account at a time; a
+ * new holder's claim revokes the previous holder's 'nft' row.
  */
 import type { AppContext } from './context.js';
+import { runInTransaction } from '../shared/db/uow.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 
 export const HOVERCAR = 'vehicle.hovercar';
@@ -67,7 +72,11 @@ export async function hasEntitlement(
   return (r.rowCount ?? 0) > 0;
 }
 
-/** Grant `itemKey` unless a live row exists. Returns true when a row was added. */
+/**
+ * Grant `itemKey` unless a live row exists. Returns true when a row was
+ * added. An 'nft' grant first revokes any other player's live row for
+ * the same asset, so one pass never unlocks two accounts.
+ */
 export async function grantEntitlement(
   ctx: AppContext,
   userId: string,
@@ -75,15 +84,27 @@ export async function grantEntitlement(
   source: 'nft' | 'grant',
   reference = '',
 ): Promise<boolean> {
-  const r = await ctx.db.withConnection((c) =>
-    c.query(
-      `INSERT INTO player_entitlements (entitlement_id, user_id, item_key, source, reference)
+  return runInTransaction(
+    async (c) => {
+      if (source === 'nft') {
+        await c.query(
+          `UPDATE player_entitlements SET revoked_at = now()
+          WHERE item_key = $1 AND reference = $2 AND source = 'nft'
+            AND user_id <> $3 AND revoked_at IS NULL`,
+          [itemKey, reference, userId],
+        );
+      }
+      const r = await c.query(
+        `INSERT INTO player_entitlements (entitlement_id, user_id, item_key, source, reference)
        VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (user_id, item_key) WHERE revoked_at IS NULL DO NOTHING`,
-      [uuidv7(), userId, itemKey, source, reference],
-    ),
+       ON CONFLICT DO NOTHING`,
+        [uuidv7(), userId, itemKey, source, reference],
+      );
+      return (r.rowCount ?? 0) > 0;
+    },
+    {},
+    ctx.db,
   );
-  return (r.rowCount ?? 0) > 0;
 }
 
 /** Revoke the live `itemKey` row, optionally only one from `source`. */
