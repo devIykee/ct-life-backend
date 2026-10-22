@@ -1,3 +1,10 @@
+## 2026-10-22 - v3 vehicle kinds, player entitlements, hovercar lease gate
+
+- `VEHICLE_KINDS` adds `sedan`, `taxi`, `police`, `pickup`, `van` (60 m/s) and `bike` (25 m/s, like `moped`) for the frontend's v3 fleet. Until now the client sent them as `compact`.
+- Added `GET /v1/me/entitlements` -> `{items: string[], updatedAt}`. The first key is `vehicle.hovercar`, the scarce right-to-drive pass for the `roadstar` kind (the v3 hovercar). It is granted while the player's wallet holds an asset in `HOVERCAR_COLLECTION` (a Metaplex Core collection, checked with Helius DAS `searchAssets` on this call, at most once a minute per player), or by an ops grant (`tools/scripts/entitlement-grant.ts`). Game Cash never grants it.
+- The vehicles room refuses a `roadstar` lease without `vehicle.hovercar` with the new realtime code `NOT_ENTITLED` (403).
+- New table `player_entitlements` (migration 081). New optional env `HOVERCAR_COLLECTION`; empty turns the wallet sync off.
+
 ## 2026-10-18 - Street rooms, island-wide vehicles, venue move fixes
 
 - Venue `move`: players now join on the `.entrance` spot's own x/z. Speed is a distance budget from the last accepted move (refills at 6.5 m/s, 0.5 m slack, at most 1 s banked) instead of speed between arrivals; moves past it are clamped and applied, and the sender gets the new `corrected {x, z}`. Messages under 90 ms apart are no longer dropped (10/s with bursts of 5). A rejected `move` carries the server `x, z` when known.
