@@ -966,6 +966,38 @@ paths:
                     },
                 }
 
+  /me/entitlements:
+    get:
+      tags: [player]
+      operationId: getMyEntitlements
+      summary: Item keys the player owns that unlock something in the game.
+      description: |
+        The first key is `vehicle.hovercar`, the scarce right-to-drive pass for the
+        `roadstar` vehicle kind (the hovercar). It is granted while the player's wallet
+        holds an asset in the `HOVERCAR_COLLECTION` Metaplex Core collection (checked
+        through Helius DAS on this call, at most once a minute) or by an ops grant, and
+        revoked when the asset leaves the wallet. Game Cash never grants it. Without it,
+        the vehicles room refuses a `roadstar` lease with `NOT_ENTITLED`.
+      x-phase: 2
+      responses:
+        '200':
+          description: Entitlements
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, updatedAt]
+                properties:
+                  items:
+                    type: array
+                    items: { type: string, pattern: '^[a-z]+\.[a-z0-9_]+$' }
+                  updatedAt: { type: string, format: date-time }
+              example:
+                items: ['vehicle.hovercar']
+                updatedAt: '2026-10-22T05:00:00Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '5xx': { $ref: '#/components/responses/ServerError' }
+
   /characters/me/look:
     patch:
       tags: [player]

@@ -146,6 +146,11 @@
       "code": "POSITION_UNKNOWN",
       "httpStatus": 409,
       "message": "Realtime: the server has no recent street position for the player."
+    },
+    {
+      "code": "NOT_ENTITLED",
+      "httpStatus": 403,
+      "message": "The player does not own the entitlement this needs (e.g. vehicle.hovercar for the roadstar)."
     }
   ]
 }

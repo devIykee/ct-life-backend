@@ -17,7 +17,8 @@
  * Messages:
  *   - vehicle_enter { id, kind?, x?, y?, z?, yaw? }: vehicle must be free
  *     and within 4 m of the player. An id the server does not know yet is
- *     registered where the client says (client-parked cars).
+ *     registered where the client says (client-parked cars). A roadstar
+ *     (the hovercar) needs the vehicle.hovercar entitlement (NOT_ENTITLED).
  *   - vehicle_move { id, x, y, z, yaw, pitch, roll, speed, flags? }: driver
  *     only, 10 Hz. Distance budget at the kind's speed cap (clamped, with
  *     `vehicle_corrected`), y up to 214 m, inside the island outline plus
@@ -167,6 +168,10 @@ export class VehiclesRoom extends Room {
     if (!s.actionBucket.take(Date.now())) return reject('RATE_LIMITED');
     if (s.driving) return reject('ALREADY_DRIVING');
     const m = parsed.data;
+    const kind = this.state.vehicles.get(m.id)?.kind ?? m.kind;
+    if (kind === 'roadstar' && !(await this.ownsHovercar(s.userId))) {
+      return reject('NOT_ENTITLED');
+    }
     const where = await this.readPos(s.userId);
     // Re-read everything after the await; another message may have landed.
     const now = Date.now();
@@ -209,6 +214,15 @@ export class VehiclesRoom extends Room {
     meta.budget = 1;
     s.driving = m.id;
     if (!s.view.has(v)) s.view.add(v);
+  }
+
+  /** The roadstar (hovercar) needs the player's vehicle.hovercar entitlement. */
+  private async ownsHovercar(userId: string): Promise<boolean> {
+    const [{ buildContext }, { hasEntitlement, HOVERCAR }] = await Promise.all([
+      import('../../application/context.js'),
+      import('../../application/entitlements.js'),
+    ]);
+    return hasEntitlement(buildContext(), userId, HOVERCAR);
   }
 
   private handleMove(client: Client, msg: unknown): void {
