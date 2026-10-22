@@ -73,7 +73,7 @@ export class StreetState extends Schema {
 /** One vehicle in the island-wide vehicles room. Island metres and radians. */
 export class VehicleState extends Schema {
   @type('string') id = '';
-  /** compact | suv | sports | moped | roadstar | heli | drone */
+  /** compact | suv | sports | moped | roadstar | heli | drone | sedan | taxi | police | pickup | van | bike */
   @type('string') kind = '';
   /** userId of the driver, '' when parked. */
   @type('string') driver = '';
