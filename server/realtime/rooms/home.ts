@@ -16,8 +16,11 @@ import { MapSchema } from '@colyseus/schema';
 import { HomeState, PlayerState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
+import { HOME_ACCESS_CHANNEL } from '../../application/home-units.js';
 
 const MAX_GUESTS = 16;
+/** Backstop for a missed access event: re-check everyone this often. */
+const RECHECK_MS = 30_000;
 
 const LOOK_SLOTS = [
   'skinTone',
@@ -52,6 +55,14 @@ function lookToArray(raw: unknown): string[] {
 export class HomeRoom extends Room {
   declare state: HomeState;
 
+  private readonly userBySession = new Map<string, string>();
+  private recheckTimer: ReturnType<typeof setInterval> | null = null;
+
+  /** A guest was removed, or the home was moved out of or evicted: look again. */
+  private readonly onAccess = (msg: unknown): void => {
+    if ((msg as { homeId?: string } | null)?.homeId === this.state.homeId) void this.recheck();
+  };
+
   /**
    * Create the room for one home.
    * @param options - Join options; `homeId` and `ownerId` scope the room.
@@ -63,6 +74,37 @@ export class HomeRoom extends Room {
     this.state.players = new MapSchema<PlayerState>();
     this.maxClients = MAX_GUESTS;
     this.patchRate = 100; // 10 Hz, same as a venue: guests walk around.
+    await this.presence?.subscribe(HOME_ACCESS_CHANNEL, this.onAccess);
+    this.recheckTimer = setInterval(() => void this.recheck(), RECHECK_MS);
+    this.recheckTimer.unref();
+  }
+
+  /**
+   * Stop listening and re-checking.
+   */
+  override async onDispose(): Promise<void> {
+    if (this.recheckTimer) clearInterval(this.recheckTimer);
+    this.recheckTimer = null;
+    await this.presence?.unsubscribe(HOME_ACCESS_CHANNEL, this.onAccess);
+  }
+
+  /**
+   * Show out every client who can no longer enter this home. Joining
+   * checks the door once; this enforces revocation afterwards.
+   */
+  async recheck(): Promise<void> {
+    const { buildContext } = await import('../../application/context.js');
+    const { canEnterHome } = await import('../../application/homes.js');
+    const ctx = buildContext();
+    for (const client of [...this.clients]) {
+      const userId = this.userBySession.get(client.sessionId);
+      if (userId === undefined) continue;
+      try {
+        if (!(await canEnterHome(ctx, this.state.homeId, userId))) client.leave(4403, 'FORBIDDEN');
+      } catch {
+        // A database blip must not throw anyone out; the next check retries.
+      }
+    }
   }
 
   /**
@@ -105,6 +147,7 @@ export class HomeRoom extends Room {
     player.minerTier = profile.minerTier;
     player.look = profile.look;
     player.anim = 'loco_idle';
+    this.userBySession.set(client.sessionId, userId);
     this.state.players.set(client.sessionId, player);
     client.send('welcome', {
       serverNow: Date.now(),
@@ -119,6 +162,7 @@ export class HomeRoom extends Room {
    * @param client - The leaving client.
    */
   override onLeave(client: Client): void {
+    this.userBySession.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
   }
 

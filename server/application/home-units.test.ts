@@ -13,8 +13,16 @@ import { config as loadDotenv } from 'dotenv';
 import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { createHome, moveOut, addGuest, removeGuest, recordVisit, loadMeHome } from './homes.js';
-import { syncHomeUnits, unitAccess } from './home-units.js';
+import {
+  createHome,
+  moveOut,
+  addGuest,
+  removeGuest,
+  recordVisit,
+  loadMeHome,
+  getHome,
+} from './homes.js';
+import { HOME_ACCESS_CHANNEL, syncHomeUnits, unitAccess } from './home-units.js';
 import { runWeeklyRent } from '../workers/rent.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
@@ -201,6 +209,42 @@ describe('home units', () => {
     expect((await unitAccess(ctx, UNIT_A, ids.guest)).canEnter).toBe(false);
   });
 
+  it('GET home: owner sees everything, a guest the door, a stranger only the public view', async () => {
+    await addGuest(ctx, ownerHome.homeId, ids.owner, ids.guest);
+    await recordVisit(ctx, ids.owner, ids.guest);
+    const own = await getHome(ctx, ownerHome.homeId, ids.owner);
+    expect(own.view).toBe('owner');
+    expect(own.home).toMatchObject({ unitId: UNIT_A, status: 'active', ownerUserId: ids.owner });
+    expect(own.visits.length).toBeGreaterThan(0);
+
+    const guest = await getHome(ctx, ownerHome.homeId, ids.guest);
+    expect(guest.view).toBe('guest');
+    expect(guest.home).toMatchObject({ unitId: UNIT_A, roomType: 'test_room' });
+    expect(guest.home).not.toHaveProperty('status');
+    expect(guest.home).not.toHaveProperty('ownerUserId');
+    expect(guest.visits).toEqual([]);
+
+    const stranger = await getHome(ctx, ownerHome.homeId, ids.stranger);
+    expect(stranger.view).toBe('public');
+    expect(Object.keys(stranger.home).sort()).toEqual(['decoratedAt', 'homeId', 'kind', 'tier']);
+    expect(stranger.visits).toEqual([]);
+    expect(JSON.stringify(stranger)).not.toContain(UNIT_A);
+    expect(JSON.stringify(stranger)).not.toContain(ids.owner);
+    await removeGuest(ctx, ownerHome.homeId, ids.owner, ids.guest);
+  });
+
+  it('removing a guest and moving out publish on the home access channel', async () => {
+    const sub = ctx.redis.main.duplicate();
+    const got: string[] = [];
+    await sub.subscribe(HOME_ACCESS_CHANNEL);
+    sub.on('message', (_ch, m) => got.push((JSON.parse(m) as { homeId: string }).homeId));
+    await addGuest(ctx, ownerHome.homeId, ids.owner, ids.guest);
+    await removeGuest(ctx, ownerHome.homeId, ids.owner, ids.guest);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(got).toEqual([ownerHome.homeId]);
+    await sub.quit();
+  });
+
   it('move-out is owner-only and frees the unit for the next lease', async () => {
     await expect(moveOut(ctx, ownerHome.homeId, ids.stranger)).rejects.toMatchObject({
       code: 'NOT_HOME_OWNER',
@@ -240,5 +284,55 @@ describe('home units', () => {
     // Evicted homes owe nothing more and the door can be let again.
     const next = await createHome(ctx, ids.stranger, 'penthouse');
     expect(next.unitId).toBe(UNIT_A);
+  });
+
+  it('the rent worker skips a home moved out mid-run and survives a failing home', async () => {
+    // The eviction test above left a lease on the unit; free it first.
+    await pool.query(`DELETE FROM homes WHERE owner_user_id = ANY($1::uuid[])`, [
+      [ids.stranger, ids.late],
+    ]);
+    await pool.query(`UPDATE balances SET cash_cents = 1000000 WHERE user_id = $1`, [ids.late]);
+    const h = await createHome(ctx, ids.late, 'penthouse');
+    const cashBefore = await pool.query<{ cash_cents: string }>(
+      `SELECT cash_cents FROM balances WHERE user_id = $1`,
+      [ids.late],
+    );
+    const ledgerBefore = await pool.query(`SELECT 1 FROM ledger_entries WHERE ref_id = $1`, [
+      h.homeId,
+    ]);
+    // A home whose owner has no user row: its balance insert fails.
+    const badId = `home:${uuidv7()}`;
+    await pool.query(
+      `INSERT INTO homes (home_id, owner_user_id, kind, rent_cents_per_week) VALUES ($1, $2, 'studio', 18000)`,
+      [badId, uuidv7()],
+    );
+    // Another connection moves the home out and holds the row lock while the
+    // worker, which already listed the home as active, reaches it.
+    const other = await pool.connect();
+    await other.query('BEGIN');
+    await other.query(
+      `UPDATE homes SET status = 'moved_out', ended_at = now() WHERE home_id = $1`,
+      [h.homeId],
+    );
+    const run = runWeeklyRent(ctx.db);
+    await new Promise((r) => setTimeout(r, 300));
+    await other.query('COMMIT');
+    other.release();
+    await expect(run).resolves.toBeDefined();
+    const after = await pool.query<{ status: string; missed_weeks: number }>(
+      `SELECT status, missed_weeks FROM homes WHERE home_id = $1`,
+      [h.homeId],
+    );
+    expect(after.rows[0]).toEqual({ status: 'moved_out', missed_weeks: 0 });
+    const cashAfter = await pool.query<{ cash_cents: string }>(
+      `SELECT cash_cents FROM balances WHERE user_id = $1`,
+      [ids.late],
+    );
+    expect(cashAfter.rows[0]?.cash_cents).toBe(cashBefore.rows[0]?.cash_cents);
+    const ledgerAfter = await pool.query(`SELECT 1 FROM ledger_entries WHERE ref_id = $1`, [
+      h.homeId,
+    ]);
+    expect(ledgerAfter.rowCount).toBe(ledgerBefore.rowCount);
+    await pool.query(`DELETE FROM homes WHERE home_id = ANY($1::text[])`, [[badId, h.homeId]]);
   });
 });

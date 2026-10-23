@@ -118,7 +118,7 @@ export function registerHomeRoutes(app: FastifyInstance): void {
 
   app.get('/v1/homes/:id', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    const out = await getHome(req.ctx, id);
+    const out = await getHome(req.ctx, id, req.user!.sub);
     return reply.send(out);
   });
 }

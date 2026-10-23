@@ -24,6 +24,13 @@ import type { Db } from '../shared/db/pool.js';
 import { NotFoundError } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
 
+/**
+ * Presence channel the API and the rent worker publish `{ homeId }` on
+ * when somebody may have lost the door (guest removed, move-out, eviction).
+ * The `home` room re-checks its clients on it.
+ */
+export const HOME_ACCESS_CHANNEL = 'ctl:home_access';
+
 export type HomeTier = 'basement' | 'flat' | 'penthouse';
 
 /** Status values of a home; active and overdue hold their unit. */
@@ -185,4 +192,22 @@ export async function unitAccess(
     );
     return { canEnter: false, reason: gone.rowCount ? 'evicted' : 'vacant' };
   });
+}
+
+/**
+ * Tell the `home` room that access to a home may have changed. Best
+ * effort: the room also re-checks on a timer, so a lost message only delays
+ * the disconnect.
+ * @param redis - Anything with a Redis `publish`.
+ * @param homeId - The home whose access changed.
+ */
+export async function publishHomeAccess(
+  redis: { publish(channel: string, message: string): Promise<unknown> },
+  homeId: string,
+): Promise<void> {
+  try {
+    await redis.publish(HOME_ACCESS_CHANNEL, JSON.stringify({ homeId }));
+  } catch {
+    // The room's interval re-check covers a missed publish.
+  }
 }

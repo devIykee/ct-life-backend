@@ -37,6 +37,7 @@ import type { AppContext } from './context.js';
 import {
   accessToHome,
   ensureUnitsSynced,
+  publishHomeAccess,
   takeFreeUnit,
   type HomeStatus,
   type HomeTier,
@@ -390,6 +391,7 @@ export async function moveOut(
     );
     await client.query(`DELETE FROM home_guests WHERE home_id = $1`, [home.homeId]);
   });
+  await publishHomeAccess(ctx.redis.main, homeId);
   return selectHomeRequired(ctx, homeId);
 }
 
@@ -447,6 +449,8 @@ export async function removeGuest(
       guestUserId,
     ]);
   });
+  // The removed guest may be standing in the room right now.
+  await publishHomeAccess(ctx.redis.main, homeId);
   return listGuests(ctx, homeId);
 }
 
@@ -577,12 +581,54 @@ export async function recordVisit(
   };
 }
 
-/** Get a home + recent visits. */
+/** What a non-owner may see of a home. */
+export interface PublicHomeView {
+  readonly homeId: string;
+  readonly kind: HomeKind;
+  readonly tier: HomeTier;
+  readonly decoratedAt: string | null;
+  /** Only set for a guest, who can open the door. */
+  readonly unitId?: string | null;
+  readonly roomType?: string | null;
+}
+
+/**
+ * Get a home. The owner sees everything and the recent visits. A guest
+ * sees the public fields plus the door; anyone else sees the public
+ * fields only, with no owner, status, rent, unit or visit list.
+ */
 export async function getHome(
   ctx: AppContext,
   homeId: string,
-): Promise<{ home: HomeRow; visits: VisitRow[] }> {
+  callerUserId: string,
+): Promise<{
+  view: 'owner' | 'guest' | 'public';
+  home: HomeRow | PublicHomeView;
+  visits: VisitRow[];
+}> {
   const home = await selectHomeRequired(ctx, homeId);
+  const pub: PublicHomeView = {
+    homeId: home.homeId,
+    kind: home.kind,
+    tier: home.tier,
+    decoratedAt: home.decoratedAt,
+  };
+  if (home.ownerUserId !== callerUserId) {
+    const guest = await ctx.db.withConnection((c) =>
+      c.query(`SELECT 1 FROM home_guests WHERE home_id = $1 AND user_id = $2`, [
+        homeId,
+        callerUserId,
+      ]),
+    );
+    if (guest.rowCount && isLive(home.status)) {
+      return {
+        view: 'guest',
+        home: { ...pub, unitId: home.unitId, roomType: home.roomType },
+        visits: [],
+      };
+    }
+    return { view: 'public', home: pub, visits: [] };
+  }
   const visits = await ctx.db.withConnection(async (c) => {
     return c.query<{
       visit_id: string;
@@ -596,6 +642,7 @@ export async function getHome(
     );
   });
   return {
+    view: 'owner',
     home,
     visits: visits.rows.map((row) => ({
       visitId: row.visit_id,
