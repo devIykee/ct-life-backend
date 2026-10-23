@@ -21,7 +21,9 @@ import {
   listQuests,
   loadQuestDefs,
   pickQuests,
+  PAID_CALL_PAIR_COOLDOWN_DAYS,
   recordQuestEvent,
+  TIP_QUEST_MIN_CENTS,
   type QuestVerb,
 } from './quests.js';
 import { utcDate } from './daily-streak.js';
@@ -279,13 +281,71 @@ describe('progress from real server events', () => {
     expect(await progressOf(o, 'perp_open')).toBe(1);
   });
 
-  it('a tip of at least $1 advances tip_send; a smaller one does not', async () => {
+  const events = async (userId: string, verb: QuestVerb): Promise<number> => {
+    const r = await pool.query(
+      `SELECT count(*) AS n FROM quest_events WHERE user_id = $1 AND verb = $2`,
+      [userId, verb],
+    );
+    return Number(r.rows[0].n);
+  };
+
+  it('a tip of at least the minimum advances tip_send; a smaller one does not', async () => {
     const t = await userWithDailyVerb('tip_send');
     const to = await newUser();
-    await sendCashTip(ctx, t, to, 99, null);
+    await sendCashTip(ctx, t, to, TIP_QUEST_MIN_CENTS - 1, null);
     expect(await progressOf(t, 'tip_send')).toBe(0);
-    await sendCashTip(ctx, t, to, 100, null);
+    await sendCashTip(ctx, t, to, TIP_QUEST_MIN_CENTS, null);
     expect(await progressOf(t, 'tip_send')).toBeGreaterThanOrEqual(1);
+  });
+
+  it('the tip minimum is above every tip quest reward, daily and (over its tips) weekly', () => {
+    for (const q of defs.filter((d) => d.verb === 'tip_send')) {
+      expect(TIP_QUEST_MIN_CENTS * q.target).toBeGreaterThan(q.reward.cashCents);
+    }
+  });
+
+  it('counts only the first qualifying tip per recipient', async () => {
+    const a = await userWithDailyVerb('tip_send');
+    const b = await newUser(1_000_000);
+    const c = await newUser(1_000_000);
+    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS, null);
+    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS, null);
+    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS * 5, null);
+    expect(await events(a, 'tip_send')).toBe(1);
+    await sendCashTip(ctx, a, c, TIP_QUEST_MIN_CENTS, null);
+    expect(await events(a, 'tip_send')).toBe(2); // a different recipient counts
+  });
+
+  it('does not count a ping-pong: B tipping A back after A tipped B earns nothing', async () => {
+    const a = await userWithDailyVerb('tip_send');
+    const b = await userWithDailyVerb('tip_send');
+    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS, null);
+    expect(await events(a, 'tip_send')).toBe(1);
+    await sendCashTip(ctx, b, a, TIP_QUEST_MIN_CENTS, null);
+    expect(await events(b, 'tip_send')).toBe(0);
+    // B can still earn by tipping someone who did not tip B.
+    const c = await newUser(1_000_000);
+    await sendCashTip(ctx, b, c, TIP_QUEST_MIN_CENTS, null);
+    expect(await events(b, 'tip_send')).toBe(1);
+  });
+
+  it('paid_call credits a pair of players once per window, whichever way round', async () => {
+    const x = await userWithDailyVerb('paid_call');
+    const y = await newUser();
+    const z = await newUser();
+    const rule = (other: string): { key: string; cooldownDays: number } => ({
+      key: `pair:${other}`,
+      cooldownDays: PAID_CALL_PAIR_COOLDOWN_DAYS,
+    });
+    await recordQuestEvent(ctx, x, 'paid_call', 'call-1', new Date(), rule(y));
+    await recordQuestEvent(ctx, x, 'paid_call', 'call-2', new Date(), rule(y));
+    expect(await events(x, 'paid_call')).toBe(1);
+    await recordQuestEvent(ctx, x, 'paid_call', 'call-3', new Date(), rule(z));
+    expect(await events(x, 'paid_call')).toBe(2);
+    // After the window the same pair counts again.
+    const later = new Date(Date.now() + (PAID_CALL_PAIR_COOLDOWN_DAYS + 1) * 86_400_000);
+    await recordQuestEvent(ctx, x, 'paid_call', 'call-4', later, rule(y));
+    expect(await events(x, 'paid_call')).toBe(3);
   });
 
   it("visiting someone else's home advances home_visit; visiting your own does not", async () => {
@@ -302,5 +362,27 @@ describe('progress from real server events', () => {
       [owner],
     );
     await pool.query(`DELETE FROM homes WHERE owner_user_id = $1`, [owner]);
+  });
+
+  it('two accounts visiting each other do not both earn, and a home counts once per window', async () => {
+    const a = await userWithDailyVerb('home_visit');
+    const b = await userWithDailyVerb('home_visit');
+    await createHome(ctx, a, 'parents_basement');
+    await createHome(ctx, b, 'parents_basement');
+    try {
+      await recordVisit(ctx, a, b); // b visits a's home: counts for b
+      await recordVisit(ctx, a, b); // again: same home, no second credit
+      expect(await events(b, 'home_visit')).toBe(1);
+      await recordVisit(ctx, b, a); // a visits b's home: b visited a, so a earns nothing
+      expect(await events(a, 'home_visit')).toBe(0);
+    } finally {
+      for (const u of [a, b]) {
+        await pool.query(
+          `DELETE FROM home_visits WHERE home_id IN (SELECT home_id FROM homes WHERE owner_user_id = $1)`,
+          [u],
+        );
+        await pool.query(`DELETE FROM homes WHERE owner_user_id = $1`, [u]);
+      }
+    }
   });
 });

@@ -34,7 +34,7 @@ import {
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { notifyHomeVisit } from './push-delivery.js';
-import { recordQuestEvent } from './quests.js';
+import { HOME_VISIT_COOLDOWN_DAYS, recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 import {
   accessToHome,
@@ -576,7 +576,26 @@ export async function recordVisit(
   // After the commit, and only for someone else's home: visiting your own earns nothing.
   if (home.owner_user_id !== visitorUserId) {
     const day = new Date().toISOString().slice(0, 10);
-    await recordQuestEvent(ctx, visitorUserId, 'home_visit', `${resolvedHomeId}:${day}`);
+    // Two accounts visiting each other do not both earn: no credit when the owner visited
+    // one of the visitor's homes within the window, and a home counts once per window.
+    const reciprocal = await ctx.db.withConnection((c) =>
+      c.query(
+        `SELECT 1 FROM home_visits v JOIN homes h ON h.home_id = v.home_id
+          WHERE v.visitor_user_id = $1 AND h.owner_user_id = $2
+            AND v.visited_at > now() - make_interval(days => $3::int) LIMIT 1`,
+        [home.owner_user_id, visitorUserId, HOME_VISIT_COOLDOWN_DAYS],
+      ),
+    );
+    if (reciprocal.rows.length === 0) {
+      await recordQuestEvent(
+        ctx,
+        visitorUserId,
+        'home_visit',
+        `${resolvedHomeId}:${day}`,
+        new Date(),
+        { key: `home:${resolvedHomeId}`, cooldownDays: HOME_VISIT_COOLDOWN_DAYS },
+      );
+    }
     await notifyHomeVisit(ctx, home.owner_user_id, resolvedHomeId);
   }
   return {

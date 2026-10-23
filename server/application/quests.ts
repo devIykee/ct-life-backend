@@ -50,8 +50,28 @@ export interface QuestDef {
 
 export const DAILY_COUNT = 3;
 export const WEEKLY_COUNT = 5;
-/** A Cash tip counts toward `tip_send` from this amount, so a 1 cent loop earns nothing. */
-export const TIP_QUEST_MIN_CENTS = 100;
+/**
+ * A Cash tip counts toward `tip_send` from this amount, which is above every tip quest's
+ * Cash reward (daily 300) and, over a weekly quest's 3 tips, above its reward (2500). A tip
+ * moves Cash to the recipient rather than burning it, so this alone does not make farming
+ * with an alt unprofitable; the counterpart rules below are what cap it.
+ */
+export const TIP_QUEST_MIN_CENTS = 1000;
+/** A recipient counts for `tip_send` once per this many days. */
+export const TIP_RECIPIENT_COOLDOWN_DAYS = 7;
+/** A tip does not count when the recipient tipped the sender within this many days. */
+export const TIP_PINGPONG_DAYS = 7;
+/** A home counts for `home_visit` once per this many days. */
+export const HOME_VISIT_COOLDOWN_DAYS = 7;
+/** A pair of players counts for `paid_call` once per this many days. */
+export const PAID_CALL_PAIR_COOLDOWN_DAYS = 7;
+
+/** Limit a social event to once per counterpart within a window. */
+export interface CounterpartRule {
+  /** Identifies the other side (a user id, a home id). */
+  readonly key: string;
+  readonly cooldownDays: number;
+}
 
 /**
  * Every quest definition.
@@ -243,6 +263,9 @@ export interface QuestEventUpdate {
  * @param verb - What they did.
  * @param ref - A stable id of the source event (shift id, perp id, ...).
  * @param now - The current time (injectable for tests).
+ * @param counterpart - For social events: skip the event when this player already earned
+ * this verb from the same counterpart within the window, so a pair of accounts cannot
+ * loop the same quest.
  */
 export async function recordQuestEvent(
   ctx: AppContext,
@@ -250,6 +273,7 @@ export async function recordQuestEvent(
   verb: QuestVerb,
   ref: string,
   now: Date = new Date(),
+  counterpart?: CounterpartRule,
 ): Promise<void> {
   try {
     const p = picksFor(ctx, userId, now);
@@ -259,10 +283,20 @@ export async function recordQuestEvent(
     ];
     if (matches.length === 0) return;
     const updates = await runInTransaction(async (client) => {
+      if (counterpart) {
+        const since = new Date(now.getTime() - counterpart.cooldownDays * 86_400_000);
+        const prior = await client.query(
+          `SELECT 1 FROM quest_events
+            WHERE user_id = $1 AND verb = $2 AND starts_with(ref, $3) AND created_at > $4 LIMIT 1`,
+          [userId, verb, `${counterpart.key}|`, since],
+        );
+        if (prior.rows.length > 0) return [] as QuestEventUpdate[];
+      }
+      const stored = counterpart ? `${counterpart.key}|${ref}` : ref;
       const seen = await client.query(
         `INSERT INTO quest_events (user_id, verb, ref, created_at) VALUES ($1, $2, $3, $4)
          ON CONFLICT DO NOTHING RETURNING 1`,
-        [userId, verb, ref, now],
+        [userId, verb, stored, now],
       );
       if (seen.rows.length === 0) return [] as QuestEventUpdate[];
       const out: QuestEventUpdate[] = [];

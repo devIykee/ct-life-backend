@@ -2,7 +2,7 @@
   "_owner": "BE",
   "_provisional": true,
   "version": "0.1.0",
-  "_note": "Quest definitions. Each player gets a deterministic pick of 3 daily quests (seeded by user and UTC date) and a chain of 5 weekly quests (seeded by user and ISO week), preferring distinct verbs. verb is a server event: shift_complete, perp_open, perp_close, prediction_place, alpha_call, paid_call (a funded call the payee accepted, counted for both sides), tip_send (Cash tip of at least 100 cents), home_visit (someone else's home). Progress comes only from server events, never from the client. reward.cashCents pays as ledger reason quest_reward; reward.seasonXp is recorded in season_xp. deepLink is the screen the client opens. The FE may reword titles; ids are stable. To add a quest, add it here: no code change.",
+  "_note": "Quest definitions. Each player gets a deterministic pick of 3 daily quests (seeded by user and UTC date) and a chain of 5 weekly quests (seeded by user and ISO week), preferring distinct verbs. verb is a server event: shift_complete, perp_open, perp_close, prediction_place, alpha_call, paid_call (a funded call the payee accepted, counted for both sides, once per pair of players per 7 days), tip_send (Cash tip of at least 1000 cents, counted once per recipient per 7 days, never to someone who tipped the sender in the last 7 days), home_visit (someone else's home, once per home per 7 days, and not when the owner visited the visitor's home in the last 7 days). Progress comes only from server events, never from the client. reward.cashCents pays as ledger reason quest_reward; reward.seasonXp is recorded in season_xp. deepLink is the screen the client opens. The FE may reword titles; ids are stable. To add a quest, add it here: no code change.",
   "quests": [
     {
       "id": "q_daily_shift_1",
@@ -111,7 +111,7 @@
     {
       "id": "q_daily_tip_1",
       "title": "Tip a creator",
-      "description": "Send a tip of at least $1",
+      "description": "Send a tip of at least $10 to someone new",
       "verb": "tip_send",
       "target": 1,
       "reward": {
@@ -215,7 +215,7 @@
     {
       "id": "q_weekly_tip_3",
       "title": "Generous",
-      "description": "Send 3 tips of at least $1",
+      "description": "Send 3 tips of at least $10, each to a different person",
       "verb": "tip_send",
       "target": 3,
       "reward": {

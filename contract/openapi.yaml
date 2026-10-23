@@ -1863,7 +1863,7 @@ paths:
         The pick is deterministic per player and period (daily: user and UTC date; weekly: user
         and ISO week) from `contract/ids/quests.json`. Progress is advanced only by server
         events (a shift paid, a perp opened or closed, a prediction placed, an alpha call, a
-        paid call accepted, a Cash tip of at least $1, a visit to someone else's home); the
+        paid call accepted, a Cash tip of at least $10, a visit to someone else's home); the
         client never reports progress. Each change is also pushed live as the realtime
         `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward.
       x-phase: 5
