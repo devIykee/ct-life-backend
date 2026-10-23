@@ -191,6 +191,11 @@
       "code": "UNIT_FULL",
       "httpStatus": 409,
       "message": "The unit is at capacity; remove a guest first."
+    },
+    {
+      "code": "FREEZE_LIMIT_REACHED",
+      "httpStatus": 409,
+      "message": "You already hold the maximum number of streak freezes."
     }
   ]
 }

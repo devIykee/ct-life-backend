@@ -168,6 +168,8 @@ const LABELS: Record<string, string> = {
   cosmetic: 'Cosmetic',
   season_pass_buy: 'Season pass',
   daily_clue: 'Daily clue',
+  daily_streak: 'Daily streak chest',
+  streak_freeze: 'Streak freeze',
   weekly_perk: 'Sunday Unlock perk',
   airdrop: 'Airdrop',
   project_seed: 'Project funding',
