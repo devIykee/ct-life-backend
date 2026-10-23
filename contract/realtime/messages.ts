@@ -287,6 +287,23 @@ export const DmMessage = z.object({
 });
 export type DmMessage = z.infer<typeof DmMessage>;
 
+/** Duo Shop: the courier leaves, about 60 s before `etaAt` (epoch ms). `unitId` is null for a locker. */
+export const DeliveryOutMessage = z.object({
+  orderId: z.string().uuid(),
+  destination: z.enum(['door', 'locker']),
+  unitId: z.string().min(1).nullable(),
+  etaAt: z.number().int().nonnegative(),
+});
+export type DeliveryOutMessage = z.infer<typeof DeliveryOutMessage>;
+
+/** Duo Shop: the parcel is there and the items are in the player's inventory. */
+export const DeliveryArrivedMessage = z.object({
+  orderId: z.string().uuid(),
+  destination: z.enum(['door', 'locker']),
+  unitId: z.string().min(1).nullable(),
+});
+export type DeliveryArrivedMessage = z.infer<typeof DeliveryArrivedMessage>;
+
 export const CallInviteMessage = z.object({
   callId: z.string().min(1),
   fromUserId: z.string().min(1),

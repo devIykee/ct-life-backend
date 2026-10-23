@@ -86,23 +86,25 @@ The M1 milestone produces the `messages.ts` types with Zod validation:
 
 ### Server → client
 
-| Room              | Type                | To                                | Payload                                                                                                                  |
-| ----------------- | ------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| any               | `welcome`           | joiner                            | `{ serverNow, instanceId, island? }`; venue rooms on CT Island add `island {x, y, z, yaw}`                               |
-| `venue`           | `said`              | everyone (except blocked senders) | `{ messageId, userId, sessionId, text, at }`                                                                             |
-| `venue`           | `toast`             | one player                        | `{ textId, params }`                                                                                                     |
-| `venue`           | `rejected`          | one player                        | `{ type, code }` (e.g. `SPOT_TAKEN`, `RATE_LIMITED`); a rejected `move` adds the server `x, z` when known                |
-| `venue`, `street` | `corrected`         | one player                        | `{ x, z, island? }`: the server clamped your move to this position (island frame if you sent `island: true`); snap to it |
-| `vehicles`        | `vehicle_corrected` | the driver                        | `{ id, x, y, z }`: same, for the vehicle                                                                                 |
-| `vehicles`        | `vehicle_hit`       | the victim                        | `{ victim, velocity, by, vehicleId, at }`: ragdoll locally (schema `vehicle_hit_relay`, sent as `vehicle_hit`)           |
-| `city`            | `event`             | everyone                          | `{ eventId, params, at }` - liquidations, rugs, launches, exploits, mood, ORE motherlode                                 |
-| `city`            | `liquidated`        | one player                        | `{ perpId, coinId, lossCents, at }` (REKT card)                                                                          |
-| `city`            | `payment_confirmed` | one player                        | `{ intentId, cashCents }`                                                                                                |
-| `city`            | `space_update`      | everyone in that space            | `{ spaceId }`                                                                                                            |
-| `city`            | `dm`                | one player                        | `{ messageId, fromUserId, text, at }`                                                                                    |
-| `city`            | `call_invite`       | one player                        | `{ callId, fromUserId, paid }`                                                                                           |
-| `city`            | `kicked`            | one player                        | `{ reasonId }`                                                                                                           |
-| `market`          | `tape`              | everyone                          | `{ coinId, side, cashCents, name }` (trades >= $1,000 only)                                                              |
+| Room              | Type                | To                                | Payload                                                                                                                                                                   |
+| ----------------- | ------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| any               | `welcome`           | joiner                            | `{ serverNow, instanceId, island? }`; venue rooms on CT Island add `island {x, y, z, yaw}`                                                                                |
+| `venue`           | `said`              | everyone (except blocked senders) | `{ messageId, userId, sessionId, text, at }`                                                                                                                              |
+| `venue`           | `toast`             | one player                        | `{ textId, params }`                                                                                                                                                      |
+| `venue`           | `rejected`          | one player                        | `{ type, code }` (e.g. `SPOT_TAKEN`, `RATE_LIMITED`); a rejected `move` adds the server `x, z` when known                                                                 |
+| `venue`, `street` | `corrected`         | one player                        | `{ x, z, island? }`: the server clamped your move to this position (island frame if you sent `island: true`); snap to it                                                  |
+| `vehicles`        | `vehicle_corrected` | the driver                        | `{ id, x, y, z }`: same, for the vehicle                                                                                                                                  |
+| `vehicles`        | `vehicle_hit`       | the victim                        | `{ victim, velocity, by, vehicleId, at }`: ragdoll locally (schema `vehicle_hit_relay`, sent as `vehicle_hit`)                                                            |
+| `city`            | `event`             | everyone                          | `{ eventId, params, at }` - liquidations, rugs, launches, exploits, mood, ORE motherlode                                                                                  |
+| `city`            | `liquidated`        | one player                        | `{ perpId, coinId, lossCents, at }` (REKT card)                                                                                                                           |
+| `city`            | `payment_confirmed` | one player                        | `{ intentId, cashCents }`                                                                                                                                                 |
+| `city`            | `space_update`      | everyone in that space            | `{ spaceId }`                                                                                                                                                             |
+| `city`            | `dm`                | one player                        | `{ messageId, fromUserId, text, at }`                                                                                                                                     |
+| `city`            | `delivery_out`      | one player                        | `{ orderId, destination, unitId, etaAt }`: a Duo Shop courier leaves about 60 s before `etaAt` (epoch ms); `unitId` is the door, null for the lobby locker. Spawn the van |
+| `city`            | `delivery_arrived`  | one player                        | `{ orderId, destination, unitId }`: the order is delivered and its items are in `GET /me/items`. Drop the parcel at the door or fill the locker                           |
+| `city`            | `call_invite`       | one player                        | `{ callId, fromUserId, paid }`                                                                                                                                            |
+| `city`            | `kicked`            | one player                        | `{ reasonId }`                                                                                                                                                            |
+| `market`          | `tape`              | everyone                          | `{ coinId, side, cashCents, name }` (trades >= $1,000 only)                                                                                                               |
 
 ## Join and reconnection
 
