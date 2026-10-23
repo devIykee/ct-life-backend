@@ -191,6 +191,46 @@
       "code": "UNIT_FULL",
       "httpStatus": 409,
       "message": "The unit is at capacity; remove a guest first."
+    },
+    {
+      "code": "AGE_REQUIRED",
+      "httpStatus": 403,
+      "message": "The Rug Room is 18+. Confirm your age to play."
+    },
+    {
+      "code": "STAKE_CAP_REACHED",
+      "httpStatus": 403,
+      "message": "This stake would pass your daily casino stake cap. Try again tomorrow (UTC)."
+    },
+    {
+      "code": "LOSS_CAP_REACHED",
+      "httpStatus": 403,
+      "message": "This stake would pass your daily casino net-loss cap. Try again tomorrow (UTC)."
+    },
+    {
+      "code": "SELF_EXCLUDED",
+      "httpStatus": 403,
+      "message": "You have excluded yourself from the casino until the date shown."
+    },
+    {
+      "code": "ROUND_SETTLED",
+      "httpStatus": 409,
+      "message": "This round is already settled."
+    },
+    {
+      "code": "ROUND_IN_PROGRESS",
+      "httpStatus": 409,
+      "message": "Finish your open crash round before starting another."
+    },
+    {
+      "code": "CHALLENGE_EXPIRED",
+      "httpStatus": 410,
+      "message": "This challenge expired; the stake was refunded."
+    },
+    {
+      "code": "CHALLENGE_NOT_OPEN",
+      "httpStatus": 409,
+      "message": "This challenge is no longer open."
     }
   ]
 }

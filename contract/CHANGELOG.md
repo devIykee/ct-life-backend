@@ -1,3 +1,19 @@
+## 2026-10-24 - The Rug Room: Cash-only casino (slots, crash, coinflip)
+
+Independent of the other open PRs. Migration 086 (`1700000086000_casino`); if it merges after 084 or 085, run migrations with `--no-check-order`.
+
+- Play money, Cash only, 18+. Every success response carries `disclaimer: "Play money. No cash value. 18+"`, `sessionMinutes` (continuous play) and `sessionReminder` (true from 30 minutes). Nothing can be cashed out and nothing tradable is paid.
+- New config `contract/config/casino.json` (+ `casino.schema.json`, checked by `contract:check`): stake limits, slots reel weights and paytable with `computedRtp` (95.05%), crash growth, coinflip payout and head-to-head cut. A new `contract:check` step `casino-rtp` recomputes the slots RTP and fails outside 94-96%.
+- Added `GET /casino/state` (age and exclusion state, caps and what is left today, paytables; readable before 18+ is confirmed), `POST /casino/slots/spin {stakeCents}`, `POST /casino/crash/bet {stakeCents, autoCashout?}`, `POST /casino/crash/cashout {roundId}`, `POST /casino/coinflip/bet {stakeCents, side}`, `POST` and `GET /casino/coinflip/challenges`, `POST /casino/coinflip/challenges/{id}/accept | decline | cancel`, `GET /casino/rounds?mine&limit&before`, `GET /casino/rounds/{id}` and `POST /casino/self-exclude {days}`. Writes are idempotent and rate limited; request bodies are strict (an unknown field such as an outcome or multiplier is `VALIDATION_FAILED`).
+- Server-authoritative commit-reveal RNG: `seedHash` is published when a round opens, `seed` is returned once it settles (never while open); the algorithm is in `docs/CASINO.md`. `GET /casino/rounds?mine` is the caller's own audit log; someone else's round or challenge is `404`.
+- Crash: the crash point is drawn at the bet and never sent while the round is open. A manual cashout is decided by the server clock against the crash time; a late cashout answers `200` with payout 0 and `outcome.crashed: true`, a second one `409 ROUND_SETTLED`. One open crash round per player.
+- Head-to-head coinflip: named opponent, the challenger's stake is escrowed (ledger `casino_stake`), the opponent has 120 s to accept, then the stake is refunded (`casino_refund`) by the next touch or a per-minute worker; the winner gets the pot minus 5%.
+- Ledger reasons `casino_stake`, `casino_win`, `casino_refund`.
+- Caps (UTC day): `CASINO_DAILY_STAKE_CAP_CENTS` (default 50000) and `CASINO_DAILY_LOSS_CAP_CENTS` (default 25000). Self-exclusion can be extended, never shortened.
+- New error codes `AGE_REQUIRED` (403), `STAKE_CAP_REACHED` (403), `LOSS_CAP_REACHED` (403), `SELF_EXCLUDED` (403), `ROUND_SETTLED` (409), `ROUND_IN_PROGRESS` (409), `CHALLENGE_EXPIRED` (410), `CHALLENGE_NOT_OPEN` (409).
+- Rich list: a net casino profit now counts at 25% on the `net_worth` and `weekly_pnl` boards (losses in full), so gamblers do not dominate it.
+- Migration 086 adds `casino_players`, `casino_rounds`, `casino_challenges` and a partial index on `ledger_entries` for the casino reasons.
+
 ## 2026-10-23 - Duo Shop: Cash goods and furniture, scheduled delivery, placements
 
 Merge after the homes PR (#7): orders to the door use `homes.unit_id` and `home_units`, and placements use its door access rules.

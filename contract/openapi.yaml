@@ -46,6 +46,8 @@ tags:
     description: Top-up, cosmetic, ad booking, season pass intents. Phase 2+.
   - name: shop
     description: Shop, inventory. Phase 4+.
+  - name: casino
+    description: The Rug Room, a Cash-only play-money casino (18+). Phase 4+.
   - name: ads
     description: Ad slots, uploads, bookings, live creatives. Phase 5+.
   - name: ore
@@ -3973,6 +3975,560 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /casino/state:
+    get:
+      tags: [casino]
+      operationId: getCasinoState
+      summary: Rug Room state, caps and paytables.
+      description: >-
+        Everything the UI needs before a bet: whether the caller confirmed 18+, the self-exclusion
+        date, the daily stake and net-loss caps with what is left today (UTC day), the session
+        length and the paytables with their RTP. Readable by a player who has not confirmed 18+
+        so the client can show the age gate; nothing is staked. Play money only: Cash cannot be
+        cashed out anywhere.
+      x-phase: 4
+      responses:
+        '200':
+          description: State
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /casino/slots/spin:
+    post:
+      tags: [casino]
+      operationId: postCasinoSlotsSpin
+      summary: Spin the slots.
+      description: >-
+        Three reels (rocket, diamond_hands, ape, laser_eyes, rug, wild). Debits the stake and
+        pays any win in one transaction (ledger `casino_stake`, `casino_win`). The outcome comes
+        from a server seed committed in `seedHash` and revealed in `seed` once the round settles;
+        the client sends no outcome, seed or multiplier. RTP about 95%. Refused with `AGE_REQUIRED`
+        unless 18+ is confirmed, `SELF_EXCLUDED`, `STAKE_CAP_REACHED`, `LOSS_CAP_REACHED`.
+        Idempotent: a replayed key returns the same round and charges once.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stakeCents]
+              properties:
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+      responses:
+        '201':
+          description: The settled round
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/crash/bet:
+    post:
+      tags: [casino]
+      operationId: postCasinoCrashBet
+      summary: Place a crash ("moon or rug") bet.
+      description: >-
+        The multiplier climbs along `e^(growthPerSecond * t)` from the round's start until it
+        hits a crash point the server drew when the bet was placed (P(crash >= m) = 0.95 / m,
+        capped at `maxMultiplier`). With `autoCashout` the round settles at once (win if the
+        target is at or below the crash point) and the client animates the result. Without it the
+        round is `open`: the answer carries `params.startedAtMs` and `params.growthPerSecond` for
+        the animation but never the crash point or the seed, and the player cashes out with
+        `POST /casino/crash/cashout`. One open crash round per player (`ROUND_IN_PROGRESS`); a
+        round whose crash time has passed is closed as a loss by the next bet.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stakeCents]
+              properties:
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+                autoCashout:
+                  type: number
+                  minimum: 1.01
+                  maximum: 100
+                  description: Target multiplier with at most 2 decimals.
+      responses:
+        '201':
+          description: The round (`settled` with an auto-cashout, else `open`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '409':
+          description: A crash round is already open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: ROUND_IN_PROGRESS,
+                      message: 'Finish your open crash round before starting another.',
+                      details: {},
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/crash/cashout:
+    post:
+      tags: [casino]
+      operationId: postCasinoCrashCashout
+      summary: Cash out of an open crash round.
+      description: >-
+        Decided by the server clock only: if the time since the round started has reached the
+        crash point the round is lost (`200`, payout 0, `outcome.crashed: true`, the crash point
+        and seed revealed); otherwise it pays the server's multiplier at that instant. Owner only
+        (someone else's round is `404`). A round that already settled answers `409 ROUND_SETTLED`
+        and pays nothing. Still allowed while self-excluded.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [roundId]
+              properties:
+                roundId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The settled round
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The round is already settled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: ROUND_SETTLED,
+                      message: 'This round is already settled.',
+                      details: { roundId: '0192e1f0-0000-7000-8000-000000000000' },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/coinflip/bet:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipBet
+      summary: Flip a coin against the house.
+      description: >-
+        Call heads or tails. A win pays 1.9x the stake (RTP 95%), a loss pays nothing. Same
+        rules, gates and commit-reveal as the slots.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stakeCents, side]
+              properties:
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+                side: { type: string, enum: [heads, tails] }
+      responses:
+        '201':
+          description: The settled round
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/coinflip/challenges:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallenges
+      summary: Challenge a player to a head-to-head coinflip.
+      description: >-
+        The challenger's stake is escrowed now (ledger `casino_stake`). The challenged player has
+        120 seconds to accept; after that the stake is refunded (`casino_refund`). The winner is
+        paid the pot minus a 5% house cut. The coin comes from a seed committed in `seedHash` at
+        creation. At most 5 open challenges per player. Same gates as any stake.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [opponentUserId, stakeCents, side]
+              properties:
+                opponentUserId: { type: string, format: uuid }
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+                side: { type: string, enum: [heads, tails], description: The challenger's side. }
+      responses:
+        '201':
+          description: The open challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [casino]
+      operationId: getCasinoCoinflipChallenges
+      summary: My challenges, incoming and outgoing.
+      description: >-
+        Newest first, last 50. Only challenges the caller takes part in are listed. Expired ones
+        are refunded before the list is built. The client polls this while in the Rug Room to see
+        incoming challenges.
+      x-phase: 4
+      responses:
+        '200':
+          description: Challenges
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [challenges]
+                    properties:
+                      challenges:
+                        type: array
+                        items: { $ref: '#/components/schemas/CasinoChallenge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /casino/coinflip/challenges/{id}/accept:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallengesIdAccept
+      summary: Accept a challenge (the challenged player only).
+      description: >-
+        Debits the opponent's stake, flips the coin from the committed seed, pays the winner the
+        pot minus 5% (ledger `casino_win`) and writes a `casino_rounds` row for each player. A
+        challenge older than 120 seconds is refunded and answers `410 CHALLENGE_EXPIRED`. Someone
+        who is not a participant gets `404`; the challenger gets `403`. The opponent must pass the
+        same gates as for any stake.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The settled challenge and the caller's round
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoChallengeResult'
+                  - type: object
+                    required: [round]
+                    properties:
+                      round: { $ref: '#/components/schemas/CasinoRound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The challenge is no longer open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHALLENGE_NOT_OPEN,
+                      message: 'This challenge is no longer open.',
+                      details:
+                        { challengeId: '0192e1f0-0000-7000-8000-000000000000', status: settled },
+                    },
+                }
+        '410':
+          description: The challenge expired and the stake was refunded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHALLENGE_EXPIRED,
+                      message: 'This challenge expired; the stake was refunded.',
+                      details: { challengeId: '0192e1f0-0000-7000-8000-000000000000' },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/coinflip/challenges/{id}/decline:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallengesIdDecline
+      summary: Decline a challenge (the challenged player only).
+      description: Refunds the challenger's escrowed stake (ledger `casino_refund`).
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The closed challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The challenge is no longer open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /casino/coinflip/challenges/{id}/cancel:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallengesIdCancel
+      summary: Cancel my open challenge (the challenger only).
+      description: Refunds the escrowed stake (ledger `casino_refund`).
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The closed challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The challenge is no longer open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /casino/rounds:
+    get:
+      tags: [casino]
+      operationId: getCasinoRounds
+      summary: My round log (auditable).
+      description: >-
+        The caller's own rounds, newest first. `?mine` is accepted and implied: other players'
+        rounds cannot be listed. `seedHash` is published when a round opens and `seed` is
+        revealed once it settles; recompute `SHA-256(seed)` and the outcome as described in
+        `docs/CASINO.md`. The seed of an open round is never returned.
+      x-phase: 4
+      parameters:
+        - name: mine
+          in: query
+          required: false
+          schema: { type: string, enum: ['true', '1', ''] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: before
+          in: query
+          required: false
+          description: Return rounds created before this ISO time (the last row's `createdAt`).
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Rounds
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [rounds]
+                    properties:
+                      rounds:
+                        type: array
+                        items: { $ref: '#/components/schemas/CasinoRound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /casino/rounds/{id}:
+    get:
+      tags: [casino]
+      operationId: getCasinoRoundsId
+      summary: One of my rounds.
+      description: Owner only. Someone else's round answers `404`, the same as no round.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The round
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [round]
+                    properties:
+                      round: { $ref: '#/components/schemas/CasinoRound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /casino/self-exclude:
+    post:
+      tags: [casino]
+      operationId: postCasinoSelfExclude
+      summary: Exclude myself from the casino for N days.
+      description: >-
+        New stakes are refused with `SELF_EXCLUDED` until the returned date. It can be extended
+        by calling again with more days but never shortened or lifted early. An open crash round
+        can still be cashed out and a pending challenge refunded. `days` is 1 to 365.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [days]
+              properties:
+                days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '200':
+          description: The exclusion
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [selfExcludedUntil]
+                    properties:
+                      selfExcludedUntil: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4064,6 +4620,65 @@ components:
                   details: { 'field': 'ageConfirmed' },
                 },
             }
+    CasinoRefused:
+      description: >-
+        The casino refused the stake: `AGE_REQUIRED` (18+ not confirmed), `SELF_EXCLUDED`,
+        `STAKE_CAP_REACHED` or `LOSS_CAP_REACHED` (daily caps, UTC day). `details` carries the
+        cap or the exclusion date.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            age:
+              value:
+                {
+                  error:
+                    {
+                      code: AGE_REQUIRED,
+                      message: 'The Rug Room is 18+. Confirm your age to play.',
+                      details: {},
+                    },
+                }
+            excluded:
+              value:
+                {
+                  error:
+                    {
+                      code: SELF_EXCLUDED,
+                      message: 'You have excluded yourself from the casino until the date shown.',
+                      details: { until: '2026-11-01T12:00:00.000Z' },
+                    },
+                }
+            stakeCap:
+              value:
+                {
+                  error:
+                    {
+                      code: STAKE_CAP_REACHED,
+                      message: 'This stake would pass your daily casino stake cap. Try again tomorrow (UTC).',
+                      details:
+                        {
+                          capCents: 50000,
+                          stakedCents: 49800,
+                          resetsAt: '2026-10-25T00:00:00.000Z',
+                        },
+                    },
+                }
+            lossCap:
+              value:
+                {
+                  error:
+                    {
+                      code: LOSS_CAP_REACHED,
+                      message: 'This stake would pass your daily casino net-loss cap. Try again tomorrow (UTC).',
+                      details:
+                        {
+                          capCents: 25000,
+                          netLossCents: 24900,
+                          resetsAt: '2026-10-25T00:00:00.000Z',
+                        },
+                    },
+                }
     RateLimited:
       description: Rate limit exceeded
       headers:
@@ -4879,6 +5494,181 @@ components:
             d: { type: number }
             h: { type: number }
         modelKey: { type: string, description: 'Frontend asset key.' }
+    CasinoMeta:
+      type: object
+      required: [disclaimer, sessionMinutes, sessionReminder]
+      properties:
+        disclaimer:
+          type: string
+          enum: ['Play money. No cash value. 18+']
+          description: Show on every casino screen.
+        sessionMinutes:
+          type: integer
+          description: Minutes of continuous play (a break over 10 minutes ends a session).
+        sessionReminder:
+          type: boolean
+          description: True from 30 minutes of continuous play; show the take-a-break popup.
+    CasinoRound:
+      type: object
+      required:
+        [
+          roundId,
+          game,
+          status,
+          stakeCents,
+          payoutCents,
+          params,
+          outcome,
+          seedHash,
+          seed,
+          challengeId,
+          createdAt,
+          settledAt,
+        ]
+      properties:
+        roundId: { type: string, format: uuid }
+        game: { type: string, enum: [slots, crash, coinflip, coinflip_h2h] }
+        status: { type: string, enum: [open, settled] }
+        stakeCents: { type: integer }
+        payoutCents: { type: integer, nullable: true, description: Null while open. }
+        params:
+          type: object
+          description: >-
+            Public inputs. Crash: `startedAtMs` (server epoch ms) and `growthPerSecond` for the
+            open round, `autoCashout` when set. Coinflip: `side`.
+          additionalProperties: true
+        outcome:
+          type: object
+          nullable: true
+          description: >-
+            Null while open. Slots `{reels: [s, s, s], multiplier, winSymbol, jackpot}`; crash
+            `{crashPoint, cashedOutAt, crashed, autoCashout?}`; coinflip `{side, result, won}`;
+            head-to-head `{result, won, potCents, houseCutCents, winnerId, loserId}`.
+          additionalProperties: true
+        seedHash:
+          { type: string, description: 'SHA-256 of `seed`, published when the round opens.' }
+        seed: { type: string, nullable: true, description: Revealed once settled; null while open. }
+        challengeId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        settledAt: { type: string, format: date-time, nullable: true }
+    CasinoBetResult:
+      allOf:
+        - $ref: '#/components/schemas/CasinoMeta'
+        - type: object
+          required: [round, cashCents]
+          properties:
+            round: { $ref: '#/components/schemas/CasinoRound' }
+            cashCents: { type: integer, description: Cash after this action. }
+    CasinoChallenge:
+      type: object
+      required:
+        [
+          challengeId,
+          role,
+          challengerId,
+          challengerAlias,
+          opponentId,
+          opponentAlias,
+          stakeCents,
+          challengerSide,
+          status,
+          seedHash,
+          seed,
+          result,
+          winnerId,
+          potCents,
+          houseCutCents,
+          payoutCents,
+          createdAt,
+          expiresAt,
+          settledAt,
+        ]
+      properties:
+        challengeId: { type: string, format: uuid }
+        role: { type: string, enum: [challenger, opponent], description: The caller's role. }
+        challengerId: { type: string, format: uuid }
+        challengerAlias: { type: string, nullable: true }
+        opponentId: { type: string, format: uuid }
+        opponentAlias: { type: string, nullable: true }
+        stakeCents: { type: integer, description: Each player's stake. }
+        challengerSide: { type: string, enum: [heads, tails] }
+        status: { type: string, enum: [open, settled, expired, cancelled, declined] }
+        seedHash: { type: string }
+        seed: { type: string, nullable: true, description: Revealed once settled. }
+        result: { type: string, enum: [heads, tails], nullable: true }
+        winnerId: { type: string, format: uuid, nullable: true }
+        potCents: { type: integer, nullable: true }
+        houseCutCents: { type: integer, nullable: true, description: 5% of the pot, floored. }
+        payoutCents: { type: integer, nullable: true, description: Pot minus the house cut. }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: 120 seconds after creation. }
+        settledAt: { type: string, format: date-time, nullable: true }
+    CasinoChallengeResult:
+      allOf:
+        - $ref: '#/components/schemas/CasinoMeta'
+        - type: object
+          required: [challenge, cashCents]
+          properties:
+            challenge: { $ref: '#/components/schemas/CasinoChallenge' }
+            cashCents: { type: integer }
+    CasinoState:
+      allOf:
+        - $ref: '#/components/schemas/CasinoMeta'
+        - type: object
+          required: [ageConfirmed, selfExcludedUntil, limits, today, games]
+          properties:
+            ageConfirmed: { type: boolean }
+            selfExcludedUntil: { type: string, format: date-time, nullable: true }
+            limits:
+              type: object
+              required: [minStakeCents, maxStakeCents, dailyStakeCapCents, dailyNetLossCapCents]
+              properties:
+                minStakeCents: { type: integer }
+                maxStakeCents: { type: integer }
+                dailyStakeCapCents: { type: integer }
+                dailyNetLossCapCents: { type: integer }
+            today:
+              type: object
+              required:
+                [stakedCents, netLossCents, stakeRemainingCents, lossRemainingCents, resetsAt]
+              properties:
+                stakedCents: { type: integer }
+                netLossCents: { type: integer }
+                stakeRemainingCents: { type: integer }
+                lossRemainingCents: { type: integer }
+                resetsAt: { type: string, format: date-time }
+            games:
+              type: object
+              required: [slots, crash, coinflip]
+              properties:
+                slots:
+                  type: object
+                  required: [reelWeights, paytable, rtp, hitRate]
+                  properties:
+                    reelWeights: { type: object, additionalProperties: { type: integer } }
+                    paytable:
+                      type: object
+                      properties:
+                        three: { type: object, additionalProperties: { type: number } }
+                        two: { type: object, additionalProperties: { type: number } }
+                    rtp: { type: number }
+                    hitRate: { type: number }
+                crash:
+                  type: object
+                  required: [growthPerSecond, maxMultiplier, minAutoCashout, rtp]
+                  properties:
+                    growthPerSecond: { type: number }
+                    maxMultiplier: { type: number }
+                    minAutoCashout: { type: number }
+                    rtp: { type: number }
+                coinflip:
+                  type: object
+                  required: [payoutMultiplier, rtp, h2hHouseCutBps, challengeTtlSeconds]
+                  properties:
+                    payoutMultiplier: { type: number }
+                    rtp: { type: number }
+                    h2hHouseCutBps: { type: integer }
+                    challengeTtlSeconds: { type: integer }
     ShopOrder:
       type: object
       required:
