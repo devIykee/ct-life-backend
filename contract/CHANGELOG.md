@@ -1,3 +1,7 @@
+## 2026-10-23 - Follow-up to the homes (#7) and Duo Shop (#8) merges
+
+#7 and #8 were merged before their last updates, so these landed late: the real door ids in `home_units.json` (see "Real door ids" below), `homeId` in the unit access reply, the `/me` home-follows-lease fix, `flags.wireV3Kinds` in `GET /config`, and the real 18-item `shop_items.json` catalogue. No new endpoints. Deploy note: the six placeholder `flat:midrise_*` rows are no longer in the file but stay in `home_units`; delete the unleased ones once (`DELETE FROM home_units WHERE unit_id LIKE 'flat:midrise_%' AND unit_id NOT IN (SELECT unit_id FROM homes WHERE unit_id IS NOT NULL)`).
+
 ## 2026-10-23 - Duo Shop: Cash goods and furniture, scheduled delivery, placements
 
 Merge after the homes PR (#7): orders to the door use `homes.unit_id` and `home_units`, and placements use its door access rules.

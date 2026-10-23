@@ -220,12 +220,12 @@ describe('placing an order', () => {
   });
 
   it('uses the window to set the ETA', async () => {
-    expect((await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], { window: '30m' })).etaAt).toBe(
-      min(30).toISOString(),
-    );
-    expect((await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], { window: '1h' })).etaAt).toBe(
-      min(60).toISOString(),
-    );
+    expect(
+      (await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], { window: '30m' })).etaAt,
+    ).toBe(min(30).toISOString());
+    expect(
+      (await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], { window: '1h' })).etaAt,
+    ).toBe(min(60).toISOString());
   });
 
   it('refuses the door without a home, and for a home without a door', async () => {
@@ -238,7 +238,9 @@ describe('placing an order', () => {
        VALUES ($1, $2, 'parents_basement', 2000, now())`,
       [`home:${uuidv7()}`, street],
     );
-    const err = await order(street, [{ itemId: 'pantry_restock', qty: 1 }]).catch((e: unknown) => e);
+    const err = await order(street, [{ itemId: 'pantry_restock', qty: 1 }]).catch(
+      (e: unknown) => e,
+    );
     expect(err).toBeInstanceOf(NoHomeDoorError);
     expect((err as NoHomeDoorError).code).toBe('NO_HOME_DOOR');
     expect((err as NoHomeDoorError).httpStatus).toBe(409);
@@ -248,7 +250,9 @@ describe('placing an order', () => {
   it('charges the locker fee, and a street player can order to the locker', async () => {
     const street = await newUser(100_000);
     const price = await priceOf('side_table_oak');
-    const o = await order(street, [{ itemId: 'side_table_oak', qty: 2 }], { destination: 'locker' });
+    const o = await order(street, [{ itemId: 'side_table_oak', qty: 2 }], {
+      destination: 'locker',
+    });
     expect(o).toMatchObject({
       destination: 'locker',
       unitId: null,
@@ -285,8 +289,12 @@ describe('placing an order', () => {
       order(buyer, items).catch((e: unknown) => e);
     expect(await bad([])).toBeInstanceOf(ValidationFailedError);
     expect(await bad([{ itemId: 'pantry_restock', qty: 0 }])).toBeInstanceOf(ValidationFailedError);
-    expect(await bad([{ itemId: 'pantry_restock', qty: 11 }])).toBeInstanceOf(ValidationFailedError);
-    expect(await bad([{ itemId: 'pantry_restock', qty: 1.5 }])).toBeInstanceOf(ValidationFailedError);
+    expect(await bad([{ itemId: 'pantry_restock', qty: 11 }])).toBeInstanceOf(
+      ValidationFailedError,
+    );
+    expect(await bad([{ itemId: 'pantry_restock', qty: 1.5 }])).toBeInstanceOf(
+      ValidationFailedError,
+    );
     expect(
       await bad([
         { itemId: 'pantry_restock', qty: 1 },
@@ -427,11 +435,7 @@ describe('delivery worker', () => {
     await deliverOrder(ctx, o.orderId, min(10));
     await deliverOrder(ctx, o.orderId, min(12));
     const items = await listMyItems(ctx, buyer);
-    expect(items.map((i) => i.itemId).sort()).toEqual([
-      'plant_zebra',
-      'plant_zebra',
-      'sofa_linen',
-    ]);
+    expect(items.map((i) => i.itemId).sort()).toEqual(['plant_zebra', 'plant_zebra', 'sofa_linen']);
     expect(new Set(items.map((i) => i.itemInstanceId)).size).toBe(3);
     expect(items.every((i) => i.orderId === o.orderId && i.placedHomeId === null)).toBe(true);
     const sofa = items.find((i) => i.itemId === 'sofa_linen')!;
@@ -443,7 +447,9 @@ describe('delivery worker', () => {
 
   it('delivers to the locker with unitId null', async () => {
     const street = await newUser(100_000);
-    const o = await order(street, [{ itemId: 'pantry_restock', qty: 1 }], { destination: 'locker' });
+    const o = await order(street, [{ itemId: 'pantry_restock', qty: 1 }], {
+      destination: 'locker',
+    });
     await markOutForDelivery(ctx, o.orderId, min(9));
     await deliverOrder(ctx, o.orderId, min(10));
     expect(publishToUser).toHaveBeenCalledWith(ctx, street, 'delivery_out', {
@@ -532,11 +538,16 @@ describe('placements', () => {
       { itemInstanceId: lamp, x: -1, z: 0, rotY: 0 },
     ]);
     expect(set.homeId).toBe(homeId);
-    expect(set.placements.map((p) => [p.itemId, p.x, p.z, p.rotY])).toEqual([
-      ['sofa_linen', 1, 2, 0.5],
+    // The set has no defined order: both rows share one timestamp.
+    expect(
+      set.placements
+        .map((p) => [p.itemId, p.x, p.z, p.rotY])
+        .sort((l, r) => (l[0]! < r[0]! ? -1 : 1)),
+    ).toEqual([
       ['lamp_pipe', -1, 0, 0],
+      ['sofa_linen', 1, 2, 0.5],
     ]);
-    expect(set.placements[0]!.footprint).not.toBeNull();
+    expect(set.placements.every((p) => p.footprint !== null)).toBe(true);
     expect((await listMyItems(ctx, buyer)).every((i) => i.placedHomeId === homeId)).toBe(true);
     // Replace with one item: the lamp is free again.
     const again = await setPlacements(ctx, homeId, buyer, [
