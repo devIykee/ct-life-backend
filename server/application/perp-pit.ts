@@ -36,6 +36,7 @@ import {
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { notifyLiquidated } from './push-delivery.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
@@ -297,7 +298,9 @@ export async function closePerp(
  * room 'liquidated' message to the user.
  */
 export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<boolean> {
-  return runInTransaction(async (client) => {
+  let rekt: { userId: string; lossCents: bigint } | null = null;
+  const liquidated = await runInTransaction(async (client) => {
+    rekt = null;
     const pr = await client.query<{
       perp_id: string;
       user_id: string;
@@ -360,8 +363,13 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
         at: Date.now(),
       }),
     );
+    rekt = { userId: perp.user_id, lossCents };
     return true;
   });
+  // After the commit: the push never holds up, or fails, the liquidation.
+  const r = rekt as { userId: string; lossCents: bigint } | null;
+  if (liquidated && r) await notifyLiquidated(ctx, r.userId, perpId, r.lossCents);
+  return liquidated;
 }
 
 /**

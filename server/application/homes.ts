@@ -33,6 +33,7 @@ import {
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { notifyHomeVisit } from './push-delivery.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 import {
@@ -576,6 +577,7 @@ export async function recordVisit(
   if (home.owner_user_id !== visitorUserId) {
     const day = new Date().toISOString().slice(0, 10);
     await recordQuestEvent(ctx, visitorUserId, 'home_visit', `${resolvedHomeId}:${day}`);
+    await notifyHomeVisit(ctx, home.owner_user_id, resolvedHomeId);
   }
   return {
     visitId,
