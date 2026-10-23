@@ -78,6 +78,8 @@ const DEFAULT_CATALOG: ReadonlyArray<{
   name: string;
   priceCents: number;
   onchainOnly?: boolean;
+  /** Only ever granted (event rewards); never in the shop, never buyable. */
+  grantOnly?: boolean;
 }> = [
   // tops
   { slot: 'top', itemKey: 'top_hoodie_black', name: 'Black Hoodie', priceCents: 1000 },
@@ -114,6 +116,14 @@ const DEFAULT_CATALOG: ReadonlyArray<{
     priceCents: 0,
     onchainOnly: true,
   },
+  // Event rewards (granted by the events service, off-chain, never tradable)
+  {
+    slot: 'acc',
+    itemKey: 'lanyard_breakpoint_2026',
+    name: 'Breakpoint 2026 Lanyard',
+    priceCents: 0,
+    grantOnly: true,
+  },
 ];
 
 /**
@@ -126,10 +136,18 @@ export async function ensureCatalog(_ctx: AppContext): Promise<void> {
     const itemId = uuidv7();
     await _ctx.db.withConnection(async (c) => {
       await c.query(
-        `INSERT INTO cosmetic_items (item_id, slot, item_key, name, price_cents, onchain_only)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO cosmetic_items (item_id, slot, item_key, name, price_cents, onchain_only, grant_only)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (item_key) DO NOTHING`,
-        [itemId, item.slot, item.itemKey, item.name, item.priceCents, item.onchainOnly ?? false],
+        [
+          itemId,
+          item.slot,
+          item.itemKey,
+          item.name,
+          item.priceCents,
+          item.onchainOnly ?? false,
+          item.grantOnly ?? false,
+        ],
       );
     });
   }
@@ -145,12 +163,12 @@ export async function listShop(
     const r = slot
       ? await c.query<ItemDbRow>(
           `SELECT item_id, slot, item_key, name, price_cents, onchain_only
-           FROM cosmetic_items WHERE slot = $1 ORDER BY price_cents ASC, item_key ASC`,
+           FROM cosmetic_items WHERE slot = $1 AND NOT grant_only ORDER BY price_cents ASC, item_key ASC`,
           [slot],
         )
       : await c.query<ItemDbRow>(
           `SELECT item_id, slot, item_key, name, price_cents, onchain_only
-           FROM cosmetic_items ORDER BY slot ASC, price_cents ASC, item_key ASC`,
+           FROM cosmetic_items WHERE NOT grant_only ORDER BY slot ASC, price_cents ASC, item_key ASC`,
         );
     return r.rows.map(rowToItem);
   });
@@ -186,13 +204,19 @@ export async function purchase(
   const result = await runInTransaction(async (client) => {
     // Lock + read the item.
     const itemR = await client.query<ItemDbRow>(
-      `SELECT item_id, slot, item_key, name, price_cents, onchain_only
+      `SELECT item_id, slot, item_key, name, price_cents, onchain_only, grant_only
        FROM cosmetic_items WHERE item_id = $1 FOR UPDATE`,
       [itemId],
     );
-    const item = itemR.rows[0];
+    const item = itemR.rows[0] as (ItemDbRow & { grant_only: boolean }) | undefined;
     if (!item) {
       throw new NotFoundError({ reason: 'item not found', itemId });
+    }
+    if (item.grant_only) {
+      throw new ValidationFailedError({
+        reason: 'item is grant-only; it cannot be bought',
+        itemKey: item.item_key,
+      });
     }
     if (item.onchain_only) {
       throw new ValidationFailedError({
@@ -317,4 +341,33 @@ function rowToInventory(r: InventoryDbRow): InventoryRow {
     source: r.source,
     acquiredAt: r.acquired_at.toISOString(),
   };
+}
+
+/**
+ * Grant a cosmetic by key (event rewards, ops). Writes the inventory row with
+ * source 'grant' on the caller's transaction client. Idempotent: owning the
+ * item already is not an error and grants nothing twice.
+ * @param client - The transaction client.
+ * @param userId - The player.
+ * @param itemKey - The cosmetic's key (must be in the catalogue).
+ * @returns True when newly granted, false when already owned.
+ */
+export async function grantCosmetic(
+  client: { query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }> },
+  userId: string,
+  itemKey: string,
+): Promise<boolean> {
+  const item = await client.query(`SELECT item_id FROM cosmetic_items WHERE item_key = $1`, [
+    itemKey,
+  ]);
+  const row = item.rows[0] as { item_id: string } | undefined;
+  if (!row) throw new NotFoundError({ reason: 'cosmetic not in catalogue', itemKey });
+  const r = await client.query(
+    `INSERT INTO cosmetic_inventory (inventory_id, user_id, item_id, source)
+     VALUES ($1, $2, $3, 'grant')
+     ON CONFLICT (user_id, item_id) DO NOTHING
+     RETURNING inventory_id`,
+    [uuidv7(), userId, row.item_id],
+  );
+  return r.rows.length > 0;
 }

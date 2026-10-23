@@ -34,6 +34,7 @@ import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerShopRoutes } from './routes/shop.js';
+import { registerEventRoutes } from './routes/events.js';
 import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
@@ -159,6 +160,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
   registerShopRoutes(app);
+  registerEventRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
   registerBusinessRoutes(app);
