@@ -7,7 +7,7 @@
  * forwards to that user's client. This is the single mechanism behind the
  * targeted messages in the contract (`toast`, `dm`, `call_invite`,
  * `space_update`, `payment_confirmed`, `liquidated`, `delivery_out`,
- * `delivery_arrived`), which previously had
+ * `delivery_arrived`, `quest_progress`), which previously had
  * no transport at all: a video call returned a callId and the callee was
  * never rung.
  *
@@ -30,6 +30,7 @@ export type UserMessageType =
   | 'liquidated'
   | 'delivery_out'
   | 'delivery_arrived'
+  | 'quest_progress'
   | 'event';
 
 export interface UserMessage {

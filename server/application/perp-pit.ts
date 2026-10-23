@@ -36,6 +36,7 @@ import {
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
 export type PerpSide = 'long' | 'short';
@@ -131,7 +132,7 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
       tribe,
     });
   }
-  return runInTransaction(async (client) => {
+  const opened = await runInTransaction(async (client) => {
     const cr = await client.query<{ coin_id: string; ticker: string; price_micros: string; stage: string }>(
       `SELECT coin_id, ticker, price_micros, stage FROM coins WHERE coin_id = $1 FOR UPDATE`,
       [input.coinId],
@@ -195,6 +196,8 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
       createdAt: new Date().toISOString(),
     };
   });
+  await recordQuestEvent(ctx, input.userId, 'perp_open', opened.perpId);
+  return opened;
 }
 
 /**
@@ -203,11 +206,11 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
  *   short : (entry - close) * units
  */
 export async function closePerp(
-  _ctx: AppContext,
+  ctx: AppContext,
   userId: string,
   perpId: string,
 ): Promise<PerpRow> {
-  return runInTransaction(async (client) => {
+  const closed: PerpRow = await runInTransaction(async (client) => {
     const pr = await client.query<{
       perp_id: string;
       user_id: string;
@@ -282,6 +285,8 @@ export async function closePerp(
       createdAt: '',
     };
   });
+  await recordQuestEvent(ctx, userId, 'perp_close', perpId);
+  return closed;
 }
 
 /**

@@ -196,6 +196,11 @@
       "code": "FREEZE_LIMIT_REACHED",
       "httpStatus": 409,
       "message": "You already hold the maximum number of streak freezes."
+    },
+    {
+      "code": "QUEST_NOT_COMPLETE",
+      "httpStatus": 409,
+      "message": "This quest is not finished yet."
     }
   ]
 }

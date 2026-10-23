@@ -1,0 +1,242 @@
+{
+  "_owner": "BE",
+  "_provisional": true,
+  "version": "0.1.0",
+  "_note": "Quest definitions. Each player gets a deterministic pick of 3 daily quests (seeded by user and UTC date) and a chain of 5 weekly quests (seeded by user and ISO week), preferring distinct verbs. verb is a server event: shift_complete, perp_open, perp_close, prediction_place, alpha_call, paid_call (a funded call the payee accepted, counted for both sides), tip_send (Cash tip of at least 100 cents), home_visit (someone else's home). Progress comes only from server events, never from the client. reward.cashCents pays as ledger reason quest_reward; reward.seasonXp is recorded in season_xp. deepLink is the screen the client opens. The FE may reword titles; ids are stable. To add a quest, add it here: no code change.",
+  "quests": [
+    {
+      "id": "q_daily_shift_1",
+      "title": "Clock in",
+      "description": "Finish a work shift",
+      "verb": "shift_complete",
+      "target": 1,
+      "reward": {
+        "cashCents": 300,
+        "seasonXp": 10
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://jobs"
+    },
+    {
+      "id": "q_daily_shift_2",
+      "title": "Double shift",
+      "description": "Finish 2 work shifts",
+      "verb": "shift_complete",
+      "target": 2,
+      "reward": {
+        "cashCents": 600,
+        "seasonXp": 20
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://jobs"
+    },
+    {
+      "id": "q_daily_perp_open_1",
+      "title": "Take a position",
+      "description": "Open a perp",
+      "verb": "perp_open",
+      "target": 1,
+      "reward": {
+        "cashCents": 400,
+        "seasonXp": 15
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://perps"
+    },
+    {
+      "id": "q_daily_perp_close_1",
+      "title": "Take profit (or the L)",
+      "description": "Close a perp",
+      "verb": "perp_close",
+      "target": 1,
+      "reward": {
+        "cashCents": 400,
+        "seasonXp": 15
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://perps"
+    },
+    {
+      "id": "q_daily_prediction_1",
+      "title": "Make a call",
+      "description": "Place a prediction",
+      "verb": "prediction_place",
+      "target": 1,
+      "reward": {
+        "cashCents": 300,
+        "seasonXp": 10
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://predictions"
+    },
+    {
+      "id": "q_daily_prediction_2",
+      "title": "Degen on the outcome",
+      "description": "Place 2 predictions",
+      "verb": "prediction_place",
+      "target": 2,
+      "reward": {
+        "cashCents": 600,
+        "seasonXp": 20
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://predictions"
+    },
+    {
+      "id": "q_daily_alpha_1",
+      "title": "Drop some alpha",
+      "description": "Post an alpha call",
+      "verb": "alpha_call",
+      "target": 1,
+      "reward": {
+        "cashCents": 500,
+        "seasonXp": 15
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://alpha"
+    },
+    {
+      "id": "q_daily_paid_call_1",
+      "title": "Pick up the phone",
+      "description": "Take part in a paid call",
+      "verb": "paid_call",
+      "target": 1,
+      "reward": {
+        "cashCents": 500,
+        "seasonXp": 20
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://calls"
+    },
+    {
+      "id": "q_daily_tip_1",
+      "title": "Tip a creator",
+      "description": "Send a tip of at least $1",
+      "verb": "tip_send",
+      "target": 1,
+      "reward": {
+        "cashCents": 300,
+        "seasonXp": 10
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://timeline"
+    },
+    {
+      "id": "q_daily_visit_1",
+      "title": "Pop round",
+      "description": "Visit a neighbour's home",
+      "verb": "home_visit",
+      "target": 1,
+      "reward": {
+        "cashCents": 300,
+        "seasonXp": 10
+      },
+      "pool": "daily",
+      "deepLink": "ctlife://neighbours"
+    },
+    {
+      "id": "q_weekly_shift_5",
+      "title": "Grind week",
+      "description": "Finish 5 work shifts",
+      "verb": "shift_complete",
+      "target": 5,
+      "reward": {
+        "cashCents": 2500,
+        "seasonXp": 100
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://jobs"
+    },
+    {
+      "id": "q_weekly_perp_open_3",
+      "title": "Leverage week",
+      "description": "Open 3 perps",
+      "verb": "perp_open",
+      "target": 3,
+      "reward": {
+        "cashCents": 2500,
+        "seasonXp": 100
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://perps"
+    },
+    {
+      "id": "q_weekly_perp_close_3",
+      "title": "Realise it",
+      "description": "Close 3 perps",
+      "verb": "perp_close",
+      "target": 3,
+      "reward": {
+        "cashCents": 2500,
+        "seasonXp": 100
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://perps"
+    },
+    {
+      "id": "q_weekly_prediction_5",
+      "title": "Oracle",
+      "description": "Place 5 predictions",
+      "verb": "prediction_place",
+      "target": 5,
+      "reward": {
+        "cashCents": 3000,
+        "seasonXp": 120
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://predictions"
+    },
+    {
+      "id": "q_weekly_alpha_3",
+      "title": "Alpha leaker",
+      "description": "Post 3 alpha calls",
+      "verb": "alpha_call",
+      "target": 3,
+      "reward": {
+        "cashCents": 3000,
+        "seasonXp": 120
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://alpha"
+    },
+    {
+      "id": "q_weekly_paid_call_2",
+      "title": "Office hours",
+      "description": "Take part in 2 paid calls",
+      "verb": "paid_call",
+      "target": 2,
+      "reward": {
+        "cashCents": 3500,
+        "seasonXp": 150
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://calls"
+    },
+    {
+      "id": "q_weekly_tip_3",
+      "title": "Generous",
+      "description": "Send 3 tips of at least $1",
+      "verb": "tip_send",
+      "target": 3,
+      "reward": {
+        "cashCents": 2500,
+        "seasonXp": 100
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://timeline"
+    },
+    {
+      "id": "q_weekly_visit_3",
+      "title": "Good neighbour",
+      "description": "Visit 3 homes",
+      "verb": "home_visit",
+      "target": 3,
+      "reward": {
+        "cashCents": 2500,
+        "seasonXp": 100
+      },
+      "pool": "weekly",
+      "deepLink": "ctlife://neighbours"
+    }
+  ]
+}

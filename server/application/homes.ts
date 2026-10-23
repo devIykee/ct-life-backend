@@ -33,6 +33,7 @@ import {
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 import {
   accessToHome,
@@ -571,6 +572,11 @@ export async function recordVisit(
       [visitId, resolvedHomeId, visitorUserId],
     );
   });
+  // After the commit, and only for someone else's home: visiting your own earns nothing.
+  if (home.owner_user_id !== visitorUserId) {
+    const day = new Date().toISOString().slice(0, 10);
+    await recordQuestEvent(ctx, visitorUserId, 'home_visit', `${resolvedHomeId}:${day}`);
+  }
   return {
     visitId,
     homeId: resolvedHomeId,

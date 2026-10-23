@@ -19,6 +19,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordQuestEvent, TIP_QUEST_MIN_CENTS } from './quests.js';
 import type { AppContext } from './context.js';
 
 const TIP_TEXT_MAX = 200;
@@ -139,6 +140,9 @@ export async function sendCashTip(
       [tipId, fromUserId, toUserId, amountCents, message],
     );
   });
+  if (amountCents >= TIP_QUEST_MIN_CENTS) {
+    await recordQuestEvent(ctx, fromUserId, 'tip_send', tipId);
+  }
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<TipDbRow>(
       `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, amount_lamports,

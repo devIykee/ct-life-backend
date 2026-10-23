@@ -180,6 +180,14 @@ export class FreezeLimitReachedError extends DomainError {
   }
 }
 
+export class QuestNotCompleteError extends DomainError {
+  readonly code = 'QUEST_NOT_COMPLETE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This quest is not finished yet.', details);
+    this.httpStatus = 409;
+  }
+}
+
 // Economy -----------------------------------------------------------------
 
 export class InsufficientCashError extends DomainError {

@@ -170,6 +170,7 @@ const LABELS: Record<string, string> = {
   daily_clue: 'Daily clue',
   daily_streak: 'Daily streak chest',
   streak_freeze: 'Streak freeze',
+  quest_reward: 'Quest reward',
   weekly_perk: 'Sunday Unlock perk',
   airdrop: 'Airdrop',
   project_seed: 'Project funding',

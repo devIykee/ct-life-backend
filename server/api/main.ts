@@ -38,6 +38,7 @@ import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
 import { registerDailyRoutes } from './routes/daily.js';
+import { registerQuestRoutes } from './routes/quests.js';
 import { registerBusinessRoutes } from './routes/businesses.js';
 import { registerGigRoutes } from './routes/gigs.js';
 import { registerProjectRoutes } from './routes/projects.js';
@@ -163,6 +164,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
   registerDailyRoutes(app);
+  registerQuestRoutes(app);
   registerBusinessRoutes(app);
   registerGigRoutes(app);
   registerProjectRoutes(app);

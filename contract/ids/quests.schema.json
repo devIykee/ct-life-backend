@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctlife.dev/contract/ids/quests.schema.json",
+  "title": "CT Life quest definitions",
+  "type": "object",
+  "required": ["_owner", "_provisional", "version", "quests"],
+  "properties": {
+    "_owner": { "type": "string" },
+    "_provisional": { "type": "boolean" },
+    "_note": { "type": "string" },
+    "version": { "type": "string" },
+    "quests": {
+      "type": "array",
+      "minItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "verb", "target", "reward", "pool"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^q_[a-z0-9_]+$", "maxLength": 64 },
+          "title": { "type": "string", "minLength": 1, "maxLength": 60 },
+          "description": { "type": "string", "maxLength": 140 },
+          "verb": {
+            "enum": [
+              "shift_complete",
+              "perp_open",
+              "perp_close",
+              "prediction_place",
+              "alpha_call",
+              "paid_call",
+              "tip_send",
+              "home_visit"
+            ]
+          },
+          "target": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "reward": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["cashCents", "seasonXp"],
+            "properties": {
+              "cashCents": { "type": "integer", "minimum": 0, "maximum": 100000 },
+              "seasonXp": { "type": "integer", "minimum": 0, "maximum": 10000 }
+            }
+          },
+          "pool": { "enum": ["daily", "weekly"] },
+          "deepLink": { "type": "string", "pattern": "^ctlife://[a-z0-9_/-]+$" }
+        }
+      }
+    }
+  }
+}
