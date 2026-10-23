@@ -19,6 +19,9 @@
  *   - Duo Shop delivery: delayed `out` and `deliver` jobs per order, plus a
  *     per-minute sweep (see shop-delivery.ts).
  *
+ *   - Event announcer: a per-minute sweep that broadcasts `event_live` and
+ *     `event_ended` for real events (see event-announce.ts).
+ *
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
@@ -38,6 +41,7 @@ import { handleSundayUnlock, handleWeeklyMeta } from './sunday-unlock.js';
 import { handleDistrictRollover } from './district-rollover.js';
 import { handleSeasonRollover } from './season-rollover.js';
 import { handleShopDelivery } from './shop-delivery.js';
+import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -110,6 +114,7 @@ export async function buildWorkers(likeness?: {
   const districtQueue = new Queue('jobs-district-rollover', { connection: conn });
   const seasonQueue = new Queue('jobs-season-rollover', { connection: conn });
   const shopQueue = new Queue<ShopJobData>(SHOP_DELIVERY_QUEUE, { connection: conn });
+  const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -174,6 +179,17 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'shop-delivery failed'),
   );
 
+  const eventWorker = new Worker(
+    EVENT_ANNOUNCE_QUEUE,
+    async (job) => handleEventAnnounce(job, ctx),
+    {
+      connection: newClient(redis),
+    },
+  );
+  eventWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'event-announce failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
 
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
@@ -210,6 +226,13 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // Real events: announce start and end to the city.
+  await eventQueue.upsertJobScheduler(
+    'event-announce',
+    { pattern: '* * * * *' },
+    { name: 'sweep', data: {} },
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -234,12 +257,14 @@ export async function buildWorkers(likeness?: {
   void districtWorker;
   void seasonWorker;
   void shopWorker;
+  void eventWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
   void districtQueue;
   void seasonQueue;
   void shopQueue;
+  void eventQueue;
   void log;
   void cfg;
 
@@ -256,6 +281,7 @@ export async function buildWorkers(likeness?: {
       await districtWorker.close();
       await seasonWorker.close();
       await shopWorker.close();
+      await eventWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -263,6 +289,7 @@ export async function buildWorkers(likeness?: {
       await districtQueue.close();
       await seasonQueue.close();
       await shopQueue.close();
+      await eventQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },
