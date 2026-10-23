@@ -1,11 +1,11 @@
 {
   "_owner": "FE",
-  "_provisional": true,
-  "version": "0.0.1",
-  "_note": "Enterable home doors (units) behind the flats' real doors. unitId is the door id: flat:<buildingInstanceId>:<doorIndex> (doorIndex 0-based within the building). tier is basement | flat | penthouse; roomType is the interior the client streams (e.g. apartment_modern). capacity is the most people living there (owner plus guests). weeklyRentCents is the catalog rent shown for the unit; the rent charged is still set by the home kind. These six ids are placeholders for the six lg_midrise_flats buildings in the Residences district; the frontend replaces the file with its real door ids. A tier with no units here keeps the old unit-less behaviour: leases succeed and the home has no door. The API upserts this file into home_units (a unit dropped from the file stays in the table, so a leased door is never pulled from under a tenant).",
+  "_provisional": false,
+  "version": "0.1.0",
+  "_note": "Enterable home doors (units), FE-owned. unitId = flat:<buildingInstanceId>:<doorIndex>; buildingInstanceId names the lg_midrise_flats building by its footprint centre in whole island metres (lgmf_n439_p68 = x -439, z +68), doorIndex 0 (one walk-in door per building). Exported from client/Assets/Resources/World/Island/interior_doors.json (written by tools/world/islandgen/dress.py v3_interior_doors). All six are Residences flats behind the real street doors; roomType is the interior the client streams (Resources/World/Interiors/int_<roomType>). capacity is owner plus one guest.",
   "units": [
     {
-      "unitId": "flat:midrise_01:0",
+      "unitId": "flat:lgmf_n439_p68:0",
       "district": "residences",
       "tier": "flat",
       "roomType": "apartment_modern",
@@ -13,7 +13,7 @@
       "capacity": 2
     },
     {
-      "unitId": "flat:midrise_02:0",
+      "unitId": "flat:lgmf_n598_p29:0",
       "district": "residences",
       "tier": "flat",
       "roomType": "apartment_modern",
@@ -21,7 +21,7 @@
       "capacity": 2
     },
     {
-      "unitId": "flat:midrise_03:0",
+      "unitId": "flat:lgmf_n400_p168:0",
       "district": "residences",
       "tier": "flat",
       "roomType": "apartment_modern",
@@ -29,7 +29,7 @@
       "capacity": 2
     },
     {
-      "unitId": "flat:midrise_04:0",
+      "unitId": "flat:lgmf_n507_n40:0",
       "district": "residences",
       "tier": "flat",
       "roomType": "apartment_modern",
@@ -37,7 +37,7 @@
       "capacity": 2
     },
     {
-      "unitId": "flat:midrise_05:0",
+      "unitId": "flat:lgmf_n484_n59:0",
       "district": "residences",
       "tier": "flat",
       "roomType": "apartment_modern",
@@ -45,7 +45,7 @@
       "capacity": 2
     },
     {
-      "unitId": "flat:midrise_06:0",
+      "unitId": "flat:lgmf_n714_n130:0",
       "district": "residences",
       "tier": "flat",
       "roomType": "apartment_modern",

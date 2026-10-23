@@ -1286,7 +1286,12 @@ paths:
                 properties:
                   canEnter: { type: boolean }
                   reason: { type: string, enum: [owner, guest, locked, vacant, evicted] }
-              example: { canEnter: false, reason: locked }
+                  homeId:
+                    type: string
+                    description: >-
+                      The home's instance id (`home:<uuid>`), to join the `home` room. Present only
+                      when `canEnter` is true (owner or guest), never for anyone else.
+              example: { canEnter: true, reason: guest, homeId: 'home:0192a1c2-...' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /homes/{ownerId}/visit:
@@ -4168,6 +4173,16 @@ components:
       properties:
         version: { type: string }
         minClientVersion: { type: string }
+        flags:
+          type: object
+          description: Remote switches the client reads without a release.
+          properties:
+            wireV3Kinds:
+              type: boolean
+              description: >-
+                When true the client sends the v3 vehicle kinds (`sedan`, `taxi`, `police`,
+                `pickup`, `van`, `bike`) instead of `compact` / `moped`. Default false; the
+                server sets it with `WIRE_V3_KINDS`.
         degraded:
           type: array
           description: |

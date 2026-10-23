@@ -1,3 +1,10 @@
+## 2026-10-23 - Real door ids, access `homeId`, `/me` home kind, `flags.wireV3Kinds`
+
+- `contract/ids/home_units.json` now holds the six real doors from the frontend (`flat:lgmf_<x>_<z>:0`, tier `flat`, `apartment_modern`, 18000 cents a week, capacity 2). The placeholder `flat:midrise_0N:0` rows stay in `home_units` on an existing database (the upsert never deletes); delete any that are unleased, once.
+- `GET /units/{unitId}/access` adds `homeId` (the `home:<uuid>` instance id) when `canEnter` is true, for the owner and guests only, so a guest at a door can join the `home` room. Strangers never get it.
+- `GET /me`: `homeId` and `character.homeId` now follow the live lease (`studio` after a studio lease) instead of the birth home; `home` gains `kind`. With no live lease they fall back to the character's birth home.
+- `GET /config` adds `flags: {wireV3Kinds}` (boolean, default false, env `WIRE_V3_KINDS`). When true the client sends the v3 vehicle kinds.
+
 ## 2026-10-23 - Home units (doors), move-out, guests, door access
 
 - New FE-owned `contract/ids/home_units.json` (+ `home_units.schema.json`, checked by `contract:check`): `units: [{unitId, district, tier, roomType, weeklyRentCents, capacity}]`. `unitId` is the door id, `flat:<buildingInstanceId>:<doorIndex>`; `tier` is `basement | flat | penthouse`. It ships six placeholder flat doors (`flat:midrise_01:0` to `flat:midrise_06:0`) for the Residences midrise buildings; the frontend replaces them with its real ids. The API upserts the file into the new `home_units` table (migration 082).

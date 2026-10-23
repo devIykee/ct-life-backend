@@ -92,6 +92,9 @@ export interface Config {
      */
     readonly hovercarCollection: string;
   };
+  readonly flags: {
+    readonly wireV3Kinds: boolean;
+  };
 
   readonly helius: {
     readonly apiKey: string;
@@ -340,6 +343,11 @@ export function loadConfig(): Config {
 
     entitlements: {
       hovercarCollection: optionalEnv('HOVERCAR_COLLECTION', ''),
+    },
+
+    flags: {
+      // Tells the client to send the v3 vehicle kinds; turn on once they are deployed.
+      wireV3Kinds: optionalEnv('WIRE_V3_KINDS', 'false').toLowerCase() === 'true',
     },
 
     helius: {

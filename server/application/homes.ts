@@ -78,6 +78,8 @@ export interface VisitResult extends VisitRow {
 /** The player's current home, as `GET /me` reports it. */
 export interface MeHome {
   readonly homeId: string;
+  /** The home kind (`studio`, ...) of this lease. */
+  readonly kind: HomeKind;
   readonly unitId: string | null;
   readonly tier: HomeTier;
   readonly roomType: string | null;
@@ -488,6 +490,7 @@ export async function loadMeHome(
   const h = toHomeRow(row);
   return {
     homeId: h.homeId,
+    kind: h.kind,
     unitId: h.unitId,
     tier: h.tier,
     roomType: h.roomType,
