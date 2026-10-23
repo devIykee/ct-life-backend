@@ -143,8 +143,11 @@ describe('home doors over HTTP', () => {
     const homeId = lease.body.homeId as string;
 
     const me = await call(owner, 'GET', '/v1/me');
+    // The header follows the lease, not the birth home.
+    expect(me.body.homeId).toBe('penthouse');
     expect(me.body.home).toEqual({
       homeId,
+      kind: 'penthouse',
       unitId: UNIT,
       tier: 'penthouse',
       roomType: 'test_room',
@@ -160,6 +163,7 @@ describe('home doors over HTTP', () => {
     expect((await call(owner, 'GET', `/v1/units/${UNIT}/access`)).body).toEqual({
       canEnter: true,
       reason: 'owner',
+      homeId,
     });
     expect((await call(owner, 'GET', '/v1/units/nope:nope:0/access')).status).toBe(404);
 
@@ -186,6 +190,7 @@ describe('home doors over HTTP', () => {
     expect((await call(guest, 'GET', `/v1/units/${UNIT}/access`)).body).toEqual({
       canEnter: true,
       reason: 'guest',
+      homeId,
     });
     const bad = await call(owner, 'POST', `/v1/homes/${homeId}/guests/not-a-uuid`);
     expect(bad.status).toBe(400);
@@ -203,5 +208,15 @@ describe('home doors over HTTP', () => {
     });
     expect((await call(owner, 'GET', '/v1/me')).body.home).toBeNull();
     await cleanup();
+  });
+});
+
+describe('GET /config flags', () => {
+  it('carries wireV3Kinds, off by default', async () => {
+    const r = await app.inject({ method: 'GET', url: '/v1/config' });
+    expect(r.statusCode).toBe(200);
+    expect((r.json() as { flags: { wireV3Kinds: boolean } }).flags).toEqual({
+      wireV3Kinds: process.env.WIRE_V3_KINDS === 'true',
+    });
   });
 });

@@ -41,6 +41,8 @@ export type AccessReason = 'owner' | 'guest' | 'locked' | 'vacant' | 'evicted';
 export interface UnitAccess {
   readonly canEnter: boolean;
   readonly reason: AccessReason;
+  /** The home's instance id; only when `canEnter` (owner or guest), never for a stranger. */
+  readonly homeId?: string;
 }
 
 const UnitFile = z.object({
@@ -178,11 +180,13 @@ export async function unitAccess(
     );
     const h = live.rows[0];
     if (h) {
-      return accessToHome(
+      const a = await accessToHome(
         c,
         { homeId: h.home_id, ownerUserId: h.owner_user_id, status: h.status },
         userId,
       );
+      // The id lets an owner or guest join the `home` room; it is never shown to a stranger.
+      return a.canEnter ? { ...a, homeId: h.home_id } : a;
     }
     // Nobody lives there. Tell a former tenant why the door is shut.
     const gone = await c.query(
