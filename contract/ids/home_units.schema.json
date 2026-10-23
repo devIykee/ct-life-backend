@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctlife.dev/contract/ids/home_units.schema.json",
+  "title": "CT Life home units (enterable doors)",
+  "type": "object",
+  "required": ["_owner", "_provisional", "version", "units"],
+  "properties": {
+    "_owner": {
+      "type": "string"
+    },
+    "_provisional": {
+      "type": "boolean"
+    },
+    "_note": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "units": {
+      "type": "array",
+      "uniqueItems": false,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["unitId", "district", "tier", "roomType", "weeklyRentCents", "capacity"],
+        "properties": {
+          "unitId": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+:[A-Za-z0-9_.-]+:[0-9]+$",
+            "maxLength": 96
+          },
+          "district": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tier": {
+            "enum": ["basement", "flat", "penthouse"]
+          },
+          "roomType": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "weeklyRentCents": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "capacity": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

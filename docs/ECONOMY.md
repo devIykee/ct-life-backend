@@ -29,7 +29,7 @@ The full content lives in M2 onward. This is the table of contents and the rules
 
 | Sink                              | Spec section | Notes                                    |
 | --------------------------------- | ------------ | ---------------------------------------- |
-| Rent                              | spec 4       | per `homes.json`; weekly                 |
+| Rent                              | spec 4       | per `homes.json`; weekly; 4 misses evict |
 | Gas bill                          | spec 4       | per city district                        |
 | Food                              | spec 4       | per `needs.json`; need action `eat`      |
 | Tax                               | spec 4       | brackets in `economy.json`; weekly reset |
