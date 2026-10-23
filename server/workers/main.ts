@@ -16,6 +16,9 @@
  *     registered as repeatable jobs so the cron expression is fixed
  *     and only the handler changes.
  *
+ *   - Duo Shop delivery: delayed `out` and `deliver` jobs per order, plus a
+ *     per-minute sweep (see shop-delivery.ts).
+ *
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
@@ -34,6 +37,8 @@ import { handleTownCrier } from './town-crier.js';
 import { handleSundayUnlock, handleWeeklyMeta } from './sunday-unlock.js';
 import { handleDistrictRollover } from './district-rollover.js';
 import { handleSeasonRollover } from './season-rollover.js';
+import { handleShopDelivery } from './shop-delivery.js';
+import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
 import { startLikenessScheduler } from './likeness.js';
@@ -104,6 +109,7 @@ export async function buildWorkers(likeness?: {
   const metaQueue = new Queue('jobs-weekly-meta', { connection: conn });
   const districtQueue = new Queue('jobs-district-rollover', { connection: conn });
   const seasonQueue = new Queue('jobs-season-rollover', { connection: conn });
+  const shopQueue = new Queue<ShopJobData>(SHOP_DELIVERY_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -159,6 +165,15 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'season-rollover failed'),
   );
 
+  const shopWorker = new Worker<ShopJobData>(
+    SHOP_DELIVERY_QUEUE,
+    async (job) => handleShopDelivery(job, ctx),
+    { connection: newClient(redis) },
+  );
+  shopWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'shop-delivery failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
 
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
@@ -188,6 +203,12 @@ export async function buildWorkers(likeness?: {
     { pattern: '0 0 * * 1' },
     { name: 'rollover', data: {} },
   );
+  // Safety net for Duo Shop orders whose delayed job was lost.
+  await shopQueue.upsertJobScheduler(
+    'shop-delivery-sweep',
+    { pattern: '* * * * *' },
+    { name: 'sweep', data: {} },
+  );
 
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
@@ -212,11 +233,13 @@ export async function buildWorkers(likeness?: {
   void metaWorker;
   void districtWorker;
   void seasonWorker;
+  void shopWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
   void districtQueue;
   void seasonQueue;
+  void shopQueue;
   void log;
   void cfg;
 
@@ -232,12 +255,14 @@ export async function buildWorkers(likeness?: {
       await metaWorker.close();
       await districtWorker.close();
       await seasonWorker.close();
+      await shopWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
       await metaQueue.close();
       await districtQueue.close();
       await seasonQueue.close();
+      await shopQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

@@ -144,6 +144,8 @@ const LABELS: Record<string, string> = {
   shift_pay: 'Shift pay',
   gig_pay: 'Gig pay',
   rent: 'Rent',
+  shop_order: 'Duo Shop order',
+  shop_refund: 'Duo Shop refund',
   business_rent: 'Business rent',
   business_pay: 'Business income',
   business_buy: 'Business purchase',
