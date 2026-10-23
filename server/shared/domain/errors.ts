@@ -172,6 +172,75 @@ export class UnitFullError extends DomainError {
   }
 }
 
+// Casino -------------------------------------------------------------------
+
+export class AgeRequiredError extends DomainError {
+  readonly code = 'AGE_REQUIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The Rug Room is 18+. Confirm your age to play.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class StakeCapReachedError extends DomainError {
+  readonly code = 'STAKE_CAP_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This stake would pass your daily casino stake cap. Try again tomorrow (UTC).', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class LossCapReachedError extends DomainError {
+  readonly code = 'LOSS_CAP_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super(
+      'This stake would pass your daily casino net-loss cap. Try again tomorrow (UTC).',
+      details,
+    );
+    this.httpStatus = 403;
+  }
+}
+
+export class SelfExcludedError extends DomainError {
+  readonly code = 'SELF_EXCLUDED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You have excluded yourself from the casino until the date shown.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class RoundSettledError extends DomainError {
+  readonly code = 'ROUND_SETTLED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This round is already settled.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class RoundInProgressError extends DomainError {
+  readonly code = 'ROUND_IN_PROGRESS';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Finish your open crash round before starting another.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class ChallengeExpiredError extends DomainError {
+  readonly code = 'CHALLENGE_EXPIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This challenge expired; the stake was refunded.', details);
+    this.httpStatus = 410;
+  }
+}
+
+export class ChallengeNotOpenError extends DomainError {
+  readonly code = 'CHALLENGE_NOT_OPEN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This challenge is no longer open.', details);
+    this.httpStatus = 409;
+  }
+}
+
 // Economy -----------------------------------------------------------------
 
 export class InsufficientCashError extends DomainError {

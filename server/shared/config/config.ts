@@ -128,6 +128,12 @@ export interface Config {
     readonly loginGlobalConcurrent: number;
   };
 
+  /** The Rug Room (casino) daily player caps, in cents. */
+  readonly casino: {
+    readonly dailyStakeCapCents: number;
+    readonly dailyNetLossCapCents: number;
+  };
+
   readonly features: {
     readonly llmEnabled: boolean;
     readonly pushEnabled: boolean;
@@ -378,6 +384,11 @@ export function loadConfig(): Config {
       restGlobalPerSec: asInt('RATE_LIMIT_REST_GLOBAL_PER_SEC', 5_000),
       loginPerIpPerMin: asInt('RATE_LIMIT_LOGIN_PER_IP_PER_MIN', 30),
       loginGlobalConcurrent: asInt('RATE_LIMIT_LOGIN_GLOBAL_CONCURRENT', 200),
+    },
+
+    casino: {
+      dailyStakeCapCents: asInt('CASINO_DAILY_STAKE_CAP_CENTS', 50_000),
+      dailyNetLossCapCents: asInt('CASINO_DAILY_LOSS_CAP_CENTS', 25_000),
     },
 
     features: {
