@@ -1,0 +1,10 @@
+{
+  "title": "event_trivia.json",
+  "type": "object",
+  "required": ["version", "answers"],
+  "properties": {
+    "version": { "type": "string" },
+    "_note": { "type": "string" },
+    "answers": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+  }
+}

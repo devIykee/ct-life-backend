@@ -324,3 +324,21 @@ export class ConflictError extends DomainError {
     this.httpStatus = 409;
   }
 }
+
+// Events ------------------------------------------------------------------
+
+export class EventNotLiveError extends DomainError {
+  readonly code = 'EVENT_NOT_LIVE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This event is not live; its quests only run inside its window.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class EventStepInvalidError extends DomainError {
+  readonly code = 'EVENT_STEP_INVALID';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That quest step or proof is not valid for this event.', details);
+    this.httpStatus = 400;
+  }
+}

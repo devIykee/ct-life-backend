@@ -1,0 +1,109 @@
+{
+  "_owner": "BE",
+  "_provisional": false,
+  "version": "1.0.0",
+  "_note": "Real-world event calendar (the in-game Event Calendar). Not the same file as events.json, which lists the city's evt_* world events. The API upserts `events` into the `events` table (migration 085) and `questSets` drive POST /events/{slug}/progress. Real dates only, each with a primary source in `sourceUrl`. A time that the source does not state is stored as the whole UTC day (the event listing gives dates only). `streamUrl` is a link-out to the official stream, never embedded; it stays null until the organiser publishes one and ops set it with PUT /v1/admin/events/{slug}. Once ops edit an event, this file no longer overwrites that row. Interaction ids in `questSets` (booth, nod) are the ids the client sends as `proof.id`; the frontend owns the matching in-world objects and may add ids, never rename. Trivia answers are NOT in this file (server-only: contract/config/event_trivia.json). The `lanyard_breakpoint_2026` cosmetic is off-chain, never tradable, never an NFT.",
+  "events": [
+    {
+      "id": "evt_cal_breakpoint_2026",
+      "slug": "breakpoint-2026",
+      "title": "Breakpoint 2026",
+      "kind": "conference",
+      "startsAt": "2026-11-15T00:00:00Z",
+      "endsAt": "2026-11-18T00:00:00Z",
+      "city": "London",
+      "realVenue": "Olympia London",
+      "ingameVenueId": "conference_hall",
+      "skinId": "london_2026",
+      "streamUrl": null,
+      "sourceUrl": "https://luma.com/breakpoint2026",
+      "questSet": "breakpoint_2026",
+      "rewardCents": 20000,
+      "rewardItemKey": "lanyard_breakpoint_2026"
+    }
+  ],
+  "questSets": {
+    "breakpoint_2026": {
+      "steps": [
+        {
+          "step": "booths",
+          "title": "Visit 3 booths",
+          "kind": "interaction",
+          "required": 3,
+          "items": [
+            { "id": "bp26.booth_1", "label": "Booth 1" },
+            { "id": "bp26.booth_2", "label": "Booth 2" },
+            { "id": "bp26.booth_3", "label": "Booth 3" },
+            { "id": "bp26.booth_4", "label": "Booth 4" },
+            { "id": "bp26.booth_5", "label": "Booth 5" },
+            { "id": "bp26.booth_6", "label": "Booth 6" }
+          ]
+        },
+        {
+          "step": "trivia",
+          "title": "Answer the keynote trivia",
+          "kind": "trivia",
+          "required": 3,
+          "questions": [
+            {
+              "id": "bp26.q_city",
+              "prompt": "Which city hosts Breakpoint 2026?",
+              "choices": [
+                { "id": "a", "label": "London" },
+                { "id": "b", "label": "Abu Dhabi" },
+                { "id": "c", "label": "Singapore" },
+                { "id": "d", "label": "Lisbon" }
+              ]
+            },
+            {
+              "id": "bp26.q_venue",
+              "prompt": "Which venue hosts Breakpoint 2026?",
+              "choices": [
+                { "id": "a", "label": "ExCeL London" },
+                { "id": "b", "label": "Olympia London" },
+                { "id": "c", "label": "The O2" },
+                { "id": "d", "label": "Wembley Stadium" }
+              ]
+            },
+            {
+              "id": "bp26.q_month",
+              "prompt": "In which month does Breakpoint 2026 take place?",
+              "choices": [
+                { "id": "a", "label": "September" },
+                { "id": "b", "label": "October" },
+                { "id": "c", "label": "November" },
+                { "id": "d", "label": "December" }
+              ]
+            },
+            {
+              "id": "bp26.q_days",
+              "prompt": "How many days does Breakpoint 2026 run (15 to 17 November)?",
+              "choices": [
+                { "id": "a", "label": "1" },
+                { "id": "b", "label": "2" },
+                { "id": "c", "label": "3" },
+                { "id": "d", "label": "5" }
+              ]
+            }
+          ]
+        },
+        {
+          "step": "nods",
+          "title": "Find 5 event nods",
+          "kind": "interaction",
+          "required": 5,
+          "items": [
+            { "id": "bp26.nod_1", "label": "Nod 1" },
+            { "id": "bp26.nod_2", "label": "Nod 2" },
+            { "id": "bp26.nod_3", "label": "Nod 3" },
+            { "id": "bp26.nod_4", "label": "Nod 4" },
+            { "id": "bp26.nod_5", "label": "Nod 5" },
+            { "id": "bp26.nod_6", "label": "Nod 6" },
+            { "id": "bp26.nod_7", "label": "Nod 7" },
+            { "id": "bp26.nod_8", "label": "Nod 8" }
+          ]
+        }
+      ]
+    }
+  }
+}
