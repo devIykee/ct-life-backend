@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ctlife.dev/contract/ids/shop_items.schema.json",
+  "title": "CT Life Duo Shop catalogue",
+  "type": "object",
+  "required": ["_owner", "_provisional", "version", "items"],
+  "properties": {
+    "_owner": { "type": "string" },
+    "_provisional": { "type": "boolean" },
+    "_note": { "type": "string" },
+    "version": { "type": "string" },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "itemId",
+          "category",
+          "name",
+          "priceCents",
+          "deliverable",
+          "placeable",
+          "modelKey"
+        ],
+        "properties": {
+          "itemId": { "type": "string", "pattern": "^[a-z0-9_]+$", "maxLength": 64 },
+          "category": { "enum": ["furniture", "decor", "appliance", "food", "clothing"] },
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "priceCents": { "type": "integer", "minimum": 1 },
+          "deliverable": { "const": true },
+          "placeable": { "type": "boolean" },
+          "footprint": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["w", "d", "h"],
+            "properties": {
+              "w": { "type": "number", "exclusiveMinimum": 0, "maximum": 50 },
+              "d": { "type": "number", "exclusiveMinimum": 0, "maximum": 50 },
+              "h": { "type": "number", "exclusiveMinimum": 0, "maximum": 50 }
+            }
+          },
+          "modelKey": { "type": "string", "minLength": 1, "maxLength": 96 }
+        },
+        "if": { "properties": { "placeable": { "const": true } } },
+        "then": { "required": ["footprint"] },
+        "else": { "not": { "required": ["footprint"] } }
+      }
+    }
+  },
+  "additionalProperties": false
+}

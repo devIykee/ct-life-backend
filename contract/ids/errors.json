@@ -158,6 +158,31 @@
       "message": "Every unit of this home tier is taken; try again later or pick another tier."
     },
     {
+      "code": "NO_HOME_DOOR",
+      "httpStatus": 409,
+      "message": "Delivery to the door needs a home with a door; pick the lobby locker."
+    },
+    {
+      "code": "ORDER_NOT_CANCELLABLE",
+      "httpStatus": 409,
+      "message": "Only an order that is still placed can be cancelled."
+    },
+    {
+      "code": "ITEM_NOT_OWNED",
+      "httpStatus": 403,
+      "message": "You do not own this item."
+    },
+    {
+      "code": "ITEM_NOT_PLACEABLE",
+      "httpStatus": 409,
+      "message": "This item cannot be placed in a home."
+    },
+    {
+      "code": "ITEM_ALREADY_PLACED",
+      "httpStatus": 409,
+      "message": "This item is already placed (in the request twice, or in another home)."
+    },
+    {
       "code": "NOT_HOME_OWNER",
       "httpStatus": 403,
       "message": "Only the home's owner can do this."

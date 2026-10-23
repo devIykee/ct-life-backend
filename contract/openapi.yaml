@@ -3171,6 +3171,325 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Inventory' }
 
+  /shop/catalog:
+    get:
+      tags: [shop]
+      operationId: getShopCatalog
+      summary: Duo Shop catalogue (Cash goods and furniture).
+      description: >-
+        The items of `contract/ids/shop_items.json`, with the locker fee and the delivery
+        windows. Everything here is bought with game Cash, delivered to the door or a lobby
+        locker, and owned off-chain: not an NFT, never tradable. `footprint` (metres) is set
+        only for `placeable` items.
+      x-phase: 4
+      parameters:
+        - name: category
+          in: query
+          required: false
+          schema: { type: string, enum: [furniture, decor, appliance, food, clothing] }
+      responses:
+        '200':
+          description: Catalogue
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShopCatalog' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /shop/orders:
+    post:
+      tags: [shop]
+      operationId: postShopOrders
+      summary: Order goods for delivery.
+      description: >-
+        Debits Cash in the same transaction that creates the order: the catalogue price times
+        the quantity of every line (the server ignores any client price), plus the locker fee
+        for `destination: locker`. Ledger reason `shop_order`. The order is `placed` with an
+        `etaAt` of 10 (`asap`), 30 or 60 minutes from now. `door` needs a home with a door;
+        a player on the street must use `locker`. At most 10 lines, 10 of each, 20 units per
+        order, and 5 orders in flight. A replay with the same `Idempotency-Key` returns the
+        same order without charging again. Nothing, real money included, shortens the wait.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items, window, destination]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    type: object
+                    required: [itemId, qty]
+                    properties:
+                      itemId: { type: string }
+                      qty: { type: integer, minimum: 1, maximum: 10 }
+                window: { type: string, enum: [asap, 30m, 1h] }
+                destination: { type: string, enum: [door, locker] }
+      responses:
+        '201':
+          description: The placed order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShopOrder' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402':
+          description: Not enough Cash for the items and fee
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '24900' },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The door needs a home with a door (use `locker`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NO_HOME_DOOR,
+                      message: 'Delivery to the door needs a home with a door; pick the lobby locker.',
+                      details: {},
+                    },
+                }
+
+    get:
+      tags: [shop]
+      operationId: getShopOrders
+      summary: My Duo Shop orders, newest first.
+      x-phase: 4
+      responses:
+        '200':
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/ShopOrder' }
+
+  /shop/orders/{id}:
+    get:
+      tags: [shop]
+      operationId: getShopOrdersId
+      summary: One of my orders.
+      description: Owner only. Someone else's order answers `404`, the same as no order.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShopOrder' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /shop/orders/{id}/cancel:
+    post:
+      tags: [shop]
+      operationId: postShopOrdersIdCancel
+      summary: Cancel an order that is still `placed`.
+      description: >-
+        Owner only; full refund (items and locker fee, ledger reason `shop_refund`). Once the
+        courier is out (`out_for_delivery`) or the order is `delivered` it can no longer be
+        cancelled. Cancelling a cancelled order returns it without a second refund. A cancelled
+        order is never delivered.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The cancelled order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShopOrder' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The order is out for delivery or delivered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: ORDER_NOT_CANCELLABLE,
+                      message: 'Only an order that is still placed can be cancelled.',
+                      details: { status: out_for_delivery },
+                    },
+                }
+
+  /me/items:
+    get:
+      tags: [shop]
+      operationId: getMeItems
+      summary: Items I own (delivered Duo Shop orders).
+      description: >-
+        One entry per physical unit. Off-chain: bought with Cash, not an NFT, not tradable.
+        `placedHomeId` is the home an item stands in, or null.
+      x-phase: 4
+      responses:
+        '200':
+          description: Owned items
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/PlayerItem' }
+
+  /homes/{homeId}/placements:
+    put:
+      tags: [shop]
+      operationId: putHomesHomeIdPlacements
+      summary: Set where my items stand in my home.
+      description: >-
+        Owner only; replaces the whole set (an empty list clears the home). Every item must be
+        one of the caller's, `placeable`, and listed once. `x` and `z` are metres in the home's
+        interior frame (at most 200 either way), `rotY` is a yaw in radians; at most 200
+        placements. An item still placed in a home the caller left moves to this one; one
+        placed in another live home is refused.
+      x-phase: 4
+      parameters:
+        - name: homeId
+          in: path
+          required: true
+          description: 'Instance id, `home:<uuid>`.'
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [placements]
+              properties:
+                placements:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: object
+                    required: [itemInstanceId, x, z, rotY]
+                    properties:
+                      itemInstanceId: { type: string, format: uuid }
+                      x: { type: number }
+                      z: { type: number }
+                      rotY: { type: number }
+      responses:
+        '200':
+          description: The home's placements after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomePlacements' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403':
+          description: Not the owner of the home, or an item that is not yours
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                notHomeOwner:
+                  value:
+                    {
+                      error:
+                        {
+                          code: NOT_HOME_OWNER,
+                          message: "Only the home's owner can do this.",
+                          details: { homeId: 'home:0192a1c2-...' },
+                        },
+                    }
+                itemNotOwned:
+                  value:
+                    {
+                      error:
+                        {
+                          code: ITEM_NOT_OWNED,
+                          message: 'You do not own this item.',
+                          details: { itemInstanceId: '0192a1c2-...' },
+                        },
+                    }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The item is not placeable, or is already placed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                itemNotPlaceable:
+                  value:
+                    {
+                      error:
+                        {
+                          code: ITEM_NOT_PLACEABLE,
+                          message: 'This item cannot be placed in a home.',
+                          details: { itemInstanceId: '0192a1c2-...' },
+                        },
+                    }
+                itemAlreadyPlaced:
+                  value:
+                    {
+                      error:
+                        {
+                          code: ITEM_ALREADY_PLACED,
+                          message: 'This item is already placed (in the request twice, or in another home).',
+                          details: { itemInstanceId: '0192a1c2-...' },
+                        },
+                    }
+
+    get:
+      tags: [shop]
+      operationId: getHomesHomeIdPlacements
+      summary: Read a home's placements.
+      description: >-
+        For anyone who may enter the home's door: the owner and its guests (a home without a
+        door is open, like the `home` room). Others get `403 FORBIDDEN`.
+      x-phase: 4
+      parameters:
+        - name: homeId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Placements
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomePlacements' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /ads/live:
     get:
       tags: [ads]
@@ -4525,6 +4844,133 @@ components:
         itemId: { type: string }
         slot: { type: string, enum: [skin, head, hair, top, bottom, shoes, acc] }
         acquiredAt: { type: string, format: date-time }
+    ShopCatalog:
+      type: object
+      required: [items, lockerFeeCents, windows]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/ShopCatalogItem' }
+        lockerFeeCents: { type: integer, description: 'Cash fee for the lobby locker.' }
+        windows:
+          type: array
+          items:
+            type: object
+            required: [id, minutes]
+            properties:
+              id: { type: string, enum: [asap, 30m, 1h] }
+              minutes: { type: integer }
+    ShopCatalogItem:
+      type: object
+      required: [itemId, category, name, priceCents, deliverable, placeable, footprint, modelKey]
+      properties:
+        itemId: { type: string }
+        category: { type: string, enum: [furniture, decor, appliance, food, clothing] }
+        name: { type: string }
+        priceCents: { type: integer }
+        deliverable: { type: boolean }
+        placeable: { type: boolean }
+        footprint:
+          type: [object, 'null']
+          description: 'Metres; null unless `placeable`.'
+          required: [w, d, h]
+          properties:
+            w: { type: number }
+            d: { type: number }
+            h: { type: number }
+        modelKey: { type: string, description: 'Frontend asset key.' }
+    ShopOrder:
+      type: object
+      required:
+        - orderId
+        - status
+        - window
+        - destination
+        - unitId
+        - items
+        - itemsCents
+        - feeCents
+        - totalCents
+        - placedAt
+        - etaAt
+        - deliveredAt
+        - cancelledAt
+      properties:
+        orderId: { type: string, format: uuid }
+        status: { type: string, enum: [placed, out_for_delivery, delivered, cancelled] }
+        window: { type: string, enum: [asap, 30m, 1h] }
+        destination: { type: string, enum: [door, locker] }
+        unitId: { type: [string, 'null'], description: 'The door; null for a locker.' }
+        items:
+          type: array
+          items:
+            type: object
+            required: [itemId, name, qty, unitPriceCents]
+            properties:
+              itemId: { type: string }
+              name: { type: string }
+              qty: { type: integer }
+              unitPriceCents: { type: integer }
+        itemsCents: { type: integer }
+        feeCents: { type: integer }
+        totalCents: { type: integer }
+        placedAt: { type: string, format: date-time }
+        etaAt: { type: string, format: date-time }
+        deliveredAt: { type: [string, 'null'], format: date-time }
+        cancelledAt: { type: [string, 'null'], format: date-time }
+    PlayerItem:
+      type: object
+      required:
+        - itemInstanceId
+        - itemId
+        - name
+        - category
+        - modelKey
+        - placeable
+        - footprint
+        - orderId
+        - acquiredAt
+        - placedHomeId
+      properties:
+        itemInstanceId: { type: string, format: uuid }
+        itemId: { type: string }
+        name: { type: string }
+        category: { type: string, enum: [furniture, decor, appliance, food, clothing] }
+        modelKey: { type: string }
+        placeable: { type: boolean }
+        footprint:
+          type: [object, 'null']
+          properties:
+            w: { type: number }
+            d: { type: number }
+            h: { type: number }
+        orderId: { type: [string, 'null'], format: uuid }
+        acquiredAt: { type: string, format: date-time }
+        placedHomeId: { type: [string, 'null'] }
+    HomePlacements:
+      type: object
+      required: [homeId, placements]
+      properties:
+        homeId: { type: string }
+        placements:
+          type: array
+          items:
+            type: object
+            required: [itemInstanceId, x, z, rotY, itemId, name, modelKey, footprint]
+            properties:
+              itemInstanceId: { type: string, format: uuid }
+              x: { type: number }
+              z: { type: number }
+              rotY: { type: number, description: 'Yaw, radians.' }
+              itemId: { type: string }
+              name: { type: string }
+              modelKey: { type: string }
+              footprint:
+                type: [object, 'null']
+                properties:
+                  w: { type: number }
+                  d: { type: number }
+                  h: { type: number }
     AdSlot:
       type: object
       required: [slotId, kind, terms]
