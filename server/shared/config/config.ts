@@ -85,6 +85,14 @@ export interface Config {
     readonly adminKey: string;
   };
 
+  readonly entitlements: {
+    /**
+     * Metaplex Core collection address of the hovercar pass. Empty means
+     * wallet sync is off and only 'grant' rows unlock the hovercar.
+     */
+    readonly hovercarCollection: string;
+  };
+
   readonly helius: {
     readonly apiKey: string;
     readonly rpcUrlDevnet: string;
@@ -328,6 +336,10 @@ export function loadConfig(): Config {
         cluster === 'mainnet' ? 'ADMIN_KEYPAIR_MAINNET' : 'ADMIN_KEYPAIR_DEVNET',
         'path or base58 of admin keypair',
       ),
+    },
+
+    entitlements: {
+      hovercarCollection: optionalEnv('HOVERCAR_COLLECTION', ''),
     },
 
     helius: {

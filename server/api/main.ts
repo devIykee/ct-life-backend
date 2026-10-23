@@ -39,6 +39,7 @@ import { registerBusinessRoutes } from './routes/businesses.js';
 import { registerGigRoutes } from './routes/gigs.js';
 import { registerProjectRoutes } from './routes/projects.js';
 import { registerNftMintRoutes } from './routes/nft-mint.js';
+import { registerEntitlementRoutes } from './routes/entitlements.js';
 import { registerTribeRoutes } from './routes/tribes.js';
 import { registerLeagueRoutes } from './routes/leagues.js';
 import { registerRatioArenaRoutes } from './routes/ratio-arena.js';
@@ -161,6 +162,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerGigRoutes(app);
   registerProjectRoutes(app);
   registerNftMintRoutes(app);
+  registerEntitlementRoutes(app);
   registerTribeRoutes(app);
   registerLeagueRoutes(app);
   registerRatioArenaRoutes(app);

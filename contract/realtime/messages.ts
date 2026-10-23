@@ -56,6 +56,12 @@ export const VEHICLE_KINDS = [
   'roadstar',
   'heli',
   'drone',
+  'sedan',
+  'taxi',
+  'police',
+  'pickup',
+  'van',
+  'bike',
 ] as const;
 export type VehicleKind = (typeof VEHICLE_KINDS)[number];
 
@@ -68,6 +74,12 @@ export const VEHICLE_MAX_SPEED_M_PER_S: Record<VehicleKind, number> = {
   roadstar: 70,
   heli: 60,
   drone: 20,
+  sedan: 60,
+  taxi: 60,
+  police: 60,
+  pickup: 60,
+  van: 60,
+  bike: 25,
 };
 
 /** Highest a vehicle may fly, island metres. */
@@ -227,6 +239,7 @@ export const RejectedMessage = z.object({
     'NOT_DRIVER',
     'ALREADY_DRIVING',
     'POSITION_UNKNOWN',
+    'NOT_ENTITLED',
   ]),
 });
 export type RejectedMessage = z.infer<typeof RejectedMessage>;
