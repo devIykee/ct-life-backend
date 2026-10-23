@@ -87,6 +87,14 @@ export class HomeRoom extends Room {
     }
     if (userId === '') return;
 
+    // The door's rule applies to the room too: without this, anyone who knew
+    // a home id could join past a locked door. A home without a door stays open.
+    const { buildContext } = await import('../../application/context.js');
+    const { canEnterHome } = await import('../../application/homes.js');
+    if (!(await canEnterHome(buildContext(), this.state.homeId, userId))) {
+      throw new Error('FORBIDDEN');
+    }
+
     const profile = await this.fetchProfile(userId);
     const player = new PlayerState();
     player.userId = userId;

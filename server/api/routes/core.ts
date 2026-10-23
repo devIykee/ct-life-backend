@@ -20,6 +20,7 @@ import { CharacterService } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
 import { PublicProfileService } from '../../application/public-profile.js';
 import { debtSchedule } from '../../application/bank.js';
+import { loadMeHome } from '../../application/homes.js';
 import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 
@@ -274,6 +275,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       security: 1,
     };
     const balRow = bal.rows[0] ?? { cash_cents: '0', debt_cents: '0' };
+    const home = await loadMeHome(c, userId);
     const dreamProgress = chRow ? await getDreamProgress(req.ctx, userId, chRow.dream_id) : null;
     return {
       user: {
@@ -304,6 +306,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       debtCents: Number(balRow.debt_cents),
       ...debtSchedule(req.ctx, Number(balRow.debt_cents)),
       homeId: chRow?.home_id ?? 'parents_basement',
+      home,
       minerTier: uRow.miner_tier || 'none',
       flags: {
         lotteryRolled: uRow.lottery_rolled_at !== null,

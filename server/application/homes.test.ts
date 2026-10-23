@@ -39,6 +39,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Give the doors back: a leftover lease would hold one of the few flat
+  // units against the next run on a persistent database.
+  await pool.query(`DELETE FROM homes WHERE owner_user_id = $1`, [ownerId]);
   await pool.end();
 });
 
