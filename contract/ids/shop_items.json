@@ -1,0 +1,263 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "0.0.1",
+  "_note": "Duo Shop catalogue (Cash, off-chain, never tradable). itemId is stable and lowercase; category is furniture | decor | appliance | food | clothing; priceCents is the Cash price (the server never trusts a client price); deliverable is always true here; placeable items (furniture, decor, appliances) carry footprint {w,d,h} in metres and can stand in a home, the rest do not. modelKey is the frontend asset key. These twenty items and their model keys are placeholders: the frontend replaces the file with its real ids and keys. The API upserts the file into shop_items; an item dropped from the file stays in the table (orders point at it) but leaves the catalogue.",
+  "items": [
+    {
+      "itemId": "sofa_basic",
+      "category": "furniture",
+      "name": "Basic Sofa",
+      "priceCents": 24900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 2.0,
+        "d": 0.9,
+        "h": 0.85
+      },
+      "modelKey": "shop_sofa_basic"
+    },
+    {
+      "itemId": "bed_single",
+      "category": "furniture",
+      "name": "Single Bed",
+      "priceCents": 18900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 1.0,
+        "d": 2.0,
+        "h": 0.5
+      },
+      "modelKey": "shop_bed_single"
+    },
+    {
+      "itemId": "desk_work",
+      "category": "furniture",
+      "name": "Work Desk",
+      "priceCents": 14900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 1.4,
+        "d": 0.7,
+        "h": 0.75
+      },
+      "modelKey": "shop_desk_work"
+    },
+    {
+      "itemId": "chair_gaming",
+      "category": "furniture",
+      "name": "Gaming Chair",
+      "priceCents": 12900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.7,
+        "d": 0.7,
+        "h": 1.2
+      },
+      "modelKey": "shop_chair_gaming"
+    },
+    {
+      "itemId": "bookshelf_tall",
+      "category": "furniture",
+      "name": "Tall Bookshelf",
+      "priceCents": 8900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.9,
+        "d": 0.3,
+        "h": 1.9
+      },
+      "modelKey": "shop_bookshelf_tall"
+    },
+    {
+      "itemId": "table_dining",
+      "category": "furniture",
+      "name": "Dining Table",
+      "priceCents": 15900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 1.6,
+        "d": 0.9,
+        "h": 0.75
+      },
+      "modelKey": "shop_table_dining"
+    },
+    {
+      "itemId": "plant_pothos",
+      "category": "decor",
+      "name": "Pothos Plant",
+      "priceCents": 1900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.4,
+        "d": 0.4,
+        "h": 0.8
+      },
+      "modelKey": "shop_plant_pothos"
+    },
+    {
+      "itemId": "rug_round",
+      "category": "decor",
+      "name": "Round Rug",
+      "priceCents": 4900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 1.6,
+        "d": 1.6,
+        "h": 0.02
+      },
+      "modelKey": "shop_rug_round"
+    },
+    {
+      "itemId": "poster_wagmi",
+      "category": "decor",
+      "name": "WAGMI Poster",
+      "priceCents": 1200,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.6,
+        "d": 0.02,
+        "h": 0.9
+      },
+      "modelKey": "shop_poster_wagmi"
+    },
+    {
+      "itemId": "lamp_floor",
+      "category": "decor",
+      "name": "Floor Lamp",
+      "priceCents": 3900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.35,
+        "d": 0.35,
+        "h": 1.6
+      },
+      "modelKey": "shop_lamp_floor"
+    },
+    {
+      "itemId": "neon_sign_gm",
+      "category": "decor",
+      "name": "GM Neon Sign",
+      "priceCents": 7900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.8,
+        "d": 0.05,
+        "h": 0.4
+      },
+      "modelKey": "shop_neon_sign_gm"
+    },
+    {
+      "itemId": "fridge_mini",
+      "category": "appliance",
+      "name": "Mini Fridge",
+      "priceCents": 19900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.5,
+        "d": 0.5,
+        "h": 0.85
+      },
+      "modelKey": "shop_fridge_mini"
+    },
+    {
+      "itemId": "tv_55",
+      "category": "appliance",
+      "name": "55-inch TV",
+      "priceCents": 34900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 1.25,
+        "d": 0.1,
+        "h": 0.75
+      },
+      "modelKey": "shop_tv_55"
+    },
+    {
+      "itemId": "rig_desktop",
+      "category": "appliance",
+      "name": "Desktop Rig",
+      "priceCents": 29900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.25,
+        "d": 0.5,
+        "h": 0.5
+      },
+      "modelKey": "shop_rig_desktop"
+    },
+    {
+      "itemId": "coffee_machine",
+      "category": "appliance",
+      "name": "Coffee Machine",
+      "priceCents": 8900,
+      "deliverable": true,
+      "placeable": true,
+      "footprint": {
+        "w": 0.3,
+        "d": 0.3,
+        "h": 0.4
+      },
+      "modelKey": "shop_coffee_machine"
+    },
+    {
+      "itemId": "noodles_cup",
+      "category": "food",
+      "name": "Cup Noodles",
+      "priceCents": 400,
+      "deliverable": true,
+      "placeable": false,
+      "modelKey": "shop_noodles_cup"
+    },
+    {
+      "itemId": "burger_combo",
+      "category": "food",
+      "name": "Burger Combo",
+      "priceCents": 1200,
+      "deliverable": true,
+      "placeable": false,
+      "modelKey": "shop_burger_combo"
+    },
+    {
+      "itemId": "sushi_set",
+      "category": "food",
+      "name": "Sushi Set",
+      "priceCents": 2800,
+      "deliverable": true,
+      "placeable": false,
+      "modelKey": "shop_sushi_set"
+    },
+    {
+      "itemId": "hoodie_ct_black",
+      "category": "clothing",
+      "name": "CT Black Hoodie",
+      "priceCents": 2500,
+      "deliverable": true,
+      "placeable": false,
+      "modelKey": "shop_hoodie_ct_black"
+    },
+    {
+      "itemId": "sneakers_runner",
+      "category": "clothing",
+      "name": "Runner Sneakers",
+      "priceCents": 4500,
+      "deliverable": true,
+      "placeable": false,
+      "modelKey": "shop_sneakers_runner"
+    }
+  ]
+}

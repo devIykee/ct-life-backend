@@ -116,6 +116,46 @@ export class NoFreeUnitError extends DomainError {
   }
 }
 
+export class NoHomeDoorError extends DomainError {
+  readonly code = 'NO_HOME_DOOR';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Delivery to the door needs a home with a door; pick the lobby locker.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class OrderNotCancellableError extends DomainError {
+  readonly code = 'ORDER_NOT_CANCELLABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Only an order that is still placed can be cancelled.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class ItemNotOwnedError extends DomainError {
+  readonly code = 'ITEM_NOT_OWNED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You do not own this item.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class ItemNotPlaceableError extends DomainError {
+  readonly code = 'ITEM_NOT_PLACEABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This item cannot be placed in a home.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class ItemAlreadyPlacedError extends DomainError {
+  readonly code = 'ITEM_ALREADY_PLACED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This item is already placed (in the request twice, or in another home).', details);
+    this.httpStatus = 409;
+  }
+}
+
 export class NotHomeOwnerError extends DomainError {
   readonly code = 'NOT_HOME_OWNER';
   constructor(details: Record<string, unknown> = {}) {
