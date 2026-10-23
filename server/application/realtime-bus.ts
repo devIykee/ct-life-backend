@@ -6,7 +6,8 @@
  * directly. It publishes here instead; the city room subscribes and
  * forwards to that user's client. This is the single mechanism behind the
  * targeted messages in the contract (`toast`, `dm`, `call_invite`,
- * `space_update`, `payment_confirmed`, `liquidated`), which previously had
+ * `space_update`, `payment_confirmed`, `liquidated`, `delivery_out`,
+ * `delivery_arrived`), which previously had
  * no transport at all: a video call returned a callId and the callee was
  * never rung.
  *
@@ -27,6 +28,8 @@ export type UserMessageType =
   | 'space_update'
   | 'payment_confirmed'
   | 'liquidated'
+  | 'delivery_out'
+  | 'delivery_arrived'
   | 'event';
 
 export interface UserMessage {
@@ -80,10 +83,7 @@ export async function publishWorldEvent(
  * @param handler - Called for every well-formed message.
  * @returns The subscriber, so the caller can close it on shutdown.
  */
-export function subscribeUserMessages(
-  redis: Redis,
-  handler: (msg: UserMessage) => void,
-): Redis {
+export function subscribeUserMessages(redis: Redis, handler: (msg: UserMessage) => void): Redis {
   const sub = redis.duplicate();
   void sub.subscribe(USER_CHANNEL);
   sub.on('message', (_channel: string, raw: string) => {

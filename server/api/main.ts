@@ -33,6 +33,8 @@ import { registerTipRoutes } from './routes/tips.js';
 import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
+import { registerShopRoutes } from './routes/shop.js';
+import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
 import { registerBusinessRoutes } from './routes/businesses.js';
@@ -156,6 +158,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerBankRoutes(app);
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
+  registerShopRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
   registerBusinessRoutes(app);
@@ -184,6 +187,7 @@ export async function buildServer(): Promise<ServerHandle> {
     },
     async stop() {
       await app.close();
+      await closeShopQueue();
       await ctx.db.close();
       await ctx.redis.close();
     },
