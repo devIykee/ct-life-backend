@@ -416,6 +416,11 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     });
     // B26: POST /v1/homes answers 200, not 201.
     expect([200, 409, 403]).toContain(r.statusCode);
+    // Give the door back so repeated runs do not exhaust the flat units.
+    const db = createDb();
+    await db.withConnection((c) =>
+      c.query(`DELETE FROM homes WHERE owner_user_id = $1`, [alice.sub]),
+    );
   });
 
   it('creator profile: alice can POST her own creator profile', async () => {

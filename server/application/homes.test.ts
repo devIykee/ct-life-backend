@@ -39,6 +39,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // Give the doors back: a leftover lease would hold one of the few flat
+  // units against the next run on a persistent database.
+  await pool.query(`DELETE FROM homes WHERE owner_user_id = $1`, [ownerId]);
   await pool.end();
 });
 
@@ -103,7 +106,7 @@ describe('homes service', () => {
     const home = await createHome(ctx, ownerId, 'parents_basement');
     const visit = await recordVisit(ctx, home.homeId, visitorId);
     expect(visit.visitorUserId).toBe(visitorId);
-    const got = await getHome(ctx, home.homeId);
+    const got = await getHome(ctx, home.homeId, ownerId);
     expect(got.visits.find((v) => v.visitId === visit.visitId)).toBeTruthy();
   });
 

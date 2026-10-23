@@ -184,6 +184,15 @@ Written by apply (creates the row, never resets it) and by shift completion, in 
 - `processed_at timestamptz`
 - `signature text` — for dedup; UNIQUE per (source, signature)
 
+### Homes (M4, doors in migration 082)
+
+- `homes`: one row per lease. `kind`, `rent_cents_per_week`, `last_rent_paid_at`, plus `unit_id` (the door held, `home_units`), `status` (`active | overdue | evicted | moved_out`), `missed_weeks` and `ended_at`. Only an active or overdue home holds its unit: a partial unique index on `unit_id` keeps one live lease per door, and `unit_id` stays on ended rows as history.
+- `home_units`: `unit_id` (`flat:<buildingInstanceId>:<doorIndex>`), `district`, `tier` (`basement | flat | penthouse`), `room_type`, `weekly_rent_cents`, `capacity`. Upserted from `contract/ids/home_units.json` (frontend-owned) when the API first needs it.
+- `home_guests`: `(home_id, user_id)`, the people the owner lets through the door.
+- `home_visits`: append-only visit log, unchanged.
+
+Flow: `POST /homes` takes a free unit of the kind's tier (`409 NO_FREE_UNIT` when all are held; a tier with no units leases without a door). The rent worker moves a home `active` to `overdue` on a missed week and to `evicted` after 4 in a row, freeing the unit; `POST /homes/{homeId}/move-out` frees it by choice. `GET /units/{unitId}/access` and `POST /homes/{ownerId}/visit` allow the owner and guests of a live home and nobody else.
+
 ## ER diagram
 
 ```mermaid

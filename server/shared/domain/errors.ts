@@ -106,6 +106,32 @@ export class RateLimitedError extends DomainError {
   }
 }
 
+// Homes -------------------------------------------------------------------
+
+export class NoFreeUnitError extends DomainError {
+  readonly code = 'NO_FREE_UNIT';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Every unit of this home tier is taken; try again later or pick another tier.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class NotHomeOwnerError extends DomainError {
+  readonly code = 'NOT_HOME_OWNER';
+  constructor(details: Record<string, unknown> = {}) {
+    super("Only the home's owner can do this.", details);
+    this.httpStatus = 403;
+  }
+}
+
+export class UnitFullError extends DomainError {
+  readonly code = 'UNIT_FULL';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The unit is at capacity; remove a guest first.', details);
+    this.httpStatus = 409;
+  }
+}
+
 // Economy -----------------------------------------------------------------
 
 export class InsufficientCashError extends DomainError {

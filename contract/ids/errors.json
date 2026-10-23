@@ -151,6 +151,21 @@
       "code": "NOT_ENTITLED",
       "httpStatus": 403,
       "message": "The player does not own the entitlement this needs (e.g. vehicle.hovercar for the roadstar)."
+    },
+    {
+      "code": "NO_FREE_UNIT",
+      "httpStatus": 409,
+      "message": "Every unit of this home tier is taken; try again later or pick another tier."
+    },
+    {
+      "code": "NOT_HOME_OWNER",
+      "httpStatus": 403,
+      "message": "Only the home's owner can do this."
+    },
+    {
+      "code": "UNIT_FULL",
+      "httpStatus": 409,
+      "message": "The unit is at capacity; remove a guest first."
     }
   ]
 }

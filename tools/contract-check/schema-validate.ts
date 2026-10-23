@@ -26,6 +26,8 @@ function walk(dir: string, out: string[] = []): string[] {
   }
   for (const entry of entries) {
     if (entry === 'ids.schema.json') continue;
+    // An ids file may carry a companion `<name>.schema.json` (checked in main).
+    if (dir === ID_DIR && entry.endsWith('.schema.json')) continue;
     const p = join(dir, entry);
     const st = statSync(p);
     if (st.isDirectory()) walk(p, out);
@@ -51,6 +53,22 @@ function main(): void {
     if (!idSchema(data)) {
       console.log(`[FAIL] ${file.replace(`${REPO}/`, '')}: ids envelope invalid`);
       for (const err of idSchema.errors ?? []) console.log(`    - ${err.message}`);
+      failed++;
+      continue;
+    }
+    // Companion schema, when the registry has one (home_units.json).
+    const companion = file.replace(/\.json$/, '.schema.json');
+    let companionData: unknown = null;
+    try {
+      companionData = readJson(companion);
+    } catch {
+      continue;
+    }
+    const validateIds = ajv.compile(companionData as Parameters<typeof ajv.compile>[0]);
+    if (!validateIds(data)) {
+      console.log(`[FAIL] ${file.replace(`${REPO}/`, '')}: failed validation`);
+      for (const err of validateIds.errors ?? [])
+        console.log(`    - ${err.instancePath || '<root>'}: ${err.message}`);
       failed++;
     }
   }

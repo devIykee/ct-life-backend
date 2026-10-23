@@ -1,0 +1,56 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "0.0.1",
+  "_note": "Enterable home doors (units) behind the flats' real doors. unitId is the door id: flat:<buildingInstanceId>:<doorIndex> (doorIndex 0-based within the building). tier is basement | flat | penthouse; roomType is the interior the client streams (e.g. apartment_modern). capacity is the most people living there (owner plus guests). weeklyRentCents is the catalog rent shown for the unit; the rent charged is still set by the home kind. These six ids are placeholders for the six lg_midrise_flats buildings in the Residences district; the frontend replaces the file with its real door ids. A tier with no units here keeps the old unit-less behaviour: leases succeed and the home has no door. The API upserts this file into home_units (a unit dropped from the file stays in the table, so a leased door is never pulled from under a tenant).",
+  "units": [
+    {
+      "unitId": "flat:midrise_01:0",
+      "district": "residences",
+      "tier": "flat",
+      "roomType": "apartment_modern",
+      "weeklyRentCents": 18000,
+      "capacity": 2
+    },
+    {
+      "unitId": "flat:midrise_02:0",
+      "district": "residences",
+      "tier": "flat",
+      "roomType": "apartment_modern",
+      "weeklyRentCents": 18000,
+      "capacity": 2
+    },
+    {
+      "unitId": "flat:midrise_03:0",
+      "district": "residences",
+      "tier": "flat",
+      "roomType": "apartment_modern",
+      "weeklyRentCents": 18000,
+      "capacity": 2
+    },
+    {
+      "unitId": "flat:midrise_04:0",
+      "district": "residences",
+      "tier": "flat",
+      "roomType": "apartment_modern",
+      "weeklyRentCents": 18000,
+      "capacity": 2
+    },
+    {
+      "unitId": "flat:midrise_05:0",
+      "district": "residences",
+      "tier": "flat",
+      "roomType": "apartment_modern",
+      "weeklyRentCents": 18000,
+      "capacity": 2
+    },
+    {
+      "unitId": "flat:midrise_06:0",
+      "district": "residences",
+      "tier": "flat",
+      "roomType": "apartment_modern",
+      "weeklyRentCents": 18000,
+      "capacity": 2
+    }
+  ]
+}

@@ -1047,11 +1047,60 @@ paths:
                     nextDueAt: '2026-10-12T20:00:00.000Z',
                   }
 
+    post:
+      tags: [player]
+      operationId: postHomes
+      summary: Lease a home.
+      description: >-
+        Debits the first week of rent and takes a free unit (door) of the home's tier. Tiers:
+        `parents_basement` is `basement`, `hacker_house` and `studio` are `flat`, `penthouse`
+        and `marina_villa` are `penthouse`. A tier with no units in `contract/ids/home_units.json`
+        leases without a door (`unitId` null). Leasing a kind you already live in returns that home.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:
+                  type: string
+                  enum: [parents_basement, hacker_house, studio, penthouse, marina_villa]
+      responses:
+        '200':
+          description: The leased home
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeasedHome' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: Every unit of the tier is taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NO_FREE_UNIT,
+                      message: 'Every unit of this home tier is taken; try again later or pick another tier.',
+                      details: { tier: 'flat' },
+                    },
+                }
+
   /homes/{homeId}/rent:
     post:
       tags: [player]
       operationId: postHomesHomeIdRent
-      summary: Sign a lease for the given home.
+      summary: Pay the weekly rent for the given home.
+      description: >-
+        Debits one week of rent, clears an `overdue` state, and returns the Home. A lease
+        from before doors existed takes a free unit now if its tier has one. Only the owner
+        may pay; a moved-out or evicted home is refused with `400 VALIDATION_FAILED`.
       x-phase: 4
       parameters:
         - name: homeId
@@ -1071,6 +1120,9 @@ paths:
                   homeId: { type: string }
                   rentCents: { type: integer }
                   nextDueAt: { type: string, format: date-time }
+                  unitId: { type: [string, 'null'] }
+                  status: { $ref: '#/components/schemas/HomeStatus' }
+                  missedWeeks: { type: integer }
         '402':
           description: Insufficient cash for deposit
           content:
@@ -1086,11 +1138,166 @@ paths:
                     },
                 }
 
+  /homes/{homeId}/move-out:
+    post:
+      tags: [player]
+      operationId: postHomesHomeIdMoveOut
+      summary: Give the home up.
+      description: >-
+        Owner only. The home becomes `moved_out`, its unit is free for the next lease and its
+        guests are removed. Moving out of a home that is already over is a no-op. Unpaid debt stays.
+      x-phase: 4
+      parameters:
+        - name: homeId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The home, now `moved_out` (`unitId` null)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LeasedHome' }
+        '403':
+          description: Not the owner
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOT_HOME_OWNER,
+                      message: "Only the home's owner can do this.",
+                      details: { homeId: 'home:0192a1c2-...' },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /homes/{homeId}/guests/{userId}:
+    post:
+      tags: [player]
+      operationId: postHomesHomeIdGuestsUserId
+      summary: Let a player through the home's door.
+      description: >-
+        Owner only; idempotent. Guests can enter the unit and visit. A unit holds `capacity`
+        people including the owner. Returns the guest list.
+      x-phase: 4
+      parameters:
+        - name: homeId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Guest list after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeGuests' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403':
+          description: Not the owner
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOT_HOME_OWNER,
+                      message: "Only the home's owner can do this.",
+                      details: { homeId: 'home:0192a1c2-...' },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The unit is at capacity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: UNIT_FULL,
+                      message: 'The unit is at capacity; remove a guest first.',
+                      details: { unitId: 'flat:midrise_01:0', capacity: 2 },
+                    },
+                }
+    delete:
+      tags: [player]
+      operationId: deleteHomesHomeIdGuestsUserId
+      summary: Take a player off the home's guest list.
+      description: Owner only; idempotent. Returns the guest list.
+      x-phase: 4
+      parameters:
+        - name: homeId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Guest list after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeGuests' }
+        '403':
+          description: Not the owner (NOT_HOME_OWNER)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /units/{unitId}/access:
+    get:
+      tags: [player]
+      operationId: getUnitsUnitIdAccess
+      summary: Can I open this door?
+      description: >-
+        Answers for the caller only; it never names who lives there. Owners and the owner's
+        guests of a live home can enter. An evicted owner cannot (`reason: evicted`); everyone
+        else meets a locked door (`locked`, or `vacant` when nobody lives there).
+      x-phase: 4
+      parameters:
+        - name: unitId
+          in: path
+          required: true
+          schema: { type: string }
+          description: A door id from `contract/ids/home_units.json`, e.g. `flat:midrise_01:0`.
+      responses:
+        '200':
+          description: Access verdict
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [canEnter, reason]
+                properties:
+                  canEnter: { type: boolean }
+                  reason: { type: string, enum: [owner, guest, locked, vacant, evicted] }
+              example: { canEnter: false, reason: locked }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /homes/{ownerId}/visit:
     post:
       tags: [player]
       operationId: postHomesOwnerIdVisit
       summary: Visit a player's home and join their `home` room.
+      description: >-
+        A home with a door (`unitId` set) is open only to its owner and the owner's guests;
+        anyone else gets `403 FORBIDDEN` and no visit is logged. A home without a door stays
+        open. The 200 body is the visit row plus the door and interior to stream.
       x-phase: 4
       parameters:
         - name: ownerId
@@ -1100,15 +1307,54 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: Room to join
+          description: Visit logged. Join the `home` room with `homeId`; stream `roomType` at `unitId`.
           content:
             application/json:
               schema:
                 type: object
-                required: [roomId]
+                required: [visitId, homeId, visitorUserId, visitedAt, unitId, roomType]
                 properties:
-                  roomId: { type: string, description: 'Pass to `client.joinById(roomId)`.' }
-              example: { roomId: 'home:0192a1c2-...' }
+                  visitId: { type: string, format: uuid }
+                  homeId:
+                    {
+                      type: string,
+                      description: 'Pass as `homeId` to `joinOrCreate("home", ...)`.',
+                    }
+                  visitorUserId: { type: string, format: uuid }
+                  visitedAt: { type: string, format: date-time }
+                  unitId:
+                    {
+                      type: [string, 'null'],
+                      description: 'The door to open; null for a home without one.',
+                    }
+                  roomType:
+                    {
+                      type: [string, 'null'],
+                      description: 'The interior to stream, e.g. apartment_modern.',
+                    }
+              example:
+                {
+                  visitId: '0192a1c2-...',
+                  homeId: 'home:0192a1c2-...',
+                  visitorUserId: '0192a1c3-...',
+                  visitedAt: '2026-10-23T10:00:00.000Z',
+                  unitId: 'flat:midrise_01:0',
+                  roomType: 'apartment_modern',
+                }
+        '403':
+          description: The door is locked for this caller
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'FORBIDDEN',
+                      message: 'Caller is not allowed to perform this action.',
+                      details: { reason: 'locked' },
+                    },
+                }
 
   /businesses:
     get:
@@ -3760,6 +4006,13 @@ components:
             capped at debtCents; null with no debt.,
           }
         homeId: { type: string }
+        home:
+          oneOf:
+            - $ref: '#/components/schemas/MeHome'
+            - type: 'null'
+          description: >-
+            The current lease: the newest active or overdue home, else the newest evicted one;
+            null for a player with no home (street).
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
         flags: { type: 'object', additionalProperties: true }
     Character:
@@ -3825,6 +4078,67 @@ components:
         - properties:
             rentCents: { type: integer }
             nextDueAt: { type: string, format: date-time }
+    HomeStatus:
+      type: string
+      enum: [active, overdue, evicted, moved_out]
+      description: >-
+        `active` to `overdue` on a missed weekly rent, to `evicted` after 4 missed weeks in a
+        row. `moved_out` is the owner's choice. Only active and overdue homes hold a unit.
+    HomeTier:
+      type: string
+      enum: [basement, flat, penthouse]
+    LeasedHome:
+      type: object
+      required:
+        [
+          homeId,
+          ownerUserId,
+          kind,
+          unitId,
+          tier,
+          roomType,
+          status,
+          missedWeeks,
+          rentCentsPerWeek,
+          createdAt,
+        ]
+      properties:
+        homeId: { type: string, description: 'Instance id, `home:<uuid>`; not the kind.' }
+        ownerUserId: { type: string, format: uuid }
+        kind: { type: string }
+        unitId:
+          {
+            type: [string, 'null'],
+            description: 'The door this lease holds; null for a tier without doors, or once given up.',
+          }
+        tier: { $ref: '#/components/schemas/HomeTier' }
+        roomType: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/HomeStatus' }
+        missedWeeks: { type: integer, minimum: 0 }
+        rentCentsPerWeek: { type: integer }
+        decoratedAt: { type: [string, 'null'], format: date-time }
+        lastRentPaidAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+    MeHome:
+      type: object
+      required: [homeId, unitId, tier, roomType, status, missedWeeks]
+      properties:
+        homeId:
+          {
+            type: string,
+            description: 'Instance id, `home:<uuid>`; use it for the /homes/{homeId}/... routes.',
+          }
+        unitId: { type: [string, 'null'] }
+        tier: { $ref: '#/components/schemas/HomeTier' }
+        roomType: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/HomeStatus' }
+        missedWeeks: { type: integer, minimum: 0 }
+    HomeGuests:
+      type: object
+      required: [homeId, guests]
+      properties:
+        homeId: { type: string }
+        guests: { type: array, items: { type: string, format: uuid } }
     Job:
       type: object
       required: [careerId, level, xp]
