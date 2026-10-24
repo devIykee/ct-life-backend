@@ -3966,7 +3966,12 @@ paths:
     post:
       tags: [liveops]
       operationId: postPushRegister
-      summary: Register a push token. Behind PUSH_ENABLED.
+      summary: Register a push token for the caller.
+      description: >-
+        Android and web devices send `fcmToken`; iOS sends `apnsToken`. A token belongs to
+        exactly one account: registering a token that another account holds moves it to the
+        caller in the same transaction, so the previous account can no longer receive pushes on
+        this device. Call it on every sign-in, and call `DELETE` on sign-out.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3976,11 +3981,45 @@ paths:
           application/json:
             schema:
               type: object
-              required: [token]
+              required: [platform]
               properties:
-                token: { type: string }
+                platform: { type: string, enum: [ios, android, web] }
+                fcmToken: { type: string, nullable: true }
+                apnsToken: { type: string, nullable: true }
+                enabled: { type: boolean }
       responses:
-        '204': { description: Registered }
+        '201':
+          description: The stored device row
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [liveops]
+      operationId: deletePushRegister
+      summary: Unregister a push token for the caller.
+      description: >-
+        Removes `fcmToken` from the caller's devices only. A token that belongs to someone else,
+        or that does not exist, is left alone and the reply is the same `204`, so a token cannot
+        be probed or deleted by guessing it. Call it on sign-out so the account stops receiving
+        pushes on this phone.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcmToken]
+              properties:
+                fcmToken: { type: string, minLength: 1, maxLength: 4096 }
+      responses:
+        '204': { description: Removed (or nothing to remove) }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /push/prefs:
     get:

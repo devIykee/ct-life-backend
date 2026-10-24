@@ -2,6 +2,7 @@
  * Push + Meta + Ads routes (M4 #54 + M5 #64).
  *
  *   POST /v1/push/register
+ *   DELETE /v1/push/register
  *   GET  /v1/meta/current
  *   POST /v1/admin/meta
  *   GET  /v1/ads/live
@@ -23,7 +24,7 @@ import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
-import { registerDevice } from '../../application/push.js';
+import { registerDevice, unregisterDevice } from '../../application/push.js';
 import { getCurrentMeta, setCurrentMeta } from '../../application/meta.js';
 import {
   approveBooking,
@@ -46,6 +47,8 @@ const RegisterBody = z.object({
   fcmToken: z.string().nullable().optional(),
   enabled: z.boolean().optional(),
 });
+
+const UnregisterBody = z.object({ fcmToken: z.string().min(1).max(4096) });
 
 const MetaBody = z.object({
   value: z.unknown(),
@@ -80,6 +83,17 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
         enabled: body.data.enabled,
       });
       return reply.status(201).send(out);
+    },
+  );
+
+  app.delete(
+    '/v1/push/register',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const body = UnregisterBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      await unregisterDevice(req.ctx, req.user!.sub, body.data.fcmToken);
+      return reply.status(204).send();
     },
   );
 

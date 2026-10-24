@@ -129,8 +129,8 @@ describe('gates', () => {
     const none = await newUser(null);
     const ios = await newUser(null);
     await pool.query(
-      `INSERT INTO push_devices (device_id, user_id, platform, apns_token) VALUES ($1, $2, 'ios', 'apns-1')`,
-      [uuidv7(), ios.id],
+      `INSERT INTO push_devices (device_id, user_id, platform, apns_token) VALUES ($1, $2, 'ios', $3)`,
+      [uuidv7(), ios.id, `apns-${uuidv7()}`],
     );
     const off = await newUser();
     await pool.query(`UPDATE push_devices SET enabled = false WHERE user_id = $1`, [off.id]);

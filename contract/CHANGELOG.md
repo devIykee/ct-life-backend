@@ -1,3 +1,9 @@
+## 2026-10-24 - Push tokens: one account per token, DELETE /push/register
+
+- Added `DELETE /push/register {fcmToken}` -> `204`. It removes that token from the caller's own devices only; someone else's or an unknown token is left alone and the reply is the same, so tokens cannot be probed or deleted by guessing. Call it on sign-out.
+- A push token now belongs to exactly one account. `POST /push/register` with a token another account holds moves it to the caller in the same transaction, so the previous account can never receive pushes on this device. The openapi `POST /push/register` block now shows the real body (`platform`, `fcmToken` or `apnsToken`, `enabled`) and `201`.
+- Migration 088 deletes duplicate tokens (the most recently updated row keeps it) and adds unique indexes on `push_devices.fcm_token` and `apns_token`.
+
 ## 2026-10-23 - gm streak and daily chest, daily/weekly quests, real push (FCM)
 
 Independent of the homes (#7) and Duo Shop (#8) PRs, which are already on `main`: the home-visit quest is wired to `POST /homes/{ownerId}/visit` and works now.

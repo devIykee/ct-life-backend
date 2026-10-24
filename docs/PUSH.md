@@ -67,9 +67,17 @@ Each message is an FCM `notification` (title, body) plus a `data` map with `type
 - One push per (player, key): a sweep or retry never repeats a push.
 - A token FCM reports as `UNREGISTERED` is disabled in `push_devices`.
 
+## One account per token
+
+A push token belongs to exactly one account (unique index). `POST /v1/push/register` with a token
+another account holds **moves it** to the caller, so the previous account on this phone stops
+receiving pushes. On sign-out call `DELETE /v1/push/register {fcmToken}` (own tokens only), and on
+every sign-in register again, so a shared phone never delivers one player's pushes to another.
+
 ## Client checklist
 
 - Request the notification permission (Android 13+ `POST_NOTIFICATIONS`), then get the FCM token
   and call `POST /v1/push/register {platform: "android", fcmToken}`.
+- On sign-out call `DELETE /v1/push/register {fcmToken}`; on sign-in register again (a token moves to the signed-in account).
 - `PUT /v1/push/prefs` with the device's UTC offset in minutes.
 - Handle `deep_link` from the notification tap, both from a cold start and while running.

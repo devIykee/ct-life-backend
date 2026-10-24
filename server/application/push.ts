@@ -4,6 +4,12 @@
  *   POST /v1/push/register — register a device (apns or fcm token);
  *                            upserts push_devices.
  *
+ *   DELETE /v1/push/register — unregister a token for the caller only.
+ *
+ * One account per token: a token is bound to exactly one user (unique index, migration
+ * 085). Registering a token that another user holds moves it to the caller in the same
+ * transaction, so the previous account can never receive pushes on this device.
+ *
  * Per spec section 4 (POST /v1/push/register {token}, 204).
  * The M4 slice accepts { platform, apnsToken?, fcmToken? } and
  * upserts on (user_id, platform, apns_token/fcm_token).
@@ -50,39 +56,57 @@ export async function registerDevice(
   }
   const deviceId = uuidv7();
   const enabled = args.enabled ?? true;
-  await runInTransaction(async (client) => {
-    // Upsert: match on (user_id, platform, token).
-    const sel = await client.query<{ device_id: string }>(
-      `SELECT device_id FROM push_devices
-       WHERE user_id = $1 AND platform = $2
-         AND ($3::text IS NULL OR apns_token = $3)
-         AND ($4::text IS NULL OR fcm_token = $4)
-       LIMIT 1`,
-      [userId, args.platform, args.apnsToken, args.fcmToken],
-    );
-    if (sel.rows[0]) {
+  const write = (): Promise<void> =>
+    runInTransaction(async (client) => {
+      // Move the token: no other account keeps it.
       await client.query(
-        `UPDATE push_devices SET enabled = $1, updated_at = now()
-         WHERE device_id = $2`,
-        [enabled, sel.rows[0].device_id],
+        `DELETE FROM push_devices
+          WHERE user_id <> $1
+            AND (($2::text IS NOT NULL AND fcm_token = $2) OR ($3::text IS NOT NULL AND apns_token = $3))`,
+        [userId, args.fcmToken, args.apnsToken],
       );
-    } else {
-      try {
+      // Upsert: match on (user_id, platform, token).
+      const sel = await client.query<{ device_id: string }>(
+        `SELECT device_id FROM push_devices
+         WHERE user_id = $1 AND platform = $2
+           AND ($3::text IS NULL OR apns_token = $3)
+           AND ($4::text IS NULL OR fcm_token = $4)
+         LIMIT 1`,
+        [userId, args.platform, args.apnsToken, args.fcmToken],
+      );
+      if (sel.rows[0]) {
         await client.query(
-          `INSERT INTO push_devices
-             (device_id, user_id, platform, apns_token, fcm_token, enabled)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [deviceId, userId, args.platform, args.apnsToken, args.fcmToken, enabled],
+          `UPDATE push_devices SET enabled = $1, updated_at = now()
+           WHERE device_id = $2`,
+          [enabled, sel.rows[0].device_id],
         );
-      } catch (e) {
-        // 23501 CHECK (platform/apns_token/fcm_token).
-        if ((e as { code?: string }).code === '23514') {
-          throw new ValidationFailedError({ reason: 'platform/token mismatch' });
+      } else {
+        try {
+          await client.query(
+            `INSERT INTO push_devices
+               (device_id, user_id, platform, apns_token, fcm_token, enabled)
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [deviceId, userId, args.platform, args.apnsToken, args.fcmToken, enabled],
+          );
+        } catch (e) {
+          // 23501 CHECK (platform/apns_token/fcm_token).
+          if ((e as { code?: string }).code === '23514') {
+            throw new ValidationFailedError({ reason: 'platform/token mismatch' });
+          }
+          throw e;
         }
-        throw e;
       }
+    });
+  // Two accounts registering the same new token at once: the unique index stops the second;
+  // try again and it moves the token instead.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await write();
+      break;
+    } catch (e) {
+      if ((e as { code?: string }).code !== '23505' || attempt >= 2) throw e;
     }
-  });
+  }
   // Re-read so we return the canonical row.
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<{
@@ -116,4 +140,23 @@ export async function registerDevice(
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
+}
+
+/**
+ * Remove a push token for the caller. A token that belongs to someone else, or to nobody,
+ * is left alone and the call looks the same.
+ * @param ctx - The application context.
+ * @param userId - The caller.
+ * @param fcmToken - The token to remove.
+ * @returns How many of the caller's device rows were removed.
+ */
+export async function unregisterDevice(
+  ctx: AppContext,
+  userId: string,
+  fcmToken: string,
+): Promise<number> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query(`DELETE FROM push_devices WHERE user_id = $1 AND fcm_token = $2`, [userId, fcmToken]),
+  );
+  return r.rowCount ?? 0;
 }

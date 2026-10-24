@@ -117,7 +117,7 @@ async function cashOf(userId: string): Promise<number> {
 
 describe('retention routes: auth', () => {
   it('every route needs a bearer token', async () => {
-    const routes: Array<['GET' | 'POST' | 'PUT', string]> = [
+    const routes: Array<['GET' | 'POST' | 'PUT' | 'DELETE', string]> = [
       ['GET', '/v1/daily/status'],
       ['POST', '/v1/daily/claim'],
       ['POST', '/v1/daily/freeze'],
@@ -125,6 +125,7 @@ describe('retention routes: auth', () => {
       ['POST', '/v1/quests/q_daily_shift_1/claim'],
       ['GET', '/v1/push/prefs'],
       ['PUT', '/v1/push/prefs'],
+      ['DELETE', '/v1/push/register'],
     ];
     for (const [method, url] of routes) {
       const r = await app.inject({ method, url, headers: { 'idempotency-key': uuidv7() } });
@@ -268,5 +269,61 @@ describe('push prefs over HTTP', () => {
       disabledTypes: ['nope'],
     });
     expect(badType.status).toBe(400);
+  });
+});
+
+describe('push token binding over HTTP', () => {
+  it('a token moves to the latest account and only its owner can unregister it', async () => {
+    const a = await devAuth();
+    const b = await devAuth();
+    const fcmToken = `tok-${uuidv7()}`;
+    const body = { platform: 'android', fcmToken };
+    expect((await call(a, 'POST', '/v1/push/register', body)).status).toBe(201);
+    expect((await call(b, 'POST', '/v1/push/register', body)).status).toBe(201);
+    const owner = async (): Promise<string[]> =>
+      db.withConnection(async (c) => {
+        const r = await c.query<{ user_id: string }>(
+          `SELECT user_id FROM push_devices WHERE fcm_token = $1`,
+          [fcmToken],
+        );
+        return r.rows.map((x) => x.user_id);
+      });
+    expect(await owner()).toEqual([b.sub]);
+    // A guessing B's token deletes nothing.
+    const stolen = await app.inject({
+      method: 'DELETE',
+      url: '/v1/push/register',
+      headers: {
+        authorization: `Bearer ${a.accessToken}`,
+        'idempotency-key': uuidv7(),
+        'content-type': 'application/json',
+      },
+      payload: { fcmToken },
+    });
+    expect(stolen.statusCode).toBe(204);
+    expect(await owner()).toEqual([b.sub]);
+    const own = await app.inject({
+      method: 'DELETE',
+      url: '/v1/push/register',
+      headers: {
+        authorization: `Bearer ${b.accessToken}`,
+        'idempotency-key': uuidv7(),
+        'content-type': 'application/json',
+      },
+      payload: { fcmToken },
+    });
+    expect(own.statusCode).toBe(204);
+    expect(await owner()).toEqual([]);
+    const bad = await app.inject({
+      method: 'DELETE',
+      url: '/v1/push/register',
+      headers: {
+        authorization: `Bearer ${b.accessToken}`,
+        'idempotency-key': uuidv7(),
+        'content-type': 'application/json',
+      },
+      payload: {},
+    });
+    expect(bad.statusCode).toBe(400);
   });
 });
