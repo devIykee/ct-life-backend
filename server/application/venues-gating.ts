@@ -29,6 +29,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { randomBytes } from 'node:crypto';
+import { careerAreasAt } from './ladders.js';
 import type { AppContext } from './context.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
@@ -222,6 +223,8 @@ export interface VenueAccessRow {
   readonly netWorthCents: number;
   readonly membershipRequired: boolean;
   readonly isMember: boolean;
+  /** Areas of this venue my career-ladder rank unlocks (e.g. `vip_booth`); [] if none. */
+  readonly careerAreas: readonly string[];
 }
 
 /**
@@ -257,15 +260,16 @@ export async function getVenueAccess(
       [userId],
     );
     return {
-      netWorth:
-        Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
+      netWorth: Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
       jailed: jail.rows[0]?.is_sybil_jailed ?? false,
       isMember: (member.rowCount ?? 0) > 0,
     };
   });
 
+  const careerAreas = await careerAreasAt(ctx, userId, venueId);
   const base = {
     venueId,
+    careerAreas,
     netWorthCents: state.netWorth,
     requiredNetWorthCents: null as number | null,
     membershipRequired: false,

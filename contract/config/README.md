@@ -24,3 +24,7 @@ Files:
 | `casino.json`     | The Rug Room: stake limits, slots reel weights and paytable (with the computed RTP), crash growth, coinflip payout and head-to-head cut. | Multipliers are plain numbers (2 decimals); caps are env settings. `contract:check` recomputes the slots RTP and requires 94-96%. |
 
 The schema validator (`tools/contract-check/schema-validate.ts`) loads every `*.schema.json`, compiles the corresponding JSON file, and fails the build on any error. The CI `contract-check` job runs this on every push.
+
+## careers.json: ladders and Rekt Burger
+
+`careers` (the jobs) is unchanged. Added: `ladders` (five career ladders: `jobIds` from `careers`, `tribeIds` from `tribes.json`, `actionXp` per action verb, 5-7 `ranks` with cumulative `xpRequired`, `payBonusBps`, `venueAccess` flags `venueId:area` and an optional `cosmeticId`), `ladderJoinCooldownHours`, `ladderActionXpDailyCap`, `rektBurger` (unlock rules, pay, caps and the shift plausibility bounds) and `cosmetics` (reward cosmetics for ranks and the Rekt Burger uniform; synced into `cosmetic_items` like the Season Pass ones). See `docs/CAREERS.md`.

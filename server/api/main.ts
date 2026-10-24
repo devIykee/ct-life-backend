@@ -15,6 +15,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerCoreRoutes } from './routes/core.js';
 import { registerSocialRoutes } from './routes/social.js';
 import { registerWorkRoutes } from './routes/work.js';
+import { registerJobRoutes } from './routes/jobs.js';
 import { registerOpsRoutes } from './routes/ops.js';
 import { registerPaymentsRoutes } from './routes/payments.js';
 import { registerMarketRoutes } from './routes/markets.js';
@@ -150,6 +151,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerCoreRoutes(app);
   registerSocialRoutes(app);
   registerWorkRoutes(app);
+  registerJobRoutes(app);
   registerOpsRoutes(app, ctx);
   registerPaymentsRoutes(app);
   registerMarketRoutes(app);

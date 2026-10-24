@@ -25,6 +25,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { addCareerXp, readCareerProgress, type CareersConfig } from './careers.js';
+import {
+  awardLadderXp,
+  ladderForShift,
+  payBonusCents,
+  publishPromotion,
+  type PromotionInfo,
+} from './ladders.js';
+import { ensureRewardCatalog } from './rewards.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
@@ -107,7 +115,19 @@ export class ShiftsService {
     userId: string,
     shiftId: string,
     results: Array<{ miniGameId: string; score: number }>,
-  ): Promise<{ payCents: number; xp: number; promoted: boolean }> {
+  ): Promise<{
+    payCents: number;
+    xp: number;
+    promoted: boolean;
+    ladder?: {
+      ladderId: string;
+      rank: number;
+      title: string;
+      bonusCents: number;
+      xpAdded: number;
+      promoted: boolean;
+    };
+  }> {
     const shift = _shifts.get(shiftId);
     if (!shift) throw new NotFoundError({ kind: 'shift', id: shiftId });
     if (shift.userId !== userId) throw new NotFoundError({ kind: 'shift', id: shiftId });
@@ -144,7 +164,7 @@ export class ShiftsService {
       maxPossible += cap;
     }
     const ratio = maxPossible > 0 ? totalScore / maxPossible : 0;
-    const payCents = Math.round(shift.payCents * ratio);
+    const basePayCents = Math.round(shift.payCents * ratio);
     const xp = Math.round(ratio * 100);
     const career = this.ctx.configCache
       .load<CareersConfig>('careers')
@@ -154,10 +174,27 @@ export class ShiftsService {
     // a different Idempotency-Key cannot pay or award XP twice.
     _shifts.set(shiftId, { ...shift, completed: true });
     let promoted = false;
+    let payCents = basePayCents;
+    let ladderOut: {
+      ladderId: string;
+      rank: number;
+      title: string;
+      bonusCents: number;
+      xpAdded: number;
+      promoted: boolean;
+    } | null = null;
+    let promotion: PromotionInfo | null = null;
+    const now = new Date();
+    await ensureRewardCatalog(this.ctx.db);
     try {
       // Pay, ledger entry and XP land together in one SERIALIZABLE
       // transaction.
       await runInTransaction(async (client) => {
+        // The player's career ladder adds its rank's pay bonus to shifts of its jobs and
+        // takes the shift's XP, in this same transaction.
+        const lc = await ladderForShift(client, this.ctx, userId, shift.careerId, now);
+        const bonusCents = lc?.applies ? payBonusCents(basePayCents, lc.rank.payBonusBps) : 0;
+        payCents = basePayCents + bonusCents;
         await client.query(
           `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
            ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
@@ -179,13 +216,28 @@ export class ShiftsService {
         );
         // B18 fix: Update last_action_at to shift completion time so decay doesn't accumulate during shift
         await client.query(`UPDATE needs SET last_action_at = now() WHERE user_id = $1`, [userId]);
+        promotion = null;
+        ladderOut = null;
+        if (lc?.applies) {
+          const r = await awardLadderXp(client, userId, lc.ladder, xp, 'shift', shiftId, now);
+          promotion = r.promotion;
+          ladderOut = {
+            ladderId: lc.ladder.id,
+            rank: promotion?.toRank ?? lc.rank.rank,
+            title: promotion?.title ?? lc.rank.title,
+            bonusCents,
+            xpAdded: r.added,
+            promoted: promotion !== null,
+          };
+        }
       });
     } catch (e) {
       _shifts.set(shiftId, shift);
       throw e;
     }
+    if (promotion) await publishPromotion(this.ctx, userId, promotion, now);
     await recordQuestEvent(this.ctx, userId, 'shift_complete', `shift:${shiftId}`);
-    return { payCents, xp, promoted };
+    return ladderOut ? { payCents, xp, promoted, ladder: ladderOut } : { payCents, xp, promoted };
   }
 
   private loadMiniGames(): MiniGameDef[] {
