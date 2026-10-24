@@ -19,6 +19,12 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import {
+  recordQuestEvent,
+  TIP_PINGPONG_DAYS,
+  TIP_QUEST_MIN_CENTS,
+  TIP_RECIPIENT_COOLDOWN_DAYS,
+} from './quests.js';
 import type { AppContext } from './context.js';
 
 const TIP_TEXT_MAX = 200;
@@ -66,6 +72,23 @@ function rowToTip(r: TipDbRow): TipRow {
     status: r.status,
     createdAt: r.created_at.toISOString(),
   };
+}
+
+/** Whether `fromUserId` sent `toUserId` a confirmed Cash tip within the ping-pong window. */
+async function tippedRecently(
+  ctx: AppContext,
+  fromUserId: string,
+  toUserId: string,
+): Promise<boolean> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query(
+      `SELECT 1 FROM tips
+        WHERE from_user_id = $1 AND to_user_id = $2 AND kind = 'cash' AND status = 'confirmed'
+          AND created_at > now() - make_interval(days => $3::int) LIMIT 1`,
+      [fromUserId, toUserId, TIP_PINGPONG_DAYS],
+    ),
+  );
+  return r.rows.length > 0;
 }
 
 /** Send a cash tip. */
@@ -139,6 +162,15 @@ export async function sendCashTip(
       [tipId, fromUserId, toUserId, amountCents, message],
     );
   });
+  // Quest rules against two accounts looping tips: the amount must be at least the minimum,
+  // each recipient counts once per window, and a tip to someone who tipped the sender
+  // recently (ping-pong) never counts.
+  if (amountCents >= TIP_QUEST_MIN_CENTS && !(await tippedRecently(ctx, toUserId, fromUserId))) {
+    await recordQuestEvent(ctx, fromUserId, 'tip_send', tipId, new Date(), {
+      key: `tip:${toUserId}`,
+      cooldownDays: TIP_RECIPIENT_COOLDOWN_DAYS,
+    });
+  }
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<TipDbRow>(
       `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, amount_lamports,

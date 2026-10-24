@@ -172,6 +172,22 @@ export class UnitFullError extends DomainError {
   }
 }
 
+export class FreezeLimitReachedError extends DomainError {
+  readonly code = 'FREEZE_LIMIT_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You already hold the maximum number of streak freezes.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class QuestNotCompleteError extends DomainError {
+  readonly code = 'QUEST_NOT_COMPLETE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This quest is not finished yet.', details);
+    this.httpStatus = 409;
+  }
+}
+
 // Economy -----------------------------------------------------------------
 
 export class InsufficientCashError extends DomainError {

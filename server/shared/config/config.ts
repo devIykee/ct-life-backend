@@ -85,6 +85,15 @@ export interface Config {
     readonly adminKey: string;
   };
 
+  readonly push: {
+    /** Firebase project id for FCM HTTP v1. Empty with no credentials = push is a logged no-op. */
+    readonly fcmProjectId: string;
+    /** Service-account JSON, inline. Never committed; set in the host's secret store. */
+    readonly fcmServiceAccountJson: string;
+    /** Path to the service-account JSON file (used when the inline value is empty). */
+    readonly fcmServiceAccountPath: string;
+  };
+
   readonly entitlements: {
     /**
      * Metaplex Core collection address of the hovercar pass. Empty means
@@ -339,6 +348,12 @@ export function loadConfig(): Config {
         cluster === 'mainnet' ? 'ADMIN_KEYPAIR_MAINNET' : 'ADMIN_KEYPAIR_DEVNET',
         'path or base58 of admin keypair',
       ),
+    },
+
+    push: {
+      fcmProjectId: optionalEnv('FCM_PROJECT_ID', ''),
+      fcmServiceAccountJson: optionalEnv('FCM_SERVICE_ACCOUNT_JSON', ''),
+      fcmServiceAccountPath: optionalEnv('FCM_SERVICE_ACCOUNT_PATH', ''),
     },
 
     entitlements: {

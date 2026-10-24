@@ -19,6 +19,8 @@
  *   - Duo Shop delivery: delayed `out` and `deliver` jobs per order, plus a
  *     per-minute sweep (see shop-delivery.ts).
  *
+ *   - Push: a 5-minute sweep for the streak-ending and daily-clue pushes (push.ts).
+ *
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
@@ -38,6 +40,7 @@ import { handleSundayUnlock, handleWeeklyMeta } from './sunday-unlock.js';
 import { handleDistrictRollover } from './district-rollover.js';
 import { handleSeasonRollover } from './season-rollover.js';
 import { handleShopDelivery } from './shop-delivery.js';
+import { handlePush, PUSH_QUEUE } from './push.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -110,6 +113,7 @@ export async function buildWorkers(likeness?: {
   const districtQueue = new Queue('jobs-district-rollover', { connection: conn });
   const seasonQueue = new Queue('jobs-season-rollover', { connection: conn });
   const shopQueue = new Queue<ShopJobData>(SHOP_DELIVERY_QUEUE, { connection: conn });
+  const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -174,6 +178,13 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'shop-delivery failed'),
   );
 
+  const pushWorker = new Worker(PUSH_QUEUE, async (job) => handlePush(job, ctx), {
+    connection: newClient(redis),
+  });
+  pushWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'push failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
 
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
@@ -210,6 +221,13 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // Streak-ending and daily-clue pushes (no-ops without FCM credentials).
+  await pushQueue.upsertJobScheduler(
+    'push-sweep',
+    { pattern: '*/5 * * * *' },
+    { name: 'sweep', data: {} },
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -234,12 +252,14 @@ export async function buildWorkers(likeness?: {
   void districtWorker;
   void seasonWorker;
   void shopWorker;
+  void pushWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
   void districtQueue;
   void seasonQueue;
   void shopQueue;
+  void pushQueue;
   void log;
   void cfg;
 
@@ -256,6 +276,7 @@ export async function buildWorkers(likeness?: {
       await districtWorker.close();
       await seasonWorker.close();
       await shopWorker.close();
+      await pushWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -263,6 +284,7 @@ export async function buildWorkers(likeness?: {
       await districtQueue.close();
       await seasonQueue.close();
       await shopQueue.close();
+      await pushQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

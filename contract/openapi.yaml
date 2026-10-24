@@ -1770,6 +1770,162 @@ paths:
                   prizeCents: { type: integer }
               example: { correct: true, prizeCents: 5000 }
 
+  /daily/status:
+    get:
+      tags: [work]
+      operationId: getDailyStatus
+      summary: gm streak status and the chest on offer.
+      description: >-
+        `streakDay` is the number of consecutive UTC days claimed up to now (0 when the streak
+        is broken or never started; a missed day covered by a held freeze does not break it).
+        `chest` is today's chest while `claimedToday` is false, tomorrow's after that. The
+        server is the only clock: days are UTC dates and `nextResetAt` is the next UTC midnight.
+      x-phase: 5
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /daily/claim:
+    post:
+      tags: [work]
+      operationId: postDailyClaim
+      summary: Claim today's chest (idempotent per UTC day).
+      description: >-
+        Pays the chest in Cash (ledger reason `daily_streak`) and, on streak day 7, 14 and 30, a
+        cosmetic through the cosmetics inventory with `source: grant`. Takes no body: the
+        rewards and the day come from the server. A second claim on the same UTC day pays
+        nothing and returns the first claim with `alreadyClaimed: true`. A missed day resets the
+        streak to day 1 (`reset: true`) unless a held freeze covers every missed day, in which
+        case the freezes are consumed (`freezesUsed`).
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The claim and the new status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyClaim' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /daily/freeze:
+    post:
+      tags: [work]
+      operationId: postDailyFreeze
+      summary: Buy a streak freeze with Cash.
+      description: >-
+        Debits `freezePriceCents` (ledger reason `streak_freeze`). At most `maxFreezes` (2) can
+        be held. A freeze is consumed automatically by a claim that follows missed days.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The new status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'INSUFFICIENT_CASH',
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '5000' },
+                    },
+                }
+        '409':
+          description: Already holding the maximum
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: FREEZE_LIMIT_REACHED,
+                      message: 'You already hold the maximum number of streak freezes.',
+                      details: { max: 2 },
+                    },
+                }
+
+  /quests:
+    get:
+      tags: [work]
+      operationId: getQuests
+      summary: Today's 3 daily quests and this week's chain of 5, with progress.
+      description: >-
+        The pick is deterministic per player and period (daily: user and UTC date; weekly: user
+        and ISO week) from `contract/ids/quests.json`. Progress is advanced only by server
+        events (a shift paid, a perp opened or closed, a prediction placed, an alpha call, a
+        paid call accepted, a Cash tip of at least $10, a visit to someone else's home); the
+        client never reports progress. Each change is also pushed live as the realtime
+        `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward.
+      x-phase: 5
+      responses:
+        '200':
+          description: Quests
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /quests/{id}/claim:
+    post:
+      tags: [work]
+      operationId: postQuestsIdClaim
+      summary: Claim a finished quest (idempotent).
+      description: >-
+        Pays `reward.cashCents` (ledger reason `quest_reward`) and records `reward.seasonXp` in
+        `season_xp`. Takes no body. Only a quest in the caller's current picks can be claimed;
+        any other id, including another player's, is `404`. A second claim returns
+        `alreadyClaimed: true` and pays nothing.
+      x-phase: 5
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: What was paid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questId, alreadyClaimed, reward]
+                properties:
+                  questId: { type: string }
+                  alreadyClaimed: { type: boolean }
+                  reward: { $ref: '#/components/schemas/QuestReward' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The target is not reached yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: QUEST_NOT_COMPLETE,
+                      message: 'This quest is not finished yet.',
+                      details: { questId: q_daily_shift_2, progress: 1, target: 2 },
+                    },
+                }
+
   /market/coins:
     get:
       tags: [markets]
@@ -3815,7 +3971,12 @@ paths:
     post:
       tags: [liveops]
       operationId: postPushRegister
-      summary: Register a push token. Behind PUSH_ENABLED.
+      summary: Register a push token for the caller.
+      description: >-
+        Android and web devices send `fcmToken`; iOS sends `apnsToken`. A token belongs to
+        exactly one account: registering a token that another account holds moves it to the
+        caller in the same transaction, so the previous account can no longer receive pushes on
+        this device. Call it on every sign-in, and call `DELETE` on sign-out.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3825,11 +3986,85 @@ paths:
           application/json:
             schema:
               type: object
-              required: [token]
+              required: [platform]
               properties:
-                token: { type: string }
+                platform: { type: string, enum: [ios, android, web] }
+                fcmToken: { type: string, nullable: true }
+                apnsToken: { type: string, nullable: true }
+                enabled: { type: boolean }
       responses:
-        '204': { description: Registered }
+        '201':
+          description: The stored device row
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [liveops]
+      operationId: deletePushRegister
+      summary: Unregister a push token for the caller.
+      description: >-
+        Removes `fcmToken` from the caller's devices only. A token that belongs to someone else,
+        or that does not exist, is left alone and the reply is the same `204`, so a token cannot
+        be probed or deleted by guessing it. Call it on sign-out so the account stops receiving
+        pushes on this phone.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcmToken]
+              properties:
+                fcmToken: { type: string, minLength: 1, maxLength: 4096 }
+      responses:
+        '204': { description: Removed (or nothing to remove) }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /push/prefs:
+    get:
+      tags: [liveops]
+      operationId: getPushPrefs
+      summary: Quiet hours and per-type push opt-outs.
+      description: >-
+        Defaults when never set: quiet hours on, 22:00 to 08:00 at `tzOffsetMin` 0 (UTC). The
+        client should PUT its own offset when the player grants the push permission. Push types:
+        `streak_ending`, `daily_clue`, `liquidated`, `home_visit`, `event_starting`. A player
+        receives at most 4 pushes per UTC day. Delivery is off until the server has Firebase
+        credentials (docs/PUSH.md).
+      x-phase: 5
+      responses:
+        '200':
+          description: Preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushPrefs' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [liveops]
+      operationId: putPushPrefs
+      summary: Replace the push preferences.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushPrefs' }
+      responses:
+        '200':
+          description: Stored preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushPrefs' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /admin/moderation/queue:
     get:
@@ -4894,6 +5129,116 @@ components:
             d: { type: number }
             h: { type: number }
         modelKey: { type: string, description: 'Frontend asset key.' }
+    ChestRewards:
+      type: object
+      required: [cashCents, cosmetic]
+      properties:
+        cashCents: { type: integer }
+        cosmetic:
+          nullable: true
+          description: A cosmetic granted on streak day 7, 14 and 30; null otherwise or when already owned.
+          type: object
+          required: [itemKey, name]
+          properties:
+            itemKey: { type: string }
+            name: { type: string }
+    DailyStatus:
+      type: object
+      required: [streakDay, claimedToday, nextResetAt, freezes, maxFreezes, freezePriceCents, chest]
+      properties:
+        streakDay: { type: integer }
+        claimedToday: { type: boolean }
+        nextResetAt: { type: string, format: date-time }
+        freezes: { type: integer }
+        maxFreezes: { type: integer }
+        freezePriceCents: { type: integer }
+        chest:
+          type: object
+          required: [day, rewards]
+          properties:
+            day: { type: integer }
+            rewards: { $ref: '#/components/schemas/ChestRewards' }
+    DailyClaim:
+      allOf:
+        - $ref: '#/components/schemas/DailyStatus'
+        - type: object
+          required: [alreadyClaimed, claimed, freezesUsed, reset]
+          properties:
+            alreadyClaimed: { type: boolean }
+            claimed:
+              type: object
+              required: [day, rewards]
+              properties:
+                day: { type: integer }
+                rewards: { $ref: '#/components/schemas/ChestRewards' }
+            freezesUsed: { type: integer }
+            reset: { type: boolean }
+    QuestReward:
+      type: object
+      required: [cashCents, seasonXp]
+      properties:
+        cashCents: { type: integer }
+        seasonXp: { type: integer }
+    Quest:
+      type: object
+      required: [id, title, verb, target, progress, completed, claimed, reward]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        verb:
+          type: string
+          enum:
+            [
+              shift_complete,
+              perp_open,
+              perp_close,
+              prediction_place,
+              alpha_call,
+              paid_call,
+              tip_send,
+              home_visit,
+            ]
+        target: { type: integer }
+        progress: { type: integer }
+        completed: { type: boolean }
+        claimed: { type: boolean }
+        reward: { $ref: '#/components/schemas/QuestReward' }
+        deepLink: { type: string, nullable: true, description: 'e.g. ctlife://jobs' }
+        step:
+          { type: integer, description: 'Weekly chain position, 1 to 5. Absent for daily quests.' }
+    QuestsResponse:
+      type: object
+      required: [daily, weekly]
+      properties:
+        daily:
+          type: object
+          required: [date, resetsAt, quests]
+          properties:
+            date: { type: string, format: date }
+            resetsAt: { type: string, format: date-time }
+            quests: { type: array, items: { $ref: '#/components/schemas/Quest' } }
+        weekly:
+          type: object
+          required: [week, resetsAt, quests]
+          properties:
+            week: { type: string, example: 2026-W43 }
+            resetsAt: { type: string, format: date-time }
+            quests: { type: array, items: { $ref: '#/components/schemas/Quest' } }
+    PushPrefs:
+      type: object
+      required: [quietEnabled, quietStartHour, quietEndHour, tzOffsetMin, disabledTypes]
+      properties:
+        quietEnabled: { type: boolean }
+        quietStartHour: { type: integer, minimum: 0, maximum: 23 }
+        quietEndHour: { type: integer, minimum: 0, maximum: 23 }
+        tzOffsetMin:
+          { type: integer, minimum: -840, maximum: 840, description: 'Minutes east of UTC.' }
+        disabledTypes:
+          type: array
+          items:
+            type: string
+            enum: [streak_ending, daily_clue, liquidated, home_visit, event_starting]
     ShopOrder:
       type: object
       required:
