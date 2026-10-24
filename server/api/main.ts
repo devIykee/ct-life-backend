@@ -36,6 +36,7 @@ import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerShopRoutes } from './routes/shop.js';
 import { REDACT_PATHS } from '../shared/logger/logger.js';
 import { registerEventRoutes } from './routes/events.js';
+import { registerCasinoRoutes } from './routes/casino.js';
 import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
@@ -167,6 +168,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerCosmeticRoutes(app);
   registerShopRoutes(app);
   registerEventRoutes(app);
+  registerCasinoRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
   registerDailyRoutes(app);

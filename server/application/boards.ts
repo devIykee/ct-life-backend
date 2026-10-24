@@ -17,6 +17,7 @@
  * standing is only returned in the caller-private `me` row.
  */
 import { ValidationFailedError } from '../shared/domain/errors.js';
+import { CASINO_REASONS_SQL, CASINO_RICH_LIST_WEIGHT_PCT } from './casino-constants.js';
 import { getLeagueCohort, getMyLeague } from './leagues.js';
 import { currentSeasonIso } from './season-clock.js';
 import type { AppContext } from './context.js';
@@ -37,17 +38,32 @@ const RICH_LIST_HIDDEN_TRIBES: readonly string[] = ['anon'];
 const RICH_LIST_BOARDS = new Set(['net_worth', 'weekly_pnl', 'weekly_return']);
 
 /**
+ * Anti-grinding (The Rug Room). Casino winnings must not let gamblers top
+ * the rich list, so a net casino PROFIT counts at CASINO_RICH_LIST_WEIGHT_PCT
+ * percent on net_worth (lifetime casino net) and weekly_pnl (casino net of
+ * the last 7 days). A net loss counts in full: it is real Cash they lost.
+ */
+const W = CASINO_RICH_LIST_WEIGHT_PCT;
+const LIFETIME_CASINO_NET = `(SELECT COALESCE(SUM(l.delta_cents), 0) FROM ledger_entries l
+             WHERE l.user_id = u.id AND l.reason IN ${CASINO_REASONS_SQL})`;
+const CASINO_NET_7D = `COALESCE(SUM(l.delta_cents) FILTER (WHERE l.reason IN ${CASINO_REASONS_SQL}), 0)`;
+
+/**
  * Per-board SQL: `joins` attach to `users u` / `characters c`, `value`
  * is the ranked expression. Never built from caller input.
  */
 const BOARD_SQL: Readonly<Record<string, { joins: string; value: string }>> = {
   net_worth: {
     joins: 'LEFT JOIN balances b ON b.user_id = u.id',
-    value: '(COALESCE(b.cash_cents, 0) - COALESCE(b.debt_cents, 0))',
+    value: `(COALESCE(b.cash_cents, 0) - COALESCE(b.debt_cents, 0)
+             - ((100 - ${W}) * GREATEST(0, ${LIFETIME_CASINO_NET}) / 100))`,
   },
   weekly_pnl: {
     joins: '',
-    value: `(SELECT COALESCE(SUM(l.delta_cents), 0) FROM ledger_entries l
+    value: `(SELECT COALESCE(SUM(l.delta_cents) FILTER (WHERE l.reason NOT IN ${CASINO_REASONS_SQL}), 0)
+                    + CASE WHEN ${CASINO_NET_7D} > 0 THEN ${CASINO_NET_7D} * ${W} / 100
+                           ELSE ${CASINO_NET_7D} END
+             FROM ledger_entries l
              WHERE l.user_id = u.id AND l.created_at > now() - interval '7 days')`,
   },
   clout: {

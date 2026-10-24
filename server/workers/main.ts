@@ -16,6 +16,8 @@
  *     registered as repeatable jobs so the cron expression is fixed
  *     and only the handler changes.
  *
+ *   - Rug Room sweep: a per-minute job refunds expired head-to-head
+ *     challenges and closes abandoned crash rounds (see casino-sweep.ts).
  *   - Duo Shop delivery: delayed `out` and `deliver` jobs per order, plus a
  *     per-minute sweep (see shop-delivery.ts).
  *
@@ -44,6 +46,7 @@ import { handleSeasonRollover } from './season-rollover.js';
 import { handleShopDelivery } from './shop-delivery.js';
 import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
+import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -118,6 +121,7 @@ export async function buildWorkers(likeness?: {
   const shopQueue = new Queue<ShopJobData>(SHOP_DELIVERY_QUEUE, { connection: conn });
   const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
+  const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -200,6 +204,13 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'event-announce failed'),
   );
 
+  const casinoWorker = new Worker(CASINO_SWEEP_QUEUE, async (job) => handleCasinoSweep(job, ctx), {
+    connection: newClient(redis),
+  });
+  casinoWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'casino-sweep failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
 
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
@@ -248,6 +259,12 @@ export async function buildWorkers(likeness?: {
     { pattern: '* * * * *' },
     { name: 'sweep', data: {} },
   );
+  // Rug Room: refund expired head-to-head challenges, close dead crash rounds.
+  await casinoQueue.upsertJobScheduler(
+    'casino-sweep',
+    { pattern: '* * * * *' },
+    { name: 'sweep', data: {} },
+  );
 
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
@@ -275,6 +292,7 @@ export async function buildWorkers(likeness?: {
   void shopWorker;
   void pushWorker;
   void eventWorker;
+  void casinoWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -283,6 +301,7 @@ export async function buildWorkers(likeness?: {
   void shopQueue;
   void pushQueue;
   void eventQueue;
+  void casinoQueue;
   void log;
   void cfg;
 
@@ -301,6 +320,7 @@ export async function buildWorkers(likeness?: {
       await shopWorker.close();
       await pushWorker.close();
       await eventWorker.close();
+      await casinoWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -310,6 +330,7 @@ export async function buildWorkers(likeness?: {
       await shopQueue.close();
       await pushQueue.close();
       await eventQueue.close();
+      await casinoQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },
