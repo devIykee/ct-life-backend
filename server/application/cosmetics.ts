@@ -145,12 +145,12 @@ export async function listShop(
     const r = slot
       ? await c.query<ItemDbRow>(
           `SELECT item_id, slot, item_key, name, price_cents, onchain_only
-           FROM cosmetic_items WHERE slot = $1 ORDER BY price_cents ASC, item_key ASC`,
+           FROM cosmetic_items WHERE slot = $1 AND item_key NOT LIKE 'reward\\_%' ORDER BY price_cents ASC, item_key ASC`,
           [slot],
         )
       : await c.query<ItemDbRow>(
           `SELECT item_id, slot, item_key, name, price_cents, onchain_only
-           FROM cosmetic_items ORDER BY slot ASC, price_cents ASC, item_key ASC`,
+           FROM cosmetic_items WHERE item_key NOT LIKE 'reward\\_%' ORDER BY slot ASC, price_cents ASC, item_key ASC`,
         );
     return r.rows.map(rowToItem);
   });
