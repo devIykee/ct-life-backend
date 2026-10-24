@@ -282,6 +282,29 @@ describe('pursuit spawns at wanted', () => {
     expect(me.pursuit).toMatchObject({ units: 2, escapeRadiusM: 200, escapeSeconds: 60 });
   });
 
+  it('stale high-stored-heat rows cannot starve a genuinely wanted player', async () => {
+    const t0 = new Date();
+    await pool.query(
+      `INSERT INTO users (id, wallet)
+       SELECT gen_random_uuid(), 'stale-' || gen_random_uuid() FROM generate_series(1, 250)`,
+    );
+    await pool.query(
+      `INSERT INTO player_heat (user_id, heat, updated_at)
+       SELECT id, 100, $1::timestamptz - interval '20 days' FROM users WHERE wallet LIKE 'stale-%'
+       ON CONFLICT (user_id) DO UPDATE SET heat = 100, updated_at = $1::timestamptz - interval '20 days'`,
+      [t0],
+    );
+    const wanted = await newUser();
+    await raiseHeat(ctx, wanted, 85, 'factory_rug', null, t0);
+    await setPos(wanted, 1_000_000, 1_000_000, t0);
+    const started = await startPursuits(ctx, t0);
+    expect(started).toContain(wanted);
+    const stale = await pool.query(
+      `SELECT count(*)::int AS n FROM heat_pursuits p JOIN users u ON u.id = p.user_id WHERE u.wallet LIKE 'stale-%'`,
+    );
+    expect(stale.rows[0].n).toBe(0);
+  });
+
   it('does not start below wanted, without a fresh position, or on your own doorstep', async () => {
     const t0 = new Date();
     const hot = await newUser();

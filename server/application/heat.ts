@@ -78,6 +78,8 @@ export const SAFE_HOUSE_RADIUS_M = 8;
 /** No pursuit starts, and the safe house does not count, within this of your own door. */
 export const SAFE_HOUSE_GUARD_M = 40;
 /** A server position older than this is "unknown" for the referee. */
+/** Candidates fetched per SQL page. */
+export const CANDIDATE_PAGE = 500;
 export const POS_REFEREE_FRESH_MS = 15_000;
 
 /** An early `POST /heat/caught` is not believed before this long after the start. */
@@ -486,18 +488,39 @@ async function homeDoor(q: Q, userId: string): Promise<{ x: number; z: number } 
  * @returns The ids of the players a pursuit started for.
  */
 export async function startPursuits(ctx: AppContext, now: Date): Promise<string[]> {
-  const cands = await ctx.db.withConnection((c) =>
-    c.query<{ user_id: string; heat: number; updated_at: Date }>(
-      `SELECT h.user_id, h.heat, h.updated_at FROM player_heat h
-         LEFT JOIN heat_pursuits p ON p.user_id = h.user_id
-         LEFT JOIN player_jail j ON j.user_id = h.user_id
-        WHERE h.heat >= $1
-          AND (p.user_id IS NULL OR (p.status <> 'active' AND p.ended_at <= $2))
-          AND (j.user_id IS NULL OR j.released_at IS NOT NULL OR j.jailed_until <= $3)
-        LIMIT 200`,
-      [WANTED_HEAT, new Date(now.getTime() - PURSUIT_COOLDOWN_MS), now],
-    ),
+  // Heat decays lazily, so the stored value overstates it. Decay in SQL (same half-life as the
+  // app) so only genuinely wanted players are candidates, and page through all of them by
+  // user id: no fixed cap can be filled with stale rows, and nobody is dropped silently.
+  const cutoff = new Date(now.getTime() - PURSUIT_COOLDOWN_MS);
+  const rows: { user_id: string; heat: number; updated_at: Date }[] = [];
+  let after = '00000000-0000-0000-0000-000000000000';
+  for (;;) {
+    const page = await ctx.db.withConnection((c) =>
+      c.query<{ user_id: string; heat: number; updated_at: Date }>(
+        `SELECT h.user_id, h.heat, h.updated_at FROM player_heat h
+           LEFT JOIN heat_pursuits p ON p.user_id = h.user_id
+           LEFT JOIN player_jail j ON j.user_id = h.user_id
+          WHERE h.user_id > $4
+            AND h.heat * power(0.5, GREATEST(0, extract(epoch FROM ($3::timestamptz - h.updated_at)) * 1000) / $5)
+                >= $1
+            AND (p.user_id IS NULL OR (p.status <> 'active' AND p.ended_at <= $2))
+            AND (j.user_id IS NULL OR j.released_at IS NOT NULL OR j.jailed_until <= $3)
+          ORDER BY h.user_id
+          LIMIT $6`,
+        [WANTED_HEAT, cutoff, now, after, HEAT_HALF_LIFE_MS, CANDIDATE_PAGE],
+      ),
+    );
+    rows.push(...page.rows);
+    if (page.rows.length < CANDIDATE_PAGE) break;
+    after = page.rows[page.rows.length - 1]!.user_id;
+  }
+  // Most wanted first.
+  rows.sort(
+    (x, y) =>
+      decayHeat(y.heat, y.updated_at.getTime(), now.getTime()) -
+      decayHeat(x.heat, x.updated_at.getTime(), now.getTime()),
   );
+  const cands = { rows };
   const started: string[] = [];
   for (const row of cands.rows) {
     const heat = decayHeat(row.heat, row.updated_at.getTime(), now.getTime());
