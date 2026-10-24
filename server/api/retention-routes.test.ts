@@ -326,4 +326,37 @@ describe('push token binding over HTTP', () => {
     });
     expect(bad.statusCode).toBe(400);
   });
+
+  it('DELETE accepts apnsToken, needs exactly one token, and is caller-only', async () => {
+    const a = await devAuth();
+    const b = await devAuth();
+    const apnsToken = `apns-${uuidv7()}`;
+    expect(
+      (await call(a, 'POST', '/v1/push/register', { platform: 'ios', apnsToken })).status,
+    ).toBe(201);
+    const del = (u: { accessToken: string }, payload: unknown) =>
+      app.inject({
+        method: 'DELETE',
+        url: '/v1/push/register',
+        headers: {
+          authorization: `Bearer ${u.accessToken}`,
+          'idempotency-key': uuidv7(),
+          'content-type': 'application/json',
+        },
+        payload: payload as Record<string, unknown>,
+      });
+    const rows = async (): Promise<number> =>
+      db.withConnection(
+        async (c) =>
+          (await c.query(`SELECT 1 FROM push_devices WHERE apns_token = $1`, [apnsToken]))
+            .rowCount ?? 0,
+      );
+    expect((await del(b, { apnsToken })).statusCode).toBe(204);
+    expect(await rows()).toBe(1);
+    expect((await del(a, { apnsToken, fcmToken: 'x' })).statusCode).toBe(400);
+    expect(await rows()).toBe(1);
+    expect((await del(a, { apnsToken })).statusCode).toBe(204);
+    expect(await rows()).toBe(0);
+    expect((await del(a, { apnsToken })).statusCode).toBe(204);
+  });
 });

@@ -229,6 +229,26 @@ describe('attendee board', () => {
     await expect(listAttendees(ctx, viewer, BP, 1, 'garbage')).rejects.toBeInstanceOf(
       ValidationFailedError,
     );
+
+    // The cursor is opaque and signed: no user id inside, tampering is rejected.
+    const decoded = Buffer.from(p1.next!, 'base64url').toString();
+    for (const u of [viewer, shown, second, hidden, blockedByViewer, blocksViewer]) {
+      expect(decoded).not.toContain(u);
+      expect(p1.next).not.toContain(u);
+    }
+    const [ms, cid, mac] = decoded.split('.') as [string, string, string];
+    const forge = (v: string): string => Buffer.from(v).toString('base64url');
+    const bad = [
+      forge(`${ms}.${cid}.${'0'.repeat(32)}`),
+      forge(`${Number(ms) + 1}.${cid}.${mac}`),
+      forge(`${ms}.${shown.length === 36 ? shown : cid}.${mac}`),
+      forge(`${ms}.${cid}`),
+    ];
+    for (const c of bad) {
+      await expect(listAttendees(ctx, viewer, BP, 1, c)).rejects.toBeInstanceOf(
+        ValidationFailedError,
+      );
+    }
   });
 
   it('is invisible by default, needs a check-in to toggle, and announces the alias only', async () => {
@@ -302,13 +322,14 @@ describe('attendee board', () => {
 });
 
 describe('privacy', () => {
-  it('stores no position: the table has exactly four columns', async () => {
+  it('stores no position: the table has only an opaque id, time and visibility', async () => {
     const cols = await pool.query(
       `SELECT column_name FROM information_schema.columns
         WHERE table_name = 'event_checkins' ORDER BY column_name`,
     );
     expect(cols.rows.map((r) => r.column_name)).toEqual([
       'checked_in_at',
+      'checkin_id',
       'event_id',
       'user_id',
       'visible',

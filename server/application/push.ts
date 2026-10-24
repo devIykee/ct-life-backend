@@ -147,16 +147,23 @@ export async function registerDevice(
  * is left alone and the call looks the same.
  * @param ctx - The application context.
  * @param userId - The caller.
- * @param fcmToken - The token to remove.
+ * @param tokens - Exactly one of `fcmToken` or `apnsToken`; only the caller's own rows are removed.
  * @returns How many of the caller's device rows were removed.
  */
 export async function unregisterDevice(
   ctx: AppContext,
   userId: string,
-  fcmToken: string,
+  tokens: { fcmToken?: string | undefined; apnsToken?: string | undefined },
 ): Promise<number> {
+  const fcm = tokens.fcmToken ?? null;
+  const apns = tokens.apnsToken ?? null;
+  if (fcm === null && apns === null) return 0;
   const r = await ctx.db.withConnection((c) =>
-    c.query(`DELETE FROM push_devices WHERE user_id = $1 AND fcm_token = $2`, [userId, fcmToken]),
+    c.query(`DELETE FROM push_devices WHERE user_id = $1 AND (fcm_token = $2 OR apns_token = $3)`, [
+      userId,
+      fcm,
+      apns,
+    ]),
   );
   return r.rowCount ?? 0;
 }

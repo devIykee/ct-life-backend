@@ -48,7 +48,14 @@ const RegisterBody = z.object({
   enabled: z.boolean().optional(),
 });
 
-const UnregisterBody = z.object({ fcmToken: z.string().min(1).max(4096) });
+const UnregisterBody = z
+  .object({
+    fcmToken: z.string().min(1).max(4096).optional(),
+    apnsToken: z.string().min(1).max(4096).optional(),
+  })
+  .refine((b) => (b.fcmToken === undefined) !== (b.apnsToken === undefined), {
+    message: 'Provide exactly one of fcmToken or apnsToken.',
+  });
 
 const MetaBody = z.object({
   value: z.unknown(),
@@ -92,7 +99,7 @@ export function registerPushMetaAdRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const body = UnregisterBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      await unregisterDevice(req.ctx, req.user!.sub, body.data.fcmToken);
+      await unregisterDevice(req.ctx, req.user!.sub, body.data);
       return reply.status(204).send();
     },
   );

@@ -94,9 +94,9 @@ describe('unregister', () => {
     const a = await newUser();
     const token = `tok-${uuidv7()}`;
     await reg(a, token);
-    expect(await unregisterDevice(ctx, a, token)).toBe(1);
+    expect(await unregisterDevice(ctx, a, { fcmToken: token })).toBe(1);
     expect(await owners(token)).toEqual([]);
-    expect(await unregisterDevice(ctx, a, token)).toBe(0); // idempotent
+    expect(await unregisterDevice(ctx, a, { fcmToken: token })).toBe(0); // idempotent
   });
 
   it("cannot remove someone else's token by guessing it (no IDOR)", async () => {
@@ -104,7 +104,22 @@ describe('unregister', () => {
     const b = await newUser();
     const token = `tok-${uuidv7()}`;
     await reg(b, token);
-    expect(await unregisterDevice(ctx, a, token)).toBe(0);
+    expect(await unregisterDevice(ctx, a, { fcmToken: token })).toBe(0);
     expect(await owners(token)).toEqual([b]);
+  });
+
+  it('removes an APNs token for its owner only', async () => {
+    const a = await newUser();
+    const b = await newUser();
+    const apnsToken = `apns-${uuidv7()}`;
+    await registerDevice(ctx, a, { platform: 'ios', apnsToken, fcmToken: null });
+    const count = async (): Promise<number> =>
+      (await pool.query(`SELECT 1 FROM push_devices WHERE apns_token = $1`, [apnsToken]))
+        .rowCount ?? 0;
+    expect(await unregisterDevice(ctx, b, { apnsToken })).toBe(0);
+    expect(await count()).toBe(1);
+    expect(await unregisterDevice(ctx, a, { apnsToken })).toBe(1);
+    expect(await count()).toBe(0);
+    expect(await unregisterDevice(ctx, a, { apnsToken })).toBe(0);
   });
 });

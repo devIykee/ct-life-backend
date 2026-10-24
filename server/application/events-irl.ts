@@ -24,6 +24,7 @@
  * flag, the accuracy cap and the account-age rule raise the cost; they do
  * not prove presence. The reward is cosmetic plus a modest Cash bonus.
  */
+import { createHmac, timingSafeEqual, createHash } from 'node:crypto';
 import { runInTransaction } from '../shared/db/uow.js';
 import {
   CheckinRejectedError,
@@ -288,6 +289,32 @@ export interface IrlAttendee {
   readonly checkedInAt: string;
 }
 
+const CURSOR_RE =
+  /^(\d{1,15})\.([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.([0-9a-f]{32})$/;
+
+/** HMAC key for board cursors, derived from the server's JWT signing key (never stored or logged). */
+function cursorMac(ctx: AppContext, payload: string): string {
+  const key = createHash('sha256')
+    .update('irl-board-cursor:' + ctx.config.jwt.privateKeyPem)
+    .digest();
+  return createHmac('sha256', key).update(payload).digest('hex').slice(0, 32);
+}
+
+/** Opaque, signed cursor over (checked_in_at, checkin_id). Carries no user id. */
+function makeCursor(ctx: AppContext, ms: number, checkinId: string): string {
+  const payload = `${ms}.${checkinId}`;
+  return Buffer.from(`${payload}.${cursorMac(ctx, payload)}`).toString('base64url');
+}
+
+function parseCursor(ctx: AppContext, cursor: string): { ms: number; cid: string } | null {
+  const m = CURSOR_RE.exec(Buffer.from(cursor, 'base64url').toString());
+  if (!m) return null;
+  const want = Buffer.from(cursorMac(ctx, `${m[1]}.${m[2]}`));
+  const got = Buffer.from(m[3]!);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) return null;
+  return { ms: Number(m[1]), cid: m[2]! };
+}
+
 /**
  * The visible attendees, newest first, keyset paginated. Blocks are removed in
  * both directions. No position, no user id.
@@ -305,29 +332,29 @@ export async function listAttendees(
   cursor: string | null,
 ): Promise<{ items: IrlAttendee[]; next: string | null }> {
   await ensureEventsSynced(ctx.db);
-  let after: { ts: Date; uid: string } | null = null;
+  let after: { ts: Date; cid: string } | null = null;
   if (cursor) {
-    const m = /^(\d{1,15})\.([0-9a-f-]{36})$/.exec(Buffer.from(cursor, 'base64url').toString());
-    if (!m) throw new ValidationFailedError({ reason: 'bad_cursor' });
-    after = { ts: new Date(Number(m[1])), uid: m[2]! };
+    const parsed = parseCursor(ctx, cursor);
+    if (!parsed) throw new ValidationFailedError({ reason: 'bad_cursor' });
+    after = { ts: new Date(parsed.ms), cid: parsed.cid };
   }
   return ctx.db.withConnection(async (c) => {
     const ev = await loadEvent(c, slug);
     const params: unknown[] = [ev.id, userId, limit + 1];
     let keyset = '';
     if (after) {
-      params.push(after.ts, after.uid);
-      keyset = `AND (ch.checked_in_at, ch.user_id) < ($4, $5)`;
+      params.push(after.ts, after.cid);
+      keyset = `AND (ch.checked_in_at, ch.checkin_id) < ($4, $5)`;
     }
     const r = await c.query<{
-      user_id: string;
+      checkin_id: string;
       checked_in_at: Date;
       alias: string;
       look: unknown;
       tribe_id: string | null;
       likeness_job_id: string | null;
     }>(
-      `SELECT ch.user_id, ch.checked_in_at, c.alias, c.look, c.tribe_id, c.likeness_job_id
+      `SELECT ch.checkin_id, ch.checked_in_at, c.alias, c.look, c.tribe_id, c.likeness_job_id
          FROM event_checkins ch
          JOIN characters c ON c.user_id = ch.user_id
         WHERE ch.event_id = $1 AND ch.visible ${keyset}
@@ -335,7 +362,7 @@ export async function listAttendees(
             SELECT 1 FROM blocks b
              WHERE (b.blocker_user_id = $2 AND b.blocked_user_id = ch.user_id)
                 OR (b.blocker_user_id = ch.user_id AND b.blocked_user_id = $2))
-        ORDER BY ch.checked_in_at DESC, ch.user_id DESC
+        ORDER BY ch.checked_in_at DESC, ch.checkin_id DESC
         LIMIT $3`,
       params,
     );
@@ -343,7 +370,7 @@ export async function listAttendees(
     const last = page[page.length - 1];
     const next =
       r.rows.length > limit && last
-        ? Buffer.from(`${last.checked_in_at.getTime()}.${last.user_id}`).toString('base64url')
+        ? makeCursor(ctx, last.checked_in_at.getTime(), last.checkin_id)
         : null;
     return {
       items: page.map((x) => ({

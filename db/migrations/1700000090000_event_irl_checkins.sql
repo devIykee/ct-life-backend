@@ -24,15 +24,18 @@ ALTER TABLE events
   ADD COLUMN geo_source   text;
 
 CREATE TABLE event_checkins (
+  -- Opaque surrogate for board pagination, so cursors never carry a user id.
+  checkin_id     uuid NOT NULL DEFAULT gen_random_uuid(),
   event_id       text NOT NULL REFERENCES events(id) ON DELETE CASCADE,
   user_id        uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   checked_in_at  timestamptz NOT NULL DEFAULT now(),
   visible        boolean NOT NULL DEFAULT false,
-  PRIMARY KEY (event_id, user_id)
+  PRIMARY KEY (event_id, user_id),
+  UNIQUE (checkin_id)
 );
 
 CREATE INDEX event_checkins_board_idx
-  ON event_checkins (event_id, checked_in_at DESC, user_id)
+  ON event_checkins (event_id, checked_in_at DESC, checkin_id)
   WHERE visible;
 
 -- Down Migration

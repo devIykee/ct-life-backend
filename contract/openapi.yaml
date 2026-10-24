@@ -4731,7 +4731,7 @@ paths:
       operationId: deletePushRegister
       summary: Unregister a push token for the caller.
       description: >-
-        Removes `fcmToken` from the caller's devices only. A token that belongs to someone else,
+        Removes the given token (send exactly one of `fcmToken` for Android and web, `apnsToken` for iOS) from the caller's devices only. A token that belongs to someone else,
         or that does not exist, is left alone and the reply is the same `204`, so a token cannot
         be probed or deleted by guessing it. Call it on sign-out so the account stops receiving
         pushes on this phone.
@@ -4744,9 +4744,10 @@ paths:
           application/json:
             schema:
               type: object
-              required: [fcmToken]
+              description: Exactly one of `fcmToken` or `apnsToken`.
               properties:
                 fcmToken: { type: string, minLength: 1, maxLength: 4096 }
+                apnsToken: { type: string, minLength: 1, maxLength: 4096 }
       responses:
         '204': { description: Removed (or nothing to remove) }
         '400': { $ref: '#/components/responses/ValidationFailed' }
