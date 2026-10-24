@@ -288,9 +288,9 @@ describe('Season tracks', () => {
       'grant',
     ]);
     const fur = await call(u, 'POST', '/v1/season/tiers/5/claim?track=free');
-    expect(fur.body.reward).toEqual({ furnitureItemId: 'plant_pothos' });
+    expect(fur.body.reward).toEqual({ furnitureItemId: 'plant_zebra' });
     const items = (await call(u, 'GET', '/v1/me/items')).body as { items: { itemId: string }[] };
-    expect(items.items.map((i) => i.itemId)).toEqual(['plant_pothos']);
+    expect(items.items.map((i) => i.itemId)).toEqual(['plant_zebra']);
     // Reward cosmetics are not for sale.
     const shop = (await call(u, 'GET', '/v1/shop')).body as { items: { itemKey: string }[] };
     expect(shop.items.some((i) => i.itemKey.startsWith('reward_'))).toBe(false);

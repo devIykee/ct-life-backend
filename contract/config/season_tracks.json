@@ -75,7 +75,7 @@
           {
             "tier": 5,
             "reward": {
-              "furnitureItemId": "plant_pothos"
+              "furnitureItemId": "plant_zebra"
             }
           },
           {
@@ -99,7 +99,7 @@
           {
             "tier": 9,
             "reward": {
-              "furnitureItemId": "poster_wagmi"
+              "furnitureItemId": "vase_stoneware"
             }
           },
           {
@@ -131,7 +131,7 @@
           {
             "tier": 2,
             "reward": {
-              "furnitureItemId": "lamp_floor"
+              "furnitureItemId": "lamp_architect"
             }
           },
           {
@@ -149,7 +149,7 @@
           {
             "tier": 5,
             "reward": {
-              "furnitureItemId": "rug_round"
+              "furnitureItemId": "ottoman_leather"
             }
           },
           {
@@ -167,7 +167,7 @@
           {
             "tier": 8,
             "reward": {
-              "furnitureItemId": "neon_sign_gm"
+              "furnitureItemId": "lamp_pipe"
             }
           },
           {
@@ -185,7 +185,7 @@
           {
             "tier": 11,
             "reward": {
-              "furnitureItemId": "coffee_machine"
+              "furnitureItemId": "boombox_retro"
             }
           },
           {

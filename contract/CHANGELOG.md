@@ -1,3 +1,7 @@
+## 2026-10-24 - Retention batch: season furniture rewards remapped to the real Duo Shop catalogue
+
+Combining #10 (the frontend's real 18-item catalogue) with #13 (Season Pass tracks) left six season furniture rewards pointing at placeholder ids that no longer exist (a tier claim would 500). `contract/config/season_tracks.json` now uses catalogue ids: `plant_pothos` -> `plant_zebra`, `poster_wagmi` -> `vase_stoneware`, `lamp_floor` -> `lamp_architect`, `rug_round` -> `ottoman_leather`, `neon_sign_gm` -> `lamp_pipe`, `coffee_machine` -> `boombox_retro`. FE-owned file: swap these for the items you want. A new test fails if a season reward ever names an item outside `shop_items.json`.
+
 ## 2026-10-24 - Rugpull Factory: player coin launches, creator fee, rug heat and the Sleuth
 
 Parody, game-Cash-only and server-simulated: no token, no chain, nothing withdrawable. Rules, fees and odds are in `docs/FACTORY.md`.
