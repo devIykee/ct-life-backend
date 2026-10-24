@@ -1,3 +1,16 @@
+## 2026-10-24 - Season Pass tracks and the community-nods collection
+
+Merge notes: migration `1700000087000` (after 084 #9, 085 #11, 086 #12; apply with `--no-check-order` if it lands before them). It creates `season_xp` with `IF NOT EXISTS` in the same shape as 084, so it is safe in either order with #9 (see `docs/SEASON_AND_NODS.md`).
+
+- New FE-owned `contract/config/season_tracks.json` (+ schema, checked by `contract:check`): `seasons: [{seasonId, name, startsAt, endsAt, xpPerTier, nodXp, tracks: {free, paid}}]`, each track at least 10 tiers `{tier, reward}`; a reward is exactly one of `cashCents`, `cosmeticId` (a `reward_*` id from the file's `cosmetics`) or `furnitureItemId` (a `shop_items` id). Tier `n` unlocks at `n * xpPerTier` Season XP earned in `[startsAt, endsAt)`. Ships one placeholder season (`s1_airdrop_season`, 12 tiers per track, 250 XP a tier); rewards and dates are to tune. Rewards are off-chain, never tradable, never NFTs.
+- New FE-owned `contract/ids/nods.json` (+ `nods.schema.json`): `sets`, reward `cosmetics` and `nods: [{nodId, name, setId, tier, district, x, z, radiusM?}]`. It lists the 80 community nods (ids = the community-eggs ids) in six sets. PLACEHOLDER: `x`/`z` (island metres, the `ctl:pos` frame) are provisional grid points inside each nod's district, not the real prop positions; the frontend replaces the file with its placed positions.
+- Added `GET /season` -> `{season, xp, tier, xpToNext, hasPass, tracks: {free, paid}}`, each track a list of `{tier, xpRequired, reward, status}` with `status` `locked | claimable | claimed | pass_required`. `404 NOT_FOUND` when no season runs.
+- Added `POST /season/tiers/{n}/claim?track=free|paid` -> `{seasonId, track, tier, reward, alreadyClaimed, xp}`. Idempotent (a tier pays once). Cash is ledger reason `season_reward`; a cosmetic lands in `GET /inventory` (source `grant`); furniture lands in `GET /me/items`. Paid needs a live season pass (`403 PASS_REQUIRED`); short of XP is `409 TIER_LOCKED`; a tier not in the track is `404`.
+- Added `GET /nods` (my book by set; no positions), `POST /nods/{nodId}/collect {proof: {nodId, x, z}}` and `GET /nods/leaderboard` (Hunter board, top 50 plus `me`). Collect is decided by the server's last position for the player (`ctl:pos`, fresh within 30 s, within 15 m of the nod): `409 POSITION_UNKNOWN`, `409 NOD_TOO_FAR`; the client position is only a consistency check (`400` beyond 30 m); `429 RATE_LIMITED` past 10 burst / 12 a minute. A nod counts once (a repeat is `200` with `alreadyCollected: true`); each new find awards `nodXp` (50) Season XP and a filled set grants its cosmetic once (`setReward`).
+- New error codes `PASS_REQUIRED` (403), `TIER_LOCKED` (409), `NOD_TOO_FAR` (409). `POSITION_UNKNOWN` (409, until now realtime only) is also returned over REST.
+- Reward-only cosmetics are `cosmetic_items` rows with `reward_*` keys: they are hidden from `GET /shop` and cannot be bought.
+- Migration 087 adds `season_tier_claims`, `collected_nods`, `nod_set_grants` and (if missing) `season_xp`.
+
 ## 2026-10-23 - Duo Shop: Cash goods and furniture, scheduled delivery, placements
 
 Merge after the homes PR (#7): orders to the door use `homes.unit_id` and `home_units`, and placements use its door access rules.

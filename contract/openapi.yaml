@@ -46,6 +46,10 @@ tags:
     description: Top-up, cosmetic, ad booking, season pass intents. Phase 2+.
   - name: shop
     description: Shop, inventory. Phase 4+.
+  - name: season
+    description: Season Pass tracks (free and paid) and Season XP. Phase 4+.
+  - name: nods
+    description: Community nods collection, sets and the Hunter board. Phase 4+.
   - name: ads
     description: Ad slots, uploads, bookings, live creatives. Phase 5+.
   - name: ore
@@ -3369,6 +3373,187 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/PlayerItem' }
 
+  /season:
+    get:
+      tags: [season]
+      operationId: getSeason
+      summary: The current season, my Season XP and both tracks.
+      description: >-
+        Season definitions are the contract file `season_tracks.json`. Tier `n` unlocks at
+        `n * xpPerTier` Season XP earned inside the season window. Each tier has one reward
+        (`cashCents`, `cosmeticId` or `furnitureItemId`); all rewards are off-chain, never
+        tradable and never NFTs. Tier `status`: `locked`, `claimable`, `claimed`, or
+        `pass_required` (reached on the paid track without a live season pass). XP comes
+        from the daily/weekly quests and from nod finds (`nodXp` each); the client never
+        sends XP. `404 NOT_FOUND` when no season is running.
+      x-phase: 4
+      responses:
+        '200':
+          description: The season
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /season/tiers/{n}/claim:
+    post:
+      tags: [season]
+      operationId: postSeasonTiersNClaim
+      summary: Claim a tier reward on the free or the paid track.
+      description: >-
+        Idempotent: a tier pays once; a repeat answers `200` with `alreadyClaimed: true` and
+        pays nothing (a replayed `Idempotency-Key` returns the first response). Cash is
+        credited with ledger reason `season_reward`; a cosmetic goes to `GET /inventory`
+        (source `grant`); furniture goes to `GET /me/items`. The paid track needs a live
+        season pass (`403 PASS_REQUIRED`), checked at claim time. Not enough XP is
+        `409 TIER_LOCKED`; a tier that is not in the track is `404`.
+      x-phase: 4
+      parameters:
+        - name: n
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: track
+          in: query
+          required: true
+          schema: { type: string, enum: [free, paid] }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonClaim' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The paid track needs an active season pass
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: PASS_REQUIRED,
+                      message: 'The paid track needs an active season pass.',
+                      details: { track: paid, tier: 1 },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Not enough Season XP for this tier yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TIER_LOCKED,
+                      message: 'Not enough Season XP for this tier yet.',
+                      details: { tier: 1, track: free, xp: 249, xpRequired: 250 },
+                    },
+                }
+
+  /nods:
+    get:
+      tags: [nods]
+      operationId: getNods
+      summary: My nods collection book, by set.
+      description: >-
+        Every set with its member nods, whether I found each, and whether the set reward was
+        granted. World positions are never returned.
+      x-phase: 4
+      responses:
+        '200':
+          description: The book
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodsBook' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /nods/{nodId}/collect:
+    post:
+      tags: [nods]
+      operationId: postNodsNodIdCollect
+      summary: Photograph a nod (collect it once).
+      description: >-
+        The proof is the nod id plus the client-reported position (island metres). Anti-cheat:
+        the find is decided by the SERVER's last position for the player (the one the street,
+        venue and vehicles rooms keep in presence), which must be fresh (30 s) and within the
+        nod's radius (15 m by default) of the registry position. The client position is only
+        a consistency check (more than 30 m from the server position is `400`). No fresh
+        server position is `409 POSITION_UNKNOWN`; too far is `409 NOD_TOO_FAR`. Attempts are
+        rate limited per player (10 burst, 12 a minute; `429 RATE_LIMITED`). Each nod counts
+        once: a repeat answers `200` with `alreadyCollected: true`, no XP and no position
+        needed. A new find awards `nodXp` Season XP and, if it fills the set, grants the set
+        cosmetic once (`setReward`).
+      x-phase: 4
+      parameters:
+        - name: nodId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proof]
+              properties:
+                proof:
+                  type: object
+                  required: [nodId, x, z]
+                  properties:
+                    nodId: { type: string, description: Must equal the path id. }
+                    x: { type: number }
+                    z: { type: number }
+      responses:
+        '200':
+          description: The find
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodCollect' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: No fresh server position (`POSITION_UNKNOWN`) or too far from the nod (`NOD_TOO_FAR`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOD_TOO_FAR,
+                      message: "The server's last position for you is more than the collect radius from this nod.",
+                      details: { radiusM: 15, distanceM: 40 },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /nods/leaderboard:
+    get:
+      tags: [nods]
+      operationId: getNodsLeaderboard
+      summary: The Hunter board.
+      description: >-
+        Top 50 by nods found; ties go to whoever reached the count first. `me` is my row with
+        my rank even outside the top 50, or null when I have found none.
+      x-phase: 4
+      responses:
+        '200':
+          description: The board
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodsLeaderboard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /homes/{homeId}/placements:
     put:
       tags: [shop]
@@ -4918,6 +5103,126 @@ components:
         etaAt: { type: string, format: date-time }
         deliveredAt: { type: [string, 'null'], format: date-time }
         cancelledAt: { type: [string, 'null'], format: date-time }
+    SeasonReward:
+      type: object
+      description: Exactly one of the three.
+      properties:
+        cashCents: { type: integer }
+        cosmeticId: { type: string, description: 'A reward_* cosmetic id.' }
+        furnitureItemId: { type: string, description: A shop_items id. }
+    SeasonTier:
+      type: object
+      required: [tier, xpRequired, reward, status]
+      properties:
+        tier: { type: integer }
+        xpRequired: { type: integer }
+        reward: { $ref: '#/components/schemas/SeasonReward' }
+        status: { type: string, enum: [locked, claimable, claimed, pass_required] }
+    SeasonView:
+      type: object
+      required: [season, xp, tier, xpToNext, hasPass, tracks]
+      properties:
+        season:
+          type: object
+          required: [seasonId, name, startsAt, endsAt, xpPerTier]
+          properties:
+            seasonId: { type: string }
+            name: { type: string }
+            startsAt: { type: string, format: date-time }
+            endsAt: { type: string, format: date-time }
+            xpPerTier: { type: integer }
+        xp: { type: integer }
+        tier: { type: integer, description: Highest tier the XP reaches. }
+        xpToNext: { type: [integer, 'null'] }
+        hasPass: { type: boolean }
+        tracks:
+          type: object
+          required: [free, paid]
+          properties:
+            free: { type: array, items: { $ref: '#/components/schemas/SeasonTier' } }
+            paid: { type: array, items: { $ref: '#/components/schemas/SeasonTier' } }
+    SeasonClaim:
+      type: object
+      required: [seasonId, track, tier, reward, alreadyClaimed, xp]
+      properties:
+        seasonId: { type: string }
+        track: { type: string, enum: [free, paid] }
+        tier: { type: integer }
+        reward: { $ref: '#/components/schemas/SeasonReward' }
+        alreadyClaimed: { type: boolean }
+        xp: { type: integer }
+    NodsBook:
+      type: object
+      required: [total, collected, sets]
+      properties:
+        total: { type: integer }
+        collected: { type: integer }
+        sets:
+          type: array
+          items:
+            type: object
+            required: [setId, name, reward, total, collected, completed, rewardGranted, nods]
+            properties:
+              setId: { type: string }
+              name: { type: string }
+              reward:
+                type: object
+                properties:
+                  cosmeticId: { type: string }
+              total: { type: integer }
+              collected: { type: integer }
+              completed: { type: boolean }
+              rewardGranted: { type: boolean }
+              nods:
+                type: array
+                items:
+                  type: object
+                  required: [nodId, name, tier, found, collectedAt]
+                  properties:
+                    nodId: { type: string }
+                    name: { type: string }
+                    tier: { type: string, enum: [A, B, C] }
+                    found: { type: boolean }
+                    collectedAt: { type: [string, 'null'], format: date-time }
+    NodCollect:
+      type: object
+      required: [nodId, alreadyCollected, xp, set, setReward]
+      properties:
+        nodId: { type: string }
+        alreadyCollected: { type: boolean }
+        xp: { type: integer, description: Season XP awarded by this find. }
+        set:
+          type: object
+          required: [setId, collected, total, completed]
+          properties:
+            setId: { type: string }
+            collected: { type: integer }
+            total: { type: integer }
+            completed: { type: boolean }
+        setReward:
+          type: [object, 'null']
+          description: Set when this find filled the set and granted its cosmetic.
+          properties:
+            setId: { type: string }
+            cosmeticId: { type: string }
+    HunterRow:
+      type: object
+      required: [rank, userId, alias, count]
+      properties:
+        rank: { type: integer }
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        count: { type: integer }
+    NodsLeaderboard:
+      type: object
+      required: [total, top, me]
+      properties:
+        total: { type: integer }
+        top: { type: array, items: { $ref: '#/components/schemas/HunterRow' } }
+        me:
+          oneOf:
+            - { $ref: '#/components/schemas/HunterRow' }
+            - { type: 'null' }
     PlayerItem:
       type: object
       required:

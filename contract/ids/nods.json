@@ -1,0 +1,805 @@
+{
+  "_owner": "FE",
+  "_provisional": true,
+  "version": "0.0.1",
+  "_note": "Community nods (the 80 painted props from docs/research/community-eggs-2026-10 and the island plan). PLACEHOLDER, the frontend confirms: nodId is the community-eggs id (lowercase, stable, never renamed); x and z are island metres (+X east, +Z north, origin at the downtown plaza, the same frame as ctl:pos and districts.json) and are provisional grid points inside each nod's district, NOT the real prop positions; the frontend replaces them with the placed positions it exports. radiusM is the collect radius (default 15). setId groups nods into sets; filling a set grants its off-chain cosmetic once. Cosmetics here are rewards only: never sold, never tradable, never NFTs. A nod dropped from the file keeps its past finds but no longer counts toward a set.",
+  "defaultRadiusM": 15,
+  "sets": [
+    {
+      "setId": "memecoin_row",
+      "name": "Memecoin Row",
+      "reward": {
+        "cosmeticId": "reward_nod_memecoin_pin"
+      }
+    },
+    {
+      "setId": "nft_gallery",
+      "name": "NFT Gallery",
+      "reward": {
+        "cosmeticId": "reward_nod_gallery_lanyard"
+      }
+    },
+    {
+      "setId": "superteam_corner",
+      "name": "Superteam Corner",
+      "reward": {
+        "cosmeticId": "reward_nod_superteam_bandana"
+      }
+    },
+    {
+      "setId": "defi_district",
+      "name": "DeFi District",
+      "reward": {
+        "cosmeticId": "reward_nod_defi_visor"
+      }
+    },
+    {
+      "setId": "builders_row",
+      "name": "Builders Row",
+      "reward": {
+        "cosmeticId": "reward_nod_builder_hoodie"
+      }
+    },
+    {
+      "setId": "event_hall",
+      "name": "Event Hall",
+      "reward": {
+        "cosmeticId": "reward_nod_event_badge"
+      }
+    }
+  ],
+  "cosmetics": [
+    {
+      "cosmeticId": "reward_nod_memecoin_pin",
+      "name": "Memecoin Row Pin",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_nod_gallery_lanyard",
+      "name": "Gallery Visitor Lanyard",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_nod_superteam_bandana",
+      "name": "Superteam Bandana",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_nod_defi_visor",
+      "name": "Degen Visor",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_nod_builder_hoodie",
+      "name": "Builder Hoodie Patch",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_nod_event_badge",
+      "name": "Event Badge Lanyard",
+      "slot": "acc"
+    }
+  ],
+  "nods": [
+    {
+      "nodId": "bonk",
+      "name": "BONK",
+      "setId": "memecoin_row",
+      "tier": "A",
+      "district": "timeline",
+      "x": -10,
+      "z": -142
+    },
+    {
+      "nodId": "wif",
+      "name": "dogwifhat (WIF)",
+      "setId": "memecoin_row",
+      "tier": "A",
+      "district": "trenches",
+      "x": -360,
+      "z": -270
+    },
+    {
+      "nodId": "popcat",
+      "name": "Popcat (POPCAT)",
+      "setId": "memecoin_row",
+      "tier": "A",
+      "district": "trenches",
+      "x": -330,
+      "z": -270
+    },
+    {
+      "nodId": "mew",
+      "name": "MEW (cat in a dogs world)",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "trenches",
+      "x": -360,
+      "z": -300
+    },
+    {
+      "nodId": "pengu",
+      "name": "Pudgy Penguins / PENGU",
+      "setId": "memecoin_row",
+      "tier": "A",
+      "district": "timeline",
+      "x": 20,
+      "z": -142
+    },
+    {
+      "nodId": "moodeng",
+      "name": "Moo Deng (MOODENG)",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "timeline",
+      "x": -10,
+      "z": -112
+    },
+    {
+      "nodId": "pnut",
+      "name": "Peanut the Squirrel (PNUT)",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "timeline",
+      "x": 20,
+      "z": -112
+    },
+    {
+      "nodId": "fartcoin",
+      "name": "Fartcoin",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "trenches",
+      "x": -330,
+      "z": -300
+    },
+    {
+      "nodId": "giga",
+      "name": "Gigachad (GIGA)",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "timeline",
+      "x": -10,
+      "z": -172
+    },
+    {
+      "nodId": "useless",
+      "name": "Useless Coin (USELESS)",
+      "setId": "memecoin_row",
+      "tier": "C",
+      "district": "timeline",
+      "x": 20,
+      "z": -172
+    },
+    {
+      "nodId": "madlads",
+      "name": "Mad Lads",
+      "setId": "nft_gallery",
+      "tier": "A",
+      "district": "timeline",
+      "x": -40,
+      "z": -142
+    },
+    {
+      "nodId": "smb",
+      "name": "Solana Monkey Business",
+      "setId": "nft_gallery",
+      "tier": "B",
+      "district": "timeline",
+      "x": 50,
+      "z": -142
+    },
+    {
+      "nodId": "claynosaurz",
+      "name": "Claynosaurz",
+      "setId": "nft_gallery",
+      "tier": "A",
+      "district": "timeline",
+      "x": -40,
+      "z": -112
+    },
+    {
+      "nodId": "degods",
+      "name": "DeGods",
+      "setId": "nft_gallery",
+      "tier": "B",
+      "district": "timeline",
+      "x": -40,
+      "z": -172
+    },
+    {
+      "nodId": "fff",
+      "name": "Famous Fox Federation",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "builder_hills",
+      "x": 370,
+      "z": 320
+    },
+    {
+      "nodId": "cets",
+      "name": "Cets on Creck",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "boardwalk",
+      "x": -30,
+      "z": -244
+    },
+    {
+      "nodId": "geckos",
+      "name": "Galactic Geckos",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "builder_hills",
+      "x": 400,
+      "z": 320
+    },
+    {
+      "nodId": "phantom",
+      "name": "Phantom",
+      "setId": "builders_row",
+      "tier": "A",
+      "district": "timeline",
+      "x": 50,
+      "z": -112
+    },
+    {
+      "nodId": "solflare",
+      "name": "Solflare",
+      "setId": "builders_row",
+      "tier": "C",
+      "district": "breakpoint",
+      "x": -280,
+      "z": 286
+    },
+    {
+      "nodId": "backpack",
+      "name": "Backpack",
+      "setId": "builders_row",
+      "tier": "B",
+      "district": "trenches",
+      "x": -360,
+      "z": -240
+    },
+    {
+      "nodId": "jupiter",
+      "name": "Jupiter",
+      "setId": "defi_district",
+      "tier": "A",
+      "district": "trenches",
+      "x": -330,
+      "z": -240
+    },
+    {
+      "nodId": "pumpfun",
+      "name": "pump.fun",
+      "setId": "defi_district",
+      "tier": "A",
+      "district": "trenches",
+      "x": -390,
+      "z": -270
+    },
+    {
+      "nodId": "axiom",
+      "name": "Axiom",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "trenches",
+      "x": -300,
+      "z": -270
+    },
+    {
+      "nodId": "gmgn",
+      "name": "GMGN",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "trenches",
+      "x": -390,
+      "z": -300
+    },
+    {
+      "nodId": "orca",
+      "name": "Orca",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "boardwalk",
+      "x": 0,
+      "z": -244
+    },
+    {
+      "nodId": "meteora",
+      "name": "Meteora",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "boardwalk",
+      "x": -60,
+      "z": -244
+    },
+    {
+      "nodId": "kamino",
+      "name": "Kamino",
+      "setId": "defi_district",
+      "tier": "C",
+      "district": "boardwalk",
+      "x": 30,
+      "z": -244
+    },
+    {
+      "nodId": "jito",
+      "name": "Jito",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "trenches",
+      "x": -300,
+      "z": -300
+    },
+    {
+      "nodId": "sanctum",
+      "name": "Sanctum",
+      "setId": "defi_district",
+      "tier": "C",
+      "district": "timeline",
+      "x": 50,
+      "z": -172
+    },
+    {
+      "nodId": "marinade",
+      "name": "Marinade",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "timeline",
+      "x": -10,
+      "z": -82
+    },
+    {
+      "nodId": "collector",
+      "name": "Collector Crypt / Jupiter Gacha",
+      "setId": "nft_gallery",
+      "tier": "B",
+      "district": "timeline",
+      "x": 20,
+      "z": -82
+    },
+    {
+      "nodId": "helius",
+      "name": "Helius",
+      "setId": "builders_row",
+      "tier": "A",
+      "district": "builder_hills",
+      "x": 370,
+      "z": 290
+    },
+    {
+      "nodId": "pyth",
+      "name": "Pyth",
+      "setId": "defi_district",
+      "tier": "C",
+      "district": "timeline",
+      "x": -10,
+      "z": -202
+    },
+    {
+      "nodId": "seeker",
+      "name": "Seeker (Solana Mobile)",
+      "setId": "builders_row",
+      "tier": "A",
+      "district": "trenches",
+      "x": -390,
+      "z": -240
+    },
+    {
+      "nodId": "skr",
+      "name": "SKR / .skr handles",
+      "setId": "builders_row",
+      "tier": "B",
+      "district": "builder_hills",
+      "x": 400,
+      "z": 290
+    },
+    {
+      "nodId": "ore",
+      "name": "ORE",
+      "setId": "builders_row",
+      "tier": "A",
+      "district": "airdrop_farm",
+      "x": 630,
+      "z": 40
+    },
+    {
+      "nodId": "helium",
+      "name": "Helium",
+      "setId": "builders_row",
+      "tier": "B",
+      "district": "timeline",
+      "x": 20,
+      "z": -202
+    },
+    {
+      "nodId": "grass",
+      "name": "Grass",
+      "setId": "builders_row",
+      "tier": "C",
+      "district": "timeline",
+      "x": -40,
+      "z": -82
+    },
+    {
+      "nodId": "staratlas",
+      "name": "Star Atlas",
+      "setId": "builders_row",
+      "tier": "C",
+      "district": "timeline",
+      "x": -70,
+      "z": -142
+    },
+    {
+      "nodId": "x402",
+      "name": "AI agents / x402",
+      "setId": "builders_row",
+      "tier": "B",
+      "district": "builder_hills",
+      "x": 370,
+      "z": 350
+    },
+    {
+      "nodId": "solana",
+      "name": "Solana",
+      "setId": "builders_row",
+      "tier": "A",
+      "district": "timeline",
+      "x": -40,
+      "z": -202
+    },
+    {
+      "nodId": "superteam",
+      "name": "Superteam",
+      "setId": "superteam_corner",
+      "tier": "A",
+      "district": "timeline",
+      "x": 50,
+      "z": -82
+    },
+    {
+      "nodId": "colosseum",
+      "name": "Colosseum",
+      "setId": "superteam_corner",
+      "tier": "A",
+      "district": "breakpoint",
+      "x": -280,
+      "z": 256
+    },
+    {
+      "nodId": "breakpoint",
+      "name": "Breakpoint 2026",
+      "setId": "event_hall",
+      "tier": "B",
+      "district": "breakpoint",
+      "x": -310,
+      "z": 286
+    },
+    {
+      "nodId": "stng",
+      "name": "Superteam Nigeria (Lagos)",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "trenches",
+      "x": -360,
+      "z": -330
+    },
+    {
+      "nodId": "stin",
+      "name": "Superteam India",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "timeline",
+      "x": 80,
+      "z": -142
+    },
+    {
+      "nodId": "stbr",
+      "name": "Superteam Brazil",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "timeline",
+      "x": 50,
+      "z": -202
+    },
+    {
+      "nodId": "stvn",
+      "name": "Superteam Vietnam",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "timeline",
+      "x": -70,
+      "z": -112
+    },
+    {
+      "nodId": "sttr",
+      "name": "Superteam Turkey",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "trenches",
+      "x": -330,
+      "z": -330
+    },
+    {
+      "nodId": "stuk",
+      "name": "Superteam UK",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "timeline",
+      "x": -70,
+      "z": -172
+    },
+    {
+      "nodId": "stkr",
+      "name": "Superteam Korea",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "timeline",
+      "x": 80,
+      "z": -112
+    },
+    {
+      "nodId": "ban",
+      "name": "Comedian (BAN)",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "timeline",
+      "x": 80,
+      "z": -172
+    },
+    {
+      "nodId": "ansem",
+      "name": "The Black Bull (ANSEM)",
+      "setId": "memecoin_row",
+      "tier": "C",
+      "district": "trenches",
+      "x": -300,
+      "z": -240
+    },
+    {
+      "nodId": "zcat",
+      "name": "Anonymous Cat (ZCAT)",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "trenches",
+      "x": -360,
+      "z": -210
+    },
+    {
+      "nodId": "troll",
+      "name": "TROLL",
+      "setId": "memecoin_row",
+      "tier": "B",
+      "district": "trenches",
+      "x": -330,
+      "z": -210
+    },
+    {
+      "nodId": "neet",
+      "name": "NEET",
+      "setId": "memecoin_row",
+      "tier": "C",
+      "district": "builder_hills",
+      "x": 340,
+      "z": 320
+    },
+    {
+      "nodId": "catwifhat",
+      "name": "catwifhat",
+      "setId": "memecoin_row",
+      "tier": "C",
+      "district": "trenches",
+      "x": -390,
+      "z": -330
+    },
+    {
+      "nodId": "pippin",
+      "name": "Pippin",
+      "setId": "memecoin_row",
+      "tier": "C",
+      "district": "timeline",
+      "x": -10,
+      "z": -52
+    },
+    {
+      "nodId": "goat",
+      "name": "Goatseus Maximus (GOAT)",
+      "setId": "memecoin_row",
+      "tier": "C",
+      "district": "builder_hills",
+      "x": 400,
+      "z": 350
+    },
+    {
+      "nodId": "birb",
+      "name": "Moonbirds (BIRB)",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "timeline",
+      "x": 20,
+      "z": -52
+    },
+    {
+      "nodId": "monkedao",
+      "name": "MonkeDAO",
+      "setId": "nft_gallery",
+      "tier": "B",
+      "district": "timeline",
+      "x": -70,
+      "z": -82
+    },
+    {
+      "nodId": "pythenians",
+      "name": "Pythenians",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "timeline",
+      "x": -70,
+      "z": -202
+    },
+    {
+      "nodId": "deadking",
+      "name": "DeadKing Society",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "boardwalk",
+      "x": -30,
+      "z": -214
+    },
+    {
+      "nodId": "frensfactory",
+      "name": "Frens Factory",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "timeline",
+      "x": 80,
+      "z": -82
+    },
+    {
+      "nodId": "sensei",
+      "name": "Solana Sensei",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "timeline",
+      "x": -40,
+      "z": -52
+    },
+    {
+      "nodId": "perennials",
+      "name": "Perennials (map spells it \"Perenimals\")",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "timeline",
+      "x": 80,
+      "z": -202
+    },
+    {
+      "nodId": "sagamonkes",
+      "name": "Sagamonkes",
+      "setId": "nft_gallery",
+      "tier": "B",
+      "district": "builder_hills",
+      "x": 340,
+      "z": 290
+    },
+    {
+      "nodId": "solanons",
+      "name": "Solanons",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "boardwalk",
+      "x": 0,
+      "z": -214
+    },
+    {
+      "nodId": "mindfolk",
+      "name": "Mind Folk",
+      "setId": "nft_gallery",
+      "tier": "C",
+      "district": "timeline",
+      "x": 50,
+      "z": -52
+    },
+    {
+      "nodId": "jitocabal",
+      "name": "Jito Cabal",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "trenches",
+      "x": -420,
+      "z": -270
+    },
+    {
+      "nodId": "metadao",
+      "name": "MetaDAO",
+      "setId": "defi_district",
+      "tier": "C",
+      "district": "timeline",
+      "x": -100,
+      "z": -142
+    },
+    {
+      "nodId": "bags",
+      "name": "Bags",
+      "setId": "defi_district",
+      "tier": "C",
+      "district": "timeline",
+      "x": -100,
+      "z": -112
+    },
+    {
+      "nodId": "bonkfun",
+      "name": "Bonk.fun",
+      "setId": "defi_district",
+      "tier": "B",
+      "district": "trenches",
+      "x": -300,
+      "z": -330
+    },
+    {
+      "nodId": "hackerhouse",
+      "name": "Hacker Houses",
+      "setId": "event_hall",
+      "tier": "B",
+      "district": "builder_hills",
+      "x": 340,
+      "z": 350
+    },
+    {
+      "nodId": "mtndao",
+      "name": "Mtndao",
+      "setId": "event_hall",
+      "tier": "C",
+      "district": "timeline",
+      "x": 110,
+      "z": -142
+    },
+    {
+      "nodId": "islanddao",
+      "name": "IslandDAO",
+      "setId": "event_hall",
+      "tier": "C",
+      "district": "boardwalk",
+      "x": 30,
+      "z": -214
+    },
+    {
+      "nodId": "magicblock",
+      "name": "MagicBlock",
+      "setId": "builders_row",
+      "tier": "B",
+      "district": "builder_hills",
+      "x": 430,
+      "z": 320
+    },
+    {
+      "nodId": "radiants",
+      "name": "RadiantsDAO",
+      "setId": "superteam_corner",
+      "tier": "C",
+      "district": "builder_hills",
+      "x": 370,
+      "z": 260
+    },
+    {
+      "nodId": "metaplex",
+      "name": "Metaplex",
+      "setId": "builders_row",
+      "tier": "C",
+      "district": "timeline",
+      "x": -100,
+      "z": -172
+    },
+    {
+      "nodId": "wormhole",
+      "name": "Wormhole",
+      "setId": "builders_row",
+      "tier": "C",
+      "district": "timeline",
+      "x": 110,
+      "z": -112
+    }
+  ]
+}
