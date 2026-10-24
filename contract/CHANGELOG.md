@@ -1,3 +1,20 @@
+## 2026-10-24 - Rugpull Factory: player coin launches, creator fee, rug heat and the Sleuth
+
+Parody, game-Cash-only and server-simulated: no token, no chain, nothing withdrawable. Rules, fees and odds are in `docs/FACTORY.md`.
+
+Merge order: migration 089 follows open PRs 084 (#9, which also adds 088 push_token_unique), 085 (#11), 086 (#12) and 087 (season tracks). If it merges first, run the migrator with `--no-check-order`; it touches none of their tables.
+
+- Added `POST /factory/coins {name, ticker, templateId, liquidityCents, devAllocationBps}` -> `201 FactoryCoin`. Debits the launch fee (500 cents, ledger `factory_launch_fee`, a sink) plus the liquidity (1,000 to 100,000, `factory_liquidity`) in one transaction and creates a coin flagged `playerLaunched` with the caller as creator. The creator is credited `devAllocationBps` (0 to 5,000) of the units the liquidity buys. The hidden arc is sampled by the server from `market.json` `outcomeMix` (rug 25, bleed 40, sideways 20, moon 15); the body is strict, so a client-sent arc is a `400`. Name and ticker are filtered. Limits: 3 per rolling 24 hours and a 10 minute cooldown. Idempotent: a replayed `Idempotency-Key` returns the same coin and charges once.
+- Added `GET /factory/coins?view=trending|new|mine&limit=`, `GET /factory/coins/{coinId}` (the coin, `candles1m`, `topHolders`, `riskHint`; `creatorFeesCents` only for the creator), `GET /factory/config` and `GET /factory/me` (`heat`, `heatLevel`, `launchesToday`, `nextLaunchAt`). Art is a fixed id `templateId` (`rf_*`, listed in `/factory/config` and the openapi enum).
+- Trading a player coin uses the existing `POST /market/trades`. Once a coin has traded at 3x its launch price, the creator earns 50% of every other player's trade fee on it (ledger `factory_creator_fee`), taken out of the fee the market already charges.
+- Rug detection: a creator who sells at least 30% of the circulating units within 60 minutes of other players buying 500 cents or more is flagged once per coin. They gain heat (35 to 50, capped at 100, halving every 24 hours; stored in `player_heat` for the future police loop, nothing punishes it yet). The Sleuth, an original parody NPC, posts one exposé naming the launcher on the Timeline (one per coin, one per launcher per 30 minutes), and `evt_rug` is broadcast with params `{coinId, ticker, kind: "creator_dump", launcherAlias, heat}`.
+- `GET /feed` posts add `kind` (`player | sleuth`) and `meta` (null for player posts; for `sleuth`: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat, deepLink}` with `deepLink` `venue:launchpad_tower`). A Sleuth post's `alias` is `The Sleuth`.
+- `evt_coin_launch` now also fires for player coins, with params `{coinId, ticker, playerLaunched: "1", templateId, creatorAlias}`.
+- Realtime `CoinState` (market room) adds `playerLaunched: boolean` and `templateId: string` at the end of the schema. The market room lists a player coin from its first 30 minutes ahead of the market-cap ordering so it always shows on Pulse. `holders` is now counted from positions at read time.
+- The market sim looks for new player coins every 5 seconds (was 30), so a coin ticks within 5 seconds of its launch. The engine's Redis snapshot now carries `priceHistory`, which fills the `candles1m` of `GET /market/coins/{coinId}` (it was always empty).
+- New error codes `NAME_NOT_ALLOWED` (400), `TICKER_TAKEN` (409), `LAUNCH_LIMIT_REACHED` (429) and `LAUNCH_COOLDOWN` (429, `details.retryAfterMs`).
+- Migration 089 adds `coins.player_launched, creator_id`, `factory_coins`, `factory_trades`, `player_heat`, `player_heat_events`, `feed_posts.kind, meta` and the Sleuth's user row (`npc:sleuth`).
+
 ## 2026-10-24 - Season Pass tracks and the community-nods collection
 
 Merge notes: migration `1700000087000` (after 084 #9, 085 #11, 086 #12; apply with `--no-check-order` if it lands before them). It creates `season_xp` with `IF NOT EXISTS` in the same shape as 084, so it is safe in either order with #9 (see `docs/SEASON_AND_NODS.md`).

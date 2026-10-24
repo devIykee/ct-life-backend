@@ -463,6 +463,16 @@ export class EventStepInvalidError extends DomainError {
   }
 }
 
+// Rugpull Factory ---------------------------------------------------------
+
+export class NameNotAllowedError extends DomainError {
+  readonly code = 'NAME_NOT_ALLOWED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That coin name or ticker is not allowed.', details);
+    this.httpStatus = 400;
+  }
+}
+
 export class CheckinRejectedError extends DomainError {
   readonly code = 'CHECKIN_REJECTED';
   /**
@@ -472,5 +482,29 @@ export class CheckinRejectedError extends DomainError {
   constructor(reason: string) {
     super('The IRL check-in was not accepted.', { reason });
     this.httpStatus = 422;
+  }
+}
+
+export class TickerTakenError extends DomainError {
+  readonly code = 'TICKER_TAKEN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That ticker is already used by another coin.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class LaunchLimitReachedError extends DomainError {
+  readonly code = 'LAUNCH_LIMIT_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super("You have reached today's coin launch limit.", details);
+    this.httpStatus = 429;
+  }
+}
+
+export class LaunchCooldownError extends DomainError {
+  readonly code = 'LAUNCH_COOLDOWN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Wait before launching another coin.', details);
+    this.httpStatus = 429;
   }
 }

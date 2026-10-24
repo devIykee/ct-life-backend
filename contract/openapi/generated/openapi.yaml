@@ -46,6 +46,12 @@ tags:
     description: Top-up, cosmetic, ad booking, season pass intents. Phase 2+.
   - name: shop
     description: Shop, inventory. Phase 4+.
+  - name: casino
+    description: The Rug Room, a Cash-only play-money casino (18+). Phase 4+.
+  - name: season
+    description: Season Pass tracks (free and paid) and Season XP. Phase 4+.
+  - name: nods
+    description: Community nods collection, sets and the Hunter board. Phase 4+.
   - name: ads
     description: Ad slots, uploads, bookings, live creatives. Phase 5+.
   - name: ore
@@ -1286,7 +1292,12 @@ paths:
                 properties:
                   canEnter: { type: boolean }
                   reason: { type: string, enum: [owner, guest, locked, vacant, evicted] }
-              example: { canEnter: false, reason: locked }
+                  homeId:
+                    type: string
+                    description: >-
+                      The home's instance id (`home:<uuid>`), to join the `home` room. Present only
+                      when `canEnter` is true (owner or guest), never for anyone else.
+              example: { canEnter: true, reason: guest, homeId: 'home:0192a1c2-...' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /homes/{ownerId}/visit:
@@ -1764,6 +1775,339 @@ paths:
                   correct: { type: boolean }
                   prizeCents: { type: integer }
               example: { correct: true, prizeCents: 5000 }
+
+  /daily/status:
+    get:
+      tags: [work]
+      operationId: getDailyStatus
+      summary: gm streak status and the chest on offer.
+      description: >-
+        `streakDay` is the number of consecutive UTC days claimed up to now (0 when the streak
+        is broken or never started; a missed day covered by a held freeze does not break it).
+        `chest` is today's chest while `claimedToday` is false, tomorrow's after that. The
+        server is the only clock: days are UTC dates and `nextResetAt` is the next UTC midnight.
+      x-phase: 5
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /daily/claim:
+    post:
+      tags: [work]
+      operationId: postDailyClaim
+      summary: Claim today's chest (idempotent per UTC day).
+      description: >-
+        Pays the chest in Cash (ledger reason `daily_streak`) and, on streak day 7, 14 and 30, a
+        cosmetic through the cosmetics inventory with `source: grant`. Takes no body: the
+        rewards and the day come from the server. A second claim on the same UTC day pays
+        nothing and returns the first claim with `alreadyClaimed: true`. A missed day resets the
+        streak to day 1 (`reset: true`) unless a held freeze covers every missed day, in which
+        case the freezes are consumed (`freezesUsed`).
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The claim and the new status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyClaim' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /daily/freeze:
+    post:
+      tags: [work]
+      operationId: postDailyFreeze
+      summary: Buy a streak freeze with Cash.
+      description: >-
+        Debits `freezePriceCents` (ledger reason `streak_freeze`). At most `maxFreezes` (2) can
+        be held. A freeze is consumed automatically by a claim that follows missed days.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: The new status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DailyStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+  /factory/config:
+    get:
+      tags: [markets]
+      operationId: getFactoryConfig
+      summary: Rugpull Factory rules for the Launchpad Tower UI.
+      description: >-
+        Fee, liquidity range, dev allocation cap, daily cap, cooldown, the art template ids,
+        the arc odds the server uses (percent; informational, the arc of a coin is hidden)
+        and the rug rule. All numbers are Cash cents or basis points.
+      x-phase: 4
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryConfig' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /factory/me:
+    get:
+      tags: [markets]
+      operationId: getFactoryMe
+      summary: My heat and launch allowance.
+      description: >-
+        `heat` is 0..100 and halves every 24 hours; it is stored for the future police loop and
+        punishes nothing yet. `nextLaunchAt` is null when a launch is allowed now.
+      x-phase: 4
+      responses:
+        '200':
+          description: Caller state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /factory/coins:
+    post:
+      tags: [markets]
+      operationId: postFactoryCoins
+      summary: Launch a Rugpull Factory coin.
+      description: >-
+        Parody, game-Cash-only, server-simulated: no token, no chain, nothing withdrawable.
+        Debits the launch fee (ledger `factory_launch_fee`, a Cash sink) plus the liquidity
+        (`factory_liquidity`, locked in the coin) in one transaction and creates a coin flagged
+        `playerLaunched` with the caller as creator. The creator is credited `devAllocationBps`
+        of the units the liquidity buys at the launch price. The coin shows on the Pulse board
+        (market room `CoinState.playerLaunched`) and `evt_coin_launch` is broadcast. The hidden
+        arc is sampled by the server from its own odds (rug 25, slow bleed 40, sideways 20, moon
+        15) and is never accepted from or sent to the client; unknown body fields are a 400.
+        Name and ticker pass a character allow-list and a profanity, slur, link and brand
+        filter. Limits: 3 launches per rolling 24 hours and a 10 minute cooldown. A replay with
+        the same `Idempotency-Key` returns the same coin without charging again. Trade the coin
+        with `POST /market/trades`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, ticker, templateId, liquidityCents, devAllocationBps]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 24 }
+                ticker: { type: string, minLength: 2, maxLength: 6 }
+                templateId: { $ref: '#/components/schemas/FactoryTemplateId' }
+                liquidityCents: { type: integer, minimum: 1000, maximum: 100000 }
+                devAllocationBps: { type: integer, minimum: 0, maximum: 5000 }
+      responses:
+        '201':
+          description: The launched coin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryCoin' }
+        '400':
+          description: Validation failed, or the name or ticker is not allowed (`NAME_NOT_ALLOWED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'INSUFFICIENT_CASH',
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '5000' },
+                    },
+                }
+        '409':
+          description: Already holding the maximum
+                      code: NAME_NOT_ALLOWED,
+                      message: 'That coin name or ticker is not allowed.',
+                      details: { reason: 'name or ticker not allowed' },
+                    },
+                }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the fee plus liquidity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '5500' },
+                    },
+                }
+        '409':
+          description: The ticker is already used (`TICKER_TAKEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: FREEZE_LIMIT_REACHED,
+                      message: 'You already hold the maximum number of streak freezes.',
+                      details: { max: 2 },
+                    },
+                }
+
+  /quests:
+    get:
+      tags: [work]
+      operationId: getQuests
+      summary: Today's 3 daily quests and this week's chain of 5, with progress.
+      description: >-
+        The pick is deterministic per player and period (daily: user and UTC date; weekly: user
+        and ISO week) from `contract/ids/quests.json`. Progress is advanced only by server
+        events (a shift paid, a perp opened or closed, a prediction placed, an alpha call, a
+        paid call accepted, a Cash tip of at least $10, a visit to someone else's home); the
+        client never reports progress. Each change is also pushed live as the realtime
+        `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward.
+      x-phase: 5
+      responses:
+        '200':
+          description: Quests
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuestsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /quests/{id}/claim:
+    post:
+      tags: [work]
+      operationId: postQuestsIdClaim
+      summary: Claim a finished quest (idempotent).
+      description: >-
+        Pays `reward.cashCents` (ledger reason `quest_reward`) and records `reward.seasonXp` in
+        `season_xp`. Takes no body. Only a quest in the caller's current picks can be claimed;
+        any other id, including another player's, is `404`. A second claim returns
+        `alreadyClaimed: true` and pays nothing.
+      x-phase: 5
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: What was paid
+                      code: TICKER_TAKEN,
+                      message: 'That ticker is already used by another coin.',
+                      details: {},
+                    },
+                }
+        '429':
+          description: >-
+            `LAUNCH_COOLDOWN` (10 minutes between launches) or `LAUNCH_LIMIT_REACHED`
+            (3 per rolling 24 hours); `details.retryAfterMs` says how long to wait
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                cooldown:
+                  value:
+                    error:
+                      code: LAUNCH_COOLDOWN
+                      message: 'Wait before launching another coin.'
+                      details: { retryAfterMs: 412000 }
+                dailyCap:
+                  value:
+                    error:
+                      code: LAUNCH_LIMIT_REACHED
+                      message: "You have reached today's coin launch limit."
+                      details: { cap: 3, retryAfterMs: 3600000 }
+    get:
+      tags: [markets]
+      operationId: getFactoryCoins
+      summary: List Rugpull Factory coins.
+      description: >-
+        `view=trending` (default) is live coins by 5 minute volume, `new` the newest live coins,
+        `mine` all of the caller's launches, dead ones included. Up to `limit` (default 20, max 50).
+      x-phase: 4
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema: { type: string, enum: [trending, new, mine] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        '200':
+          description: Coins
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questId, alreadyClaimed, reward]
+                properties:
+                  questId: { type: string }
+                  alreadyClaimed: { type: boolean }
+                  reward: { $ref: '#/components/schemas/QuestReward' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The target is not reached yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: QUEST_NOT_COMPLETE,
+                      message: 'This quest is not finished yet.',
+                      details: { questId: q_daily_shift_2, progress: 1, target: 2 },
+                    },
+                }
+                required: [coins]
+                properties:
+                  coins:
+                    type: array
+                    items: { $ref: '#/components/schemas/FactoryCoin' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /factory/coins/{coinId}:
+    get:
+      tags: [markets]
+      operationId: getFactoryCoinsCoinId
+      summary: One Rugpull Factory coin with its chart.
+      description: >-
+        The coin plus the market's `candles1m`, top holders and risk hint (the same data as
+        `GET /market/coins/{coinId}`). `creatorFeesCents` is filled only for the creator and is
+        null for everyone else. A house coin id is a 404 here.
+      x-phase: 4
+      parameters:
+        - name: coinId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Coin detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryCoinDetail' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /market/coins:
     get:
@@ -3369,6 +3713,187 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/PlayerItem' }
 
+  /season:
+    get:
+      tags: [season]
+      operationId: getSeason
+      summary: The current season, my Season XP and both tracks.
+      description: >-
+        Season definitions are the contract file `season_tracks.json`. Tier `n` unlocks at
+        `n * xpPerTier` Season XP earned inside the season window. Each tier has one reward
+        (`cashCents`, `cosmeticId` or `furnitureItemId`); all rewards are off-chain, never
+        tradable and never NFTs. Tier `status`: `locked`, `claimable`, `claimed`, or
+        `pass_required` (reached on the paid track without a live season pass). XP comes
+        from the daily/weekly quests and from nod finds (`nodXp` each); the client never
+        sends XP. `404 NOT_FOUND` when no season is running.
+      x-phase: 4
+      responses:
+        '200':
+          description: The season
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /season/tiers/{n}/claim:
+    post:
+      tags: [season]
+      operationId: postSeasonTiersNClaim
+      summary: Claim a tier reward on the free or the paid track.
+      description: >-
+        Idempotent: a tier pays once; a repeat answers `200` with `alreadyClaimed: true` and
+        pays nothing (a replayed `Idempotency-Key` returns the first response). Cash is
+        credited with ledger reason `season_reward`; a cosmetic goes to `GET /inventory`
+        (source `grant`); furniture goes to `GET /me/items`. The paid track needs a live
+        season pass (`403 PASS_REQUIRED`), checked at claim time. Not enough XP is
+        `409 TIER_LOCKED`; a tier that is not in the track is `404`.
+      x-phase: 4
+      parameters:
+        - name: n
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1 }
+        - name: track
+          in: query
+          required: true
+          schema: { type: string, enum: [free, paid] }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The claim
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonClaim' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The paid track needs an active season pass
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: PASS_REQUIRED,
+                      message: 'The paid track needs an active season pass.',
+                      details: { track: paid, tier: 1 },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Not enough Season XP for this tier yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TIER_LOCKED,
+                      message: 'Not enough Season XP for this tier yet.',
+                      details: { tier: 1, track: free, xp: 249, xpRequired: 250 },
+                    },
+                }
+
+  /nods:
+    get:
+      tags: [nods]
+      operationId: getNods
+      summary: My nods collection book, by set.
+      description: >-
+        Every set with its member nods, whether I found each, and whether the set reward was
+        granted. World positions are never returned.
+      x-phase: 4
+      responses:
+        '200':
+          description: The book
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodsBook' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /nods/{nodId}/collect:
+    post:
+      tags: [nods]
+      operationId: postNodsNodIdCollect
+      summary: Photograph a nod (collect it once).
+      description: >-
+        The proof is the nod id plus the client-reported position (island metres). Anti-cheat:
+        the find is decided by the SERVER's last position for the player (the one the street,
+        venue and vehicles rooms keep in presence), which must be fresh (30 s) and within the
+        nod's radius (15 m by default) of the registry position. The client position is only
+        a consistency check (more than 30 m from the server position is `400`). No fresh
+        server position is `409 POSITION_UNKNOWN`; too far is `409 NOD_TOO_FAR`. Attempts are
+        rate limited per player (10 burst, 12 a minute; `429 RATE_LIMITED`). Each nod counts
+        once: a repeat answers `200` with `alreadyCollected: true`, no XP and no position
+        needed. A new find awards `nodXp` Season XP and, if it fills the set, grants the set
+        cosmetic once (`setReward`).
+      x-phase: 4
+      parameters:
+        - name: nodId
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [proof]
+              properties:
+                proof:
+                  type: object
+                  required: [nodId, x, z]
+                  properties:
+                    nodId: { type: string, description: Must equal the path id. }
+                    x: { type: number }
+                    z: { type: number }
+      responses:
+        '200':
+          description: The find
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodCollect' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: No fresh server position (`POSITION_UNKNOWN`) or too far from the nod (`NOD_TOO_FAR`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOD_TOO_FAR,
+                      message: "The server's last position for you is more than the collect radius from this nod.",
+                      details: { radiusM: 15, distanceM: 40 },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /nods/leaderboard:
+    get:
+      tags: [nods]
+      operationId: getNodsLeaderboard
+      summary: The Hunter board.
+      description: >-
+        Top 50 by nods found; ties go to whoever reached the count first. `me` is my row with
+        my rank even outside the top 50, or null when I have found none.
+      x-phase: 4
+      responses:
+        '200':
+          description: The board
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NodsLeaderboard' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
   /homes/{homeId}/placements:
     put:
       tags: [shop]
@@ -3415,34 +3940,58 @@ paths:
               schema: { $ref: '#/components/schemas/HomePlacements' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '403':
-          description: Not the owner of the home (`NOT_HOME_OWNER`), or an item that is not yours (`ITEM_NOT_OWNED`)
+          description: Not the owner of the home, or an item that is not yours
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-              example:
-                {
-                  error:
+              examples:
+                notHomeOwner:
+                  value:
                     {
-                      code: NOT_HOME_OWNER,
-                      message: 'Only the home's owner can do this.',
-                      details: { homeId: 'home:0192a1c2-...' },
-                    },
-                }
+                      error:
+                        {
+                          code: NOT_HOME_OWNER,
+                          message: "Only the home's owner can do this.",
+                          details: { homeId: 'home:0192a1c2-...' },
+                        },
+                    }
+                itemNotOwned:
+                  value:
+                    {
+                      error:
+                        {
+                          code: ITEM_NOT_OWNED,
+                          message: 'You do not own this item.',
+                          details: { itemInstanceId: '0192a1c2-...' },
+                        },
+                    }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: The item is not placeable (`ITEM_NOT_PLACEABLE`) or is already placed, in the request twice or in another live home (`ITEM_ALREADY_PLACED`)
+          description: The item is not placeable, or is already placed
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-              example:
-                {
-                  error:
+              examples:
+                itemNotPlaceable:
+                  value:
                     {
-                      code: ITEM_NOT_PLACEABLE,
-                      message: 'This item cannot be placed in a home.',
-                      details: { itemInstanceId: '0192a1c2-...' },
-                    },
-                }
+                      error:
+                        {
+                          code: ITEM_NOT_PLACEABLE,
+                          message: 'This item cannot be placed in a home.',
+                          details: { itemInstanceId: '0192a1c2-...' },
+                        },
+                    }
+                itemAlreadyPlaced:
+                  value:
+                    {
+                      error:
+                        {
+                          code: ITEM_ALREADY_PLACED,
+                          message: 'This item is already placed (in the request twice, or in another home).',
+                          details: { itemInstanceId: '0192a1c2-...' },
+                        },
+                    }
 
     get:
       tags: [shop]
@@ -3782,11 +4331,363 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/WeeklyMeta' }
 
+  /events/current:
+    get:
+      tags: [liveops]
+      operationId: getEventsCurrent
+      summary: Real-world events live now (Breakpoint and the like).
+      description: >-
+        An event is live while `startsAt <= now < endsAt` (UTC). `serverNow` (epoch ms) lets the
+        client correct its clock for countdowns. Poll on join and on the `event_live` /
+        `event_ended` city messages.
+      x-phase: 4
+      responses:
+        '200':
+          description: Live events, soonest to end first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, serverNow]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CalendarEvent' }
+                  serverNow: { type: integer, format: int64 }
+
+  /events/upcoming:
+    get:
+      tags: [liveops]
+      operationId: getEventsUpcoming
+      summary: The next real-world events, soonest first (for countdowns).
+      x-phase: 4
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200':
+          description: Events that have not started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, serverNow]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CalendarEvent' }
+                  serverNow: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /events/{slug}:
+    get:
+      tags: [liveops]
+      operationId: getEventsSlug
+      summary: One event with the caller's quest progress.
+      description: >-
+        `skinId` names the in-game venue skin (for example `london_2026` on the Conference
+        Center). `streamUrl` is a link-out to the official stream; open it in the browser, never
+        embed it; null until the organiser publishes one. Trivia answers are never returned.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The event
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEventDetails' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{slug}/progress:
+    post:
+      tags: [liveops]
+      operationId: postEventsSlugProgress
+      summary: Advance the event quest chain with a proof.
+      description: >-
+        Steps run in order (`booths`, `trivia`, `nods` for Breakpoint 2026); a later step answers
+        `EVENT_STEP_INVALID` (`reason: step_locked`) until the earlier ones are complete. For
+        `booths` and `nods`, `proof.id` is the interaction id from the quest set; each id counts
+        once and the server only checks that the id belongs to that step. It cannot prove the
+        player stood there. For `trivia`, `proof.id` is the question id and `proof.answer` the
+        choice id; it is checked against a server-only key and a question is answered once, right
+        or wrong (`reason: wrong_answer` / `already_answered`). Only inside the event window.
+        Idempotent: a proof already counted returns the progress with `accepted: false`.
+        Completing the chain pays Cash (ledger reason `event_reward`) and grants the off-chain
+        cosmetic once (`justCompleted: true` on that call). Rate limited per player (burst 8,
+        then 1 call per 2 s).
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step, proof]
+              properties:
+                step: { type: string, example: booths }
+                proof:
+                  type: object
+                  required: [id]
+                  properties:
+                    id: { type: string, example: bp26.booth_1 }
+                    answer: { type: string, example: a }
+      responses:
+        '200':
+          description: Progress after this proof
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventProgressResult' }
+        '400':
+          description: Unknown step or id, step still locked, or a wrong or repeated trivia answer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_STEP_INVALID,
+                      message: 'That quest step or proof is not valid for this event.',
+                      details: { reason: step_locked, step: nods },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The event is not live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_NOT_LIVE,
+                      message: 'This event is not live; its quests only run inside its window.',
+                      details: { slug: breakpoint-2026, status: upcoming },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /events/{slug}/checkin:
+    post:
+      tags: [liveops]
+      operationId: postEventsSlugCheckin
+      summary: Opt-in IRL check-in at the real venue (Breakpoint 2026).
+      description: >-
+        Send the phone's position once. The server compares it with the venue geofence (centre and
+        radius in `calendar_events.json`, about 350 m around Olympia London) and discards it:
+        coordinates are never stored, logged or echoed; only the fact of the check-in is kept.
+        Only during the event window. Rejected with `CHECKIN_REJECTED` when `isMock` is true
+        (`reason: mock_location`), `accuracyM` is above 150 (`poor_accuracy`), the account was
+        created at or after the event start (`account_too_new`), the position is outside the
+        geofence (`outside_geofence`) or the event has no geofence (`not_available`). The first
+        accepted check-in per player per event pays a one-time reward: Cash (ledger reason
+        `event_irl_bonus`, default 10000, env `EVENT_IRL_BONUS_CENTS`) and the off-chain
+        cosmetics `irl_badge_breakpoint_2026` and `lanyard_breakpoint_2026_gold`. A repeat call
+        returns the existing check-in with `firstCheckin: false` and pays nothing. A new check-in
+        is hidden from the attendee board until the player opts in. At most 3 attempts per player
+        per hour (`429`). The server cannot prove the phone is honest; see
+        `docs/PRIVACY_IRL_CHECKIN.md`.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng, accuracyM, isMock]
+              properties:
+                lat: { type: number, minimum: -90, maximum: 90 }
+                lng: { type: number, minimum: -180, maximum: 180 }
+                accuracyM:
+                  {
+                    type: number,
+                    minimum: 0,
+                    description: 'Horizontal accuracy radius in metres from the OS.',
+                  }
+                isMock:
+                  { type: boolean, description: 'The OS mock-location flag. true is rejected.' }
+      responses:
+        '200':
+          description: Checked in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCheckinResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The event is not live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_NOT_LIVE,
+                      message: 'This event is not live; its quests only run inside its window.',
+                      details: { slug: breakpoint-2026, status: upcoming },
+                    },
+                }
+        '422':
+          description: The check-in was not accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHECKIN_REJECTED,
+                      message: 'The IRL check-in was not accepted.',
+                      details: { reason: outside_geofence },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /events/{slug}/checkin/visibility:
+    put:
+      tags: [liveops]
+      operationId: putEventsSlugCheckinVisibility
+      summary: Appear on, or leave, the IRL attendee board.
+      description: >-
+        Default is hidden. Needs a check-in (`404` otherwise). Turning visibility on tells the
+        city (`irl_checkin`, alias only; never to a player who blocked the attendee or was blocked by them, and only while the event is live), at most once an hour per player.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visible]
+              properties:
+                visible: { type: boolean }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, visible]
+                properties:
+                  slug: { type: string }
+                  visible: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{slug}/irl:
+    get:
+      tags: [liveops]
+      operationId: getEventsSlugIrl
+      summary: Players who checked in at the venue and chose to be listed.
+      description: >-
+        Newest first, keyset paginated with `next`. Only players who opted in; anyone you blocked
+        or who blocked you is left out. No location of any kind, and no user id.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of attendees
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/IrlAttendee' }
+                  next: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/events/{slug}:
+    put:
+      tags: [admin]
+      operationId: putAdminEventsSlug
+      summary: Correct an event's dates, stream link or wording (admin only).
+      description: >-
+        Admin wallets only (`ADMIN_WALLETS`). Send any of the fields; `streamUrl` is `https://` or
+        null. Once edited, the calendar file stops overwriting the event.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+                city: { type: string }
+                realVenue: { type: string }
+                streamUrl: { type: [string, 'null'] }
+                sourceUrl: { type: string }
+      responses:
+        '200':
+          description: The updated event
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /push/register:
     post:
       tags: [liveops]
       operationId: postPushRegister
-      summary: Register a push token. Behind PUSH_ENABLED.
+      summary: Register a push token for the caller.
+      description: >-
+        Android and web devices send `fcmToken`; iOS sends `apnsToken`. A token belongs to
+        exactly one account: registering a token that another account holds moves it to the
+        caller in the same transaction, so the previous account can no longer receive pushes on
+        this device. Call it on every sign-in, and call `DELETE` on sign-out.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3796,11 +4697,85 @@ paths:
           application/json:
             schema:
               type: object
-              required: [token]
+              required: [platform]
               properties:
-                token: { type: string }
+                platform: { type: string, enum: [ios, android, web] }
+                fcmToken: { type: string, nullable: true }
+                apnsToken: { type: string, nullable: true }
+                enabled: { type: boolean }
       responses:
-        '204': { description: Registered }
+        '201':
+          description: The stored device row
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [liveops]
+      operationId: deletePushRegister
+      summary: Unregister a push token for the caller.
+      description: >-
+        Removes `fcmToken` from the caller's devices only. A token that belongs to someone else,
+        or that does not exist, is left alone and the reply is the same `204`, so a token cannot
+        be probed or deleted by guessing it. Call it on sign-out so the account stops receiving
+        pushes on this phone.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcmToken]
+              properties:
+                fcmToken: { type: string, minLength: 1, maxLength: 4096 }
+      responses:
+        '204': { description: Removed (or nothing to remove) }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /push/prefs:
+    get:
+      tags: [liveops]
+      operationId: getPushPrefs
+      summary: Quiet hours and per-type push opt-outs.
+      description: >-
+        Defaults when never set: quiet hours on, 22:00 to 08:00 at `tzOffsetMin` 0 (UTC). The
+        client should PUT its own offset when the player grants the push permission. Push types:
+        `streak_ending`, `daily_clue`, `liquidated`, `home_visit`, `event_starting`. A player
+        receives at most 4 pushes per UTC day. Delivery is off until the server has Firebase
+        credentials (docs/PUSH.md).
+      x-phase: 5
+      responses:
+        '200':
+          description: Preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushPrefs' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      tags: [liveops]
+      operationId: putPushPrefs
+      summary: Replace the push preferences.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushPrefs' }
+      responses:
+        '200':
+          description: Stored preferences
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushPrefs' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /admin/moderation/queue:
     get:
@@ -3949,6 +4924,560 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /casino/state:
+    get:
+      tags: [casino]
+      operationId: getCasinoState
+      summary: Rug Room state, caps and paytables.
+      description: >-
+        Everything the UI needs before a bet: whether the caller confirmed 18+, the self-exclusion
+        date, the daily stake and net-loss caps with what is left today (UTC day), the session
+        length and the paytables with their RTP. Readable by a player who has not confirmed 18+
+        so the client can show the age gate; nothing is staked. Play money only: Cash cannot be
+        cashed out anywhere.
+      x-phase: 4
+      responses:
+        '200':
+          description: State
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoState' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /casino/slots/spin:
+    post:
+      tags: [casino]
+      operationId: postCasinoSlotsSpin
+      summary: Spin the slots.
+      description: >-
+        Three reels (rocket, diamond_hands, ape, laser_eyes, rug, wild). Debits the stake and
+        pays any win in one transaction (ledger `casino_stake`, `casino_win`). The outcome comes
+        from a server seed committed in `seedHash` and revealed in `seed` once the round settles;
+        the client sends no outcome, seed or multiplier. RTP about 95%. Refused with `AGE_REQUIRED`
+        unless 18+ is confirmed, `SELF_EXCLUDED`, `STAKE_CAP_REACHED`, `LOSS_CAP_REACHED`.
+        Idempotent: a replayed key returns the same round and charges once.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stakeCents]
+              properties:
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+      responses:
+        '201':
+          description: The settled round
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/crash/bet:
+    post:
+      tags: [casino]
+      operationId: postCasinoCrashBet
+      summary: Place a crash ("moon or rug") bet.
+      description: >-
+        The multiplier climbs along `e^(growthPerSecond * t)` from the round's start until it
+        hits a crash point the server drew when the bet was placed (P(crash >= m) = 0.95 / m,
+        capped at `maxMultiplier`). With `autoCashout` the round settles at once (win if the
+        target is at or below the crash point) and the client animates the result. Without it the
+        round is `open`: the answer carries `params.startedAtMs` and `params.growthPerSecond` for
+        the animation but never the crash point or the seed, and the player cashes out with
+        `POST /casino/crash/cashout`. One open crash round per player (`ROUND_IN_PROGRESS`); a
+        round whose crash time has passed is closed as a loss by the next bet.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stakeCents]
+              properties:
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+                autoCashout:
+                  type: number
+                  minimum: 1.01
+                  maximum: 100
+                  description: Target multiplier with at most 2 decimals.
+      responses:
+        '201':
+          description: The round (`settled` with an auto-cashout, else `open`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '409':
+          description: A crash round is already open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: ROUND_IN_PROGRESS,
+                      message: 'Finish your open crash round before starting another.',
+                      details: {},
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/crash/cashout:
+    post:
+      tags: [casino]
+      operationId: postCasinoCrashCashout
+      summary: Cash out of an open crash round.
+      description: >-
+        Decided by the server clock only: if the time since the round started has reached the
+        crash point the round is lost (`200`, payout 0, `outcome.crashed: true`, the crash point
+        and seed revealed); otherwise it pays the server's multiplier at that instant. Owner only
+        (someone else's round is `404`). A round that already settled answers `409 ROUND_SETTLED`
+        and pays nothing. Still allowed while self-excluded.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [roundId]
+              properties:
+                roundId: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The settled round
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The round is already settled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: ROUND_SETTLED,
+                      message: 'This round is already settled.',
+                      details: { roundId: '0192e1f0-0000-7000-8000-000000000000' },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/coinflip/bet:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipBet
+      summary: Flip a coin against the house.
+      description: >-
+        Call heads or tails. A win pays 1.9x the stake (RTP 95%), a loss pays nothing. Same
+        rules, gates and commit-reveal as the slots.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [stakeCents, side]
+              properties:
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+                side: { type: string, enum: [heads, tails] }
+      responses:
+        '201':
+          description: The settled round
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoBetResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/coinflip/challenges:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallenges
+      summary: Challenge a player to a head-to-head coinflip.
+      description: >-
+        The challenger's stake is escrowed now (ledger `casino_stake`). The challenged player has
+        120 seconds to accept; after that the stake is refunded (`casino_refund`). The winner is
+        paid the pot minus a 5% house cut. The coin comes from a seed committed in `seedHash` at
+        creation. At most 5 open challenges per player. Same gates as any stake.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [opponentUserId, stakeCents, side]
+              properties:
+                opponentUserId: { type: string, format: uuid }
+                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
+                side: { type: string, enum: [heads, tails], description: The challenger's side. }
+      responses:
+        '201':
+          description: The open challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+    get:
+      tags: [casino]
+      operationId: getCasinoCoinflipChallenges
+      summary: My challenges, incoming and outgoing.
+      description: >-
+        Newest first, last 50. Only challenges the caller takes part in are listed. Expired ones
+        are refunded before the list is built. The client polls this while in the Rug Room to see
+        incoming challenges.
+      x-phase: 4
+      responses:
+        '200':
+          description: Challenges
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [challenges]
+                    properties:
+                      challenges:
+                        type: array
+                        items: { $ref: '#/components/schemas/CasinoChallenge' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /casino/coinflip/challenges/{id}/accept:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallengesIdAccept
+      summary: Accept a challenge (the challenged player only).
+      description: >-
+        Debits the opponent's stake, flips the coin from the committed seed, pays the winner the
+        pot minus 5% (ledger `casino_win`) and writes a `casino_rounds` row for each player. A
+        challenge older than 120 seconds is refunded and answers `410 CHALLENGE_EXPIRED`. Someone
+        who is not a participant gets `404`; the challenger gets `403`. The opponent must pass the
+        same gates as for any stake.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The settled challenge and the caller's round
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoChallengeResult'
+                  - type: object
+                    required: [round]
+                    properties:
+                      round: { $ref: '#/components/schemas/CasinoRound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '50', need: '500' },
+                    },
+                }
+        '403': { $ref: '#/components/responses/CasinoRefused' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The challenge is no longer open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHALLENGE_NOT_OPEN,
+                      message: 'This challenge is no longer open.',
+                      details:
+                        { challengeId: '0192e1f0-0000-7000-8000-000000000000', status: settled },
+                    },
+                }
+        '410':
+          description: The challenge expired and the stake was refunded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHALLENGE_EXPIRED,
+                      message: 'This challenge expired; the stake was refunded.',
+                      details: { challengeId: '0192e1f0-0000-7000-8000-000000000000' },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /casino/coinflip/challenges/{id}/decline:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallengesIdDecline
+      summary: Decline a challenge (the challenged player only).
+      description: Refunds the challenger's escrowed stake (ledger `casino_refund`).
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The closed challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The challenge is no longer open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /casino/coinflip/challenges/{id}/cancel:
+    post:
+      tags: [casino]
+      operationId: postCasinoCoinflipChallengesIdCancel
+      summary: Cancel my open challenge (the challenger only).
+      description: Refunds the escrowed stake (ledger `casino_refund`).
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The closed challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The challenge is no longer open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /casino/rounds:
+    get:
+      tags: [casino]
+      operationId: getCasinoRounds
+      summary: My round log (auditable).
+      description: >-
+        The caller's own rounds, newest first. `?mine` is accepted and implied: other players'
+        rounds cannot be listed. `seedHash` is published when a round opens and `seed` is
+        revealed once it settles; recompute `SHA-256(seed)` and the outcome as described in
+        `docs/CASINO.md`. The seed of an open round is never returned.
+      x-phase: 4
+      parameters:
+        - name: mine
+          in: query
+          required: false
+          schema: { type: string, enum: ['true', '1', ''] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: before
+          in: query
+          required: false
+          description: Return rounds created before this ISO time (the last row's `createdAt`).
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Rounds
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [rounds]
+                    properties:
+                      rounds:
+                        type: array
+                        items: { $ref: '#/components/schemas/CasinoRound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /casino/rounds/{id}:
+    get:
+      tags: [casino]
+      operationId: getCasinoRoundsId
+      summary: One of my rounds.
+      description: Owner only. Someone else's round answers `404`, the same as no round.
+      x-phase: 4
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: The round
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [round]
+                    properties:
+                      round: { $ref: '#/components/schemas/CasinoRound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /casino/self-exclude:
+    post:
+      tags: [casino]
+      operationId: postCasinoSelfExclude
+      summary: Exclude myself from the casino for N days.
+      description: >-
+        New stakes are refused with `SELF_EXCLUDED` until the returned date. It can be extended
+        by calling again with more days but never shortened or lifted early. An open crash round
+        can still be cashed out and a pending challenge refunded. `days` is 1 to 365.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [days]
+              properties:
+                days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '200':
+          description: The exclusion
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/CasinoMeta'
+                  - type: object
+                    required: [selfExcludedUntil]
+                    properties:
+                      selfExcludedUntil: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -4040,6 +5569,65 @@ components:
                   details: { 'field': 'ageConfirmed' },
                 },
             }
+    CasinoRefused:
+      description: >-
+        The casino refused the stake: `AGE_REQUIRED` (18+ not confirmed), `SELF_EXCLUDED`,
+        `STAKE_CAP_REACHED` or `LOSS_CAP_REACHED` (daily caps, UTC day). `details` carries the
+        cap or the exclusion date.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          examples:
+            age:
+              value:
+                {
+                  error:
+                    {
+                      code: AGE_REQUIRED,
+                      message: 'The Rug Room is 18+. Confirm your age to play.',
+                      details: {},
+                    },
+                }
+            excluded:
+              value:
+                {
+                  error:
+                    {
+                      code: SELF_EXCLUDED,
+                      message: 'You have excluded yourself from the casino until the date shown.',
+                      details: { until: '2026-11-01T12:00:00.000Z' },
+                    },
+                }
+            stakeCap:
+              value:
+                {
+                  error:
+                    {
+                      code: STAKE_CAP_REACHED,
+                      message: 'This stake would pass your daily casino stake cap. Try again tomorrow (UTC).',
+                      details:
+                        {
+                          capCents: 50000,
+                          stakedCents: 49800,
+                          resetsAt: '2026-10-25T00:00:00.000Z',
+                        },
+                    },
+                }
+            lossCap:
+              value:
+                {
+                  error:
+                    {
+                      code: LOSS_CAP_REACHED,
+                      message: 'This stake would pass your daily casino net-loss cap. Try again tomorrow (UTC).',
+                      details:
+                        {
+                          capCents: 25000,
+                          netLossCents: 24900,
+                          resetsAt: '2026-10-25T00:00:00.000Z',
+                        },
+                    },
+                }
     RateLimited:
       description: Rate limit exceeded
       headers:
@@ -4463,6 +6051,16 @@ components:
       properties:
         version: { type: string }
         minClientVersion: { type: string }
+        flags:
+          type: object
+          description: Remote switches the client reads without a release.
+          properties:
+            wireV3Kinds:
+              type: boolean
+              description: >-
+                When true the client sends the v3 vehicle kinds (`sedan`, `taxi`, `police`,
+                `pickup`, `van`, `bike`) instead of `compact` / `moped`. Default false; the
+                server sets it with `WIRE_V3_KINDS`.
         degraded:
           type: array
           description: |
@@ -4517,6 +6115,156 @@ components:
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
         look: { $ref: '#/components/schemas/Look' }
         netWorthCents: { type: integer }
+    FactoryTemplateId:
+      type: string
+      enum:
+        [
+          rf_frog,
+          rf_dog,
+          rf_cat,
+          rf_rocket,
+          rf_robot,
+          rf_skull,
+          rf_diamond,
+          rf_banana,
+          rf_ghost,
+          rf_chad,
+          rf_clown,
+          rf_crown,
+        ]
+    FactoryCoin:
+      type: object
+      required:
+        [
+          coinId,
+          ticker,
+          name,
+          templateId,
+          stage,
+          priceMicros,
+          mcapCents,
+          vol5mCents,
+          change5mBps,
+          holders,
+          launchedAt,
+          liquidityCents,
+          devAllocationBps,
+          creator,
+          isMine,
+          mooned,
+          rugFlagged,
+          creatorFeesCents,
+        ]
+      properties:
+        coinId: { type: string, format: uuid }
+        ticker: { type: string }
+        name: { type: string }
+        templateId: { $ref: '#/components/schemas/FactoryTemplateId' }
+        stage: { type: string, enum: [new, final, graduated, dead] }
+        priceMicros: { type: string }
+        mcapCents: { type: string }
+        vol5mCents: { type: string }
+        change5mBps: { type: integer }
+        holders: { type: integer, description: Players holding units, counted from positions. }
+        launchedAt: { type: string, format: date-time }
+        liquidityCents: { type: string }
+        devAllocationBps: { type: integer }
+        creator:
+          type: object
+          required: [userId, alias]
+          properties:
+            userId: { type: string, format: uuid }
+            alias: { type: string }
+        isMine: { type: boolean }
+        mooned:
+          type: boolean
+          description: Price reached 3x the launch price at some trade, or is there now.
+        rugFlagged:
+          type: boolean
+          description: The creator dumped on holders and was flagged (the Sleuth posted).
+        creatorFeesCents:
+          type: string
+          nullable: true
+          description: Creator fees earned so far; null unless the caller is the creator.
+    FactoryCoinDetail:
+      allOf:
+        - $ref: '#/components/schemas/FactoryCoin'
+        - type: object
+          required: [candles1m, topHolders, riskHint]
+          properties:
+            candles1m:
+              type: array
+              items:
+                type: object
+                required: [at, priceMicros]
+                properties:
+                  at: { type: integer, description: Epoch ms. }
+                  priceMicros: { type: string }
+            topHolders:
+              type: array
+              items:
+                type: object
+                required: [alias, units]
+                properties:
+                  alias: { type: string }
+                  units: { type: string }
+            riskHint:
+              type: object
+              required: [level]
+              properties:
+                level: { type: string, enum: [low, hidden] }
+                reason: { type: string }
+    FactoryConfig:
+      type: object
+      required:
+        [
+          launchFeeCents,
+          minLiquidityCents,
+          maxLiquidityCents,
+          maxDevAllocationBps,
+          dailyLaunchCap,
+          cooldownSec,
+          name,
+          ticker,
+          templates,
+          arcOddsPct,
+          moonMultipleBps,
+          creatorFeeShareBps,
+          rug,
+        ]
+      properties:
+        launchFeeCents: { type: integer }
+        minLiquidityCents: { type: integer }
+        maxLiquidityCents: { type: integer }
+        maxDevAllocationBps: { type: integer }
+        dailyLaunchCap: { type: integer }
+        cooldownSec: { type: integer }
+        name:
+          type: object
+          properties: { min: { type: integer }, max: { type: integer } }
+        ticker:
+          type: object
+          properties: { min: { type: integer }, max: { type: integer } }
+        templates:
+          type: array
+          items: { $ref: '#/components/schemas/FactoryTemplateId' }
+        arcOddsPct:
+          type: object
+          additionalProperties: { type: number }
+        moonMultipleBps: { type: integer }
+        creatorFeeShareBps: { type: integer }
+        rug:
+          type: object
+          properties: { sellBps: { type: integer }, windowMin: { type: integer } }
+    FactoryMe:
+      type: object
+      required: [heat, heatLevel, launchesToday, dailyLaunchCap, nextLaunchAt]
+      properties:
+        heat: { type: number }
+        heatLevel: { type: string, enum: [cool, warm, hot, wanted] }
+        launchesToday: { type: integer }
+        dailyLaunchCap: { type: integer }
+        nextLaunchAt: { type: string, format: date-time, nullable: true }
     Coin:
       type: object
       required:
@@ -4689,6 +6437,17 @@ components:
         alias: { type: string }
         text: { type: string, maxLength: 280 }
         at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [player, sleuth]
+          description: '`sleuth` is an NPC exposé on a rugged Factory coin (author "The Sleuth").'
+        meta:
+          type: object
+          nullable: true
+          description: >-
+            Sleuth posts only: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat,
+            deepLink}`; `deepLink` is `venue:launchpad_tower`.
+          additionalProperties: true
     Business:
       type: object
       required:
@@ -4855,6 +6614,291 @@ components:
             d: { type: number }
             h: { type: number }
         modelKey: { type: string, description: 'Frontend asset key.' }
+    ChestRewards:
+      type: object
+      required: [cashCents, cosmetic]
+      properties:
+        cashCents: { type: integer }
+        cosmetic:
+          nullable: true
+          description: A cosmetic granted on streak day 7, 14 and 30; null otherwise or when already owned.
+          type: object
+          required: [itemKey, name]
+          properties:
+            itemKey: { type: string }
+            name: { type: string }
+    DailyStatus:
+      type: object
+      required: [streakDay, claimedToday, nextResetAt, freezes, maxFreezes, freezePriceCents, chest]
+      properties:
+        streakDay: { type: integer }
+        claimedToday: { type: boolean }
+        nextResetAt: { type: string, format: date-time }
+        freezes: { type: integer }
+        maxFreezes: { type: integer }
+        freezePriceCents: { type: integer }
+        chest:
+          type: object
+          required: [day, rewards]
+          properties:
+            day: { type: integer }
+            rewards: { $ref: '#/components/schemas/ChestRewards' }
+    DailyClaim:
+      allOf:
+        - $ref: '#/components/schemas/DailyStatus'
+        - type: object
+          required: [alreadyClaimed, claimed, freezesUsed, reset]
+          properties:
+            alreadyClaimed: { type: boolean }
+            claimed:
+              type: object
+              required: [day, rewards]
+              properties:
+                day: { type: integer }
+                rewards: { $ref: '#/components/schemas/ChestRewards' }
+            freezesUsed: { type: integer }
+            reset: { type: boolean }
+    QuestReward:
+      type: object
+      required: [cashCents, seasonXp]
+      properties:
+        cashCents: { type: integer }
+        seasonXp: { type: integer }
+    Quest:
+      type: object
+      required: [id, title, verb, target, progress, completed, claimed, reward]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        verb:
+          type: string
+          enum:
+            [
+              shift_complete,
+              perp_open,
+              perp_close,
+              prediction_place,
+              alpha_call,
+              paid_call,
+              tip_send,
+              home_visit,
+            ]
+        target: { type: integer }
+        progress: { type: integer }
+        completed: { type: boolean }
+        claimed: { type: boolean }
+        reward: { $ref: '#/components/schemas/QuestReward' }
+        deepLink: { type: string, nullable: true, description: 'e.g. ctlife://jobs' }
+        step:
+          { type: integer, description: 'Weekly chain position, 1 to 5. Absent for daily quests.' }
+    QuestsResponse:
+      type: object
+      required: [daily, weekly]
+      properties:
+        daily:
+          type: object
+          required: [date, resetsAt, quests]
+          properties:
+            date: { type: string, format: date }
+            resetsAt: { type: string, format: date-time }
+            quests: { type: array, items: { $ref: '#/components/schemas/Quest' } }
+        weekly:
+          type: object
+          required: [week, resetsAt, quests]
+          properties:
+            week: { type: string, example: 2026-W43 }
+            resetsAt: { type: string, format: date-time }
+            quests: { type: array, items: { $ref: '#/components/schemas/Quest' } }
+    PushPrefs:
+      type: object
+      required: [quietEnabled, quietStartHour, quietEndHour, tzOffsetMin, disabledTypes]
+      properties:
+        quietEnabled: { type: boolean }
+        quietStartHour: { type: integer, minimum: 0, maximum: 23 }
+        quietEndHour: { type: integer, minimum: 0, maximum: 23 }
+        tzOffsetMin:
+          { type: integer, minimum: -840, maximum: 840, description: 'Minutes east of UTC.' }
+        disabledTypes:
+          type: array
+          items:
+            type: string
+            enum: [streak_ending, daily_clue, liquidated, home_visit, event_starting]
+    CasinoMeta:
+      type: object
+      required: [disclaimer, sessionMinutes, sessionReminder]
+      properties:
+        disclaimer:
+          type: string
+          enum: ['Play money. No cash value. 18+']
+          description: Show on every casino screen.
+        sessionMinutes:
+          type: integer
+          description: Minutes of continuous play (a break over 10 minutes ends a session).
+        sessionReminder:
+          type: boolean
+          description: True from 30 minutes of continuous play; show the take-a-break popup.
+    CasinoRound:
+      type: object
+      required:
+        [
+          roundId,
+          game,
+          status,
+          stakeCents,
+          payoutCents,
+          params,
+          outcome,
+          seedHash,
+          seed,
+          challengeId,
+          createdAt,
+          settledAt,
+        ]
+      properties:
+        roundId: { type: string, format: uuid }
+        game: { type: string, enum: [slots, crash, coinflip, coinflip_h2h] }
+        status: { type: string, enum: [open, settled] }
+        stakeCents: { type: integer }
+        payoutCents: { type: integer, nullable: true, description: Null while open. }
+        params:
+          type: object
+          description: >-
+            Public inputs. Crash: `startedAtMs` (server epoch ms) and `growthPerSecond` for the
+            open round, `autoCashout` when set. Coinflip: `side`.
+          additionalProperties: true
+        outcome:
+          type: object
+          nullable: true
+          description: >-
+            Null while open. Slots `{reels: [s, s, s], multiplier, winSymbol, jackpot}`; crash
+            `{crashPoint, cashedOutAt, crashed, autoCashout?}`; coinflip `{side, result, won}`;
+            head-to-head `{result, won, potCents, houseCutCents, winnerId, loserId}`.
+          additionalProperties: true
+        seedHash:
+          { type: string, description: 'SHA-256 of `seed`, published when the round opens.' }
+        seed: { type: string, nullable: true, description: Revealed once settled; null while open. }
+        challengeId: { type: string, format: uuid, nullable: true }
+        createdAt: { type: string, format: date-time }
+        settledAt: { type: string, format: date-time, nullable: true }
+    CasinoBetResult:
+      allOf:
+        - $ref: '#/components/schemas/CasinoMeta'
+        - type: object
+          required: [round, cashCents]
+          properties:
+            round: { $ref: '#/components/schemas/CasinoRound' }
+            cashCents: { type: integer, description: Cash after this action. }
+    CasinoChallenge:
+      type: object
+      required:
+        [
+          challengeId,
+          role,
+          challengerId,
+          challengerAlias,
+          opponentId,
+          opponentAlias,
+          stakeCents,
+          challengerSide,
+          status,
+          seedHash,
+          seed,
+          result,
+          winnerId,
+          potCents,
+          houseCutCents,
+          payoutCents,
+          createdAt,
+          expiresAt,
+          settledAt,
+        ]
+      properties:
+        challengeId: { type: string, format: uuid }
+        role: { type: string, enum: [challenger, opponent], description: The caller's role. }
+        challengerId: { type: string, format: uuid }
+        challengerAlias: { type: string, nullable: true }
+        opponentId: { type: string, format: uuid }
+        opponentAlias: { type: string, nullable: true }
+        stakeCents: { type: integer, description: Each player's stake. }
+        challengerSide: { type: string, enum: [heads, tails] }
+        status: { type: string, enum: [open, settled, expired, cancelled, declined] }
+        seedHash: { type: string }
+        seed: { type: string, nullable: true, description: Revealed once settled. }
+        result: { type: string, enum: [heads, tails], nullable: true }
+        winnerId: { type: string, format: uuid, nullable: true }
+        potCents: { type: integer, nullable: true }
+        houseCutCents: { type: integer, nullable: true, description: 5% of the pot, floored. }
+        payoutCents: { type: integer, nullable: true, description: Pot minus the house cut. }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time, description: 120 seconds after creation. }
+        settledAt: { type: string, format: date-time, nullable: true }
+    CasinoChallengeResult:
+      allOf:
+        - $ref: '#/components/schemas/CasinoMeta'
+        - type: object
+          required: [challenge, cashCents]
+          properties:
+            challenge: { $ref: '#/components/schemas/CasinoChallenge' }
+            cashCents: { type: integer }
+    CasinoState:
+      allOf:
+        - $ref: '#/components/schemas/CasinoMeta'
+        - type: object
+          required: [ageConfirmed, selfExcludedUntil, limits, today, games]
+          properties:
+            ageConfirmed: { type: boolean }
+            selfExcludedUntil: { type: string, format: date-time, nullable: true }
+            limits:
+              type: object
+              required: [minStakeCents, maxStakeCents, dailyStakeCapCents, dailyNetLossCapCents]
+              properties:
+                minStakeCents: { type: integer }
+                maxStakeCents: { type: integer }
+                dailyStakeCapCents: { type: integer }
+                dailyNetLossCapCents: { type: integer }
+            today:
+              type: object
+              required:
+                [stakedCents, netLossCents, stakeRemainingCents, lossRemainingCents, resetsAt]
+              properties:
+                stakedCents: { type: integer }
+                netLossCents: { type: integer }
+                stakeRemainingCents: { type: integer }
+                lossRemainingCents: { type: integer }
+                resetsAt: { type: string, format: date-time }
+            games:
+              type: object
+              required: [slots, crash, coinflip]
+              properties:
+                slots:
+                  type: object
+                  required: [reelWeights, paytable, rtp, hitRate]
+                  properties:
+                    reelWeights: { type: object, additionalProperties: { type: integer } }
+                    paytable:
+                      type: object
+                      properties:
+                        three: { type: object, additionalProperties: { type: number } }
+                        two: { type: object, additionalProperties: { type: number } }
+                    rtp: { type: number }
+                    hitRate: { type: number }
+                crash:
+                  type: object
+                  required: [growthPerSecond, maxMultiplier, minAutoCashout, rtp]
+                  properties:
+                    growthPerSecond: { type: number }
+                    maxMultiplier: { type: number }
+                    minAutoCashout: { type: number }
+                    rtp: { type: number }
+                coinflip:
+                  type: object
+                  required: [payoutMultiplier, rtp, h2hHouseCutBps, challengeTtlSeconds]
+                  properties:
+                    payoutMultiplier: { type: number }
+                    rtp: { type: number }
+                    h2hHouseCutBps: { type: integer }
+                    challengeTtlSeconds: { type: integer }
     ShopOrder:
       type: object
       required:
@@ -4894,6 +6938,126 @@ components:
         etaAt: { type: string, format: date-time }
         deliveredAt: { type: [string, 'null'], format: date-time }
         cancelledAt: { type: [string, 'null'], format: date-time }
+    SeasonReward:
+      type: object
+      description: Exactly one of the three.
+      properties:
+        cashCents: { type: integer }
+        cosmeticId: { type: string, description: 'A reward_* cosmetic id.' }
+        furnitureItemId: { type: string, description: A shop_items id. }
+    SeasonTier:
+      type: object
+      required: [tier, xpRequired, reward, status]
+      properties:
+        tier: { type: integer }
+        xpRequired: { type: integer }
+        reward: { $ref: '#/components/schemas/SeasonReward' }
+        status: { type: string, enum: [locked, claimable, claimed, pass_required] }
+    SeasonView:
+      type: object
+      required: [season, xp, tier, xpToNext, hasPass, tracks]
+      properties:
+        season:
+          type: object
+          required: [seasonId, name, startsAt, endsAt, xpPerTier]
+          properties:
+            seasonId: { type: string }
+            name: { type: string }
+            startsAt: { type: string, format: date-time }
+            endsAt: { type: string, format: date-time }
+            xpPerTier: { type: integer }
+        xp: { type: integer }
+        tier: { type: integer, description: Highest tier the XP reaches. }
+        xpToNext: { type: [integer, 'null'] }
+        hasPass: { type: boolean }
+        tracks:
+          type: object
+          required: [free, paid]
+          properties:
+            free: { type: array, items: { $ref: '#/components/schemas/SeasonTier' } }
+            paid: { type: array, items: { $ref: '#/components/schemas/SeasonTier' } }
+    SeasonClaim:
+      type: object
+      required: [seasonId, track, tier, reward, alreadyClaimed, xp]
+      properties:
+        seasonId: { type: string }
+        track: { type: string, enum: [free, paid] }
+        tier: { type: integer }
+        reward: { $ref: '#/components/schemas/SeasonReward' }
+        alreadyClaimed: { type: boolean }
+        xp: { type: integer }
+    NodsBook:
+      type: object
+      required: [total, collected, sets]
+      properties:
+        total: { type: integer }
+        collected: { type: integer }
+        sets:
+          type: array
+          items:
+            type: object
+            required: [setId, name, reward, total, collected, completed, rewardGranted, nods]
+            properties:
+              setId: { type: string }
+              name: { type: string }
+              reward:
+                type: object
+                properties:
+                  cosmeticId: { type: string }
+              total: { type: integer }
+              collected: { type: integer }
+              completed: { type: boolean }
+              rewardGranted: { type: boolean }
+              nods:
+                type: array
+                items:
+                  type: object
+                  required: [nodId, name, tier, found, collectedAt]
+                  properties:
+                    nodId: { type: string }
+                    name: { type: string }
+                    tier: { type: string, enum: [A, B, C] }
+                    found: { type: boolean }
+                    collectedAt: { type: [string, 'null'], format: date-time }
+    NodCollect:
+      type: object
+      required: [nodId, alreadyCollected, xp, set, setReward]
+      properties:
+        nodId: { type: string }
+        alreadyCollected: { type: boolean }
+        xp: { type: integer, description: Season XP awarded by this find. }
+        set:
+          type: object
+          required: [setId, collected, total, completed]
+          properties:
+            setId: { type: string }
+            collected: { type: integer }
+            total: { type: integer }
+            completed: { type: boolean }
+        setReward:
+          type: [object, 'null']
+          description: Set when this find filled the set and granted its cosmetic.
+          properties:
+            setId: { type: string }
+            cosmeticId: { type: string }
+    HunterRow:
+      type: object
+      required: [rank, userId, alias, count]
+      properties:
+        rank: { type: integer }
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        count: { type: integer }
+    NodsLeaderboard:
+      type: object
+      required: [total, top, me]
+      properties:
+        total: { type: integer }
+        top: { type: array, items: { $ref: '#/components/schemas/HunterRow' } }
+        me:
+          oneOf:
+            - { $ref: '#/components/schemas/HunterRow' }
+            - { type: 'null' }
     PlayerItem:
       type: object
       required:
@@ -5014,6 +7178,124 @@ components:
       properties:
         weekday: { type: integer, minimum: 0, maximum: 6 }
         bonus: { type: string }
+    CalendarEvent:
+      type: object
+      required:
+        [
+          slug,
+          title,
+          kind,
+          startsAt,
+          endsAt,
+          city,
+          realVenue,
+          ingameVenueId,
+          skinId,
+          streamUrl,
+          sourceUrl,
+          irlCheckin,
+          status,
+        ]
+      properties:
+        slug: { type: string, example: breakpoint-2026 }
+        title: { type: string }
+        kind: { type: string, enum: [conference, hackathon, meetup] }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        city: { type: string, example: London }
+        realVenue: { type: string, example: Olympia London }
+        ingameVenueId: { type: string, example: conference_hall }
+        skinId: { type: string, example: london_2026 }
+        streamUrl:
+          { type: [string, 'null'], description: Link-out to the official stream; never embed. }
+        sourceUrl: { type: string, description: The primary source for the dates. }
+        irlCheckin: { type: boolean, description: True when the opt-in IRL check-in is available. }
+        status: { type: string, enum: [upcoming, live, ended] }
+    EventStepProgress:
+      type: object
+      required: [step, title, kind, required, done, complete]
+      properties:
+        step: { type: string }
+        title: { type: string }
+        kind: { type: string, enum: [interaction, trivia] }
+        required: { type: integer }
+        done: { type: integer }
+        complete: { type: boolean }
+        questions:
+          type: array
+          description: Trivia steps only. Answers are never returned.
+          items:
+            type: object
+            required: [id, prompt, choices, answered]
+            properties:
+              id: { type: string }
+              prompt: { type: string }
+              answered: { type: boolean }
+              choices:
+                type: array
+                items:
+                  type: object
+                  required: [id, label]
+                  properties:
+                    id: { type: string }
+                    label: { type: string }
+    EventQuestProgress:
+      type: object
+      required: [steps, completed, reward]
+      properties:
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/EventStepProgress' }
+        completed: { type: boolean }
+        reward:
+          type: object
+          required: [cashCents, itemKey, claimedAt]
+          properties:
+            cashCents: { type: integer }
+            itemKey: { type: [string, 'null'], example: lanyard_breakpoint_2026 }
+            claimedAt: { type: [string, 'null'], format: date-time }
+    CalendarEventDetails:
+      allOf:
+        - $ref: '#/components/schemas/CalendarEvent'
+        - type: object
+          required: [quest]
+          properties:
+            quest: { $ref: '#/components/schemas/EventQuestProgress' }
+    EventProgressResult:
+      allOf:
+        - $ref: '#/components/schemas/EventQuestProgress'
+        - type: object
+          required: [slug, accepted, justCompleted]
+          properties:
+            slug: { type: string }
+            accepted: { type: boolean, description: False for a replayed or no-op proof. }
+            justCompleted:
+              { type: boolean, description: True on the call that completed the chain and paid. }
+    EventCheckinResult:
+      type: object
+      required: [slug, checkedIn, checkedInAt, visible, firstCheckin, reward]
+      properties:
+        slug: { type: string }
+        checkedIn: { type: boolean, enum: [true] }
+        checkedInAt: { type: string, format: date-time }
+        visible: { type: boolean }
+        firstCheckin: { type: boolean }
+        reward:
+          type: [object, 'null']
+          description: Paid by this call; null on a repeat.
+          required: [cashCents, itemKeys]
+          properties:
+            cashCents: { type: integer }
+            itemKeys: { type: array, items: { type: string } }
+    IrlAttendee:
+      type: object
+      required: [alias, look, tribeId, avatarId, checkedInAt]
+      properties:
+        alias: { type: string }
+        look: {}
+        tribeId: { type: [string, 'null'] }
+        avatarId: { type: [string, 'null'], description: The owned likeness avatar id, if any. }
+        checkedInAt: { type: string, format: date-time }
     ModerationItem:
       type: object
       required: [id, targetType, targetId, reasonId, createdAt]
