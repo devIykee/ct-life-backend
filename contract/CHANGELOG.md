@@ -7,7 +7,7 @@ Extends the event calendar entry below (same PR).
 - Added `PUT /events/{slug}/checkin/visibility {visible}` (default hidden; needs a check-in, else `404`) and `GET /events/{slug}/irl?limit=&cursor=` -> `{items: [{alias, look, tribeId, avatarId, checkedInAt}], next}`: opted-in attendees only, newest first, blocked users excluded both ways, no location and no user id.
 - Realtime `irl_checkin {slug, alias, at}` on the city room when a player turns visibility on (alias only; once an hour per player, 10 burst and 2/s per event). It is scoped, not a raw broadcast: the city room skips signed-out sessions and every player who blocked the attendee or was blocked by them, and it is sent only while the event is live and the attendee is visible.
 - `calendar_events.json` events gain optional `geofence {lat, lng, radiusM, source}` and `irlRewardItemKeys`. Breakpoint 2026: 51.49639, -0.20972, 350 m, coordinates from the Wikipedia article on Olympia London. `CalendarEvent` gains `irlCheckin` (true when a geofence exists). New error code `CHECKIN_REJECTED` (422).
-- Request bodies and coordinate fields are now redacted from API logs. Migration 086 adds `event_checkins(event_id, user_id, checked_in_at, visible)` and `events.geo_*` (the venue's geofence). What is stored and why: `docs/PRIVACY_IRL_CHECKIN.md`.
+- Request bodies and coordinate fields are now redacted from API logs. Migration 090 adds `event_checkins(event_id, user_id, checked_in_at, visible)` and `events.geo_*` (the venue's geofence). What is stored and why: `docs/PRIVACY_IRL_CHECKIN.md`.
 
 ## 2026-10-23 - Event calendar: Breakpoint 2026, event quest chain, lanyard
 

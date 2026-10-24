@@ -1,4 +1,4 @@
--- Migration: 086_event_irl_checkins
+-- Migration: 090_event_irl_checkins
 --
 -- Opt-in IRL check-in for real events (Breakpoint 2026). Privacy first: the
 -- server checks the phone's position against the venue geofence in memory and
