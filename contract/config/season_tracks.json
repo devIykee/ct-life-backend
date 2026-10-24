@@ -1,0 +1,201 @@
+{
+  "version": "0.1.0",
+  "_note": "Season Pass tracks (retention #4). cosmetics lists the reward-only items (never sold, never tradable, never NFTs) the API upserts into cosmetic_items. tier n unlocks at n * xpPerTier Season XP earned inside [startsAt, endsAt). Each tier has exactly one reward: cashCents (ledger reason season_reward), cosmeticId (a reward_* id from cosmetics) or furnitureItemId (a shop_items id from contract/ids/shop_items.json, delivered straight to player_items). The paid track needs a live season pass. nodXp is the Season XP for each nod found. Reward values and dates are placeholders to tune.",
+  "cosmetics": [
+    {
+      "cosmeticId": "reward_s1_gm_cap",
+      "name": "S1 GM Cap",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_s1_airdrop_tee",
+      "name": "S1 Airdrop Season Tee",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_s1_wave_emote",
+      "name": "S1 Wave Emote",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_s1_points_chain",
+      "name": "S1 Points Chain",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_s1_tge_hoodie",
+      "name": "S1 TGE Day Hoodie",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_s1_gold_visor",
+      "name": "S1 Gold Visor",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_s1_dance_emote",
+      "name": "S1 Victory Dance Emote",
+      "slot": "acc"
+    }
+  ],
+  "seasons": [
+    {
+      "seasonId": "s1_airdrop_season",
+      "name": "Airdrop Season",
+      "startsAt": "2026-10-19T00:00:00Z",
+      "endsAt": "2026-12-14T00:00:00Z",
+      "xpPerTier": 250,
+      "nodXp": 50,
+      "tracks": {
+        "free": [
+          {
+            "tier": 1,
+            "reward": {
+              "cashCents": 500
+            }
+          },
+          {
+            "tier": 2,
+            "reward": {
+              "cashCents": 750
+            }
+          },
+          {
+            "tier": 3,
+            "reward": {
+              "cosmeticId": "reward_s1_gm_cap"
+            }
+          },
+          {
+            "tier": 4,
+            "reward": {
+              "cashCents": 1000
+            }
+          },
+          {
+            "tier": 5,
+            "reward": {
+              "furnitureItemId": "plant_pothos"
+            }
+          },
+          {
+            "tier": 6,
+            "reward": {
+              "cashCents": 1500
+            }
+          },
+          {
+            "tier": 7,
+            "reward": {
+              "cosmeticId": "reward_s1_wave_emote"
+            }
+          },
+          {
+            "tier": 8,
+            "reward": {
+              "cashCents": 2000
+            }
+          },
+          {
+            "tier": 9,
+            "reward": {
+              "furnitureItemId": "poster_wagmi"
+            }
+          },
+          {
+            "tier": 10,
+            "reward": {
+              "cashCents": 2500
+            }
+          },
+          {
+            "tier": 11,
+            "reward": {
+              "cosmeticId": "reward_s1_airdrop_tee"
+            }
+          },
+          {
+            "tier": 12,
+            "reward": {
+              "cashCents": 5000
+            }
+          }
+        ],
+        "paid": [
+          {
+            "tier": 1,
+            "reward": {
+              "cashCents": 1000
+            }
+          },
+          {
+            "tier": 2,
+            "reward": {
+              "furnitureItemId": "lamp_floor"
+            }
+          },
+          {
+            "tier": 3,
+            "reward": {
+              "cashCents": 2000
+            }
+          },
+          {
+            "tier": 4,
+            "reward": {
+              "cosmeticId": "reward_s1_points_chain"
+            }
+          },
+          {
+            "tier": 5,
+            "reward": {
+              "furnitureItemId": "rug_round"
+            }
+          },
+          {
+            "tier": 6,
+            "reward": {
+              "cashCents": 3000
+            }
+          },
+          {
+            "tier": 7,
+            "reward": {
+              "cosmeticId": "reward_s1_gold_visor"
+            }
+          },
+          {
+            "tier": 8,
+            "reward": {
+              "furnitureItemId": "neon_sign_gm"
+            }
+          },
+          {
+            "tier": 9,
+            "reward": {
+              "cashCents": 5000
+            }
+          },
+          {
+            "tier": 10,
+            "reward": {
+              "cosmeticId": "reward_s1_dance_emote"
+            }
+          },
+          {
+            "tier": 11,
+            "reward": {
+              "furnitureItemId": "coffee_machine"
+            }
+          },
+          {
+            "tier": 12,
+            "reward": {
+              "cosmeticId": "reward_s1_tge_hoodie"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

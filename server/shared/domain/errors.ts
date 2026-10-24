@@ -180,6 +180,22 @@ export class FreezeLimitReachedError extends DomainError {
   }
 }
 
+export class PassRequiredError extends DomainError {
+  readonly code = 'PASS_REQUIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The paid track needs an active season pass.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class TierLockedError extends DomainError {
+  readonly code = 'TIER_LOCKED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Not enough Season XP for this tier yet.', details);
+    this.httpStatus = 409;
+  }
+}
+
 // Casino -------------------------------------------------------------------
 
 export class AgeRequiredError extends DomainError {
@@ -225,6 +241,17 @@ export class RoundSettledError extends DomainError {
   }
 }
 
+export class NodTooFarError extends DomainError {
+  readonly code = 'NOD_TOO_FAR';
+  constructor(details: Record<string, unknown> = {}) {
+    super(
+      "The server's last position for you is more than the collect radius from this nod.",
+      details,
+    );
+    this.httpStatus = 409;
+  }
+}
+
 export class QuestNotCompleteError extends DomainError {
   readonly code = 'QUEST_NOT_COMPLETE';
   constructor(details: Record<string, unknown> = {}) {
@@ -253,6 +280,14 @@ export class ChallengeNotOpenError extends DomainError {
   readonly code = 'CHALLENGE_NOT_OPEN';
   constructor(details: Record<string, unknown> = {}) {
     super('This challenge is no longer open.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class PositionUnknownError extends DomainError {
+  readonly code = 'POSITION_UNKNOWN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The server has no recent street position for the player.', details);
     this.httpStatus = 409;
   }
 }

@@ -256,6 +256,21 @@
       "code": "CHALLENGE_NOT_OPEN",
       "httpStatus": 409,
       "message": "This challenge is no longer open."
+    },
+    {
+      "code": "PASS_REQUIRED",
+      "httpStatus": 403,
+      "message": "The paid track needs an active season pass."
+    },
+    {
+      "code": "TIER_LOCKED",
+      "httpStatus": 409,
+      "message": "Not enough Season XP for this tier yet."
+    },
+    {
+      "code": "NOD_TOO_FAR",
+      "httpStatus": 409,
+      "message": "The server's last position for you is more than the collect radius from this nod."
     }
   ]
 }
