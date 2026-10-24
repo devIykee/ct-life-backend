@@ -140,10 +140,7 @@ export async function sendDm(
   const messageId = uuidv7();
   const createdAt = await runInTransaction(async (client) => {
     // B25: Check if recipient exists
-    const recipientCheck = await client.query(
-      `SELECT id FROM users WHERE id = $1`,
-      [toUserId],
-    );
+    const recipientCheck = await client.query(`SELECT id FROM users WHERE id = $1`, [toUserId]);
     if (recipientCheck.rowCount === 0) {
       throw new ValidationFailedError({ reason: 'recipient not found' });
     }
@@ -186,6 +183,10 @@ export interface FeedPost {
   readonly alias: string;
   readonly text: string;
   readonly createdAt: string;
+  /** 'player' for a normal post, 'sleuth' for an NPC exposé. */
+  readonly kind?: 'player' | 'sleuth';
+  /** Sleuth posts: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat, deepLink}`. */
+  readonly meta?: Record<string, unknown> | null;
 }
 
 /**
@@ -216,8 +217,12 @@ export async function listFeed(
       alias: string;
       text: string;
       created_at: Date;
+      kind: string | null;
+      meta: Record<string, unknown> | null;
     }>(
-      `SELECT p.post_id, p.user_id, COALESCE(ch.alias, u.wallet) AS alias, p.text, p.created_at
+      `SELECT p.post_id, p.user_id,
+              CASE WHEN p.kind = 'sleuth' THEN 'The Sleuth' ELSE COALESCE(ch.alias, u.wallet) END AS alias,
+              p.text, p.created_at, p.kind, p.meta
        FROM feed_posts p
        JOIN users u ON u.id = p.user_id
        LEFT JOIN characters ch ON ch.user_id = p.user_id
@@ -234,6 +239,8 @@ export async function listFeed(
     alias: row.alias,
     text: row.text,
     createdAt: row.created_at.toISOString(),
+    kind: row.kind === 'sleuth' ? 'sleuth' : 'player',
+    meta: row.kind === 'sleuth' ? row.meta : null,
   }));
 }
 

@@ -191,6 +191,26 @@
       "code": "UNIT_FULL",
       "httpStatus": 409,
       "message": "The unit is at capacity; remove a guest first."
+    },
+    {
+      "code": "NAME_NOT_ALLOWED",
+      "httpStatus": 400,
+      "message": "That coin name or ticker is not allowed."
+    },
+    {
+      "code": "TICKER_TAKEN",
+      "httpStatus": 409,
+      "message": "That ticker is already used by another coin."
+    },
+    {
+      "code": "LAUNCH_LIMIT_REACHED",
+      "httpStatus": 429,
+      "message": "You have reached today's coin launch limit."
+    },
+    {
+      "code": "LAUNCH_COOLDOWN",
+      "httpStatus": 429,
+      "message": "Wait before launching another coin."
     }
   ]
 }

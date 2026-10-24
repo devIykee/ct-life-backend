@@ -1765,6 +1765,202 @@ paths:
                   prizeCents: { type: integer }
               example: { correct: true, prizeCents: 5000 }
 
+  /factory/config:
+    get:
+      tags: [markets]
+      operationId: getFactoryConfig
+      summary: Rugpull Factory rules for the Launchpad Tower UI.
+      description: >-
+        Fee, liquidity range, dev allocation cap, daily cap, cooldown, the art template ids,
+        the arc odds the server uses (percent; informational, the arc of a coin is hidden)
+        and the rug rule. All numbers are Cash cents or basis points.
+      x-phase: 4
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryConfig' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /factory/me:
+    get:
+      tags: [markets]
+      operationId: getFactoryMe
+      summary: My heat and launch allowance.
+      description: >-
+        `heat` is 0..100 and halves every 24 hours; it is stored for the future police loop and
+        punishes nothing yet. `nextLaunchAt` is null when a launch is allowed now.
+      x-phase: 4
+      responses:
+        '200':
+          description: Caller state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /factory/coins:
+    post:
+      tags: [markets]
+      operationId: postFactoryCoins
+      summary: Launch a Rugpull Factory coin.
+      description: >-
+        Parody, game-Cash-only, server-simulated: no token, no chain, nothing withdrawable.
+        Debits the launch fee (ledger `factory_launch_fee`, a Cash sink) plus the liquidity
+        (`factory_liquidity`, locked in the coin) in one transaction and creates a coin flagged
+        `playerLaunched` with the caller as creator. The creator is credited `devAllocationBps`
+        of the units the liquidity buys at the launch price. The coin shows on the Pulse board
+        (market room `CoinState.playerLaunched`) and `evt_coin_launch` is broadcast. The hidden
+        arc is sampled by the server from its own odds (rug 25, slow bleed 40, sideways 20, moon
+        15) and is never accepted from or sent to the client; unknown body fields are a 400.
+        Name and ticker pass a character allow-list and a profanity, slur, link and brand
+        filter. Limits: 3 launches per rolling 24 hours and a 10 minute cooldown. A replay with
+        the same `Idempotency-Key` returns the same coin without charging again. Trade the coin
+        with `POST /market/trades`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, ticker, templateId, liquidityCents, devAllocationBps]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 24 }
+                ticker: { type: string, minLength: 2, maxLength: 6 }
+                templateId: { $ref: '#/components/schemas/FactoryTemplateId' }
+                liquidityCents: { type: integer, minimum: 1000, maximum: 100000 }
+                devAllocationBps: { type: integer, minimum: 0, maximum: 5000 }
+      responses:
+        '201':
+          description: The launched coin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryCoin' }
+        '400':
+          description: Validation failed, or the name or ticker is not allowed (`NAME_NOT_ALLOWED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NAME_NOT_ALLOWED,
+                      message: 'That coin name or ticker is not allowed.',
+                      details: { reason: 'name or ticker not allowed' },
+                    },
+                }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the fee plus liquidity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '5500' },
+                    },
+                }
+        '409':
+          description: The ticker is already used (`TICKER_TAKEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TICKER_TAKEN,
+                      message: 'That ticker is already used by another coin.',
+                      details: {},
+                    },
+                }
+        '429':
+          description: >-
+            `LAUNCH_COOLDOWN` (10 minutes between launches) or `LAUNCH_LIMIT_REACHED`
+            (3 per rolling 24 hours); `details.retryAfterMs` says how long to wait
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                cooldown:
+                  value:
+                    error:
+                      code: LAUNCH_COOLDOWN
+                      message: 'Wait before launching another coin.'
+                      details: { retryAfterMs: 412000 }
+                dailyCap:
+                  value:
+                    error:
+                      code: LAUNCH_LIMIT_REACHED
+                      message: "You have reached today's coin launch limit."
+                      details: { cap: 3, retryAfterMs: 3600000 }
+    get:
+      tags: [markets]
+      operationId: getFactoryCoins
+      summary: List Rugpull Factory coins.
+      description: >-
+        `view=trending` (default) is live coins by 5 minute volume, `new` the newest live coins,
+        `mine` all of the caller's launches, dead ones included. Up to `limit` (default 20, max 50).
+      x-phase: 4
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema: { type: string, enum: [trending, new, mine] }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50 }
+      responses:
+        '200':
+          description: Coins
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [coins]
+                properties:
+                  coins:
+                    type: array
+                    items: { $ref: '#/components/schemas/FactoryCoin' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /factory/coins/{coinId}:
+    get:
+      tags: [markets]
+      operationId: getFactoryCoinsCoinId
+      summary: One Rugpull Factory coin with its chart.
+      description: >-
+        The coin plus the market's `candles1m`, top holders and risk hint (the same data as
+        `GET /market/coins/{coinId}`). `creatorFeesCents` is filled only for the creator and is
+        null for everyone else. A house coin id is a 404 here.
+      x-phase: 4
+      parameters:
+        - name: coinId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Coin detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryCoinDetail' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /market/coins:
     get:
       tags: [markets]
@@ -4541,6 +4737,156 @@ components:
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
         look: { $ref: '#/components/schemas/Look' }
         netWorthCents: { type: integer }
+    FactoryTemplateId:
+      type: string
+      enum:
+        [
+          rf_frog,
+          rf_dog,
+          rf_cat,
+          rf_rocket,
+          rf_robot,
+          rf_skull,
+          rf_diamond,
+          rf_banana,
+          rf_ghost,
+          rf_chad,
+          rf_clown,
+          rf_crown,
+        ]
+    FactoryCoin:
+      type: object
+      required:
+        [
+          coinId,
+          ticker,
+          name,
+          templateId,
+          stage,
+          priceMicros,
+          mcapCents,
+          vol5mCents,
+          change5mBps,
+          holders,
+          launchedAt,
+          liquidityCents,
+          devAllocationBps,
+          creator,
+          isMine,
+          mooned,
+          rugFlagged,
+          creatorFeesCents,
+        ]
+      properties:
+        coinId: { type: string, format: uuid }
+        ticker: { type: string }
+        name: { type: string }
+        templateId: { $ref: '#/components/schemas/FactoryTemplateId' }
+        stage: { type: string, enum: [new, final, graduated, dead] }
+        priceMicros: { type: string }
+        mcapCents: { type: string }
+        vol5mCents: { type: string }
+        change5mBps: { type: integer }
+        holders: { type: integer, description: Players holding units, counted from positions. }
+        launchedAt: { type: string, format: date-time }
+        liquidityCents: { type: string }
+        devAllocationBps: { type: integer }
+        creator:
+          type: object
+          required: [userId, alias]
+          properties:
+            userId: { type: string, format: uuid }
+            alias: { type: string }
+        isMine: { type: boolean }
+        mooned:
+          type: boolean
+          description: Price reached 3x the launch price at some trade, or is there now.
+        rugFlagged:
+          type: boolean
+          description: The creator dumped on holders and was flagged (the Sleuth posted).
+        creatorFeesCents:
+          type: string
+          nullable: true
+          description: Creator fees earned so far; null unless the caller is the creator.
+    FactoryCoinDetail:
+      allOf:
+        - $ref: '#/components/schemas/FactoryCoin'
+        - type: object
+          required: [candles1m, topHolders, riskHint]
+          properties:
+            candles1m:
+              type: array
+              items:
+                type: object
+                required: [at, priceMicros]
+                properties:
+                  at: { type: integer, description: Epoch ms. }
+                  priceMicros: { type: string }
+            topHolders:
+              type: array
+              items:
+                type: object
+                required: [alias, units]
+                properties:
+                  alias: { type: string }
+                  units: { type: string }
+            riskHint:
+              type: object
+              required: [level]
+              properties:
+                level: { type: string, enum: [low, hidden] }
+                reason: { type: string }
+    FactoryConfig:
+      type: object
+      required:
+        [
+          launchFeeCents,
+          minLiquidityCents,
+          maxLiquidityCents,
+          maxDevAllocationBps,
+          dailyLaunchCap,
+          cooldownSec,
+          name,
+          ticker,
+          templates,
+          arcOddsPct,
+          moonMultipleBps,
+          creatorFeeShareBps,
+          rug,
+        ]
+      properties:
+        launchFeeCents: { type: integer }
+        minLiquidityCents: { type: integer }
+        maxLiquidityCents: { type: integer }
+        maxDevAllocationBps: { type: integer }
+        dailyLaunchCap: { type: integer }
+        cooldownSec: { type: integer }
+        name:
+          type: object
+          properties: { min: { type: integer }, max: { type: integer } }
+        ticker:
+          type: object
+          properties: { min: { type: integer }, max: { type: integer } }
+        templates:
+          type: array
+          items: { $ref: '#/components/schemas/FactoryTemplateId' }
+        arcOddsPct:
+          type: object
+          additionalProperties: { type: number }
+        moonMultipleBps: { type: integer }
+        creatorFeeShareBps: { type: integer }
+        rug:
+          type: object
+          properties: { sellBps: { type: integer }, windowMin: { type: integer } }
+    FactoryMe:
+      type: object
+      required: [heat, heatLevel, launchesToday, dailyLaunchCap, nextLaunchAt]
+      properties:
+        heat: { type: number }
+        heatLevel: { type: string, enum: [cool, warm, hot, wanted] }
+        launchesToday: { type: integer }
+        dailyLaunchCap: { type: integer }
+        nextLaunchAt: { type: string, format: date-time, nullable: true }
     Coin:
       type: object
       required:
@@ -4713,6 +5059,17 @@ components:
         alias: { type: string }
         text: { type: string, maxLength: 280 }
         at: { type: string, format: date-time }
+        kind:
+          type: string
+          enum: [player, sleuth]
+          description: '`sleuth` is an NPC exposé on a rugged Factory coin (author "The Sleuth").'
+        meta:
+          type: object
+          nullable: true
+          description: >-
+            Sleuth posts only: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat,
+            deepLink}`; `deepLink` is `venue:launchpad_tower`.
+          additionalProperties: true
     Business:
       type: object
       required:

@@ -61,6 +61,7 @@ The M1 milestone produces `contract/realtime/*.ts` with `@colyseus/schema` class
 - `coinId, ticker, name: string`.
 - `stage: string` — `new | final | graduated | dead`.
 - `priceMicros, mcapCents: int64`, `vol5mCents, change5mBps, holders, launchedAt: int` / number.
+- `playerLaunched: boolean`, `templateId: string` — a coin a player launched through the Rugpull Factory (`docs/FACTORY.md`) has `playerLaunched = true` and its art id in `templateId` (`rf_*`); both are `false` / `''` for house coins.
 - **Hidden:** the `hiddenArc` (stealth / hype / peak / outcome) lives only on the server and is never sent.
 
 ## Messages (will be filled in M1)
