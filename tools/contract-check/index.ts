@@ -8,7 +8,9 @@
  *      openapi.yaml.
  *   3. realtime-vs-readme — every message type in contract/realtime is
  *      documented in docs/REALTIME.md.
- *   4. openapi-docs — render openapi.yaml to static HTML.
+ *   4. casino-rtp — the casino paytable's computed RTP is 94-96% and matches
+ *      the figure in casino.json.
+ *   5. openapi-docs — render openapi.yaml to static HTML.
  *
  * Run: pnpm contract:check
  */
@@ -20,6 +22,7 @@ const STEPS: Array<{ name: string; cmd: string; args: string[] }> = [
   { name: 'schema-validate', cmd: 'tsx', args: ['tools/contract-check/schema-validate.ts'] },
   { name: 'openapi-vs-errors', cmd: 'tsx', args: ['tools/contract-check/openapi-vs-errors.ts'] },
   { name: 'realtime-vs-readme', cmd: 'tsx', args: ['tools/contract-check/realtime-vs-readme.ts'] },
+  { name: 'casino-rtp', cmd: 'tsx', args: ['tools/contract-check/casino-rtp.ts'] },
   { name: 'openapi-docs', cmd: 'tsx', args: ['tools/contract-check/openapi-docs.ts'] },
 ];
 

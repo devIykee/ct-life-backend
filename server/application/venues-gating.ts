@@ -29,6 +29,8 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { randomBytes } from 'node:crypto';
+import { careerAreasAt } from './ladders.js';
+import { activeJail, JAIL_VENUE_ID } from './heat.js';
 import type { AppContext } from './context.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
@@ -222,6 +224,8 @@ export interface VenueAccessRow {
   readonly netWorthCents: number;
   readonly membershipRequired: boolean;
   readonly isMember: boolean;
+  /** Areas of this venue my career-ladder rank unlocks (e.g. `vip_booth`); [] if none. */
+  readonly careerAreas: readonly string[];
 }
 
 /**
@@ -257,21 +261,27 @@ export async function getVenueAccess(
       [userId],
     );
     return {
-      netWorth:
-        Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
+      netWorth: Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
       jailed: jail.rows[0]?.is_sybil_jailed ?? false,
       isMember: (member.rowCount ?? 0) > 0,
     };
   });
 
+  const careerAreas = await careerAreasAt(ctx, userId, venueId);
+  // Police custody: a jailed player may only be in CT Jail until bail or the timer.
+  const custody = await ctx.db.withConnection((c) => activeJail(c, userId, new Date()));
   const base = {
     venueId,
+    careerAreas,
     netWorthCents: state.netWorth,
     requiredNetWorthCents: null as number | null,
     membershipRequired: false,
     isMember: state.isMember,
   };
 
+  if (custody && venueId !== JAIL_VENUE_ID) {
+    return { ...base, allowed: false, reasonCode: 'JAILED' };
+  }
   if (venueId === 'dubai_marina') {
     const allowed = state.netWorth >= MARINA_GATE_CENTS;
     return {

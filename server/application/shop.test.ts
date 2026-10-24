@@ -151,7 +151,7 @@ beforeEach(async () => {
 describe('catalogue', () => {
   it('lists the seeded items with footprints for placeables, by category', async () => {
     const all = await listCatalog(ctx, null);
-    expect(all.items.length).toBeGreaterThanOrEqual(20);
+    expect(all.items.length).toBeGreaterThanOrEqual(18);
     expect(all.lockerFeeCents).toBe(LOCKER_FEE_CENTS);
     expect(all.windows).toEqual([
       { id: 'asap', minutes: 10 },
@@ -159,7 +159,7 @@ describe('catalogue', () => {
       { id: '1h', minutes: 60 },
     ]);
     const categories = new Set(all.items.map((i) => i.category));
-    for (const c of ['furniture', 'decor', 'appliance', 'food', 'clothing']) {
+    for (const c of ['furniture', 'decor', 'appliance', 'food']) {
       expect(categories.has(c as never)).toBe(true);
     }
     for (const i of all.items) {
@@ -175,26 +175,26 @@ describe('catalogue', () => {
   });
 
   it('hides an item that is no longer in the file', async () => {
-    await pool.query(`UPDATE shop_items SET active = false WHERE item_id = 'plant_pothos'`);
+    await pool.query(`UPDATE shop_items SET active = false WHERE item_id = 'plant_zebra'`);
     try {
       const decor = await listCatalog(ctx, 'decor');
-      expect(decor.items.some((i) => i.itemId === 'plant_pothos')).toBe(false);
-      await expect(order(buyer, [{ itemId: 'plant_pothos', qty: 1 }])).rejects.toBeInstanceOf(
+      expect(decor.items.some((i) => i.itemId === 'plant_zebra')).toBe(false);
+      await expect(order(buyer, [{ itemId: 'plant_zebra', qty: 1 }])).rejects.toBeInstanceOf(
         NotFoundError,
       );
     } finally {
-      await pool.query(`UPDATE shop_items SET active = true WHERE item_id = 'plant_pothos'`);
+      await pool.query(`UPDATE shop_items SET active = true WHERE item_id = 'plant_zebra'`);
     }
   });
 });
 
 describe('placing an order', () => {
   it('debits Cash from the catalogue price, writes the ledger and schedules delivery', async () => {
-    const sofa = await priceOf('sofa_basic');
-    const lamp = await priceOf('lamp_floor');
+    const sofa = await priceOf('sofa_linen');
+    const lamp = await priceOf('lamp_pipe');
     const o = await order(buyer, [
-      { itemId: 'sofa_basic', qty: 1 },
-      { itemId: 'lamp_floor', qty: 2 },
+      { itemId: 'sofa_linen', qty: 1 },
+      { itemId: 'lamp_pipe', qty: 2 },
     ]);
     const total = sofa + 2 * lamp;
     expect(o).toMatchObject({
@@ -208,8 +208,8 @@ describe('placing an order', () => {
       etaAt: min(10).toISOString(),
     });
     expect(o.items.map((l) => [l.itemId, l.qty, l.unitPriceCents])).toEqual([
-      ['lamp_floor', 2, lamp],
-      ['sofa_basic', 1, sofa],
+      ['lamp_pipe', 2, lamp],
+      ['sofa_linen', 1, sofa],
     ]);
     expect(await cashOf(buyer)).toBe(1_000_000 - total);
     expect(await ledgerOf(buyer)).toEqual([{ reason: 'shop_order', delta: -total }]);
@@ -220,17 +220,17 @@ describe('placing an order', () => {
   });
 
   it('uses the window to set the ETA', async () => {
-    expect((await order(buyer, [{ itemId: 'noodles_cup', qty: 1 }], { window: '30m' })).etaAt).toBe(
-      min(30).toISOString(),
-    );
-    expect((await order(buyer, [{ itemId: 'noodles_cup', qty: 1 }], { window: '1h' })).etaAt).toBe(
-      min(60).toISOString(),
-    );
+    expect(
+      (await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], { window: '30m' })).etaAt,
+    ).toBe(min(30).toISOString());
+    expect(
+      (await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], { window: '1h' })).etaAt,
+    ).toBe(min(60).toISOString());
   });
 
   it('refuses the door without a home, and for a home without a door', async () => {
     const street = await newUser(100_000);
-    await expect(order(street, [{ itemId: 'noodles_cup', qty: 1 }])).rejects.toBeInstanceOf(
+    await expect(order(street, [{ itemId: 'pantry_restock', qty: 1 }])).rejects.toBeInstanceOf(
       NoHomeDoorError,
     );
     await pool.query(
@@ -238,7 +238,9 @@ describe('placing an order', () => {
        VALUES ($1, $2, 'parents_basement', 2000, now())`,
       [`home:${uuidv7()}`, street],
     );
-    const err = await order(street, [{ itemId: 'noodles_cup', qty: 1 }]).catch((e: unknown) => e);
+    const err = await order(street, [{ itemId: 'pantry_restock', qty: 1 }]).catch(
+      (e: unknown) => e,
+    );
     expect(err).toBeInstanceOf(NoHomeDoorError);
     expect((err as NoHomeDoorError).code).toBe('NO_HOME_DOOR');
     expect((err as NoHomeDoorError).httpStatus).toBe(409);
@@ -247,8 +249,10 @@ describe('placing an order', () => {
 
   it('charges the locker fee, and a street player can order to the locker', async () => {
     const street = await newUser(100_000);
-    const price = await priceOf('burger_combo');
-    const o = await order(street, [{ itemId: 'burger_combo', qty: 2 }], { destination: 'locker' });
+    const price = await priceOf('side_table_oak');
+    const o = await order(street, [{ itemId: 'side_table_oak', qty: 2 }], {
+      destination: 'locker',
+    });
     expect(o).toMatchObject({
       destination: 'locker',
       unitId: null,
@@ -269,7 +273,7 @@ describe('placing an order', () => {
        VALUES ($1, $2, 'parents_basement', 2000, now())`,
       [`home:${uuidv7()}`, poor],
     );
-    const err = await order(poor, [{ itemId: 'sofa_basic', qty: 1 }], {
+    const err = await order(poor, [{ itemId: 'sofa_linen', qty: 1 }], {
       destination: 'locker',
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(InsufficientCashError);
@@ -284,20 +288,24 @@ describe('placing an order', () => {
     const bad = (items: Array<{ itemId: string; qty: number }>): Promise<unknown> =>
       order(buyer, items).catch((e: unknown) => e);
     expect(await bad([])).toBeInstanceOf(ValidationFailedError);
-    expect(await bad([{ itemId: 'noodles_cup', qty: 0 }])).toBeInstanceOf(ValidationFailedError);
-    expect(await bad([{ itemId: 'noodles_cup', qty: 11 }])).toBeInstanceOf(ValidationFailedError);
-    expect(await bad([{ itemId: 'noodles_cup', qty: 1.5 }])).toBeInstanceOf(ValidationFailedError);
+    expect(await bad([{ itemId: 'pantry_restock', qty: 0 }])).toBeInstanceOf(ValidationFailedError);
+    expect(await bad([{ itemId: 'pantry_restock', qty: 11 }])).toBeInstanceOf(
+      ValidationFailedError,
+    );
+    expect(await bad([{ itemId: 'pantry_restock', qty: 1.5 }])).toBeInstanceOf(
+      ValidationFailedError,
+    );
     expect(
       await bad([
-        { itemId: 'noodles_cup', qty: 1 },
-        { itemId: 'noodles_cup', qty: 1 },
+        { itemId: 'pantry_restock', qty: 1 },
+        { itemId: 'pantry_restock', qty: 1 },
       ]),
     ).toBeInstanceOf(ValidationFailedError);
     expect(
       await bad([
-        { itemId: 'noodles_cup', qty: 10 },
-        { itemId: 'burger_combo', qty: 10 },
-        { itemId: 'sushi_set', qty: 1 },
+        { itemId: 'pantry_restock', qty: 10 },
+        { itemId: 'side_table_oak', qty: 10 },
+        { itemId: 'vase_stoneware', qty: 1 },
       ]),
     ).toBeInstanceOf(ValidationFailedError);
     expect(await bad([{ itemId: 'no_such_item', qty: 1 }])).toBeInstanceOf(NotFoundError);
@@ -305,15 +313,15 @@ describe('placing an order', () => {
   });
 
   it('caps the orders in flight', async () => {
-    for (let i = 0; i < 5; i++) await order(buyer, [{ itemId: 'noodles_cup', qty: 1 }]);
-    await expect(order(buyer, [{ itemId: 'noodles_cup', qty: 1 }])).rejects.toBeInstanceOf(
+    for (let i = 0; i < 5; i++) await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }]);
+    await expect(order(buyer, [{ itemId: 'pantry_restock', qty: 1 }])).rejects.toBeInstanceOf(
       ValidationFailedError,
     );
   });
 
   it('replaying the same Idempotency-Key returns the order and charges once', async () => {
     const input = {
-      items: [{ itemId: 'sofa_basic', qty: 1 }],
+      items: [{ itemId: 'sofa_linen', qty: 1 }],
       window: 'asap' as const,
       destination: 'door' as const,
     };
@@ -329,8 +337,8 @@ describe('placing an order', () => {
 
 describe('reading orders', () => {
   it('lists my orders newest first and hides other players orders (no IDOR)', async () => {
-    const a = await order(buyer, [{ itemId: 'noodles_cup', qty: 1 }], {}, T0);
-    const b = await order(buyer, [{ itemId: 'sushi_set', qty: 1 }], {}, min(1));
+    const a = await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }], {}, T0);
+    const b = await order(buyer, [{ itemId: 'vase_stoneware', qty: 1 }], {}, min(1));
     expect((await listOrders(ctx, buyer)).map((o) => o.orderId)).toEqual([b.orderId, a.orderId]);
     expect(await listOrders(ctx, stranger)).toEqual([]);
     expect((await getOrder(ctx, buyer, a.orderId)).orderId).toBe(a.orderId);
@@ -341,7 +349,7 @@ describe('reading orders', () => {
 
 describe('cancel', () => {
   it('refunds in full (locker fee included), once, and unschedules', async () => {
-    const o = await order(buyer, [{ itemId: 'sofa_basic', qty: 1 }], { destination: 'locker' });
+    const o = await order(buyer, [{ itemId: 'sofa_linen', qty: 1 }], { destination: 'locker' });
     expect(await cashOf(buyer)).toBe(1_000_000 - o.totalCents);
     const c = await cancelOrder(ctx, buyer, o.orderId);
     expect(c.status).toBe('cancelled');
@@ -358,7 +366,7 @@ describe('cancel', () => {
   });
 
   it("cannot cancel someone else's order, or one that is out for delivery", async () => {
-    const o = await order(buyer, [{ itemId: 'noodles_cup', qty: 1 }]);
+    const o = await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }]);
     await expect(cancelOrder(ctx, stranger, o.orderId)).rejects.toBeInstanceOf(NotFoundError);
     expect((await getOrder(ctx, buyer, o.orderId)).status).toBe('placed');
     await markOutForDelivery(ctx, o.orderId, min(9));
@@ -369,7 +377,7 @@ describe('cancel', () => {
   });
 
   it('is never delivered after a cancel', async () => {
-    const o = await order(buyer, [{ itemId: 'sofa_basic', qty: 1 }]);
+    const o = await order(buyer, [{ itemId: 'sofa_linen', qty: 1 }]);
     await cancelOrder(ctx, buyer, o.orderId);
     expect(await markOutForDelivery(ctx, o.orderId, min(9))).toBe('skipped');
     expect(await deliverOrder(ctx, o.orderId, min(11))).toBe('skipped');
@@ -384,8 +392,8 @@ describe('cancel', () => {
 describe('delivery worker', () => {
   it('goes placed -> out_for_delivery -> delivered with the pushes', async () => {
     const o = await order(buyer, [
-      { itemId: 'sofa_basic', qty: 1 },
-      { itemId: 'plant_pothos', qty: 2 },
+      { itemId: 'sofa_linen', qty: 1 },
+      { itemId: 'plant_zebra', qty: 2 },
     ]);
     // Too early for both steps.
     expect(await markOutForDelivery(ctx, o.orderId, min(8))).toBe('not_due');
@@ -420,30 +428,28 @@ describe('delivery worker', () => {
 
   it('puts delivered items in /me/items, one row per unit', async () => {
     const o = await order(buyer, [
-      { itemId: 'sofa_basic', qty: 1 },
-      { itemId: 'plant_pothos', qty: 2 },
+      { itemId: 'sofa_linen', qty: 1 },
+      { itemId: 'plant_zebra', qty: 2 },
     ]);
     expect(await listMyItems(ctx, buyer)).toEqual([]); // nothing before delivery
     await deliverOrder(ctx, o.orderId, min(10));
     await deliverOrder(ctx, o.orderId, min(12));
     const items = await listMyItems(ctx, buyer);
-    expect(items.map((i) => i.itemId).sort()).toEqual([
-      'plant_pothos',
-      'plant_pothos',
-      'sofa_basic',
-    ]);
+    expect(items.map((i) => i.itemId).sort()).toEqual(['plant_zebra', 'plant_zebra', 'sofa_linen']);
     expect(new Set(items.map((i) => i.itemInstanceId)).size).toBe(3);
     expect(items.every((i) => i.orderId === o.orderId && i.placedHomeId === null)).toBe(true);
-    const sofa = items.find((i) => i.itemId === 'sofa_basic')!;
+    const sofa = items.find((i) => i.itemId === 'sofa_linen')!;
     expect(sofa).toMatchObject({ placeable: true, category: 'furniture' });
     expect(sofa.footprint).not.toBeNull();
-    expect(sofa.modelKey).toBe('shop_sofa_basic');
+    expect(sofa.modelKey).toBe('fu_sofa_linen');
     expect(await listMyItems(ctx, stranger)).toEqual([]);
   });
 
   it('delivers to the locker with unitId null', async () => {
     const street = await newUser(100_000);
-    const o = await order(street, [{ itemId: 'noodles_cup', qty: 1 }], { destination: 'locker' });
+    const o = await order(street, [{ itemId: 'pantry_restock', qty: 1 }], {
+      destination: 'locker',
+    });
     await markOutForDelivery(ctx, o.orderId, min(9));
     await deliverOrder(ctx, o.orderId, min(10));
     expect(publishToUser).toHaveBeenCalledWith(ctx, street, 'delivery_out', {
@@ -462,8 +468,8 @@ describe('delivery worker', () => {
 
   it('the sweep recovers orders whose delayed jobs were lost', async () => {
     // The sweep is global, so other tests' leftover orders may be swept too.
-    const early = await order(buyer, [{ itemId: 'noodles_cup', qty: 1 }]); // asap
-    const late = await order(buyer, [{ itemId: 'sushi_set', qty: 1 }], { window: '1h' });
+    const early = await order(buyer, [{ itemId: 'pantry_restock', qty: 1 }]); // asap
+    const late = await order(buyer, [{ itemId: 'vase_stoneware', qty: 1 }], { window: '1h' });
     expect((await sweepShopOrders(ctx, min(9.5))).out).toBeGreaterThanOrEqual(1);
     expect((await getOrder(ctx, buyer, early.orderId)).status).toBe('out_for_delivery');
     expect((await getOrder(ctx, buyer, late.orderId)).status).toBe('placed');
@@ -478,8 +484,8 @@ describe('delivery worker', () => {
 
   it('one failing order does not stop the sweep', async () => {
     const bad = await newUser(100_000);
-    const a = await order(bad, [{ itemId: 'noodles_cup', qty: 1 }], { destination: 'locker' });
-    const b = await order(buyer, [{ itemId: 'sushi_set', qty: 1 }]);
+    const a = await order(bad, [{ itemId: 'pantry_restock', qty: 1 }], { destination: 'locker' });
+    const b = await order(buyer, [{ itemId: 'vase_stoneware', qty: 1 }]);
     // Make the delivery of the first player's items fail.
     await pool.query(
       `CREATE OR REPLACE FUNCTION shop_test_fail() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -522,21 +528,26 @@ describe('placements', () => {
 
   it('places owned placeable items, replaces the set and shows them in /me/items', async () => {
     await delivered([
-      { itemId: 'sofa_basic', qty: 1 },
-      { itemId: 'lamp_floor', qty: 1 },
+      { itemId: 'sofa_linen', qty: 1 },
+      { itemId: 'lamp_pipe', qty: 1 },
     ]);
-    const sofa = await idOf(buyer, 'sofa_basic');
-    const lamp = await idOf(buyer, 'lamp_floor');
+    const sofa = await idOf(buyer, 'sofa_linen');
+    const lamp = await idOf(buyer, 'lamp_pipe');
     const set = await setPlacements(ctx, homeId, buyer, [
       { itemInstanceId: sofa, x: 1, z: 2, rotY: 0.5 },
       { itemInstanceId: lamp, x: -1, z: 0, rotY: 0 },
     ]);
     expect(set.homeId).toBe(homeId);
-    expect(set.placements.map((p) => [p.itemId, p.x, p.z, p.rotY])).toEqual([
-      ['sofa_basic', 1, 2, 0.5],
-      ['lamp_floor', -1, 0, 0],
+    // The set has no defined order: both rows share one timestamp.
+    expect(
+      set.placements
+        .map((p) => [p.itemId, p.x, p.z, p.rotY])
+        .sort((l, r) => (l[0]! < r[0]! ? -1 : 1)),
+    ).toEqual([
+      ['lamp_pipe', -1, 0, 0],
+      ['sofa_linen', 1, 2, 0.5],
     ]);
-    expect(set.placements[0]!.footprint).not.toBeNull();
+    expect(set.placements.every((p) => p.footprint !== null)).toBe(true);
     expect((await listMyItems(ctx, buyer)).every((i) => i.placedHomeId === homeId)).toBe(true);
     // Replace with one item: the lamp is free again.
     const again = await setPlacements(ctx, homeId, buyer, [
@@ -544,20 +555,20 @@ describe('placements', () => {
     ]);
     expect(again.placements).toHaveLength(1);
     expect(
-      (await listMyItems(ctx, buyer)).find((i) => i.itemId === 'lamp_floor')!.placedHomeId,
+      (await listMyItems(ctx, buyer)).find((i) => i.itemId === 'lamp_pipe')!.placedHomeId,
     ).toBe(null);
     expect((await setPlacements(ctx, homeId, buyer, [])).placements).toEqual([]);
   });
 
   it('refuses an item that is not owned, not placeable, or listed twice', async () => {
     await delivered([
-      { itemId: 'sofa_basic', qty: 1 },
-      { itemId: 'noodles_cup', qty: 1 },
+      { itemId: 'sofa_linen', qty: 1 },
+      { itemId: 'pantry_restock', qty: 1 },
     ]);
-    await delivered([{ itemId: 'lamp_floor', qty: 1 }], stranger);
-    const sofa = await idOf(buyer, 'sofa_basic');
-    const noodles = await idOf(buyer, 'noodles_cup');
-    const theirs = await idOf(stranger, 'lamp_floor');
+    await delivered([{ itemId: 'lamp_pipe', qty: 1 }], stranger);
+    const sofa = await idOf(buyer, 'sofa_linen');
+    const noodles = await idOf(buyer, 'pantry_restock');
+    const theirs = await idOf(stranger, 'lamp_pipe');
     const p = (id: string): { itemInstanceId: string; x: number; z: number; rotY: number } => ({
       itemInstanceId: id,
       x: 0,
@@ -586,8 +597,8 @@ describe('placements', () => {
   });
 
   it('only the owner sets placements; an unknown home is 404', async () => {
-    await delivered([{ itemId: 'sofa_basic', qty: 1 }], stranger);
-    const sofa = await idOf(stranger, 'sofa_basic');
+    await delivered([{ itemId: 'sofa_linen', qty: 1 }], stranger);
+    const sofa = await idOf(stranger, 'sofa_linen');
     const err = await setPlacements(ctx, homeId, stranger, [
       { itemInstanceId: sofa, x: 0, z: 0, rotY: 0 },
     ]).catch((e: unknown) => e);
@@ -599,8 +610,8 @@ describe('placements', () => {
   });
 
   it('a visitor reads the placements only with access (owner, guest), not a stranger', async () => {
-    await delivered([{ itemId: 'sofa_basic', qty: 1 }]);
-    const sofa = await idOf(buyer, 'sofa_basic');
+    await delivered([{ itemId: 'sofa_linen', qty: 1 }]);
+    const sofa = await idOf(buyer, 'sofa_linen');
     await setPlacements(ctx, homeId, buyer, [{ itemInstanceId: sofa, x: 1, z: 1, rotY: 0 }]);
     await expect(getPlacements(ctx, homeId, stranger)).rejects.toBeInstanceOf(ForbiddenError);
     await expect(getPlacements(ctx, `home:${uuidv7()}`, stranger)).rejects.toBeInstanceOf(
@@ -611,7 +622,7 @@ describe('placements', () => {
       stranger,
     ]);
     const seen = await getPlacements(ctx, homeId, stranger);
-    expect(seen.placements.map((x) => x.itemId)).toEqual(['sofa_basic']);
+    expect(seen.placements.map((x) => x.itemId)).toEqual(['sofa_linen']);
     // Revoked: locked out again. Moved out: nobody gets in.
     await pool.query(`DELETE FROM home_guests WHERE home_id = $1`, [homeId]);
     await expect(getPlacements(ctx, homeId, stranger)).rejects.toBeInstanceOf(ForbiddenError);

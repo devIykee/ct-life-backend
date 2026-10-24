@@ -7,7 +7,7 @@
  * forwards to that user's client. This is the single mechanism behind the
  * targeted messages in the contract (`toast`, `dm`, `call_invite`,
  * `space_update`, `payment_confirmed`, `liquidated`, `delivery_out`,
- * `delivery_arrived`), which previously had
+ * `delivery_arrived`, `quest_progress`, `event_live`, `event_ended`), which previously had
  * no transport at all: a video call returned a callId and the callee was
  * never rung.
  *
@@ -30,12 +30,65 @@ export type UserMessageType =
   | 'liquidated'
   | 'delivery_out'
   | 'delivery_arrived'
+  | 'quest_progress'
+  | 'career_promoted'
+  | 'job_unlocked'
+  | 'event_live'
+  | 'event_ended'
+  | 'irl_checkin'
+  | 'police_pursuit'
+  | 'police_pursuit_end'
+  | 'jailed'
+  | 'released'
   | 'event';
 
 export interface UserMessage {
   readonly userId: string;
   readonly type: UserMessageType;
   readonly payload: Record<string, unknown>;
+  /**
+   * Broadcast ('*') only: users who must NOT receive it (block pairs), and,
+   * with `authedOnly`, sessions that did not sign in never receive it.
+   */
+  readonly exclude?: readonly string[];
+  readonly authedOnly?: boolean;
+}
+
+/**
+ * Whether a broadcast reaches a session, given the signed-in user id of that
+ * session (undefined for an anonymous one).
+ * @param msg - The published message.
+ * @param sessionUserId - The session's user, if known.
+ */
+export function shouldDeliverBroadcast(
+  msg: UserMessage,
+  sessionUserId: string | undefined,
+): boolean {
+  if (msg.authedOnly && !sessionUserId) return false;
+  if (sessionUserId && msg.exclude?.includes(sessionUserId)) return false;
+  return true;
+}
+
+/**
+ * Broadcast to the city except to some users (block pairs). Used for presence
+ * that must not reach people who blocked, or were blocked by, its subject.
+ * @param ctx - The application context.
+ * @param type - The contract message name.
+ * @param payload - The message body.
+ * @param opts - Who to leave out; anonymous sessions never get it.
+ */
+export async function publishToCityExcept(
+  ctx: AppContext,
+  type: UserMessageType,
+  payload: Record<string, unknown>,
+  opts: { exclude: readonly string[] },
+): Promise<void> {
+  const msg: UserMessage = { userId: '*', type, payload, exclude: opts.exclude, authedOnly: true };
+  try {
+    await ctx.redis.main.publish(USER_CHANNEL, JSON.stringify(msg));
+  } catch {
+    // Never fail the request.
+  }
 }
 
 /**

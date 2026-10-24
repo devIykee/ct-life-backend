@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0",
+  "disclaimer": "Play money. No cash value. 18+",
+  "_note": "The Rug Room. Cash only, play money, 18+. The daily stake cap and net-loss cap are env settings (CASINO_DAILY_STAKE_CAP_CENTS, CASINO_DAILY_LOSS_CAP_CENTS), not part of this file. Multipliers are plain numbers with at most 2 decimals; payouts are floored to a whole cent. `computedRtp` is checked against the paytable by `pnpm contract:check`.",
+  "limits": {
+    "minStakeCents": 100,
+    "maxStakeCents": 10000,
+    "sessionReminderMinutes": 30,
+    "sessionGapMinutes": 10,
+    "minSelfExcludeDays": 1,
+    "maxSelfExcludeDays": 365
+  },
+  "slots": {
+    "reelWeights": {
+      "rocket": 5,
+      "diamond_hands": 9,
+      "ape": 13,
+      "laser_eyes": 8,
+      "rug": 10,
+      "wild": 2
+    },
+    "paytable": {
+      "three": {
+        "rocket": 30,
+        "diamond_hands": 10,
+        "ape": 5,
+        "laser_eyes": 15,
+        "rug": 0,
+        "wild": 25
+      },
+      "two": {
+        "rocket": 1.5,
+        "diamond_hands": 1,
+        "ape": 0.5,
+        "laser_eyes": 1.5,
+        "rug": 0,
+        "wild": 0
+      }
+    },
+    "computedRtp": 0.9505
+  },
+  "crash": {
+    "targetRtp": 0.95,
+    "growthPerSecond": 0.07,
+    "maxMultiplier": 100,
+    "minAutoCashout": 1.01
+  },
+  "coinflip": {
+    "payoutMultiplier": 1.9,
+    "h2hHouseCutBps": 500,
+    "challengeTtlSeconds": 120
+  }
+}

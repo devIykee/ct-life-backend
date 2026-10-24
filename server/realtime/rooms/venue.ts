@@ -202,6 +202,11 @@ export class VenueRoom extends Room {
   override async onJoin(client: Client, options: unknown): Promise<void> {
     // Identity and look come from the database, never from join options.
     const userId = await authenticateJoin(options);
+    // Police custody: a jailed player may only be in CT Jail. Fails open if the
+    // database cannot be reached; the REST gates still hold.
+    if (this.state.venueId !== 'ct_jail' && (await isInPoliceCustody(userId))) {
+      throw new Error('JAILED');
+    }
     const player = await loadPlayerState(userId);
 
     // Place the player on the venue's entrance spot. Joining a second
@@ -694,5 +699,21 @@ export class VenueRoom extends Room {
       readFileSync(join(repoRoot, 'contract', 'ids', 'anims.json'), 'utf8'),
     ) as { anims: string[] };
     return { venues: spots.venues, anims: anims.anims };
+  }
+}
+
+/**
+ * Whether the player is serving a police stay in CT Jail.
+ * @param userId - The player.
+ */
+async function isInPoliceCustody(userId: string): Promise<boolean> {
+  try {
+    const [{ buildContext }, { isJailed }] = await Promise.all([
+      import('../../application/context.js'),
+      import('../../application/heat.js'),
+    ]);
+    return await isJailed(buildContext(), userId);
+  } catch {
+    return false;
   }
 }

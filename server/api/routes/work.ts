@@ -1,7 +1,8 @@
 /**
  * Work routes.
  *
- *   GET  /v1/careers
+ *   GET  /v1/careers                     (?view=ladders: career ladders)
+ *   POST /v1/careers/{ladderId}/join
  *   POST /v1/careers/{careerId}/apply
  *   POST /v1/shifts
  *   POST /v1/shifts/{shiftId}/complete
@@ -18,8 +19,11 @@ import { withIdempotency } from '../middleware/idempotency.js';
 import { ShiftNotFinishedError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { CareersService } from '../../application/careers.js';
 import { ShiftsService } from '../../application/shifts.js';
+import { getLadders, joinLadder } from '../../application/ladders.js';
 
 const ApplyBody = z.object({}).optional();
+
+const CareersQuery = z.object({ view: z.enum(['jobs', 'ladders']).default('jobs') });
 
 const ShiftBody = z.object({ careerId: z.string().min(1) });
 
@@ -38,6 +42,11 @@ const ShiftCompleteBody = z.object({
 export function registerWorkRoutes(app: FastifyInstance): void {
   // GET /v1/careers
   app.get('/v1/careers', { preHandler: requireAuth }, async (req, reply) => {
+    // `?view=ladders` is the career-ladder screen; the default stays the job list so
+    // clients written against the job list keep working.
+    const q = CareersQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+    if (q.data.view === 'ladders') return reply.send(await getLadders(req.ctx, req.user!.sub));
     const svc = new CareersService(req.ctx);
     const list = await svc.list(req.user!.sub);
     return reply.send(list);
@@ -53,6 +62,17 @@ export function registerWorkRoutes(app: FastifyInstance): void {
       const svc = new CareersService(req.ctx);
       const job = await svc.apply(req.user!.sub, careerId);
       return reply.send(job);
+    },
+  );
+
+  // POST /v1/careers/{ladderId}/join
+  app.post(
+    '/v1/careers/:ladderId/join',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { ladderId } = req.params as { ladderId: string };
+      ApplyBody.parse(req.body);
+      return reply.send(await joinLadder(req.ctx, req.user!.sub, ladderId));
     },
   );
 

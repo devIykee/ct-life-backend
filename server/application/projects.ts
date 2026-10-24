@@ -29,6 +29,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { ConflictError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordCareerAction } from './ladders.js';
 import type { AppContext } from './context.js';
 
 export type ProjectKind = 'memecoin' | 'dex' | 'nft_studio' | 'perps_venue' | 'l2';
@@ -103,7 +104,7 @@ function rowToHire(r: ProjectHireDbRow): ProjectHireRow {
 
 /** Found a project. Debits the seed cost. */
 export async function foundProject(
-  _ctx: AppContext,
+  ctx: AppContext,
   ownerUserId: string,
   kind: ProjectKind,
   name?: string,
@@ -156,6 +157,7 @@ export async function foundProject(
     );
     return r.rows[0]!;
   });
+  await recordCareerAction(ctx, ownerUserId, 'project_found', projectId);
   return rowToProject(result);
 }
 
@@ -250,7 +252,7 @@ export async function hirePlayer(
 
 /** Launch: flip founded -> launching. */
 export async function launchProject(
-  _ctx: AppContext,
+  ctx: AppContext,
   ownerUserId: string,
   projectId: string,
 ): Promise<ProjectRow> {
@@ -266,6 +268,7 @@ export async function launchProject(
     }
     return r.rows[0];
   });
+  await recordCareerAction(ctx, ownerUserId, 'project_launch', projectId);
   return rowToProject(result);
 }
 

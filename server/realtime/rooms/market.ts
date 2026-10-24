@@ -65,6 +65,8 @@ export class MarketRoom extends Room {
         c.change5mBps = snap.change5mBps;
         c.holders = snap.holders;
         c.launchedAt = snap.launchedAt;
+        c.playerLaunched = snap.playerLaunched;
+        c.templateId = snap.templateId;
       }
       for (const id of [...this.state.coins.keys()]) {
         if (!seen.has(id)) this.state.coins.delete(id);

@@ -47,6 +47,7 @@ import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { loadKeypair } from '../shared/solana/keypair.js';
 import { CT_ESCROW_PROGRAM_ID, sendSettle, configPda } from '../shared/solana/ct-escrow.js';
+import { PAID_CALL_PAIR_COOLDOWN_DAYS, recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
 export const PLATFORM_FEE_BPS = 500; // 5%
@@ -225,8 +226,8 @@ export async function acceptPaidCall(
   callerUserId: string,
 ): Promise<PaidCallRow> {
   const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{ payee_user_id: string; status: string }>(
-      `SELECT payee_user_id, status FROM paid_call_escrow WHERE call_id = $1::uuid`,
+    return c.query<{ payee_user_id: string; payer_user_id: string; status: string }>(
+      `SELECT payee_user_id, payer_user_id, status FROM paid_call_escrow WHERE call_id = $1::uuid`,
       [callId],
     );
   });
@@ -249,6 +250,19 @@ export async function acceptPaidCall(
   } catch {
     /* best-effort */
   }
+  // A funded call the payee picked up is a real paid call for both sides.
+  // One credit per pair of players per window, whichever way round they call, so two
+  // accounts calling each other earn from the first call only.
+  const cooldownDays = PAID_CALL_PAIR_COOLDOWN_DAYS;
+  const now = new Date();
+  await recordQuestEvent(ctx, row.payer_user_id, 'paid_call', callId, now, {
+    key: `pair:${row.payee_user_id}`,
+    cooldownDays,
+  });
+  await recordQuestEvent(ctx, row.payee_user_id, 'paid_call', callId, now, {
+    key: `pair:${row.payer_user_id}`,
+    cooldownDays,
+  });
   return loadPaidCall(ctx, callId);
 }
 

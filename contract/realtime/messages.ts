@@ -97,6 +97,11 @@ export const VehicleEnterMessage = z.object({
   y: z.number().finite().optional(),
   z: z.number().finite().optional(),
   yaw: z.number().finite().optional(),
+  /**
+   * Take a vehicle that is not yours: an NPC traffic car (id `traffic_*`) or another
+   * player's parked vehicle. Adds heat; never transfers ownership; never the roadstar.
+   */
+  steal: z.boolean().optional(),
 });
 export type VehicleEnterMessage = z.infer<typeof VehicleEnterMessage>;
 
@@ -240,6 +245,9 @@ export const RejectedMessage = z.object({
     'ALREADY_DRIVING',
     'POSITION_UNKNOWN',
     'NOT_ENTITLED',
+    'JAILED',
+    'VEHICLE_NOT_STEALABLE',
+    'STEAL_REQUIRED',
   ]),
 });
 export type RejectedMessage = z.infer<typeof RejectedMessage>;

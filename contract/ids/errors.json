@@ -191,6 +191,156 @@
       "code": "UNIT_FULL",
       "httpStatus": 409,
       "message": "The unit is at capacity; remove a guest first."
+    },
+    {
+      "code": "FREEZE_LIMIT_REACHED",
+      "httpStatus": 409,
+      "message": "You already hold the maximum number of streak freezes."
+    },
+    {
+      "code": "QUEST_NOT_COMPLETE",
+      "httpStatus": 409,
+      "message": "This quest is not finished yet."
+    },
+    {
+      "code": "EVENT_NOT_LIVE",
+      "httpStatus": 409,
+      "message": "This event is not live; its quests only run inside its window."
+    },
+    {
+      "code": "EVENT_STEP_INVALID",
+      "httpStatus": 400,
+      "message": "That quest step or proof is not valid for this event."
+    },
+    {
+      "code": "CHECKIN_REJECTED",
+      "httpStatus": 422,
+      "message": "The IRL check-in was not accepted."
+    },
+    {
+      "code": "AGE_REQUIRED",
+      "httpStatus": 403,
+      "message": "The Rug Room is 18+. Confirm your age to play."
+    },
+    {
+      "code": "STAKE_CAP_REACHED",
+      "httpStatus": 403,
+      "message": "This stake would pass your daily casino stake cap. Try again tomorrow (UTC)."
+    },
+    {
+      "code": "LOSS_CAP_REACHED",
+      "httpStatus": 403,
+      "message": "This stake would pass your daily casino net-loss cap. Try again tomorrow (UTC)."
+    },
+    {
+      "code": "SELF_EXCLUDED",
+      "httpStatus": 403,
+      "message": "You have excluded yourself from the casino until the date shown."
+    },
+    {
+      "code": "ROUND_SETTLED",
+      "httpStatus": 409,
+      "message": "This round is already settled."
+    },
+    {
+      "code": "ROUND_IN_PROGRESS",
+      "httpStatus": 409,
+      "message": "Finish your open crash round before starting another."
+    },
+    {
+      "code": "CHALLENGE_EXPIRED",
+      "httpStatus": 410,
+      "message": "This challenge expired; the stake was refunded."
+    },
+    {
+      "code": "CHALLENGE_NOT_OPEN",
+      "httpStatus": 409,
+      "message": "This challenge is no longer open."
+    },
+    {
+      "code": "PASS_REQUIRED",
+      "httpStatus": 403,
+      "message": "The paid track needs an active season pass."
+    },
+    {
+      "code": "TIER_LOCKED",
+      "httpStatus": 409,
+      "message": "Not enough Season XP for this tier yet."
+    },
+    {
+      "code": "NOD_TOO_FAR",
+      "httpStatus": 409,
+      "message": "The server's last position for you is more than the collect radius from this nod."
+    },
+    {
+      "code": "NAME_NOT_ALLOWED",
+      "httpStatus": 400,
+      "message": "That coin name or ticker is not allowed."
+    },
+    {
+      "code": "TICKER_TAKEN",
+      "httpStatus": 409,
+      "message": "That ticker is already used by another coin."
+    },
+    {
+      "code": "LAUNCH_LIMIT_REACHED",
+      "httpStatus": 429,
+      "message": "You have reached today's coin launch limit."
+    },
+    {
+      "code": "LAUNCH_COOLDOWN",
+      "httpStatus": 429,
+      "message": "Wait before launching another coin."
+    },
+    {
+      "code": "CAREER_SWITCH_COOLDOWN",
+      "httpStatus": 409,
+      "message": "You switched career ladders recently; wait for the cooldown to end."
+    },
+    {
+      "code": "JOB_LOCKED",
+      "httpStatus": 403,
+      "message": "This job is not unlocked for you."
+    },
+    {
+      "code": "JOB_DAILY_CAP",
+      "httpStatus": 409,
+      "message": "You have earned today's maximum pay from this job."
+    },
+    {
+      "code": "SHIFT_RESULT_IMPLAUSIBLE",
+      "httpStatus": 422,
+      "message": "The shift result does not look like a real shift."
+    },
+    {
+      "code": "JAILED",
+      "httpStatus": 403,
+      "message": "You are in CT Jail. Pay bail or wait it out."
+    },
+    {
+      "code": "NOT_JAILED",
+      "httpStatus": 409,
+      "message": "You are not in CT Jail."
+    },
+    {
+      "code": "NO_PURSUIT",
+      "httpStatus": 409,
+      "message": "There is no active police pursuit for you."
+    },
+    {
+      "code": "CATCH_NOT_VERIFIED",
+      "httpStatus": 422,
+      "message": "The server could not verify that the police caught you."
+    },
+    {
+      "code": "VEHICLE_NOT_STEALABLE",
+      "httpStatus": 403,
+      "message": "Realtime: this vehicle cannot be stolen (the hovercar, or one a player is driving)."
+    },
+    {
+      "code": "STEAL_REQUIRED",
+      "httpStatus": 409,
+      "message": "Realtime: this vehicle belongs to someone else; send vehicle_enter with steal: true."
     }
   ]
 }

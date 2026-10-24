@@ -49,10 +49,7 @@ export async function getMoodBps(ctx: AppContext): Promise<number> {
  * @param anchorSpotId - The spot to attach venue-local events to.
  * @returns Newest-first events, capped.
  */
-export async function getRecentEvents(
-  ctx: AppContext,
-  anchorSpotId: string,
-): Promise<NpcEvent[]> {
+export async function getRecentEvents(ctx: AppContext, anchorSpotId: string): Promise<NpcEvent[]> {
   const out: NpcEvent[] = [];
   const rows = await ctx.db.withConnection(async (c) => {
     const coins = await c.query<{ ticker: string; stage: string; launched_at: Date }>(
@@ -87,6 +84,10 @@ export interface MarketCoinSnapshot {
   readonly change5mBps: number;
   readonly holders: number;
   readonly launchedAt: bigint;
+  /** Launched by a player through the Rugpull Factory. */
+  readonly playerLaunched: boolean;
+  /** Factory art id, '' for house coins. */
+  readonly templateId: string;
 }
 
 /**
@@ -115,12 +116,19 @@ export async function listMarketCoins(
       change_5m_bps: number;
       holders: number;
       launched_at: Date;
+      player_launched: boolean;
+      template_id: string | null;
     }>(
-      `SELECT coin_id, ticker, name, stage, price_micros, mcap_cents,
-              vol_5m_cents, change_5m_bps, holders, launched_at
-         FROM coins
-        WHERE stage <> 'dead'
-        ORDER BY mcap_cents DESC
+      `SELECT c.coin_id, c.ticker, c.name, c.stage, c.price_micros, c.mcap_cents,
+              c.vol_5m_cents, c.change_5m_bps,
+              (SELECT COUNT(*)::int FROM positions p WHERE p.coin_id = c.coin_id AND p.units > 0)
+                AS holders,
+              c.launched_at, c.player_launched, f.template_id
+         FROM coins c
+         LEFT JOIN factory_coins f ON f.coin_id = c.coin_id
+        WHERE c.stage <> 'dead'
+        ORDER BY (c.player_launched AND c.launched_at > now() - interval '30 minutes') DESC,
+                 c.mcap_cents DESC
         LIMIT $1`,
       [limit],
     );
@@ -136,6 +144,8 @@ export async function listMarketCoins(
     change5mBps: row.change_5m_bps,
     holders: row.holders,
     launchedAt: BigInt(row.launched_at.getTime()),
+    playerLaunched: row.player_launched,
+    templateId: row.template_id ?? '',
   }));
 }
 
