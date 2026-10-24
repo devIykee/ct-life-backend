@@ -1,8 +1,12 @@
+## 2026-10-23 - Follow-up to the homes (#7) and Duo Shop (#8) merges
+
+#7 and #8 were merged before their last updates, so these landed late: the real door ids in `home_units.json` (see "Real door ids" below), `homeId` in the unit access reply, the `/me` home-follows-lease fix, `flags.wireV3Kinds` in `GET /config`, and the real 18-item `shop_items.json` catalogue. No new endpoints. Deploy note: the six placeholder `flat:midrise_*` rows are no longer in the file but stay in `home_units`; delete the unleased ones once (`DELETE FROM home_units WHERE unit_id LIKE 'flat:midrise_%' AND unit_id NOT IN (SELECT unit_id FROM homes WHERE unit_id IS NOT NULL)`).
+
 ## 2026-10-23 - Duo Shop: Cash goods and furniture, scheduled delivery, placements
 
 Merge after the homes PR (#7): orders to the door use `homes.unit_id` and `home_units`, and placements use its door access rules.
 
-- New FE-owned `contract/ids/shop_items.json` (+ `shop_items.schema.json`, checked by `contract:check`): `items: [{itemId, category, name, priceCents, deliverable, placeable, footprint {w,d,h}, modelKey}]`. `category` is `furniture | decor | appliance | food | clothing`; `footprint` (metres) is required exactly when `placeable` is true; `modelKey` is the frontend asset key. It ships 20 placeholder items with placeholder model keys (`shop_<itemId>`); the frontend replaces them. The API upserts the file into `shop_items` (migration 083); an item dropped from the file leaves the catalogue but stays in the table.
+- New FE-owned `contract/ids/shop_items.json` (+ `shop_items.schema.json`, checked by `contract:check`): `items: [{itemId, category, name, priceCents, deliverable, placeable, footprint {w,d,h}, modelKey}]`. `category` is `furniture | decor | appliance | food | clothing` (the schema keeps `clothing` open); `footprint` (metres) is required exactly when `placeable` is true; `modelKey` is the frontend asset key. It ships the frontend's 18 items (12 furniture, 4 decor, 1 appliance, 1 food; no clothing, the cosmetics shop sells looks), with `modelKey` the client prefab `Resources/World/Furniture/<modelKey>`. The API upserts the file into `shop_items` (migration 083); an item dropped from the file leaves the catalogue but stays in the table.
 - Added `GET /shop/catalog?category=` -> `{items, lockerFeeCents, windows: [{id, minutes}]}`. The cosmetics `GET /shop` and `POST /shop/purchase` are unchanged.
 - Added `POST /shop/orders {items: [{itemId, qty}], window: 'asap' | '30m' | '1h', destination: 'door' | 'locker'}` -> `201 ShopOrder`. It debits Cash (ledger reason `shop_order`) from catalogue prices, plus a 300 cent locker fee for `locker`; the client never sends a price. Windows are real time: asap 10 min, 30 min, 60 min; nothing shortens the wait. Limits: 10 lines, 1 to 10 of each, 20 units, 5 orders in flight (`VALIDATION_FAILED`). `door` needs a home with a door (`409 NO_HOME_DOOR`; a player on the street uses `locker`); short of Cash is `402 INSUFFICIENT_CASH`. Idempotent: a replayed `Idempotency-Key` returns the same order and charges once.
 - Added `GET /shop/orders`, `GET /shop/orders/{id}` (owner only; someone else's id is `404`) and `POST /shop/orders/{id}/cancel` (owner only, only while `placed`, full refund with ledger reason `shop_refund`; `409 ORDER_NOT_CANCELLABLE` otherwise; a cancelled order is never delivered). `ShopOrder.status` is `placed | out_for_delivery | delivered | cancelled`.
@@ -11,6 +15,13 @@ Merge after the homes PR (#7): orders to the door use `homes.unit_id` and `home_
 - Added `PUT /homes/{homeId}/placements {placements: [{itemInstanceId, x, z, rotY}]}` (owner only; replaces the set; items must be owned, `placeable` and listed once; x and z within 200 m, yaw in radians) and `GET /homes/{homeId}/placements` for anyone who may enter the door (owner, guests; a home without a door is open), `403 FORBIDDEN` otherwise. Both answer `{homeId, placements: [{itemInstanceId, x, z, rotY, itemId, name, modelKey, footprint}]}`.
 - New error codes `NO_HOME_DOOR` (409), `ORDER_NOT_CANCELLABLE` (409), `ITEM_NOT_OWNED` (403, also for an unknown id), `ITEM_NOT_PLACEABLE` (409), `ITEM_ALREADY_PLACED` (409).
 - Migration 083 adds `shop_items`, `shop_orders`, `shop_order_items`, `player_items` and `home_placements`. Food and clothing are delivered and owned but have no use yet.
+
+## 2026-10-23 - Real door ids, access `homeId`, `/me` home kind, `flags.wireV3Kinds`
+
+- `contract/ids/home_units.json` now holds the six real doors from the frontend (`flat:lgmf_<x>_<z>:0`, tier `flat`, `apartment_modern`, 18000 cents a week, capacity 2). The placeholder `flat:midrise_0N:0` rows stay in `home_units` on an existing database (the upsert never deletes); delete any that are unleased, once.
+- `GET /units/{unitId}/access` adds `homeId` (the `home:<uuid>` instance id) when `canEnter` is true, for the owner and guests only, so a guest at a door can join the `home` room. Strangers never get it.
+- `GET /me`: `homeId` and `character.homeId` now follow the live lease (`studio` after a studio lease) instead of the birth home; `home` gains `kind`. With no live lease they fall back to the character's birth home.
+- `GET /config` adds `flags: {wireV3Kinds}` (boolean, default false, env `WIRE_V3_KINDS`). When true the client sends the v3 vehicle kinds.
 
 ## 2026-10-23 - Home units (doors), move-out, guests, door access
 
