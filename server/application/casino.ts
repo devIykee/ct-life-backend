@@ -1203,6 +1203,32 @@ export async function listChallenges(
 // --- Rounds, state, self-exclusion ---------------------------------------
 
 /**
+ * Settle the caller's own open crash round if the server clock is past its
+ * crash point (a loss), so reads show the rug at the real crash point instead
+ * of waiting for the 5 minute sweep. Locks player, cash and round rows in the
+ * same order as the sweep and cashout, so it cannot double-settle.
+ */
+async function settleOwnCrashedRound(ctx: AppContext, userId: string, now: Date): Promise<void> {
+  const cfg = cfgOf(ctx);
+  const has = await ctx.db.withConnection((c) =>
+    c.query(
+      `SELECT 1 FROM casino_rounds WHERE user_id = $1 AND game = 'crash' AND status = 'open' LIMIT 1`,
+      [userId],
+    ),
+  );
+  if ((has.rowCount ?? 0) === 0) return;
+  await runInTransaction(
+    async (client) => {
+      await lockPlayer(client, userId);
+      await lockCash(client, userId);
+      await reapOpenCrash(client, userId, cfg, now);
+    },
+    {},
+    ctx.db,
+  );
+}
+
+/**
  * The caller's own rounds, newest first. There is no way to list anyone
  * else's rounds.
  * @param ctx - The app context.
@@ -1218,6 +1244,7 @@ export async function listMyRounds(
 ): Promise<Meta & { rounds: RoundView[] }> {
   const cfg = cfgOf(ctx);
   await sweepCasino(ctx, now, userId);
+  await settleOwnCrashedRound(ctx, userId, now);
   return ctx.db.withConnection(async (client) => {
     const r = await client.query<RoundRow>(
       `SELECT ${ROUND_COLUMNS} FROM casino_rounds
@@ -1244,6 +1271,7 @@ export async function getMyRound(
 ): Promise<Meta & { round: RoundView }> {
   const cfg = cfgOf(ctx);
   await sweepCasino(ctx, now, userId);
+  await settleOwnCrashedRound(ctx, userId, now);
   return ctx.db.withConnection(async (client) => {
     const r = await client.query<RoundRow>(
       `SELECT ${ROUND_COLUMNS} FROM casino_rounds WHERE round_id = $1 AND user_id = $2`,
