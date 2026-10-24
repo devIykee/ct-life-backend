@@ -34,6 +34,8 @@ import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerShopRoutes } from './routes/shop.js';
+import { REDACT_PATHS } from '../shared/logger/logger.js';
+import { registerEventRoutes } from './routes/events.js';
 import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
@@ -77,6 +79,8 @@ export async function buildServer(): Promise<ServerHandle> {
   const app = Fastify({
     logger: {
       level: ctx.config.logLevel,
+      // Bodies are not logged by default; redact them (and any coordinates) anyway.
+      redact: { paths: [...REDACT_PATHS], censor: '[REDACTED]' },
       // Minimal pino-style config; the shared logger has more.
     },
     disableRequestLogging: false,
@@ -162,6 +166,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
   registerShopRoutes(app);
+  registerEventRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
   registerDailyRoutes(app);

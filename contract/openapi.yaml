@@ -3967,6 +3967,353 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/WeeklyMeta' }
 
+  /events/current:
+    get:
+      tags: [liveops]
+      operationId: getEventsCurrent
+      summary: Real-world events live now (Breakpoint and the like).
+      description: >-
+        An event is live while `startsAt <= now < endsAt` (UTC). `serverNow` (epoch ms) lets the
+        client correct its clock for countdowns. Poll on join and on the `event_live` /
+        `event_ended` city messages.
+      x-phase: 4
+      responses:
+        '200':
+          description: Live events, soonest to end first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, serverNow]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CalendarEvent' }
+                  serverNow: { type: integer, format: int64 }
+
+  /events/upcoming:
+    get:
+      tags: [liveops]
+      operationId: getEventsUpcoming
+      summary: The next real-world events, soonest first (for countdowns).
+      x-phase: 4
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200':
+          description: Events that have not started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, serverNow]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/CalendarEvent' }
+                  serverNow: { type: integer, format: int64 }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /events/{slug}:
+    get:
+      tags: [liveops]
+      operationId: getEventsSlug
+      summary: One event with the caller's quest progress.
+      description: >-
+        `skinId` names the in-game venue skin (for example `london_2026` on the Conference
+        Center). `streamUrl` is a link-out to the official stream; open it in the browser, never
+        embed it; null until the organiser publishes one. Trivia answers are never returned.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: The event
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEventDetails' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{slug}/progress:
+    post:
+      tags: [liveops]
+      operationId: postEventsSlugProgress
+      summary: Advance the event quest chain with a proof.
+      description: >-
+        Steps run in order (`booths`, `trivia`, `nods` for Breakpoint 2026); a later step answers
+        `EVENT_STEP_INVALID` (`reason: step_locked`) until the earlier ones are complete. For
+        `booths` and `nods`, `proof.id` is the interaction id from the quest set; each id counts
+        once and the server only checks that the id belongs to that step. It cannot prove the
+        player stood there. For `trivia`, `proof.id` is the question id and `proof.answer` the
+        choice id; it is checked against a server-only key and a question is answered once, right
+        or wrong (`reason: wrong_answer` / `already_answered`). Only inside the event window.
+        Idempotent: a proof already counted returns the progress with `accepted: false`.
+        Completing the chain pays Cash (ledger reason `event_reward`) and grants the off-chain
+        cosmetic once (`justCompleted: true` on that call). Rate limited per player (burst 8,
+        then 1 call per 2 s).
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [step, proof]
+              properties:
+                step: { type: string, example: booths }
+                proof:
+                  type: object
+                  required: [id]
+                  properties:
+                    id: { type: string, example: bp26.booth_1 }
+                    answer: { type: string, example: a }
+      responses:
+        '200':
+          description: Progress after this proof
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventProgressResult' }
+        '400':
+          description: Unknown step or id, step still locked, or a wrong or repeated trivia answer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_STEP_INVALID,
+                      message: 'That quest step or proof is not valid for this event.',
+                      details: { reason: step_locked, step: nods },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The event is not live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_NOT_LIVE,
+                      message: 'This event is not live; its quests only run inside its window.',
+                      details: { slug: breakpoint-2026, status: upcoming },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /events/{slug}/checkin:
+    post:
+      tags: [liveops]
+      operationId: postEventsSlugCheckin
+      summary: Opt-in IRL check-in at the real venue (Breakpoint 2026).
+      description: >-
+        Send the phone's position once. The server compares it with the venue geofence (centre and
+        radius in `calendar_events.json`, about 350 m around Olympia London) and discards it:
+        coordinates are never stored, logged or echoed; only the fact of the check-in is kept.
+        Only during the event window. Rejected with `CHECKIN_REJECTED` when `isMock` is true
+        (`reason: mock_location`), `accuracyM` is above 150 (`poor_accuracy`), the account was
+        created at or after the event start (`account_too_new`), the position is outside the
+        geofence (`outside_geofence`) or the event has no geofence (`not_available`). The first
+        accepted check-in per player per event pays a one-time reward: Cash (ledger reason
+        `event_irl_bonus`, default 10000, env `EVENT_IRL_BONUS_CENTS`) and the off-chain
+        cosmetics `irl_badge_breakpoint_2026` and `lanyard_breakpoint_2026_gold`. A repeat call
+        returns the existing check-in with `firstCheckin: false` and pays nothing. A new check-in
+        is hidden from the attendee board until the player opts in. At most 3 attempts per player
+        per hour (`429`). The server cannot prove the phone is honest; see
+        `docs/PRIVACY_IRL_CHECKIN.md`.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng, accuracyM, isMock]
+              properties:
+                lat: { type: number, minimum: -90, maximum: 90 }
+                lng: { type: number, minimum: -180, maximum: 180 }
+                accuracyM:
+                  {
+                    type: number,
+                    minimum: 0,
+                    description: 'Horizontal accuracy radius in metres from the OS.',
+                  }
+                isMock:
+                  { type: boolean, description: 'The OS mock-location flag. true is rejected.' }
+      responses:
+        '200':
+          description: Checked in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCheckinResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The event is not live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_NOT_LIVE,
+                      message: 'This event is not live; its quests only run inside its window.',
+                      details: { slug: breakpoint-2026, status: upcoming },
+                    },
+                }
+        '422':
+          description: The check-in was not accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHECKIN_REJECTED,
+                      message: 'The IRL check-in was not accepted.',
+                      details: { reason: outside_geofence },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /events/{slug}/checkin/visibility:
+    put:
+      tags: [liveops]
+      operationId: putEventsSlugCheckinVisibility
+      summary: Appear on, or leave, the IRL attendee board.
+      description: >-
+        Default is hidden. Needs a check-in (`404` otherwise). Turning visibility on tells the
+        city (`irl_checkin`, alias only; never to a player who blocked the attendee or was blocked by them, and only while the event is live), at most once an hour per player.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visible]
+              properties:
+                visible: { type: boolean }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, visible]
+                properties:
+                  slug: { type: string }
+                  visible: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{slug}/irl:
+    get:
+      tags: [liveops]
+      operationId: getEventsSlugIrl
+      summary: Players who checked in at the venue and chose to be listed.
+      description: >-
+        Newest first, keyset paginated with `next`. Only players who opted in; anyone you blocked
+        or who blocked you is left out. No location of any kind, and no user id.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of attendees
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/IrlAttendee' }
+                  next: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/events/{slug}:
+    put:
+      tags: [admin]
+      operationId: putAdminEventsSlug
+      summary: Correct an event's dates, stream link or wording (admin only).
+      description: >-
+        Admin wallets only (`ADMIN_WALLETS`). Send any of the fields; `streamUrl` is `https://` or
+        null. Once edited, the calendar file stops overwriting the event.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                startsAt: { type: string, format: date-time }
+                endsAt: { type: string, format: date-time }
+                city: { type: string }
+                realVenue: { type: string }
+                streamUrl: { type: [string, 'null'] }
+                sourceUrl: { type: string }
+      responses:
+        '200':
+          description: The updated event
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CalendarEvent' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /push/register:
     post:
       tags: [liveops]
@@ -5398,6 +5745,124 @@ components:
       properties:
         weekday: { type: integer, minimum: 0, maximum: 6 }
         bonus: { type: string }
+    CalendarEvent:
+      type: object
+      required:
+        [
+          slug,
+          title,
+          kind,
+          startsAt,
+          endsAt,
+          city,
+          realVenue,
+          ingameVenueId,
+          skinId,
+          streamUrl,
+          sourceUrl,
+          irlCheckin,
+          status,
+        ]
+      properties:
+        slug: { type: string, example: breakpoint-2026 }
+        title: { type: string }
+        kind: { type: string, enum: [conference, hackathon, meetup] }
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        city: { type: string, example: London }
+        realVenue: { type: string, example: Olympia London }
+        ingameVenueId: { type: string, example: conference_hall }
+        skinId: { type: string, example: london_2026 }
+        streamUrl:
+          { type: [string, 'null'], description: Link-out to the official stream; never embed. }
+        sourceUrl: { type: string, description: The primary source for the dates. }
+        irlCheckin: { type: boolean, description: True when the opt-in IRL check-in is available. }
+        status: { type: string, enum: [upcoming, live, ended] }
+    EventStepProgress:
+      type: object
+      required: [step, title, kind, required, done, complete]
+      properties:
+        step: { type: string }
+        title: { type: string }
+        kind: { type: string, enum: [interaction, trivia] }
+        required: { type: integer }
+        done: { type: integer }
+        complete: { type: boolean }
+        questions:
+          type: array
+          description: Trivia steps only. Answers are never returned.
+          items:
+            type: object
+            required: [id, prompt, choices, answered]
+            properties:
+              id: { type: string }
+              prompt: { type: string }
+              answered: { type: boolean }
+              choices:
+                type: array
+                items:
+                  type: object
+                  required: [id, label]
+                  properties:
+                    id: { type: string }
+                    label: { type: string }
+    EventQuestProgress:
+      type: object
+      required: [steps, completed, reward]
+      properties:
+        steps:
+          type: array
+          items: { $ref: '#/components/schemas/EventStepProgress' }
+        completed: { type: boolean }
+        reward:
+          type: object
+          required: [cashCents, itemKey, claimedAt]
+          properties:
+            cashCents: { type: integer }
+            itemKey: { type: [string, 'null'], example: lanyard_breakpoint_2026 }
+            claimedAt: { type: [string, 'null'], format: date-time }
+    CalendarEventDetails:
+      allOf:
+        - $ref: '#/components/schemas/CalendarEvent'
+        - type: object
+          required: [quest]
+          properties:
+            quest: { $ref: '#/components/schemas/EventQuestProgress' }
+    EventProgressResult:
+      allOf:
+        - $ref: '#/components/schemas/EventQuestProgress'
+        - type: object
+          required: [slug, accepted, justCompleted]
+          properties:
+            slug: { type: string }
+            accepted: { type: boolean, description: False for a replayed or no-op proof. }
+            justCompleted:
+              { type: boolean, description: True on the call that completed the chain and paid. }
+    EventCheckinResult:
+      type: object
+      required: [slug, checkedIn, checkedInAt, visible, firstCheckin, reward]
+      properties:
+        slug: { type: string }
+        checkedIn: { type: boolean, enum: [true] }
+        checkedInAt: { type: string, format: date-time }
+        visible: { type: boolean }
+        firstCheckin: { type: boolean }
+        reward:
+          type: [object, 'null']
+          description: Paid by this call; null on a repeat.
+          required: [cashCents, itemKeys]
+          properties:
+            cashCents: { type: integer }
+            itemKeys: { type: array, items: { type: string } }
+    IrlAttendee:
+      type: object
+      required: [alias, look, tribeId, avatarId, checkedInAt]
+      properties:
+        alias: { type: string }
+        look: {}
+        tribeId: { type: [string, 'null'] }
+        avatarId: { type: [string, 'null'], description: The owned likeness avatar id, if any. }
+        checkedInAt: { type: string, format: date-time }
     ModerationItem:
       type: object
       required: [id, targetType, targetId, reasonId, createdAt]

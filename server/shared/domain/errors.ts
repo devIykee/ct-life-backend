@@ -340,3 +340,33 @@ export class ConflictError extends DomainError {
     this.httpStatus = 409;
   }
 }
+
+// Events ------------------------------------------------------------------
+
+export class EventNotLiveError extends DomainError {
+  readonly code = 'EVENT_NOT_LIVE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This event is not live; its quests only run inside its window.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class EventStepInvalidError extends DomainError {
+  readonly code = 'EVENT_STEP_INVALID';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That quest step or proof is not valid for this event.', details);
+    this.httpStatus = 400;
+  }
+}
+
+export class CheckinRejectedError extends DomainError {
+  readonly code = 'CHECKIN_REJECTED';
+  /**
+   * @param reason - Why: mock_location, poor_accuracy, outside_geofence,
+   *   account_too_new or not_available. Never carries a position or distance.
+   */
+  constructor(reason: string) {
+    super('The IRL check-in was not accepted.', { reason });
+    this.httpStatus = 422;
+  }
+}

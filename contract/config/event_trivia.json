@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "_note": "Server-only answer key for the event trivia step (POST /events/{slug}/progress). Never sent to clients; the question text lives in contract/ids/calendar_events.json. Each answer must be checkable against the event's `sourceUrl` (public announcements only).",
+  "answers": {
+    "bp26.q_city": "a",
+    "bp26.q_venue": "b",
+    "bp26.q_month": "c",
+    "bp26.q_days": "c"
+  }
+}

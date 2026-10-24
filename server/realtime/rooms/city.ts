@@ -16,7 +16,11 @@ import { CityState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { getMoodBps } from '../../application/world-pulse.js';
-import { subscribeUserMessages, type UserMessage } from '../../application/realtime-bus.js';
+import {
+  shouldDeliverBroadcast,
+  subscribeUserMessages,
+  type UserMessage,
+} from '../../application/realtime-bus.js';
 import { createRedis } from '../../shared/redis/client.js';
 
 const PATCH_HZ = 1;
@@ -90,7 +94,16 @@ export class CityRoom extends Room {
    */
   private deliver(msg: UserMessage): void {
     if (msg.userId === '*') {
-      this.broadcast(msg.type, msg.payload);
+      if (msg.exclude === undefined && msg.authedOnly !== true) {
+        this.broadcast(msg.type, msg.payload);
+        return;
+      }
+      // Scoped broadcast (presence): per session, skipping excluded users.
+      for (const client of this.clients) {
+        if (shouldDeliverBroadcast(msg, this.userIdBySession.get(client.sessionId))) {
+          client.send(msg.type, msg.payload);
+        }
+      }
       return;
     }
     const sessions = this.sessionsByUser.get(msg.userId);

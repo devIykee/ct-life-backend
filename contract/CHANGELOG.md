@@ -1,8 +1,32 @@
+## 2026-10-24 - Event calendar: opt-in IRL check-in at Breakpoint
+
+Extends the event calendar entry below (same PR).
+
+- Added `POST /events/{slug}/checkin {lat, lng, accuracyM, isMock}`, only during the event window. The server checks the position against the venue geofence and discards it: no coordinates, accuracy or distance are stored, logged or returned. Rejections are `422 CHECKIN_REJECTED` with `details.reason`: `mock_location` (`isMock` true), `poor_accuracy` (`accuracyM` > 150), `account_too_new` (account created at or after the event `startsAt`), `outside_geofence`, `not_available` (no geofence). Out of window is `409 EVENT_NOT_LIVE`. At most 3 attempts per player per hour (`429`). Reply `{slug, checkedIn, checkedInAt, visible, firstCheckin, reward}`; a repeat returns the same check-in with `firstCheckin: false`, `reward: null`.
+- One-time IRL reward per player per event (and so per wallet): Cash (ledger reason `event_irl_bonus`, default 10000 cents, env `EVENT_IRL_BONUS_CENTS`) plus the off-chain, grant-only cosmetics `irl_badge_breakpoint_2026` and `lanyard_breakpoint_2026_gold` (slot `acc`, source `grant`).
+- Added `PUT /events/{slug}/checkin/visibility {visible}` (default hidden; needs a check-in, else `404`) and `GET /events/{slug}/irl?limit=&cursor=` -> `{items: [{alias, look, tribeId, avatarId, checkedInAt}], next}`: opted-in attendees only, newest first, blocked users excluded both ways, no location and no user id.
+- Realtime `irl_checkin {slug, alias, at}` on the city room when a player turns visibility on (alias only; once an hour per player, 10 burst and 2/s per event). It is scoped, not a raw broadcast: the city room skips signed-out sessions and every player who blocked the attendee or was blocked by them, and it is sent only while the event is live and the attendee is visible.
+- `calendar_events.json` events gain optional `geofence {lat, lng, radiusM, source}` and `irlRewardItemKeys`. Breakpoint 2026: 51.49639, -0.20972, 350 m, coordinates from the Wikipedia article on Olympia London. `CalendarEvent` gains `irlCheckin` (true when a geofence exists). New error code `CHECKIN_REJECTED` (422).
+- Request bodies and coordinate fields are now redacted from API logs. Migration 090 adds `event_checkins(event_id, user_id, checked_in_at, visible)` and `events.geo_*` (the venue's geofence). What is stored and why: `docs/PRIVACY_IRL_CHECKIN.md`.
+
 ## 2026-10-24 - Push tokens: one account per token, DELETE /push/register
 
 - Added `DELETE /push/register {fcmToken}` -> `204`. It removes that token from the caller's own devices only; someone else's or an unknown token is left alone and the reply is the same, so tokens cannot be probed or deleted by guessing. Call it on sign-out.
 - A push token now belongs to exactly one account. `POST /push/register` with a token another account holds moves it to the caller in the same transaction, so the previous account can never receive pushes on this device. The openapi `POST /push/register` block now shows the real body (`platform`, `fcmToken` or `apnsToken`, `enabled`) and `201`.
 - Migration 088 deletes duplicate tokens (the most recently updated row keeps it) and adds unique indexes on `push_devices.fcm_token` and `apns_token`.
+
+## 2026-10-23 - Event calendar: Breakpoint 2026, event quest chain, lanyard
+
+Independent of the daily streak PR (#9, migration 084); merge order does not matter for the code, see the PR for the migration order note.
+
+- New BE-owned `contract/ids/calendar_events.json` (+ `calendar_events.schema.json`, checked by `contract:check`): `events: [{id, slug, title, kind, startsAt, endsAt, city, realVenue, ingameVenueId, skinId, streamUrl, sourceUrl, questSet, rewardCents, rewardItemKey}]` and `questSets` (steps with the booth, trivia-question and nod ids the client sends). It is a new file because `events.json` already holds the city's `evt_*` world events. The API upserts it into `events` (migration 085); an event ops edited is no longer overwritten. It seeds Breakpoint 2026 only: `breakpoint-2026`, 15 to 17 Nov 2026 (stored as 2026-11-15T00:00Z to 2026-11-18T00:00Z, the listing gives dates but no times), London, Olympia London, source https://luma.com/breakpoint2026, in-game venue `conference_hall`, skin `london_2026`. `streamUrl` is null until the organiser publishes a stream; ops set it with the admin PUT. New server-only `contract/config/event_trivia.json` holds the trivia answer key.
+- Added `GET /events/current` -> `{items, serverNow}` (live events, with `endsAt`), `GET /events/upcoming?limit=` (default 10, max 50, with `startsAt`) and `GET /events/{slug}` -> the event plus `quest` progress for the caller (`skinId`, `streamUrl`, steps with `done/required`, trivia questions without answers, `reward`). `status` is `upcoming | live | ended`. The stream is a link-out; do not embed it.
+- Added admin `PUT /admin/events/{slug}` (`ADMIN_WALLETS`) to correct title, dates, city, venue, `streamUrl` (https or null) and `sourceUrl`.
+- Added `POST /events/{slug}/progress {step, proof: {id, answer?}}`. Steps are ordered (`booths` 3 of 6, `trivia` 3 of 4, `nods` 5 of 8). Booth and nod proofs are checked against the ids the quest set lists (each counts once); trivia is checked against the server key and each question is answered once. Only inside the event window; rate limited per player (burst 8, then 1 per 2 s); idempotent. The server cannot prove the player stood at a booth or nod: it stops unknown ids, repeats, order skips, and out-of-window claims, not a client replaying real ids.
+- Completing the chain pays `rewardCents` Cash (ledger reason `event_reward`, 20000 for Breakpoint) and grants the off-chain cosmetic `lanyard_breakpoint_2026` (slot `acc`, inventory source `grant`), once. New cosmetics column `grant_only`: a grant-only item is not in `GET /shop` and cannot be bought. Never tradable, never an NFT.
+- Realtime: the city room broadcasts `event_live {slug, title, kind, city, skinId, ingameVenueId, streamUrl, endsAt, at}` at the start and `event_ended {slug, title, kind, skinId, endedAt, at}` at the end, from a per-minute worker sweep (so up to about a minute late, once each).
+- New error codes `EVENT_NOT_LIVE` (409) and `EVENT_STEP_INVALID` (400).
+- Migration 085 adds `events`, `event_progress`, `event_completions`, `event_announcements` and `cosmetic_items.grant_only`.
 
 ## 2026-10-23 - gm streak and daily chest, daily/weekly quests, real push (FCM)
 

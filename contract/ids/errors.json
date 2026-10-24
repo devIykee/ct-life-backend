@@ -201,6 +201,21 @@
       "code": "QUEST_NOT_COMPLETE",
       "httpStatus": 409,
       "message": "This quest is not finished yet."
+    },
+    {
+      "code": "EVENT_NOT_LIVE",
+      "httpStatus": 409,
+      "message": "This event is not live; its quests only run inside its window."
+    },
+    {
+      "code": "EVENT_STEP_INVALID",
+      "httpStatus": 400,
+      "message": "That quest step or proof is not valid for this event."
+    },
+    {
+      "code": "CHECKIN_REJECTED",
+      "httpStatus": 422,
+      "message": "The IRL check-in was not accepted."
     }
   ]
 }
