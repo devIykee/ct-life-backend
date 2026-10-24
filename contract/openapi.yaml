@@ -4045,7 +4045,7 @@ paths:
       summary: Appear on, or leave, the IRL attendee board.
       description: >-
         Default is hidden. Needs a check-in (`404` otherwise). Turning visibility on tells the
-        city (`irl_checkin`, alias only), at most once an hour per player.
+        city (`irl_checkin`, alias only; never to a player who blocked the attendee or was blocked by them, and only while the event is live), at most once an hour per player.
       x-phase: 4
       parameters:
         - name: slug

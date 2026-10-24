@@ -35,7 +35,7 @@ import { perUserTokenBucket } from '../shared/infra/rate-limit.js';
 import type { AppContext } from './context.js';
 import { grantCosmetic, ensureCatalog } from './cosmetics.js';
 import { ensureEventsSynced, loadCalendar, loadEvent, statusOf } from './events.js';
-import { publishToUser } from './realtime-bus.js';
+import { publishToCityExcept } from './realtime-bus.js';
 
 /** Largest reported accuracy radius (metres) a check-in may carry. */
 export const MAX_ACCURACY_M = 150;
@@ -222,14 +222,25 @@ export async function setVisibility(
     const alias = (
       await c.query<{ alias: string }>(`SELECT alias FROM characters WHERE user_id = $1`, [userId])
     ).rows[0]?.alias;
-    return { evId: ev.id, was: upd.rows[0].visible_before, alias };
+    return {
+      evId: ev.id,
+      was: upd.rows[0].visible_before,
+      alias,
+      live: statusOf(ev, now) === 'live',
+    };
   });
-  if (visible && !r.was && r.alias) {
+  if (visible && !r.was && r.alias && r.live) {
     await announceIrl(ctx, r.evId, slug, userId, r.alias, now);
   }
   return { slug, visible };
 }
 
+/**
+ * Tell the city (alias only) that an attendee is listed. Presence is
+ * sensitive: it goes only (1) while the event is live, (2) for an attendee
+ * whose row is visible right now, and (3) to signed-in players other than
+ * those who blocked the attendee or were blocked by them. Rate limited.
+ */
 async function announceIrl(
   ctx: AppContext,
   eventId: string,
@@ -239,11 +250,31 @@ async function announceIrl(
   now: Date,
 ): Promise<void> {
   try {
+    const gate = await ctx.db.withConnection(async (c) => {
+      const v = await c.query(
+        `SELECT 1 FROM event_checkins WHERE event_id = $1 AND user_id = $2 AND visible`,
+        [eventId, userId],
+      );
+      if (v.rowCount === 0) return null;
+      const b = await c.query<{ other: string }>(
+        `SELECT blocked_user_id AS other FROM blocks WHERE blocker_user_id = $1
+         UNION
+         SELECT blocker_user_id AS other FROM blocks WHERE blocked_user_id = $1`,
+        [userId],
+      );
+      return b.rows.map((x) => x.other);
+    });
+    if (gate === null) return;
     const once = await ctx.redis.main.set(`irl:ann:${eventId}:${userId}`, '1', 'EX', 3600, 'NX');
     if (once !== 'OK') return;
     const d = await perUserTokenBucket(ctx.redis.main, `rl:irl-ann:${eventId}`, 10, 2, 1);
     if (!d.allowed) return;
-    await publishToUser(ctx, '*', 'irl_checkin', { slug, alias, at: now.getTime() });
+    await publishToCityExcept(
+      ctx,
+      'irl_checkin',
+      { slug, alias, at: now.getTime() },
+      { exclude: [...gate, userId] },
+    );
   } catch {
     // A missed announcement never fails the request.
   }

@@ -12,6 +12,7 @@ import { config as loadDotenv } from 'dotenv';
 vi.mock('./realtime-bus.js', async (orig) => ({
   ...(await orig<typeof import('./realtime-bus.js')>()),
   publishToUser: vi.fn(async () => undefined),
+  publishToCityExcept: vi.fn(async () => undefined),
 }));
 
 import { buildContext, _resetContextForTests } from './context.js';
@@ -26,7 +27,7 @@ import {
 import { _resetEventsSyncForTests, listUpcoming } from './events.js';
 import { checkIn, distanceM, irlBonusCents, listAttendees, setVisibility } from './events-irl.js';
 import { listInventory } from './cosmetics.js';
-import { publishToUser } from './realtime-bus.js';
+import { publishToCityExcept, shouldDeliverBroadcast } from './realtime-bus.js';
 import { REDACT_PATHS } from '../shared/logger/logger.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
@@ -73,7 +74,7 @@ beforeAll(async () => {
   _resetEventsSyncForTests();
   await listUpcoming(ctx, 1, new Date('2026-10-23T00:00:00Z'));
 });
-beforeEach(() => vi.mocked(publishToUser).mockClear());
+beforeEach(() => vi.mocked(publishToCityExcept).mockClear());
 afterAll(async () => {
   await pool.end();
 });
@@ -235,21 +236,68 @@ describe('attendee board', () => {
     await expect(setVisibility(ctx, u, BP, true, DURING)).rejects.toBeInstanceOf(NotFoundError);
     const r = await checkIn(ctx, u, BP, INSIDE, DURING);
     expect(r.visible).toBe(false);
-    expect(vi.mocked(publishToUser)).not.toHaveBeenCalled();
+    expect(vi.mocked(publishToCityExcept)).not.toHaveBeenCalled();
 
     await ctx.redis.main.del(`irl:ann:evt_cal_breakpoint_2026:${u}`);
     await setVisibility(ctx, u, BP, true, DURING);
-    const call = vi.mocked(publishToUser).mock.calls.find((c) => c[2] === 'irl_checkin');
+    const call = vi.mocked(publishToCityExcept).mock.calls.find((c) => c[1] === 'irl_checkin');
     expect(call).toBeDefined();
-    expect(call![1]).toBe('*');
-    expect(Object.keys(call![3]).sort()).toEqual(['alias', 'at', 'slug']);
+    expect(Object.keys(call![2] as object).sort()).toEqual(['alias', 'at', 'slug']);
+    expect(call![3].exclude).toContain(u);
 
     // Toggling again is rate limited: no second announcement.
     await setVisibility(ctx, u, BP, false, DURING);
     await setVisibility(ctx, u, BP, true, DURING);
-    expect(vi.mocked(publishToUser).mock.calls.filter((c) => c[2] === 'irl_checkin')).toHaveLength(
-      1,
+    expect(vi.mocked(publishToCityExcept)).toHaveBeenCalledTimes(1);
+  });
+
+  it('never announces a hidden attendee or outside the window', async () => {
+    const hiddenU = await newUser();
+    await checkIn(ctx, hiddenU, BP, INSIDE, DURING);
+    await setVisibility(ctx, hiddenU, BP, false, DURING);
+    expect(vi.mocked(publishToCityExcept)).not.toHaveBeenCalled();
+
+    const late = await newUser();
+    await checkIn(ctx, late, BP, INSIDE, DURING);
+    await ctx.redis.main.del(`irl:ann:evt_cal_breakpoint_2026:${late}`);
+    await setVisibility(ctx, late, BP, true, new Date('2026-11-18T00:00:00Z'));
+    expect(vi.mocked(publishToCityExcept)).not.toHaveBeenCalled();
+    // Still listed on the board, just not announced.
+    const viewer = await newUser();
+    const lateAlias = (await pool.query(`SELECT alias FROM characters WHERE user_id = $1`, [late]))
+      .rows[0].alias;
+    const board = await listAttendees(ctx, viewer, BP, 50, null);
+    expect(board.items.map((i) => i.alias)).toContain(lateAlias);
+  });
+
+  it('excludes everyone who blocked the attendee or was blocked by them', async () => {
+    const attendee = await newUser();
+    const blocker = await newUser();
+    const blocked = await newUser();
+    const bystander = await newUser();
+    await checkIn(ctx, attendee, BP, INSIDE, DURING);
+    await pool.query(
+      `INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2), ($3, $4)`,
+      [blocker, attendee, attendee, blocked],
     );
+    await ctx.redis.main.del(`irl:ann:evt_cal_breakpoint_2026:${attendee}`);
+    await setVisibility(ctx, attendee, BP, true, DURING);
+    const call = vi.mocked(publishToCityExcept).mock.calls.at(-1)!;
+    const exclude = call[3].exclude as string[];
+    expect(exclude).toEqual(expect.arrayContaining([blocker, blocked, attendee]));
+    expect(exclude).not.toContain(bystander);
+    // What the city room does with that message:
+    const msg = {
+      userId: '*',
+      type: 'irl_checkin',
+      payload: {},
+      exclude,
+      authedOnly: true,
+    } as const;
+    expect(shouldDeliverBroadcast(msg, blocker)).toBe(false);
+    expect(shouldDeliverBroadcast(msg, blocked)).toBe(false);
+    expect(shouldDeliverBroadcast(msg, bystander)).toBe(true);
+    expect(shouldDeliverBroadcast(msg, undefined)).toBe(false); // anonymous session
   });
 });
 
