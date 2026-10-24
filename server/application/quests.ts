@@ -278,7 +278,7 @@ export async function recordQuestEvent(
 ): Promise<void> {
   // The same real event also feeds the player's career ladder (never throws). A shift has
   // its own, richer path in `ShiftsService`, so it is not counted twice here.
-  if (verb !== 'shift_complete') await recordCareerAction(ctx, userId, verb, ref, now);
+  if (verb !== 'shift_complete') await recordCareerAction(ctx, userId, verb, ref, now, counterpart);
   try {
     const p = picksFor(ctx, userId, now);
     const matches = [

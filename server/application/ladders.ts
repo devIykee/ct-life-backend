@@ -272,6 +272,10 @@ export async function ladderForShift(
  * @param action - The action verb (a quest verb, or `airdrop_claim`, `project_found`...).
  * @param ref - A stable id of the source event.
  * @param now - The current time (injectable for tests).
+ * @param counterpart - For social events: the same per-counterpart cooldown the quests use.
+ * The player earns no ladder XP for this action from this counterpart again within the
+ * window, so a pair of accounts cannot loop it. Checked against accepted ladder awards, so
+ * it holds whether or not the player has a quest for the verb.
  */
 export async function recordCareerAction(
   ctx: AppContext,
@@ -279,6 +283,7 @@ export async function recordCareerAction(
   action: string,
   ref: string,
   now: Date = new Date(),
+  counterpart?: { readonly key: string; readonly cooldownDays: number },
 ): Promise<void> {
   try {
     const cfg = laddersConfig(ctx);
@@ -290,13 +295,22 @@ export async function recordCareerAction(
       const ladder = cfg.ladders.find((l) => l.id === member.ladder_id);
       const xp = ladder?.actionXp[action];
       if (!ladder || xp === undefined) return null;
+      if (counterpart) {
+        const since = new Date(now.getTime() - counterpart.cooldownDays * 86_400_000);
+        const prior = await client.query(
+          `SELECT 1 FROM ladder_xp_events
+            WHERE user_id = $1 AND source = 'action' AND starts_with(ref, $2) AND created_at > $3 LIMIT 1`,
+          [userId, `${action}:${counterpart.key}|`, since],
+        );
+        if ((prior.rowCount ?? 0) > 0) return null;
+      }
       const r = await awardLadderXp(
         client,
         userId,
         ladder,
         xp,
         'action',
-        `${action}:${ref}`,
+        counterpart ? `${action}:${counterpart.key}|${ref}` : `${action}:${ref}`,
         now,
         cfg.ladderActionXpDailyCap,
       );

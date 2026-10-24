@@ -365,3 +365,52 @@ describe('related-action XP', () => {
     });
   });
 });
+
+describe('social actions cannot be looped', () => {
+  const ladderXp = async (u: string) =>
+    (await getLadders(ctx, u, NOW)).ladders.find((l) => l.id === 'caller')!.xp;
+
+  it('a valid tip earns ladder XP; the same pair again inside the window earns none', async () => {
+    const u = await newUser();
+    await joinLadder(ctx, u, 'caller', NOW);
+    const rule = { key: 'tip:friend', cooldownDays: 7 };
+    await recordQuestEvent(ctx, u, 'tip_send', 't1', NOW, rule);
+    expect(await ladderXp(u)).toBe(3);
+    // Alt-account ping-pong: new tip id, same counterpart, still in the window.
+    await recordQuestEvent(ctx, u, 'tip_send', 't2', new Date(NOW.getTime() + 3_600_000), rule);
+    await recordQuestEvent(ctx, u, 'tip_send', 't3', new Date(NOW.getTime() + 86_400_000), rule);
+    expect(await ladderXp(u)).toBe(3);
+    // A different counterpart is a valid event.
+    await recordQuestEvent(ctx, u, 'tip_send', 't4', NOW, { key: 'tip:other', cooldownDays: 7 });
+    expect(await ladderXp(u)).toBe(6);
+    // After the window the first counterpart counts again.
+    const later = new Date(NOW.getTime() + 8 * 86_400_000);
+    await recordQuestEvent(ctx, u, 'tip_send', 't5', later, rule);
+    expect(await ladderXp(u)).toBe(9);
+  });
+
+  it('a replayed event ref earns none, with or without a counterpart rule', async () => {
+    const u = await newUser();
+    await joinLadder(ctx, u, 'caller', NOW);
+    const rule = { key: 'pair:x', cooldownDays: 7 };
+    await recordQuestEvent(ctx, u, 'paid_call', 'call-1', NOW, rule);
+    await recordQuestEvent(ctx, u, 'paid_call', 'call-1', NOW, rule);
+    expect(await ladderXp(u)).toBe(12);
+    await recordQuestEvent(ctx, u, 'alpha_call', 'a-1', NOW);
+    await recordQuestEvent(ctx, u, 'alpha_call', 'a-1', NOW);
+    expect(await ladderXp(u)).toBe(27);
+  });
+
+  it('shift_complete through the quest hook never earns ladder XP (shifts have their own path)', async () => {
+    const u = await newUser();
+    await joinLadder(ctx, u, 'builder', NOW);
+    await recordQuestEvent(ctx, u, 'shift_complete', 'shift:x', NOW);
+    const r = await pool.query(`SELECT 1 FROM ladder_xp_events WHERE user_id = $1`, [u]);
+    expect(r.rowCount).toBe(0);
+    // A real shift pays its XP exactly once.
+    const s = await perfectShift(u, 'junior_analyst');
+    expect(s.ladder!.xpAdded).toBe(100);
+    const rows = await pool.query(`SELECT 1 FROM ladder_xp_events WHERE user_id = $1`, [u]);
+    expect(rows.rowCount).toBe(1);
+  });
+});
