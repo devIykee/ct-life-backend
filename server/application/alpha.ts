@@ -28,6 +28,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
 export type CallStatus = 'open' | 'hit_target' | 'hit_stop' | 'expired';
@@ -65,7 +66,7 @@ const SMART_MONEY_MIN_CENTS = 10_000;
  * Place an alpha call. Immutable; no edit/delete.
  */
 export async function placeAlphaCall(
-  _ctx: AppContext,
+  ctx: AppContext,
   input: AlphaCallInput,
 ): Promise<AlphaCallRow> {
   const entry = BigInt(input.entryMicros);
@@ -85,6 +86,7 @@ export async function placeAlphaCall(
       [callId, input.userId, input.coinId, input.entryMicros, input.targetMicros, input.stopMicros],
     );
   });
+  await recordQuestEvent(ctx, input.userId, 'alpha_call', callId);
   return {
     callId,
     userId: input.userId,

@@ -246,3 +246,10 @@ consumed credits for reconciliation. `likeness_action_receipts` stores owner/key
 operation hashes for durable approval, cancellation and deletion replay. No table
 contains original photo bytes, public photo URLs, provider credentials or client
 payment assertions. See [character likeness](CHARACTER_LIKENESS.md).
+
+## Season tracks and nods (migration 087)
+
+- `season_xp` — append-only Season XP awards `(user_id, source, ref)` unique; also created by migration 084 (PR #9); 087 uses `IF NOT EXISTS`.
+- `season_tier_claims` — PK `(user_id, season_id, track, tier)`; `reward_kind` is `cash | cosmetic | furniture`.
+- `collected_nods` — PK `(user_id, nod_id)`.
+- `nod_set_grants` — PK `(user_id, set_id)`.

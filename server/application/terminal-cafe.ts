@@ -37,6 +37,7 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ammQuote } from './amm.js';
 import type { AppContext } from './context.js';
+import { checkCreatorRug, recordFactoryTrade } from './factory-rug.js';
 
 export type Stage = 'new' | 'final' | 'graduated' | 'dead';
 export type TradeSide = 'buy' | 'sell';
@@ -340,16 +341,22 @@ export async function executeTrade(ctx: AppContext, input: TradeInput): Promise<
   if (input.maxSlippageBps < 0 || input.maxSlippageBps > 10_000) {
     throw new ValidationFailedError({ reason: 'maxSlippageBps out of range' });
   }
-  return runInTransaction(async (client) => {
+  // Set inside the transaction (reset on a retry); read after it commits.
+  let playerLaunched = false;
+  const result = await runInTransaction(async (client) => {
+    playerLaunched = false;
     // Lock the coin row.
     const cr = await client.query<{
       coin_id: string;
       ticker: string;
       stage: Stage;
       price_micros: string;
-    }>(`SELECT coin_id, ticker, stage, price_micros FROM coins WHERE coin_id = $1 FOR UPDATE`, [
-      input.coinId,
-    ]);
+      player_launched: boolean;
+    }>(
+      `SELECT coin_id, ticker, stage, price_micros, player_launched
+         FROM coins WHERE coin_id = $1 FOR UPDATE`,
+      [input.coinId],
+    );
     if ((cr.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'coin', id: input.coinId });
     const coin = cr.rows[0]!;
     if (coin.stage === 'dead') {
@@ -473,6 +480,19 @@ export async function executeTrade(ctx: AppContext, input: TradeInput): Promise<
         );
       }
     }
+    if (coin.player_launched) {
+      playerLaunched = true;
+      // Rugpull Factory coin: log the trade for rug detection and pay the creator fee.
+      await recordFactoryTrade(client, {
+        coinId: input.coinId,
+        userId: input.userId,
+        side: input.side,
+        units: tradedUnits,
+        cashCents: amountInCents,
+        feeCents,
+        priceMicros: quotePriceMicros,
+      });
+    }
     // B20 fix: Return the contract Trade shape with execution price and fee
     return {
       tradeId: positionId,
@@ -486,6 +506,12 @@ export async function executeTrade(ctx: AppContext, input: TradeInput): Promise<
       newUnits: newUnits.toString(),
     };
   });
+  if (playerLaunched && input.side === 'sell') {
+    // After the trade has committed: a creator dumping on holders is flagged,
+    // heated and exposed. A failure here must not undo or fail the trade.
+    await checkCreatorRug(ctx, input.coinId, input.userId).catch(() => null);
+  }
+  return result;
 }
 
 /**

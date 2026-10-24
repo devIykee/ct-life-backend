@@ -172,6 +172,126 @@ export class UnitFullError extends DomainError {
   }
 }
 
+export class FreezeLimitReachedError extends DomainError {
+  readonly code = 'FREEZE_LIMIT_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You already hold the maximum number of streak freezes.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class PassRequiredError extends DomainError {
+  readonly code = 'PASS_REQUIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The paid track needs an active season pass.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class TierLockedError extends DomainError {
+  readonly code = 'TIER_LOCKED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Not enough Season XP for this tier yet.', details);
+    this.httpStatus = 409;
+  }
+}
+
+// Casino -------------------------------------------------------------------
+
+export class AgeRequiredError extends DomainError {
+  readonly code = 'AGE_REQUIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The Rug Room is 18+. Confirm your age to play.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class StakeCapReachedError extends DomainError {
+  readonly code = 'STAKE_CAP_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This stake would pass your daily casino stake cap. Try again tomorrow (UTC).', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class LossCapReachedError extends DomainError {
+  readonly code = 'LOSS_CAP_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super(
+      'This stake would pass your daily casino net-loss cap. Try again tomorrow (UTC).',
+      details,
+    );
+    this.httpStatus = 403;
+  }
+}
+
+export class SelfExcludedError extends DomainError {
+  readonly code = 'SELF_EXCLUDED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You have excluded yourself from the casino until the date shown.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class RoundSettledError extends DomainError {
+  readonly code = 'ROUND_SETTLED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This round is already settled.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class NodTooFarError extends DomainError {
+  readonly code = 'NOD_TOO_FAR';
+  constructor(details: Record<string, unknown> = {}) {
+    super(
+      "The server's last position for you is more than the collect radius from this nod.",
+      details,
+    );
+    this.httpStatus = 409;
+  }
+}
+
+export class QuestNotCompleteError extends DomainError {
+  readonly code = 'QUEST_NOT_COMPLETE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This quest is not finished yet.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class RoundInProgressError extends DomainError {
+  readonly code = 'ROUND_IN_PROGRESS';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Finish your open crash round before starting another.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class ChallengeExpiredError extends DomainError {
+  readonly code = 'CHALLENGE_EXPIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This challenge expired; the stake was refunded.', details);
+    this.httpStatus = 410;
+  }
+}
+
+export class ChallengeNotOpenError extends DomainError {
+  readonly code = 'CHALLENGE_NOT_OPEN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This challenge is no longer open.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class PositionUnknownError extends DomainError {
+  readonly code = 'POSITION_UNKNOWN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The server has no recent street position for the player.', details);
+    this.httpStatus = 409;
+  }
+}
+
 // Economy -----------------------------------------------------------------
 
 export class InsufficientCashError extends DomainError {
@@ -322,5 +442,69 @@ export class ConflictError extends DomainError {
   constructor(details: Record<string, unknown> = {}) {
     super('Resource conflict.', details);
     this.httpStatus = 409;
+  }
+}
+
+// Events ------------------------------------------------------------------
+
+export class EventNotLiveError extends DomainError {
+  readonly code = 'EVENT_NOT_LIVE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This event is not live; its quests only run inside its window.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class EventStepInvalidError extends DomainError {
+  readonly code = 'EVENT_STEP_INVALID';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That quest step or proof is not valid for this event.', details);
+    this.httpStatus = 400;
+  }
+}
+
+// Rugpull Factory ---------------------------------------------------------
+
+export class NameNotAllowedError extends DomainError {
+  readonly code = 'NAME_NOT_ALLOWED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That coin name or ticker is not allowed.', details);
+    this.httpStatus = 400;
+  }
+}
+
+export class CheckinRejectedError extends DomainError {
+  readonly code = 'CHECKIN_REJECTED';
+  /**
+   * @param reason - Why: mock_location, poor_accuracy, outside_geofence,
+   *   account_too_new or not_available. Never carries a position or distance.
+   */
+  constructor(reason: string) {
+    super('The IRL check-in was not accepted.', { reason });
+    this.httpStatus = 422;
+  }
+}
+
+export class TickerTakenError extends DomainError {
+  readonly code = 'TICKER_TAKEN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That ticker is already used by another coin.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class LaunchLimitReachedError extends DomainError {
+  readonly code = 'LAUNCH_LIMIT_REACHED';
+  constructor(details: Record<string, unknown> = {}) {
+    super("You have reached today's coin launch limit.", details);
+    this.httpStatus = 429;
+  }
+}
+
+export class LaunchCooldownError extends DomainError {
+  readonly code = 'LAUNCH_COOLDOWN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Wait before launching another coin.', details);
+    this.httpStatus = 429;
   }
 }

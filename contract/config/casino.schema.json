@@ -1,0 +1,197 @@
+{
+  "title": "casino.json",
+  "type": "object",
+  "required": ["version", "disclaimer", "limits", "slots", "crash", "coinflip"],
+  "additionalProperties": true,
+  "$defs": {
+    "weights": {
+      "type": "object",
+      "required": ["rocket", "diamond_hands", "ape", "laser_eyes", "rug", "wild"],
+      "additionalProperties": false,
+      "properties": {
+        "rocket": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "diamond_hands": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "ape": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "laser_eyes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "rug": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "wild": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        }
+      }
+    },
+    "multipliers": {
+      "type": "object",
+      "required": ["rocket", "diamond_hands", "ape", "laser_eyes", "rug", "wild"],
+      "additionalProperties": false,
+      "properties": {
+        "rocket": {
+          "$ref": "#/$defs/mult"
+        },
+        "diamond_hands": {
+          "$ref": "#/$defs/mult"
+        },
+        "ape": {
+          "$ref": "#/$defs/mult"
+        },
+        "laser_eyes": {
+          "$ref": "#/$defs/mult"
+        },
+        "rug": {
+          "$ref": "#/$defs/mult"
+        },
+        "wild": {
+          "$ref": "#/$defs/mult"
+        }
+      }
+    },
+    "mult": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1000
+    }
+  },
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "disclaimer": {
+      "const": "Play money. No cash value. 18+"
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "minStakeCents",
+        "maxStakeCents",
+        "sessionReminderMinutes",
+        "sessionGapMinutes",
+        "minSelfExcludeDays",
+        "maxSelfExcludeDays"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "minStakeCents": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxStakeCents": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionReminderMinutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sessionGapMinutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "minSelfExcludeDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxSelfExcludeDays": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "required": ["reelWeights", "paytable", "computedRtp"],
+      "additionalProperties": false,
+      "properties": {
+        "reelWeights": {
+          "$ref": "#/$defs/weights"
+        },
+        "paytable": {
+          "type": "object",
+          "required": ["three", "two"],
+          "additionalProperties": false,
+          "properties": {
+            "three": {
+              "$ref": "#/$defs/multipliers"
+            },
+            "two": {
+              "$ref": "#/$defs/multipliers"
+            }
+          }
+        },
+        "computedRtp": {
+          "type": "number",
+          "minimum": 0.9,
+          "maximum": 0.97
+        }
+      }
+    },
+    "crash": {
+      "type": "object",
+      "required": ["targetRtp", "growthPerSecond", "maxMultiplier", "minAutoCashout"],
+      "additionalProperties": false,
+      "properties": {
+        "targetRtp": {
+          "type": "number",
+          "minimum": 0.9,
+          "maximum": 0.97
+        },
+        "growthPerSecond": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "maxMultiplier": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 1000
+        },
+        "minAutoCashout": {
+          "type": "number",
+          "minimum": 1.01
+        }
+      }
+    },
+    "coinflip": {
+      "type": "object",
+      "required": ["payoutMultiplier", "h2hHouseCutBps", "challengeTtlSeconds"],
+      "additionalProperties": false,
+      "properties": {
+        "payoutMultiplier": {
+          "type": "number",
+          "minimum": 1.5,
+          "maximum": 1.95
+        },
+        "h2hHouseCutBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
+        },
+        "challengeTtlSeconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600
+        }
+      }
+    }
+  }
+}

@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 import { addCareerXp, readCareerProgress, type CareersConfig } from './careers.js';
+import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -183,6 +184,7 @@ export class ShiftsService {
       _shifts.set(shiftId, shift);
       throw e;
     }
+    await recordQuestEvent(this.ctx, userId, 'shift_complete', `shift:${shiftId}`);
     return { payCents, xp, promoted };
   }
 
