@@ -13,6 +13,34 @@
 import pino, { type Logger, type LoggerOptions } from 'pino';
 import { loadConfig } from '../config/config.js';
 
+/**
+ * Paths pino censors. Besides secrets this covers a player's position (the
+ * IRL check-in): coordinates must never reach a log line, nor a request
+ * body, which Fastify does not log but we redact anyway as a second guard.
+ */
+export const REDACT_PATHS = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'req.headers["x-api-key"]',
+  'req.body',
+  'body',
+  'password',
+  'secret',
+  'privateKey',
+  'seed',
+  'mnemonic',
+  'lat',
+  'lng',
+  'latitude',
+  'longitude',
+  'accuracyM',
+  '*.lat',
+  '*.lng',
+  '*.latitude',
+  '*.longitude',
+  '*.accuracyM',
+] as const;
+
 let cached: Logger | null = null;
 
 /**
@@ -32,16 +60,7 @@ export function createLogger(): Logger {
     },
     timestamp: pino.stdTimeFunctions.isoTime,
     redact: {
-      paths: [
-        'req.headers.authorization',
-        'req.headers.cookie',
-        'req.headers["x-api-key"]',
-        'password',
-        'secret',
-        'privateKey',
-        'seed',
-        'mnemonic',
-      ],
+      paths: [...REDACT_PATHS],
       censor: '[REDACTED]',
     },
   };

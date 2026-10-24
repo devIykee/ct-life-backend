@@ -85,12 +85,24 @@ export interface Config {
     readonly adminKey: string;
   };
 
+  readonly push: {
+    /** Firebase project id for FCM HTTP v1. Empty with no credentials = push is a logged no-op. */
+    readonly fcmProjectId: string;
+    /** Service-account JSON, inline. Never committed; set in the host's secret store. */
+    readonly fcmServiceAccountJson: string;
+    /** Path to the service-account JSON file (used when the inline value is empty). */
+    readonly fcmServiceAccountPath: string;
+  };
+
   readonly entitlements: {
     /**
      * Metaplex Core collection address of the hovercar pass. Empty means
      * wallet sync is off and only 'grant' rows unlock the hovercar.
      */
     readonly hovercarCollection: string;
+  };
+  readonly flags: {
+    readonly wireV3Kinds: boolean;
   };
 
   readonly helius: {
@@ -126,6 +138,12 @@ export interface Config {
     readonly restGlobalPerSec: number;
     readonly loginPerIpPerMin: number;
     readonly loginGlobalConcurrent: number;
+  };
+
+  /** The Rug Room (casino) daily player caps, in cents. */
+  readonly casino: {
+    readonly dailyStakeCapCents: number;
+    readonly dailyNetLossCapCents: number;
   };
 
   readonly features: {
@@ -338,8 +356,19 @@ export function loadConfig(): Config {
       ),
     },
 
+    push: {
+      fcmProjectId: optionalEnv('FCM_PROJECT_ID', ''),
+      fcmServiceAccountJson: optionalEnv('FCM_SERVICE_ACCOUNT_JSON', ''),
+      fcmServiceAccountPath: optionalEnv('FCM_SERVICE_ACCOUNT_PATH', ''),
+    },
+
     entitlements: {
       hovercarCollection: optionalEnv('HOVERCAR_COLLECTION', ''),
+    },
+
+    flags: {
+      // Tells the client to send the v3 vehicle kinds; turn on once they are deployed.
+      wireV3Kinds: optionalEnv('WIRE_V3_KINDS', 'false').toLowerCase() === 'true',
     },
 
     helius: {
@@ -378,6 +407,11 @@ export function loadConfig(): Config {
       restGlobalPerSec: asInt('RATE_LIMIT_REST_GLOBAL_PER_SEC', 5_000),
       loginPerIpPerMin: asInt('RATE_LIMIT_LOGIN_PER_IP_PER_MIN', 30),
       loginGlobalConcurrent: asInt('RATE_LIMIT_LOGIN_GLOBAL_CONCURRENT', 200),
+    },
+
+    casino: {
+      dailyStakeCapCents: asInt('CASINO_DAILY_STAKE_CAP_CENTS', 50_000),
+      dailyNetLossCapCents: asInt('CASINO_DAILY_LOSS_CAP_CENTS', 25_000),
     },
 
     features: {

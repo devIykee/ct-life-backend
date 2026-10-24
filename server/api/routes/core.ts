@@ -88,6 +88,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       dreams: cache.loadOptional<unknown>('dreams'),
       homes: cache.loadOptional<unknown>('homes'),
       toasts: cache.loadOptional<unknown>('toasts'),
+      // Remote switches the client reads without a release.
+      flags: { wireV3Kinds: req.ctx.config.flags.wireV3Kinds },
       anims: anims ?? null,
       sfx: cache.loadOptional<unknown>('sfx'),
       items: cache.loadOptional<unknown>('items'),
@@ -276,6 +278,8 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
     };
     const balRow = bal.rows[0] ?? { cash_cents: '0', debt_cents: '0' };
     const home = await loadMeHome(c, userId);
+    const activeKind =
+      home && (home.status === 'active' || home.status === 'overdue') ? home.kind : null;
     const dreamProgress = chRow ? await getDreamProgress(req.ctx, userId, chRow.dream_id) : null;
     return {
       user: {
@@ -296,7 +300,8 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
             tribeId: chRow.tribe_id,
             traitIds: chRow.trait_ids,
             dreamId: chRow.dream_id,
-            homeId: chRow.home_id,
+            // The kind of the live lease; the character row keeps the birth home.
+            homeId: activeKind ?? chRow.home_id,
             likenessJobId: chRow.likeness_job_id ?? null,
           }
         : null,
@@ -305,7 +310,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       cashCents: Number(balRow.cash_cents),
       debtCents: Number(balRow.debt_cents),
       ...debtSchedule(req.ctx, Number(balRow.debt_cents)),
-      homeId: chRow?.home_id ?? 'parents_basement',
+      homeId: activeKind ?? chRow?.home_id ?? 'parents_basement',
       home,
       minerTier: uRow.miner_tier || 'none',
       flags: {

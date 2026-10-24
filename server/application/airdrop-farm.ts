@@ -31,6 +31,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordCareerAction } from './ladders.js';
 import type { AppContext } from './context.js';
 
 const BASE_AIRDROP_CENTS = 500; // $5
@@ -69,12 +70,12 @@ function todayUtc(): string {
 
 /** Claim today's airdrop. */
 export async function claimAirdrop(
-  _ctx: AppContext,
+  ctx: AppContext,
   userId: string,
   now: Date = new Date(),
 ): Promise<AirdropClaimRow> {
   const dayDate = todayUtc();
-  return runInTransaction(async (client) => {
+  const claim = await runInTransaction(async (client) => {
     // Lock the user row + check sybil jail.
     const u = await client.query<UserRow>(
       `SELECT is_sybil_jailed, sgt_mint FROM users WHERE id = $1 FOR UPDATE`,
@@ -128,6 +129,9 @@ export async function claimAirdrop(
     );
     return rowToClaim(r.rows[0]!);
   });
+  // After the commit: a claim (new or replayed; the ref makes it count once) feeds the ladder.
+  await recordCareerAction(ctx, userId, 'airdrop_claim', claim.claimId, now);
+  return claim;
 }
 
 /** List the caller's recent airdrop claims. */
@@ -237,7 +241,12 @@ export function airdropAmountCents(sgtBonus: boolean, tribeBonusBps: number): nu
  * @returns Basis points, 0 when the player is not an Airdrop Farmer.
  */
 async function tribeBonusBpsFor(
-  client: { query: <T extends import('pg').QueryResultRow>(q: string, v: unknown[]) => Promise<import('pg').QueryResult<T>> },
+  client: {
+    query: <T extends import('pg').QueryResultRow>(
+      q: string,
+      v: unknown[],
+    ) => Promise<import('pg').QueryResult<T>>;
+  },
   userId: string,
 ): Promise<number> {
   const r = await client.query<{ tribe_id: string }>(

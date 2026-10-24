@@ -21,8 +21,8 @@ import { ValidationFailedError } from '../shared/domain/errors.js';
 type SimConfig = MarketConfig & { readonly launchIntervalSec: number };
 
 const LAUNCH_LOCK_KEY = 'market:launch:lock';
-/** How often coins launched by players are looked for. */
-const SYNC_INTERVAL_MS = 30_000;
+/** How often coins launched by players are looked for (a Factory coin ticks within this). */
+const SYNC_INTERVAL_MS = 5_000;
 const TICKER_TRIES = 5;
 
 const NAME_HEADS = [

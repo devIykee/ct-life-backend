@@ -23,6 +23,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { InsufficientCashError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
 export type Horizon = '5m' | '15m' | '1h' | 'daily';
@@ -71,7 +72,7 @@ export async function placePrediction(
   }
   const closesAt = new Date(Date.now() + horizonSec * 1000);
   const predictionId = uuidv7();
-  return runInTransaction(async (client) => {
+  const placed: PredictionRow = await runInTransaction(async (client) => {
     const bal = await client.query<{ cash_cents: string }>(
       `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
       [input.userId],
@@ -117,6 +118,8 @@ export async function placePrediction(
       createdAt: new Date().toISOString(),
     };
   });
+  await recordQuestEvent(ctx, input.userId, 'prediction_place', placed.predictionId);
+  return placed;
 }
 
 /**

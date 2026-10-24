@@ -1,0 +1,72 @@
+{
+  "title": "season_tracks.json",
+  "type": "object",
+  "required": ["version", "cosmetics", "seasons"],
+  "properties": {
+    "version": { "type": "string" },
+    "cosmetics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cosmeticId", "name", "slot"],
+        "properties": {
+          "cosmeticId": { "type": "string", "pattern": "^reward_[a-z0-9_]+$" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "slot": { "enum": ["skin", "head", "hair", "top", "bottom", "shoes", "acc"] }
+        }
+      }
+    },
+    "seasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seasonId", "name", "startsAt", "endsAt", "xpPerTier", "nodXp", "tracks"],
+        "properties": {
+          "seasonId": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+          "name": { "type": "string" },
+          "startsAt": { "type": "string", "format": "date-time" },
+          "endsAt": { "type": "string", "format": "date-time" },
+          "xpPerTier": { "type": "integer", "minimum": 1 },
+          "nodXp": { "type": "integer", "minimum": 0 },
+          "tracks": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["free", "paid"],
+            "properties": {
+              "free": { "$ref": "#/$defs/track" },
+              "paid": { "$ref": "#/$defs/track" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "track": {
+      "type": "array",
+      "minItems": 10,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["tier", "reward"],
+        "properties": {
+          "tier": { "type": "integer", "minimum": 1 },
+          "reward": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "maxProperties": 1,
+            "properties": {
+              "cashCents": { "type": "integer", "minimum": 1 },
+              "cosmeticId": { "type": "string", "pattern": "^reward_[a-z0-9_]+$" },
+              "furnitureItemId": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

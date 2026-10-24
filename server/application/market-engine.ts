@@ -404,6 +404,11 @@ export class MarketEngine {
       mcapCents: state.mcapCents.toString(),
       change5mBps: state.change5mBps,
       holders: state.holders,
+      // The candle strip `GET /market/coins/:id` and the Factory detail serve.
+      priceHistory: state.priceHistory.map((p) => ({
+        at: p.at,
+        priceMicros: p.priceMicros.toString(),
+      })),
       at: this.clock.now(),
     };
     await this.redis.set(

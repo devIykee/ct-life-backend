@@ -156,7 +156,7 @@ describe('Duo Shop over HTTP', () => {
     // Catalogue.
     const cat = await call(owner, 'GET', '/v1/shop/catalog');
     expect(cat.status).toBe(200);
-    expect((cat.body.items as unknown[]).length).toBeGreaterThanOrEqual(20);
+    expect((cat.body.items as unknown[]).length).toBeGreaterThanOrEqual(18);
     expect(cat.body.lockerFeeCents).toBe(300);
     const food = await call(owner, 'GET', '/v1/shop/catalog?category=food');
     expect(
@@ -165,7 +165,7 @@ describe('Duo Shop over HTTP', () => {
     expect((await call(owner, 'GET', '/v1/shop/catalog?category=cars')).status).toBe(400);
 
     // A street player: door is refused, locker works.
-    const door = { items: [{ itemId: 'sofa_basic', qty: 1 }], window: 'asap', destination: 'door' };
+    const door = { items: [{ itemId: 'sofa_linen', qty: 1 }], window: 'asap', destination: 'door' };
     const noDoor = await call(owner, 'POST', '/v1/shop/orders', door);
     expect(noDoor.status).toBe(409);
     expect(errCode(noDoor.body)).toBe('NO_HOME_DOOR');
@@ -183,7 +183,7 @@ describe('Duo Shop over HTTP', () => {
       (
         await call(owner, 'POST', '/v1/shop/orders', {
           ...door,
-          items: [{ itemId: 'sofa_basic', qty: 99 }],
+          items: [{ itemId: 'sofa_linen', qty: 99 }],
         })
       ).status,
     ).toBe(400);
@@ -199,7 +199,7 @@ describe('Duo Shop over HTTP', () => {
       owner,
       'POST',
       '/v1/shop/orders',
-      { items: [{ itemId: 'lamp_floor', qty: 2 }], window: '30m', destination: 'door' },
+      { items: [{ itemId: 'lamp_pipe', qty: 2 }], window: '30m', destination: 'door' },
       key,
     );
     expect(placed.status, JSON.stringify(placed.body)).toBe(201);
@@ -215,7 +215,7 @@ describe('Duo Shop over HTTP', () => {
       owner,
       'POST',
       '/v1/shop/orders',
-      { items: [{ itemId: 'lamp_floor', qty: 2 }], window: '30m', destination: 'door' },
+      { items: [{ itemId: 'lamp_pipe', qty: 2 }], window: '30m', destination: 'door' },
       key,
     );
     expect(replay.body.orderId).toBe(orderId);
@@ -251,7 +251,7 @@ describe('Duo Shop over HTTP', () => {
 
     // Cancel refunds; a second order is delivered.
     const toCancel = await call(owner, 'POST', '/v1/shop/orders', {
-      items: [{ itemId: 'plant_pothos', qty: 1 }],
+      items: [{ itemId: 'plant_zebra', qty: 1 }],
       window: '1h',
       destination: 'door',
     });
@@ -272,9 +272,9 @@ describe('Duo Shop over HTTP', () => {
       itemInstanceId: string;
       itemId: string;
     }>;
-    const lamps = items.filter((i) => i.itemId === 'lamp_floor');
+    const lamps = items.filter((i) => i.itemId === 'lamp_pipe');
     expect(lamps).toHaveLength(2);
-    expect(items.some((i) => i.itemId === 'plant_pothos')).toBe(false);
+    expect(items.some((i) => i.itemId === 'plant_zebra')).toBe(false);
     expect(((await call(other, 'GET', '/v1/me/items')).body.items as unknown[]).length).toBe(0);
 
     // Placements: owner only, validated.

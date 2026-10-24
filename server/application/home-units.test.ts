@@ -83,7 +83,7 @@ describe('home units', () => {
     const r = await pool.query<{ unit_id: string }>(
       `SELECT unit_id FROM home_units WHERE tier = 'flat' AND unit_id LIKE 'flat:%'`,
     );
-    expect(r.rows.map((x) => x.unit_id)).toContain('flat:midrise_01:0');
+    expect(r.rows.map((x) => x.unit_id)).toContain('flat:lgmf_n439_p68:0');
   });
 
   let ownerHome: Awaited<ReturnType<typeof createHome>>;
@@ -98,6 +98,7 @@ describe('home units', () => {
     const me = await ctx.db.withConnection((c) => loadMeHome(c, ids.owner));
     expect(me).toEqual({
       homeId: ownerHome.homeId,
+      kind: 'penthouse',
       unitId: UNIT_A,
       tier: 'penthouse',
       roomType: 'test_room',
@@ -135,13 +136,21 @@ describe('home units', () => {
   });
 
   it('access: owner and guest enter; stranger and evicted owner do not', async () => {
-    expect(await unitAccess(ctx, UNIT_A, ids.owner)).toEqual({ canEnter: true, reason: 'owner' });
+    expect(await unitAccess(ctx, UNIT_A, ids.owner)).toEqual({
+      canEnter: true,
+      reason: 'owner',
+      homeId: ownerHome.homeId,
+    });
     expect(await unitAccess(ctx, UNIT_A, ids.stranger)).toEqual({
       canEnter: false,
       reason: 'locked',
     });
     await addGuest(ctx, ownerHome.homeId, ids.owner, ids.guest);
-    expect(await unitAccess(ctx, UNIT_A, ids.guest)).toEqual({ canEnter: true, reason: 'guest' });
+    expect(await unitAccess(ctx, UNIT_A, ids.guest)).toEqual({
+      canEnter: true,
+      reason: 'guest',
+      homeId: ownerHome.homeId,
+    });
     await expect(unitAccess(ctx, 'nope:nope:0', ids.owner)).rejects.toMatchObject({
       code: 'NOT_FOUND',
     });

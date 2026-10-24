@@ -15,6 +15,7 @@ import { registerAuthRoutes } from './routes/auth.js';
 import { registerCoreRoutes } from './routes/core.js';
 import { registerSocialRoutes } from './routes/social.js';
 import { registerWorkRoutes } from './routes/work.js';
+import { registerJobRoutes } from './routes/jobs.js';
 import { registerOpsRoutes } from './routes/ops.js';
 import { registerPaymentsRoutes } from './routes/payments.js';
 import { registerMarketRoutes } from './routes/markets.js';
@@ -34,9 +35,17 @@ import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerShopRoutes } from './routes/shop.js';
+import { REDACT_PATHS } from '../shared/logger/logger.js';
+import { registerEventRoutes } from './routes/events.js';
+import { registerCasinoRoutes } from './routes/casino.js';
+import { registerSeasonRoutes } from './routes/season.js';
+import { registerFactoryRoutes } from './routes/factory.js';
 import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
 import { registerSeasonPassRoutes } from './routes/season-pass.js';
+import { registerDailyRoutes } from './routes/daily.js';
+import { registerQuestRoutes } from './routes/quests.js';
+import { registerPushPrefsRoutes } from './routes/push-prefs.js';
 import { registerBusinessRoutes } from './routes/businesses.js';
 import { registerGigRoutes } from './routes/gigs.js';
 import { registerProjectRoutes } from './routes/projects.js';
@@ -74,6 +83,8 @@ export async function buildServer(): Promise<ServerHandle> {
   const app = Fastify({
     logger: {
       level: ctx.config.logLevel,
+      // Bodies are not logged by default; redact them (and any coordinates) anyway.
+      redact: { paths: [...REDACT_PATHS], censor: '[REDACTED]' },
       // Minimal pino-style config; the shared logger has more.
     },
     disableRequestLogging: false,
@@ -140,6 +151,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerCoreRoutes(app);
   registerSocialRoutes(app);
   registerWorkRoutes(app);
+  registerJobRoutes(app);
   registerOpsRoutes(app, ctx);
   registerPaymentsRoutes(app);
   registerMarketRoutes(app);
@@ -159,8 +171,15 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
   registerShopRoutes(app);
+  registerEventRoutes(app);
+  registerCasinoRoutes(app);
+  registerFactoryRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);
+  registerDailyRoutes(app);
+  registerQuestRoutes(app);
+  registerPushPrefsRoutes(app);
+  registerSeasonRoutes(app);
   registerBusinessRoutes(app);
   registerGigRoutes(app);
   registerProjectRoutes(app);
