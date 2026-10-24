@@ -542,3 +542,37 @@ export class ShiftResultImplausibleError extends DomainError {
     this.httpStatus = 422;
   }
 }
+
+// Sleuth heat, jail and police pursuit --------------------------------------
+
+export class JailedError extends DomainError {
+  readonly code = 'JAILED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are in CT Jail. Pay bail or wait it out.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class NotJailedError extends DomainError {
+  readonly code = 'NOT_JAILED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are not in CT Jail.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class NoPursuitError extends DomainError {
+  readonly code = 'NO_PURSUIT';
+  constructor(details: Record<string, unknown> = {}) {
+    super('There is no active police pursuit for you.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class CatchNotVerifiedError extends DomainError {
+  readonly code = 'CATCH_NOT_VERIFIED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The server could not verify that the police caught you.', details);
+    this.httpStatus = 422;
+  }
+}

@@ -15,10 +15,17 @@
  * position of their own here.
  *
  * Messages:
- *   - vehicle_enter { id, kind?, x?, y?, z?, yaw? }: vehicle must be free
+ *   - vehicle_enter { id, kind?, x?, y?, z?, yaw?, steal? }: vehicle must be free
  *     and within 4 m of the player. An id the server does not know yet is
  *     registered where the client says (client-parked cars). A roadstar
  *     (the hovercar) needs the vehicle.hovercar entitlement (NOT_ENTITLED).
+ *     A jailed player cannot enter (JAILED).
+ *     Stealing: an NPC traffic car (id `traffic_*`) or another player's parked
+ *     vehicle needs `steal: true` (else STEAL_REQUIRED). It adds heat, one steal
+ *     per 15 s per player, never transfers ownership (a player's vehicle goes back
+ *     to where its owner left it on exit, or after 3 minutes), and the roadstar
+ *     can never be stolen (VEHICLE_NOT_STEALABLE). A vehicle someone is driving
+ *     is never takeable (VEHICLE_TAKEN). The owner gets `vehicle_stolen`.
  *   - vehicle_move { id, x, y, z, yaw, pitch, roll, speed, flags? }: driver
  *     only, 10 Hz. Distance budget at the kind's speed cap (clamped, with
  *     `vehicle_corrected`), y up to 214 m, inside the island outline plus
@@ -26,7 +33,7 @@
  *   - vehicle_exit { id, x, z, yaw }: final parked pose. The street rooms
  *     then accept the player's first move at that spot.
  *   - vehicle_hit { victim, velocity }: relayed to the victim only, after
- *     proximity, speed and rate checks.
+ *     proximity, speed and rate checks. Adds a little heat to the driver.
  */
 import { Room, Client } from 'colyseus';
 import { StateView } from '@colyseus/schema';
@@ -79,6 +86,61 @@ const MAX_SPAWNED_PER_USER = 2;
 /** Client-registered vehicles nobody has driven for this long are removed. */
 const SPAWNED_IDLE_MS = 10 * 60_000;
 const POS_SWEEP_EVERY_TICKS = 60;
+/** Ids that start with this are NPC traffic cars (the client simulates them). */
+export const TRAFFIC_ID_PREFIX = 'traffic_';
+/** One steal per player per this long. */
+const STEAL_COOLDOWN_MS = 15_000;
+/** A player's vehicle stolen this long goes back to where its owner left it. */
+const STEAL_MAX_MS = 3 * 60_000;
+/** A driver earns heat for a hit at most this often. */
+const HIT_HEAT_EVERY_MS = 10_000;
+const STEAL_HEAT = { npc: 8, player: 15 } as const;
+const HIT_HEAT = 3;
+
+/** What the room needs from the application layer (swappable in tests). */
+export interface VehicleCrimeHooks {
+  isJailed(userId: string): Promise<boolean>;
+  raiseHeat(
+    userId: string,
+    delta: number,
+    source: 'steal_npc' | 'steal_player' | 'vehicle_hit',
+    refId: string,
+  ): Promise<void>;
+}
+
+const defaultHooks: VehicleCrimeHooks = {
+  async isJailed(userId) {
+    try {
+      const [{ buildContext }, { isJailed }] = await Promise.all([
+        import('../../application/context.js'),
+        import('../../application/heat.js'),
+      ]);
+      return await isJailed(buildContext(), userId);
+    } catch {
+      return false; // fail open; the REST gates still hold
+    }
+  },
+  async raiseHeat(userId, delta, source, refId) {
+    try {
+      const [{ buildContext }, { raiseHeat }] = await Promise.all([
+        import('../../application/context.js'),
+        import('../../application/heat.js'),
+      ]);
+      await raiseHeat(buildContext(), userId, delta, source, refId);
+    } catch {
+      // Heat is best effort; a failed write must not break driving.
+    }
+  },
+};
+let hooks: VehicleCrimeHooks = defaultHooks;
+
+/**
+ * Test hook: replace the jail / heat calls.
+ * @param h - The hooks, or null to restore the real ones.
+ */
+export function setVehicleCrimeHooks(h: VehicleCrimeHooks | null): void {
+  hooks = h ?? defaultHooks;
+}
 const POS_KEEP_MS = 5 * 60_000;
 
 interface VehicleSession {
@@ -101,6 +163,13 @@ interface VehicleMeta {
   at: number;
   budget: number;
   idleSince: number;
+  /** Set while someone is driving a vehicle they stole. */
+  stolen: {
+    /** The owning player (the vehicle goes back to them), or null for an NPC traffic car. */
+    from: string | null;
+    at: number;
+    origin: { x: number; y: number; z: number; yaw: number };
+  } | null;
 }
 
 export class VehiclesRoom extends Room {
@@ -109,6 +178,8 @@ export class VehiclesRoom extends Room {
   private sessions = new Map<string, VehicleSession>();
   private meta = new Map<string, VehicleMeta>();
   private lastHitAt = new Map<string, number>();
+  private lastStealAt = new Map<string, number>();
+  private lastHitHeatAt = new Map<string, number>();
   private ticks = 0;
 
   /**
@@ -168,6 +239,13 @@ export class VehiclesRoom extends Room {
     if (!s.actionBucket.take(Date.now())) return reject('RATE_LIMITED');
     if (s.driving) return reject('ALREADY_DRIVING');
     const m = parsed.data;
+    const traffic = m.id.startsWith(TRAFFIC_ID_PREFIX);
+    // The hovercar is never stolen: refuse before any lookup.
+    const known = this.state.vehicles.get(m.id);
+    if ((known?.kind ?? m.kind) === 'roadstar' && this.isStealTarget(s.userId, m.id, traffic)) {
+      return reject('VEHICLE_NOT_STEALABLE');
+    }
+    if (await hooks.isJailed(s.userId)) return reject('JAILED');
     // Checked before the awaits and again on the re-read vehicle below:
     // a kind that becomes roadstar meanwhile was never verified.
     const hovercarOk =
@@ -185,20 +263,35 @@ export class VehiclesRoom extends Room {
     const reach = ENTER_RADIUS_M + WALK_SPEED_M_PER_S * Math.min(1, (now - where.at) / 1000);
 
     let v = this.state.vehicles.get(m.id);
-    if ((v ? v.kind : m.kind) === 'roadstar' && hovercarOk !== true) return reject('NOT_ENTITLED');
+    const kind = v ? v.kind : m.kind;
+    if (kind === 'roadstar' && this.isStealTarget(s.userId, m.id, traffic)) {
+      return reject('VEHICLE_NOT_STEALABLE');
+    }
+    if (kind === 'roadstar' && hovercarOk !== true) return reject('NOT_ENTITLED');
+    // Someone else's parked vehicle or an NPC traffic car is a steal.
+    const stealing = this.isStealTarget(s.userId, m.id, traffic);
+    const previousOwner = v && !traffic ? (this.meta.get(m.id)?.spawnedBy ?? null) : null;
     if (v) {
       if (v.driver !== '') return reject('VEHICLE_TAKEN');
       if (Math.hypot(v.x - where.x, v.z - where.z) > reach) return reject('VEHICLE_TOO_FAR');
     } else {
       if (!m.kind || m.x === undefined || m.z === undefined) return reject('NOT_FOUND');
       if (Math.hypot(m.x - where.x, m.z - where.z) > reach) return reject('VEHICLE_TOO_FAR');
+    }
+    if (stealing) {
+      if (m.steal !== true) return reject('STEAL_REQUIRED');
+      if (now - (this.lastStealAt.get(s.userId) ?? 0) < STEAL_COOLDOWN_MS) {
+        return reject('RATE_LIMITED');
+      }
+    }
+    if (!v) {
       if (!this.makeRoomFor(s.userId)) return reject('VEHICLE_LIMIT');
       v = new VehicleState();
       v.id = m.id;
-      v.kind = m.kind;
-      v.x = m.x;
+      v.kind = m.kind!;
+      v.x = m.x!;
       v.y = Math.min(VEHICLE_MAX_Y_M, Math.max(MIN_Y_M, m.y ?? 0));
-      v.z = m.z;
+      v.z = m.z!;
       v.yaw = m.yaw ?? 0;
       this.state.vehicles.set(m.id, v);
       this.meta.set(m.id, {
@@ -209,15 +302,55 @@ export class VehiclesRoom extends Room {
         at: now,
         budget: 0,
         idleSince: now,
+        stolen: null,
       });
     }
     const meta = this.meta.get(m.id)!;
+    if (stealing) {
+      // Ownership never moves: `spawnedBy` stays with the owner. The thief only drives.
+      meta.stolen = {
+        from: previousOwner,
+        at: now,
+        origin: { x: v.x, y: v.y, z: v.z, yaw: v.yaw },
+      };
+      this.lastStealAt.set(s.userId, now);
+      void hooks.raiseHeat(
+        s.userId,
+        previousOwner ? STEAL_HEAT.player : STEAL_HEAT.npc,
+        previousOwner ? 'steal_player' : 'steal_npc',
+        m.id,
+      );
+      if (previousOwner) {
+        this.notifyUser(previousOwner, 'vehicle_stolen', {
+          vehicleId: m.id,
+          kind: v.kind,
+          by: s.userId,
+          at: now,
+        });
+      }
+    }
     v.driver = s.userId;
     meta.driverSession = client.sessionId;
     meta.at = now;
     meta.budget = 1;
     s.driving = m.id;
     if (!s.view.has(v)) s.view.add(v);
+  }
+
+  /**
+   * Whether entering this vehicle would be a steal: an NPC traffic car, or a
+   * vehicle another player registered (an unknown id is never a player's).
+   * Server-owned bay cars are public parking and not a steal.
+   */
+  private isStealTarget(userId: string, id: string, traffic: boolean): boolean {
+    if (traffic) return true;
+    const owner = this.meta.get(id)?.spawnedBy ?? null;
+    return owner !== null && owner !== userId;
+  }
+
+  /** Send a message to every session of a user in this room. */
+  private notifyUser(userId: string, type: string, payload: Record<string, unknown>): void {
+    for (const o of this.sessions.values()) if (o.userId === userId) o.client.send(type, payload);
   }
 
   /**
@@ -336,6 +469,10 @@ export class VehiclesRoom extends Room {
     this.lastHitAt.set(m.victim, at);
     const payload = { victim: m.victim, velocity: vel, by: s.userId, vehicleId: v.id, at };
     for (const o of victims) o.client.send('vehicle_hit', payload);
+    if (at - (this.lastHitHeatAt.get(s.userId) ?? 0) >= HIT_HEAT_EVERY_MS) {
+      this.lastHitHeatAt.set(s.userId, at);
+      void hooks.raiseHeat(s.userId, HIT_HEAT, 'vehicle_hit', m.victim);
+    }
   }
 
   // --- Tick: interest, presence, cleanup ----------------------------
@@ -359,6 +496,14 @@ export class VehiclesRoom extends Room {
         const p = { x: v.x, z: v.z, at: now };
         all[s.userId] = encodePos(p);
         this.writePos(s.userId, p);
+      }
+    }
+    // A stolen player vehicle is handed back after STEAL_MAX_MS even if still driven.
+    for (const s of this.sessions.values()) {
+      const meta = s.driving ? this.meta.get(s.driving) : undefined;
+      if (s.driving && meta?.stolen?.from && now - meta.stolen.at > STEAL_MAX_MS) {
+        s.client.send('vehicle_returned', { vehicleId: s.driving, reason: 'timeout', at: now });
+        this.release(s, now, 'timeout');
       }
     }
     for (const s of this.sessions.values()) {
@@ -425,7 +570,7 @@ export class VehiclesRoom extends Room {
   }
 
   /** Driver leaves (exit or disconnect): park it and hand the spot to the street rooms. */
-  private release(s: VehicleSession, now: number): void {
+  private release(s: VehicleSession, now: number, why: 'exit' | 'timeout' = 'exit'): void {
     const id = s.driving!;
     s.driving = null;
     const v = this.state.vehicles.get(id);
@@ -440,6 +585,31 @@ export class VehiclesRoom extends Room {
     void Promise.resolve(
       this.presence?.publish(VEHICLE_EXIT_CHANNEL, { userId: s.userId, ...p }),
     ).catch(() => undefined);
+    this.returnStolen(id, v, meta, why);
+  }
+
+  /**
+   * End a steal: a player's vehicle goes back to where its owner left it. An
+   * NPC traffic car just stays where it was parked.
+   */
+  private returnStolen(
+    id: string,
+    v: VehicleState,
+    meta: VehicleMeta,
+    reason: 'exit' | 'timeout',
+  ): void {
+    const st = meta.stolen;
+    meta.stolen = null;
+    if (!st?.from) return;
+    v.x = st.origin.x;
+    v.y = st.origin.y;
+    v.z = st.origin.z;
+    v.yaw = st.origin.yaw;
+    v.pitch = 0;
+    v.roll = 0;
+    v.flags = 0;
+    meta.idleSince = Date.now();
+    this.notifyUser(st.from, 'vehicle_returned', { vehicleId: id, reason, at: Date.now() });
   }
 
   /**
@@ -489,6 +659,7 @@ export class VehiclesRoom extends Room {
         at: now,
         budget: 0,
         idleSince: now,
+        stolen: null,
       });
     }
   }

@@ -30,6 +30,7 @@ import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { randomBytes } from 'node:crypto';
 import { careerAreasAt } from './ladders.js';
+import { activeJail, JAIL_VENUE_ID } from './heat.js';
 import type { AppContext } from './context.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
@@ -267,6 +268,8 @@ export async function getVenueAccess(
   });
 
   const careerAreas = await careerAreasAt(ctx, userId, venueId);
+  // Police custody: a jailed player may only be in CT Jail until bail or the timer.
+  const custody = await ctx.db.withConnection((c) => activeJail(c, userId, new Date()));
   const base = {
     venueId,
     careerAreas,
@@ -276,6 +279,9 @@ export async function getVenueAccess(
     isMember: state.isMember,
   };
 
+  if (custody && venueId !== JAIL_VENUE_ID) {
+    return { ...base, allowed: false, reasonCode: 'JAILED' };
+  }
   if (venueId === 'dubai_marina') {
     const allowed = state.netWorth >= MARINA_GATE_CENTS;
     return {
