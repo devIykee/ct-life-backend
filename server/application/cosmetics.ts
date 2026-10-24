@@ -124,6 +124,20 @@ const DEFAULT_CATALOG: ReadonlyArray<{
     priceCents: 0,
     grantOnly: true,
   },
+  {
+    slot: 'acc',
+    itemKey: 'lanyard_breakpoint_2026_gold',
+    name: 'Breakpoint 2026 Gold Lanyard',
+    priceCents: 0,
+    grantOnly: true,
+  },
+  {
+    slot: 'acc',
+    itemKey: 'irl_badge_breakpoint_2026',
+    name: 'Breakpoint 2026 IRL Attendee Badge',
+    priceCents: 0,
+    grantOnly: true,
+  },
 ];
 
 /**

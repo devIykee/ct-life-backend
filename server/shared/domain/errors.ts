@@ -342,3 +342,15 @@ export class EventStepInvalidError extends DomainError {
     this.httpStatus = 400;
   }
 }
+
+export class CheckinRejectedError extends DomainError {
+  readonly code = 'CHECKIN_REJECTED';
+  /**
+   * @param reason - Why: mock_location, poor_accuracy, outside_geofence,
+   *   account_too_new or not_available. Never carries a position or distance.
+   */
+  constructor(reason: string) {
+    super('The IRL check-in was not accepted.', { reason });
+    this.httpStatus = 422;
+  }
+}

@@ -59,6 +59,8 @@ export interface EventSummary {
   readonly skinId: string;
   readonly streamUrl: string | null;
   readonly sourceUrl: string;
+  /** True when the opt-in IRL check-in is available (the event has a geofence). */
+  readonly irlCheckin: boolean;
   readonly status: EventStatus;
 }
 
@@ -134,6 +136,15 @@ const CalendarFile = z.object({
       questSet: z.string(),
       rewardCents: z.number().int().nonnegative(),
       rewardItemKey: z.string().nullable(),
+      irlRewardItemKeys: z.array(z.string()).optional(),
+      geofence: z
+        .object({
+          lat: z.number(),
+          lng: z.number(),
+          radiusM: z.number().int().positive(),
+          source: z.string(),
+        })
+        .optional(),
     }),
   ),
   questSets: z.record(z.string(), z.object({ steps: z.array(StepFile) })),
@@ -209,15 +220,18 @@ export async function syncEvents(db: Db): Promise<number> {
       await c.query(
         `INSERT INTO events (id, slug, title, kind, starts_at, ends_at, city, real_venue,
                              ingame_venue_id, skin_id, stream_url, source_url, quest_set,
-                             reward_cents, reward_item_key)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+                             reward_cents, reward_item_key,
+                             geo_lat, geo_lng, geo_radius_m, geo_source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
          ON CONFLICT (id) DO UPDATE
            SET slug = EXCLUDED.slug, title = EXCLUDED.title, kind = EXCLUDED.kind,
                starts_at = EXCLUDED.starts_at, ends_at = EXCLUDED.ends_at, city = EXCLUDED.city,
                real_venue = EXCLUDED.real_venue, ingame_venue_id = EXCLUDED.ingame_venue_id,
                skin_id = EXCLUDED.skin_id, stream_url = EXCLUDED.stream_url,
                source_url = EXCLUDED.source_url, quest_set = EXCLUDED.quest_set,
-               reward_cents = EXCLUDED.reward_cents, reward_item_key = EXCLUDED.reward_item_key
+               reward_cents = EXCLUDED.reward_cents, reward_item_key = EXCLUDED.reward_item_key,
+               geo_lat = EXCLUDED.geo_lat, geo_lng = EXCLUDED.geo_lng,
+               geo_radius_m = EXCLUDED.geo_radius_m, geo_source = EXCLUDED.geo_source
            WHERE events.admin_edited_at IS NULL`,
         [
           e.id,
@@ -235,6 +249,10 @@ export async function syncEvents(db: Db): Promise<number> {
           e.questSet,
           e.rewardCents,
           e.rewardItemKey,
+          e.geofence?.lat ?? null,
+          e.geofence?.lng ?? null,
+          e.geofence?.radiusM ?? null,
+          e.geofence?.source ?? null,
         ],
       );
     }
@@ -244,7 +262,7 @@ export async function syncEvents(db: Db): Promise<number> {
 
 // Reads ----------------------------------------------------------------------
 
-interface EventRow {
+export interface EventRow {
   id: string;
   slug: string;
   title: string;
@@ -260,12 +278,20 @@ interface EventRow {
   quest_set: string;
   reward_cents: string;
   reward_item_key: string | null;
+  geo_lat: number | null;
+  geo_lng: number | null;
+  geo_radius_m: number | null;
 }
 
 const COLS = `id, slug, title, kind, starts_at, ends_at, city, real_venue, ingame_venue_id,
-              skin_id, stream_url, source_url, quest_set, reward_cents, reward_item_key`;
+              skin_id, stream_url, source_url, quest_set, reward_cents, reward_item_key, geo_lat, geo_lng, geo_radius_m`;
 
-function statusOf(r: EventRow, now: Date): EventStatus {
+/**
+ * Whether an event row is upcoming, live or ended at `now`.
+ * @param r - The event row.
+ * @param now - The clock.
+ */
+export function statusOf(r: EventRow, now: Date): EventStatus {
   if (now.getTime() < r.starts_at.getTime()) return 'upcoming';
   if (now.getTime() >= r.ends_at.getTime()) return 'ended';
   return 'live';
@@ -284,6 +310,7 @@ function toSummary(r: EventRow, now: Date): EventSummary {
     skinId: r.skin_id,
     streamUrl: r.stream_url,
     sourceUrl: r.source_url,
+    irlCheckin: r.geo_lat !== null && r.geo_lng !== null && r.geo_radius_m !== null,
     status: statusOf(r, now),
   };
 }
@@ -330,7 +357,13 @@ export async function listUpcoming(
   return { items: rows.rows.map((r) => toSummary(r, now)), serverNow: now.getTime() };
 }
 
-async function loadEvent(
+/**
+ * Load one event row by slug.
+ * @param client - A query client.
+ * @param slug - The event slug.
+ * @throws NotFoundError for an unknown slug.
+ */
+export async function loadEvent(
   client: { query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }> },
   slug: string,
 ): Promise<EventRow> {

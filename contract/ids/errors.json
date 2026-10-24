@@ -201,6 +201,11 @@
       "code": "EVENT_STEP_INVALID",
       "httpStatus": 400,
       "message": "That quest step or proof is not valid for this event."
+    },
+    {
+      "code": "CHECKIN_REJECTED",
+      "httpStatus": 422,
+      "message": "The IRL check-in was not accepted."
     }
   ]
 }

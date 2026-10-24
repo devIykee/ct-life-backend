@@ -240,4 +240,31 @@ describe('events over HTTP', () => {
       ),
     ).toEqual([true, true, false]);
   });
+
+  it('IRL check-in: validated, never echoes a position, rate limited to 3 attempts an hour', async () => {
+    const u = await devAuth();
+    const url = '/v1/events/breakpoint-2026/checkin';
+    const pos = { lat: 51.49639, lng: -0.20972, accuracyM: 10, isMock: false };
+    expect((await call(u, 'POST', url, { lat: 'x' })).status).toBe(400);
+    const bad = await call(u, 'POST', url, { ...pos, lat: 999 });
+    expect(bad.status).toBe(400);
+    expect(JSON.stringify(bad.body)).not.toContain('999');
+    // The real clock is before Breakpoint, so the window check refuses.
+    const early = await call(u, 'POST', url, pos);
+    expect(early.status).toBe(409);
+    expect(errCode(early.body)).toBe('EVENT_NOT_LIVE');
+    expect(JSON.stringify(early.body)).not.toContain('51.4963');
+    // Attempts so far: 3 (two bad bodies fail before the limiter; early is the 1st). Burn the rest.
+    await call(u, 'POST', url, pos);
+    await call(u, 'POST', url, pos);
+    const limited = await call(u, 'POST', url, pos);
+    expect(limited.status).toBe(429);
+
+    expect((await call(u, 'PUT', `${url}/visibility`, { visible: true })).status).toBe(404);
+    expect((await call(u, 'PUT', `${url}/visibility`, { visible: 'yes' })).status).toBe(400);
+    const board = await call(u, 'GET', '/v1/events/breakpoint-2026/irl?limit=5');
+    expect(board.status).toBe(200);
+    expect(Array.isArray(board.body.items)).toBe(true);
+    expect((await call(u, 'GET', '/v1/events/nope/irl')).status).toBe(404);
+  });
 });

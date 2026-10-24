@@ -14,6 +14,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { checkIn, listAttendees, setVisibility } from '../../application/events-irl.js';
 import { RateLimitedError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { perUserTokenBucket } from '../../shared/infra/rate-limit.js';
 import {
@@ -53,6 +54,23 @@ const AdminBody = z
   })
   .partial()
   .strict();
+
+const CheckinBody = z
+  .object({
+    lat: z.number().finite().min(-90).max(90),
+    lng: z.number().finite().min(-180).max(180),
+    accuracyM: z.number().finite().min(0).max(100_000),
+    isMock: z.boolean(),
+  })
+  .strict();
+const VisibilityBody = z.object({ visible: z.boolean() }).strict();
+const IrlQuery = z.object({
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+  cursor: z.string().min(1).max(100).optional(),
+});
+
+/** Check-in attempts per player per hour. */
+export const CHECKIN_ATTEMPTS_PER_HOUR = 3;
 
 /** Progress calls allowed in a burst, and refilled per second, per player. */
 export const PROGRESS_BURST = 8;
@@ -104,6 +122,56 @@ export function registerEventRoutes(app: FastifyInstance): void {
       );
     },
   );
+
+  // The body of this route is a position. It is never logged (redacted), never
+  // stored, and never echoed; see docs/PRIVACY_IRL_CHECKIN.md.
+  app.post(
+    '/v1/events/:slug/checkin',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const p = SlugParams.safeParse(req.params);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+      const b = CheckinBody.safeParse(req.body);
+      // Issues name fields only, never the submitted values.
+      if (!b.success)
+        throw new ValidationFailedError({ fields: b.error.issues.map((i) => i.path) });
+      const userId = req.user!.sub;
+      const decision = await perUserTokenBucket(
+        req.ctx.redis.main,
+        `rl:event-checkin:${userId}`,
+        CHECKIN_ATTEMPTS_PER_HOUR,
+        CHECKIN_ATTEMPTS_PER_HOUR / 3600,
+        1,
+      );
+      if (!decision.allowed) {
+        reply.header('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
+        throw new RateLimitedError(decision.retryAfterMs, { limit: CHECKIN_ATTEMPTS_PER_HOUR });
+      }
+      return reply.send(await checkIn(req.ctx, userId, p.data.slug, b.data));
+    },
+  );
+
+  app.put(
+    '/v1/events/:slug/checkin/visibility',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const p = SlugParams.safeParse(req.params);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+      const b = VisibilityBody.safeParse(req.body);
+      if (!b.success) throw new ValidationFailedError({ issues: b.error.issues });
+      return reply.send(await setVisibility(req.ctx, req.user!.sub, p.data.slug, b.data.visible));
+    },
+  );
+
+  app.get('/v1/events/:slug/irl', { preHandler: requireAuth }, async (req, reply) => {
+    const p = SlugParams.safeParse(req.params);
+    if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+    const q = IrlQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+    return reply.send(
+      await listAttendees(req.ctx, req.user!.sub, p.data.slug, q.data.limit, q.data.cursor ?? null),
+    );
+  });
 
   app.put(
     '/v1/admin/events/:slug',

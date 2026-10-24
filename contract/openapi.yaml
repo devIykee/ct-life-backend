@@ -3955,6 +3955,165 @@ paths:
                 }
         '429': { $ref: '#/components/responses/RateLimited' }
 
+  /events/{slug}/checkin:
+    post:
+      tags: [liveops]
+      operationId: postEventsSlugCheckin
+      summary: Opt-in IRL check-in at the real venue (Breakpoint 2026).
+      description: >-
+        Send the phone's position once. The server compares it with the venue geofence (centre and
+        radius in `calendar_events.json`, about 350 m around Olympia London) and discards it:
+        coordinates are never stored, logged or echoed; only the fact of the check-in is kept.
+        Only during the event window. Rejected with `CHECKIN_REJECTED` when `isMock` is true
+        (`reason: mock_location`), `accuracyM` is above 150 (`poor_accuracy`), the account was
+        created at or after the event start (`account_too_new`), the position is outside the
+        geofence (`outside_geofence`) or the event has no geofence (`not_available`). The first
+        accepted check-in per player per event pays a one-time reward: Cash (ledger reason
+        `event_irl_bonus`, default 10000, env `EVENT_IRL_BONUS_CENTS`) and the off-chain
+        cosmetics `irl_badge_breakpoint_2026` and `lanyard_breakpoint_2026_gold`. A repeat call
+        returns the existing check-in with `firstCheckin: false` and pays nothing. A new check-in
+        is hidden from the attendee board until the player opts in. At most 3 attempts per player
+        per hour (`429`). The server cannot prove the phone is honest; see
+        `docs/PRIVACY_IRL_CHECKIN.md`.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lat, lng, accuracyM, isMock]
+              properties:
+                lat: { type: number, minimum: -90, maximum: 90 }
+                lng: { type: number, minimum: -180, maximum: 180 }
+                accuracyM:
+                  {
+                    type: number,
+                    minimum: 0,
+                    description: 'Horizontal accuracy radius in metres from the OS.',
+                  }
+                isMock:
+                  { type: boolean, description: 'The OS mock-location flag. true is rejected.' }
+      responses:
+        '200':
+          description: Checked in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventCheckinResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The event is not live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: EVENT_NOT_LIVE,
+                      message: 'This event is not live; its quests only run inside its window.',
+                      details: { slug: breakpoint-2026, status: upcoming },
+                    },
+                }
+        '422':
+          description: The check-in was not accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CHECKIN_REJECTED,
+                      message: 'The IRL check-in was not accepted.',
+                      details: { reason: outside_geofence },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /events/{slug}/checkin/visibility:
+    put:
+      tags: [liveops]
+      operationId: putEventsSlugCheckinVisibility
+      summary: Appear on, or leave, the IRL attendee board.
+      description: >-
+        Default is hidden. Needs a check-in (`404` otherwise). Turning visibility on tells the
+        city (`irl_checkin`, alias only), at most once an hour per player.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visible]
+              properties:
+                visible: { type: boolean }
+      responses:
+        '200':
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, visible]
+                properties:
+                  slug: { type: string }
+                  visible: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /events/{slug}/irl:
+    get:
+      tags: [liveops]
+      operationId: getEventsSlugIrl
+      summary: Players who checked in at the venue and chose to be listed.
+      description: >-
+        Newest first, keyset paginated with `next`. Only players who opted in; anyone you blocked
+        or who blocked you is left out. No location of any kind, and no user id.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+        - name: cursor
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A page of attendees
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/IrlAttendee' }
+                  next: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /admin/events/{slug}:
     put:
       tags: [admin]
@@ -5241,6 +5400,7 @@ components:
           skinId,
           streamUrl,
           sourceUrl,
+          irlCheckin,
           status,
         ]
       properties:
@@ -5256,6 +5416,7 @@ components:
         streamUrl:
           { type: [string, 'null'], description: Link-out to the official stream; never embed. }
         sourceUrl: { type: string, description: The primary source for the dates. }
+        irlCheckin: { type: boolean, description: True when the opt-in IRL check-in is available. }
         status: { type: string, enum: [upcoming, live, ended] }
     EventStepProgress:
       type: object
@@ -5317,6 +5478,31 @@ components:
             accepted: { type: boolean, description: False for a replayed or no-op proof. }
             justCompleted:
               { type: boolean, description: True on the call that completed the chain and paid. }
+    EventCheckinResult:
+      type: object
+      required: [slug, checkedIn, checkedInAt, visible, firstCheckin, reward]
+      properties:
+        slug: { type: string }
+        checkedIn: { type: boolean, enum: [true] }
+        checkedInAt: { type: string, format: date-time }
+        visible: { type: boolean }
+        firstCheckin: { type: boolean }
+        reward:
+          type: [object, 'null']
+          description: Paid by this call; null on a repeat.
+          required: [cashCents, itemKeys]
+          properties:
+            cashCents: { type: integer }
+            itemKeys: { type: array, items: { type: string } }
+    IrlAttendee:
+      type: object
+      required: [alias, look, tribeId, avatarId, checkedInAt]
+      properties:
+        alias: { type: string }
+        look: {}
+        tribeId: { type: [string, 'null'] }
+        avatarId: { type: [string, 'null'], description: The owned likeness avatar id, if any. }
+        checkedInAt: { type: string, format: date-time }
     ModerationItem:
       type: object
       required: [id, targetType, targetId, reasonId, createdAt]

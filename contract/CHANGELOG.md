@@ -1,3 +1,14 @@
+## 2026-10-24 - Event calendar: opt-in IRL check-in at Breakpoint
+
+Extends the event calendar entry below (same PR).
+
+- Added `POST /events/{slug}/checkin {lat, lng, accuracyM, isMock}`, only during the event window. The server checks the position against the venue geofence and discards it: no coordinates, accuracy or distance are stored, logged or returned. Rejections are `422 CHECKIN_REJECTED` with `details.reason`: `mock_location` (`isMock` true), `poor_accuracy` (`accuracyM` > 150), `account_too_new` (account created at or after the event `startsAt`), `outside_geofence`, `not_available` (no geofence). Out of window is `409 EVENT_NOT_LIVE`. At most 3 attempts per player per hour (`429`). Reply `{slug, checkedIn, checkedInAt, visible, firstCheckin, reward}`; a repeat returns the same check-in with `firstCheckin: false`, `reward: null`.
+- One-time IRL reward per player per event (and so per wallet): Cash (ledger reason `event_irl_bonus`, default 10000 cents, env `EVENT_IRL_BONUS_CENTS`) plus the off-chain, grant-only cosmetics `irl_badge_breakpoint_2026` and `lanyard_breakpoint_2026_gold` (slot `acc`, source `grant`).
+- Added `PUT /events/{slug}/checkin/visibility {visible}` (default hidden; needs a check-in, else `404`) and `GET /events/{slug}/irl?limit=&cursor=` -> `{items: [{alias, look, tribeId, avatarId, checkedInAt}], next}`: opted-in attendees only, newest first, blocked users excluded both ways, no location and no user id.
+- Realtime `irl_checkin {slug, alias, at}` on the city room when a player turns visibility on (alias only; once an hour per player, 10 burst and 2/s per event).
+- `calendar_events.json` events gain optional `geofence {lat, lng, radiusM, source}` and `irlRewardItemKeys`. Breakpoint 2026: 51.49639, -0.20972, 350 m, coordinates from the Wikipedia article on Olympia London. `CalendarEvent` gains `irlCheckin` (true when a geofence exists). New error code `CHECKIN_REJECTED` (422).
+- Request bodies and coordinate fields are now redacted from API logs. Migration 086 adds `event_checkins(event_id, user_id, checked_in_at, visible)` and `events.geo_*` (the venue's geofence). What is stored and why: `docs/PRIVACY_IRL_CHECKIN.md`.
+
 ## 2026-10-23 - Event calendar: Breakpoint 2026, event quest chain, lanyard
 
 Independent of the daily streak PR (#9, migration 084); merge order does not matter for the code, see the PR for the migration order note.

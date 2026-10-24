@@ -49,7 +49,22 @@
           "sourceUrl": { "type": "string", "pattern": "^https://" },
           "questSet": { "type": "string", "pattern": "^[a-z0-9_]+$" },
           "rewardCents": { "type": "integer", "minimum": 0 },
-          "rewardItemKey": { "type": ["string", "null"], "pattern": "^[a-z0-9_]+$" }
+          "rewardItemKey": { "type": ["string", "null"], "pattern": "^[a-z0-9_]+$" },
+          "irlRewardItemKeys": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[a-z0-9_]+$" }
+          },
+          "geofence": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lat", "lng", "radiusM", "source"],
+            "properties": {
+              "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+              "lng": { "type": "number", "minimum": -180, "maximum": 180 },
+              "radiusM": { "type": "integer", "minimum": 20, "maximum": 2000 },
+              "source": { "type": "string", "minLength": 1 }
+            }
+          }
         }
       }
     },

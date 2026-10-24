@@ -32,6 +32,7 @@ export type UserMessageType =
   | 'delivery_arrived'
   | 'event_live'
   | 'event_ended'
+  | 'irl_checkin'
   | 'event';
 
 export interface UserMessage {
