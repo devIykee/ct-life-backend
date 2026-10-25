@@ -146,6 +146,12 @@ export interface Config {
     readonly dailyNetLossCapCents: number;
   };
 
+  /** Cash tips. */
+  readonly tips: {
+    /** Fee burned on every Cash tip, in basis points of the amount (300 = 3%). */
+    readonly feeBps: number;
+  };
+
   readonly features: {
     readonly llmEnabled: boolean;
     readonly pushEnabled: boolean;
@@ -192,6 +198,12 @@ function asInt(name: string, fallback: number): number {
   if (raw === undefined || raw === '') return fallback;
   const n = Number.parseInt(raw, 10);
   if (Number.isNaN(n)) throw new ConfigError(name, 'expected an integer');
+  return n;
+}
+
+function asBoundedInt(name: string, fallback: number, min: number, max: number): number {
+  const n = asInt(name, fallback);
+  if (n < min || n > max) throw new ConfigError(name, `expected an integer ${min}..${max}`);
   return n;
 }
 
@@ -412,6 +424,10 @@ export function loadConfig(): Config {
     casino: {
       dailyStakeCapCents: asInt('CASINO_DAILY_STAKE_CAP_CENTS', 50_000),
       dailyNetLossCapCents: asInt('CASINO_DAILY_LOSS_CAP_CENTS', 25_000),
+    },
+
+    tips: {
+      feeBps: asBoundedInt('TIP_FEE_BPS', 300, 0, 2000),
     },
 
     features: {

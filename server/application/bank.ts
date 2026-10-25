@@ -152,6 +152,7 @@ const LABELS: Record<string, string> = {
   business_sell: 'Business sale',
   tip: 'Tip received',
   tip_out: 'Tip sent',
+  tip_fee_burn: 'Tip fee (burned)',
   trade_buy: 'Coin buy',
   trade_sell: 'Coin sell',
   perp_margin: 'Perp opened',
