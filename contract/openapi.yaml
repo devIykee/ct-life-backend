@@ -745,6 +745,7 @@ paths:
               example:
                 version: '1.0.0-rc1'
                 minClientVersion: '1.0.0-rc1'
+                livePhase: 1
                 degraded: []
                 venues: { 'timeline_square': { 'name': 'Timeline Square', 'maxClients': 50 } }
         '304': { description: Not modified; ETag matches. }
@@ -6783,10 +6784,19 @@ components:
         cooldownSec: { type: integer }
     ConfigResponse:
       type: object
-      required: [version, minClientVersion, degraded]
+      required: [version, minClientVersion, livePhase, degraded]
       properties:
         version: { type: string }
         minClientVersion: { type: string }
+        livePhase:
+          type: integer
+          minimum: 1
+          maximum: 6
+          description: >-
+            The release phase this deployment has opened. The client opens every app of a phase up
+            to this number and shows "Coming soon" for the rest, instead of using its build default.
+            Set by the server env `LIVE_PHASE` (1 to 6, default 1; any other value stops the API from
+            starting).
         flags:
           type: object
           description: Remote switches the client reads without a release.

@@ -89,6 +89,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const payload = {
       version: '1.0.0-rc1',
       minClientVersion: '1.0.0',
+      // The release phase this deployment has opened (env LIVE_PHASE, 1 to 6, default 1).
+      livePhase: req.ctx.config.livePhase,
       // Kill-switch list. Only `ore_reader` is wired: it is listed when
       // GET /v1/ore/board cannot serve a live board (ORE_READER_ENABLED off).
       degraded: oreReaderAvailable(req.ctx) ? [] : ['ore_reader'],

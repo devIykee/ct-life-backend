@@ -1,3 +1,8 @@
+## 2026-10-25 - GET /config sends `livePhase`
+
+- `GET /config` has a new top-level `livePhase` (integer 1 to 6), from the server env `LIVE_PHASE` (default 1, so nothing changes until it is set; a value outside 1 to 6 or not a number makes the API fail to start). The client reads it (it also accepts `phase` or `meta.livePhase`) to open the apps of every phase up to it and show "Coming soon" for the rest, instead of falling back to its build default. The payload (and so its ETag) changes only when `LIVE_PHASE` does.
+- Ops: set `LIVE_PHASE=6` on the api service to open all apps for private testers.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
