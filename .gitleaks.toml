@@ -25,6 +25,13 @@ title = "CT Life secrets"
   regex = '''[1-9A-HJ-NP-Za-km-z]{86,88}'''
   tags = ["solana", "keypair"]
 
+  # A base58-looking string of this length is also a public transaction signature or a
+  # slice of base64 account data. These two files hold those, copied from mainnet (an RPC
+  # fixture and a verification note), not keypairs.
+  [[rules.allowlists]]
+    description = "public mainnet signatures and account data"
+    paths = ['''^server/shared/solana/fixtures/ore-mainnet\.json$''', '''^docs/UNVERIFIED\.md$''']
+
 [[rules]]
   id = "ctlife-jwt-private-key"
   description = "PEM private key"
