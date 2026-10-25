@@ -140,6 +140,27 @@ describe('StreetRoom', () => {
     expect(p.x).toBeCloseTo(25);
   });
 
+  it('accepts a first move onto the casino pier pad and rejects the sea beyond it', async () => {
+    setIslandGeometry(null); // the real districts.json
+    const room = await boot(TestStreet, new LocalPresence(), { district: 'boardwalk' });
+    const c = fakeClient('pier');
+    await room.onJoin!(c, { userId: 'pier-u' });
+    const players = (room as unknown as { state: { players: Map<string, PlayerState> } }).state
+      .players;
+    msg(room, 'move', c, { x: 126, z: -290 });
+    expect(c.sent.at(-1)?.payload.code).toBe('OUT_OF_BOUNDS');
+    expect(players.size).toBe(0);
+    msg(room, 'move', c, { x: 126, z: -262 });
+    expect(
+      c.sent.some(
+        (s) =>
+          s.type === 'rejected' && s.payload.code === 'OUT_OF_BOUNDS' && s.payload.x !== undefined,
+      ),
+    ).toBe(false);
+    expect(players.get('pier')?.x).toBe(126);
+    expect(players.get('pier')?.z).toBe(-262);
+  });
+
   it('anchors a join on the last position from another room', async () => {
     const presence = new LocalPresence();
     await presence.hset(POS_HASH, 'u2', encodePos({ x: -10, z: 0, at: now - 200 }));
