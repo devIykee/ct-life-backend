@@ -31,6 +31,13 @@ title = "CT Life secrets"
   regex = '''-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----'''
   tags = ["key", "jwt"]
 
+  # Test files carry an obviously fake placeholder PEM (`FAKE_PKCS8`, not valid DER).
+  # Real keys in a test file would still be caught by the other rules; only the
+  # PEM header is allowed here, and only under server/ test files.
+  [[rules.allowlists]]
+    description = "placeholder PEM in test fixtures"
+    paths = ['''^server/.*\.test\.ts$''']
+
 [[rules]]
   id = "ctlife-helius-api-key"
   description = "Helius API key"
