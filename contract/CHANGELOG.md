@@ -11,6 +11,10 @@ Migration 096. Changes what #16 shipped.
 - Economics (config `careers.json` `rektBurger`): 50 cents/minute, longest shift 3,600 s (3,000 cents), daily cap unchanged at 4,500 cents (90 minutes on the clock); the per-ticket design paid up to 1,500 cents per 3-minute shift and the same 4,500 cap.
 - Career XP is time-based (1 per minute), only for a player on a ladder, under the shared daily action cap; a shift under 120 s is paid but earns no XP, quest progress or uniform. Unlock rules (Trencher, broke, liquidated) are unchanged.
 - Migration 096 adds `rekt_burger_shifts.seconds, end_reason, career_xp` and an index for the sweep.
+## 2026-10-25 - GET /config sends `livePhase`
+
+- `GET /config` has a new top-level `livePhase` (integer 1 to 6), from the server env `LIVE_PHASE` (default 1, so nothing changes until it is set; a value outside 1 to 6 or not a number makes the API fail to start). The client reads it (it also accepts `phase` or `meta.livePhase`) to open the apps of every phase up to it and show "Coming soon" for the rest, instead of falling back to its build default. The payload (and so its ETag) changes only when `LIVE_PHASE` does.
+- Ops: set `LIVE_PHASE=6` on the api service to open all apps for private testers.
 
 ## 2026-10-25 - Cash tips burn a 3% fee
 
