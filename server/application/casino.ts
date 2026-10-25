@@ -30,6 +30,7 @@
  */
 import type { PoolClient } from 'pg';
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import {
   AgeRequiredError,
   BlockedError,
@@ -306,6 +307,20 @@ async function sessionOf(
 }
 
 /**
+ * Transaction options for single-player casino work. Every such transaction
+ * takes `lockPlayer` (casino_players FOR UPDATE) before anything else, so a
+ * player's bets run one at a time and each one reads the previous one's
+ * committed rows: the caps and the balance check are race-free at READ
+ * COMMITTED. Under SERIALIZABLE the per-player range reads (today's casino
+ * ledger rows, the session's rounds) took SIREAD locks that escalated to
+ * relation locks on ledger_entries and casino_rounds once players had a few
+ * dozen rows, and then failed unrelated transactions in bursts (the load
+ * test's first bottleneck, docs/LOAD-TEST.md). Head-to-head challenges stay
+ * SERIALIZABLE.
+ */
+const PLAYER_LOCKED = { isolation: 'read committed' } as const;
+
+/**
  * Lock the player's casino row (creating it) and return the exclusion date.
  * Every casino action takes this lock first, which serializes a player's
  * bets and keeps the caps race-free.
@@ -502,7 +517,9 @@ async function insertRound(
       r.status === 'settled' ? now : null,
     ],
   );
-  return toRound(res.rows[0]!);
+  const round = toRound(res.rows[0]!);
+  if (round.status === 'settled') await recordRound(client, r.userId, round, now);
+  return round;
 }
 
 // --- Slots and coinflip vs the house -------------------------------------
@@ -552,7 +569,7 @@ async function playInstant(
         cashCents: await cashOf(client, userId),
       };
     },
-    {},
+    PLAYER_LOCKED,
     ctx.db,
   );
 }
@@ -646,7 +663,34 @@ async function settleCrashRow(
       RETURNING ${ROUND_COLUMNS}`,
     [row.round_id, s.payoutCents, JSON.stringify(crashOutcome(s)), now],
   );
-  return toRound(res.rows[0]!);
+  const round = toRound(res.rows[0]!);
+  await recordRound(client, row.user_id, round, now);
+  return round;
+}
+
+/** One analytics event per settled round: stake, payout and the player's net. */
+async function recordRound(
+  client: PoolClient,
+  userId: string,
+  round: RoundView,
+  now: Date,
+): Promise<void> {
+  const payout = round.payoutCents ?? 0;
+  await recordEvent(
+    client,
+    userId,
+    {
+      name: 'casino_round',
+      props: {
+        game: round.game,
+        stakeCents: round.stakeCents,
+        payoutCents: payout,
+        pvp: round.challengeId !== null,
+      },
+      amountCents: payout - round.stakeCents,
+    },
+    now,
+  );
 }
 
 /**
@@ -771,7 +815,7 @@ export async function placeCrashBet(
         cashCents: await cashOf(client, userId),
       };
     },
-    {},
+    PLAYER_LOCKED,
     ctx.db,
   );
 }
@@ -815,7 +859,7 @@ export async function cashoutCrash(
         cashCents: await cashOf(client, userId),
       };
     },
-    {},
+    PLAYER_LOCKED,
     ctx.db,
   );
 }
@@ -1164,7 +1208,7 @@ export async function sweepCasino(
         await lockCash(client, user_id);
         if (!(await reapOpenCrash(client, user_id, cfg, now))) crashRounds += 1;
       },
-      {},
+      PLAYER_LOCKED,
       ctx.db,
     );
   }
@@ -1223,7 +1267,7 @@ async function settleOwnCrashedRound(ctx: AppContext, userId: string, now: Date)
       await lockCash(client, userId);
       await reapOpenCrash(client, userId, cfg, now);
     },
-    {},
+    PLAYER_LOCKED,
     ctx.db,
   );
 }

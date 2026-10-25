@@ -350,6 +350,9 @@ ct-life-backend/
 | `CASINO_DAILY_LOSS_CAP_CENTS`     | Rug Room daily net-loss cap per player, cents (default 25000)                 |
 | `EVENT_IRL_BONUS_CENTS`           | One-time Cash bonus for an IRL event check-in, cents (default 10000)          |
 | `TIP_FEE_BPS`                     | Fee burned on every Cash tip, basis points (default 300 = 3%, 0 turns it off) |
+| `DB_POOL_MAX`                     | Postgres connections per process (default 20); see docs/LOAD-TEST.md          |
+| `ANALYTICS_ENABLED`               | Write server product events to `analytics_events` (default true)              |
+| `ANALYTICS_RETENTION_DAYS`        | Days an analytics event is kept before the workers delete it (default 180)    |
 | `LLM_MODEL`                       | LLM model id for the AI NPCs                                                  |
 | `X_CLIENT_ID`                     | X (Twitter) OAuth client id                                                   |
 | `X_CLIENT_SECRET`                 | X OAuth client secret                                                         |
