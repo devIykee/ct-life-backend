@@ -149,9 +149,7 @@ export class AuthService {
   }
 
   /** Refresh: re-mint an access token. Revokes the old refresh token (single-use). */
-  async refresh(
-    refreshToken: string,
-  ): Promise<{
+  async refresh(refreshToken: string): Promise<{
     id: string;
     wallet: string;
     isSeeker: boolean;
@@ -340,7 +338,7 @@ interface ParsedSIWS {
 }
 
 function parseSIWSMessage(message: string): ParsedSIWS | null {
-  const lines = message.split('\n').map(l => l.trim());
+  const lines = message.split('\n').map((l) => l.trim());
   if (lines.length < 8) return null;
 
   // Line 0: "<domain> wants you to sign in with your Solana account:"
@@ -422,7 +420,10 @@ function verifySignature(wallet: string, signedMessage: Buffer, signatureB64: st
     const sig = Buffer.from(signatureB64, 'base64');
     // B0 fix: node:crypto cannot take a raw 32-byte ed25519 key (ERR_OSSL_UNSUPPORTED); wrap it as SPKI DER.
     const pub = createPublicKey({
-      key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(pubkey.toBytes())]),
+      key: Buffer.concat([
+        Buffer.from('302a300506032b6570032100', 'hex'),
+        Buffer.from(pubkey.toBytes()),
+      ]),
       format: 'der',
       type: 'spki',
     });

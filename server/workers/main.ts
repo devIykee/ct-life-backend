@@ -25,6 +25,9 @@
  *   - Event announcer: a per-minute sweep that broadcasts `event_live` and
  *     `event_ended` for real events (see event-announce.ts).
  *
+ *   - Police referee: starts and judges police pursuits and releases jail stays
+ *     every 2 s (see police.ts).
+ *
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
@@ -50,6 +53,7 @@ import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
+import { startPolice } from './police.js';
 import { startLikenessScheduler } from './likeness.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import type { LikenessGenerationWorker } from '../application/likeness-worker.js';
@@ -212,6 +216,7 @@ export async function buildWorkers(likeness?: {
   );
 
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
+  const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
   // Repeatable jobs via the modern upsertJobScheduler API. The cron
   // strings are placeholders; the actual schedule is M5.
@@ -310,6 +315,7 @@ export async function buildWorkers(likeness?: {
     healthzServer,
     async shutdown() {
       stopMarket();
+      stopPolice();
       await likenessScheduler?.stop();
       await crierWorker.close();
       await dailyWorker.close();

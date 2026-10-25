@@ -13,3 +13,14 @@ contract/realtime/generated/
 docs/spec/
 docs/adr/
 docker-compose.yml
+
+# Archived session logs and handoff dumps: kept as written, not maintained.
+docs/ct-life-backend-handoff-2026-10-08/
+docs/AUDIT_*.md
+docs/FINAL-*.md
+docs/P1-P2-PROGRESS.md
+docs/P2-COMPLETION-SUMMARY.md
+docs/P3-*.md
+docs/P4-P6-PROGRESS.md
+docs/ULTIMATE-SESSION-COMPLETION.md
+docs/NEXT_SESSION_PROMPT.md

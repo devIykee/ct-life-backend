@@ -172,6 +172,8 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
   it('listCabalInvites rejects bad limit', async () => {
     const ctx = buildContext();
     const testHost = await newUser('h6');
-    await expect(listCabalInvites(ctx, testHost, {}, 0)).rejects.toBeInstanceOf(ValidationFailedError);
+    await expect(listCabalInvites(ctx, testHost, {}, 0)).rejects.toBeInstanceOf(
+      ValidationFailedError,
+    );
   });
 });

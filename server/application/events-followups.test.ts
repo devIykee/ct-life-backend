@@ -56,6 +56,7 @@ const wrongChoices = (q: string): string[] => ['a', 'b', 'c', 'd'].filter((c) =>
 const INSIDE = { lat: 51.49639, lng: -0.20972, accuracyM: 20, isMock: false };
 
 let n = 0;
+const created: string[] = [];
 async function newUser(opts: { cash?: number } = {}): Promise<string> {
   const id = uuidv7();
   await pool.query(
@@ -71,6 +72,7 @@ async function newUser(opts: { cash?: number } = {}): Promise<string> {
      VALUES ($1, $2, $3, '{"skin":1}', 'degens', '{}', 'x', 'h')`,
     [uuidv7(), id, `fu${Date.now().toString(36)}${n++}`],
   );
+  created.push(id);
   return id;
 }
 const cashOf = async (id: string): Promise<number> =>
@@ -99,6 +101,8 @@ beforeAll(async () => {
   await listUpcoming(ctx, 1, new Date('2026-10-23T00:00:00Z'));
 });
 afterAll(async () => {
+  // Leave no attendees behind: events-irl.test.ts reads the first page of the same board.
+  await pool.query(`DELETE FROM event_checkins WHERE user_id = ANY($1::uuid[])`, [created]);
   await pool.end();
 });
 

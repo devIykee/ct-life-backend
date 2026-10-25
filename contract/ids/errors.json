@@ -296,6 +296,56 @@
       "code": "TRIVIA_COOLDOWN",
       "httpStatus": 429,
       "message": "That trivia question is cooling down after a wrong answer; try it again later."
+    },
+    {
+      "code": "CAREER_SWITCH_COOLDOWN",
+      "httpStatus": 409,
+      "message": "You switched career ladders recently; wait for the cooldown to end."
+    },
+    {
+      "code": "JOB_LOCKED",
+      "httpStatus": 403,
+      "message": "This job is not unlocked for you."
+    },
+    {
+      "code": "JOB_DAILY_CAP",
+      "httpStatus": 409,
+      "message": "You have earned today's maximum pay from this job."
+    },
+    {
+      "code": "SHIFT_RESULT_IMPLAUSIBLE",
+      "httpStatus": 422,
+      "message": "The shift result does not look like a real shift."
+    },
+    {
+      "code": "JAILED",
+      "httpStatus": 403,
+      "message": "You are in CT Jail. Pay bail or wait it out."
+    },
+    {
+      "code": "NOT_JAILED",
+      "httpStatus": 409,
+      "message": "You are not in CT Jail."
+    },
+    {
+      "code": "NO_PURSUIT",
+      "httpStatus": 409,
+      "message": "There is no active police pursuit for you."
+    },
+    {
+      "code": "CATCH_NOT_VERIFIED",
+      "httpStatus": 422,
+      "message": "The server could not verify that the police caught you."
+    },
+    {
+      "code": "VEHICLE_NOT_STEALABLE",
+      "httpStatus": 403,
+      "message": "Realtime: this vehicle cannot be stolen (the hovercar, or one a player is driving)."
+    },
+    {
+      "code": "STEAL_REQUIRED",
+      "httpStatus": 409,
+      "message": "Realtime: this vehicle belongs to someone else; send vehicle_enter with steal: true."
     }
   ]
 }

@@ -7,7 +7,11 @@
  * to the right envelope.
  */
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
-import { ForbiddenError, SignatureInvalidError, TokenExpiredError } from '../../shared/domain/errors.js';
+import {
+  ForbiddenError,
+  SignatureInvalidError,
+  TokenExpiredError,
+} from '../../shared/domain/errors.js';
 import type { AccessClaims } from '../../shared/auth/jwt.js';
 
 declare module 'fastify' {

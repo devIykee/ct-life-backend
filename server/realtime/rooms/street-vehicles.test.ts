@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalPresence } from 'colyseus';
 import { Encoder, type Schema } from '@colyseus/schema';
-import { PlayerState } from '../../../contract/realtime/states.js';
+import { PlayerState, VehicleState } from '../../../contract/realtime/states.js';
 import { setIslandGeometry, setParkingBays, POS_HASH, encodePos, DISTRICTS } from '../movement.js';
 
 vi.mock('../player.js', async (orig) => {
@@ -17,7 +17,7 @@ vi.mock('../player.js', async (orig) => {
 });
 
 const { StreetRoom } = await import('./street.js');
-const { VehiclesRoom } = await import('./vehicles.js');
+const { VehiclesRoom, setVehicleCrimeHooks } = await import('./vehicles.js');
 
 class TestStreet extends StreetRoom {
   protected override loadPlayer(userId: string): Promise<PlayerState> {
@@ -81,13 +81,31 @@ function msg(room: AnyRoom, name: string, client: unknown, payload: unknown): Pr
   return new Promise((r) => setTimeout(r, 0));
 }
 
+interface HeatCall {
+  userId: string;
+  delta: number;
+  source: string;
+  refId: string;
+}
+const jailed = new Set<string>();
+const heatCalls: HeatCall[] = [];
+
 let now = 1_000_000;
 beforeEach(() => {
+  jailed.clear();
+  heatCalls.length = 0;
+  setVehicleCrimeHooks({
+    isJailed: async (u) => jailed.has(u),
+    raiseHeat: async (userId, delta, source, refId) => {
+      heatCalls.push({ userId, delta, source, refId });
+    },
+  });
   setIslandGeometry({ island: [ISLAND], districts: { timeline: TIMELINE } });
   setParkingBays([]);
   vi.spyOn(Date, 'now').mockImplementation(() => now);
 });
 afterEach(() => {
+  setVehicleCrimeHooks(null);
   setIslandGeometry(null);
   setParkingBays(null);
   vi.restoreAllMocks();
@@ -331,5 +349,231 @@ describe('VehiclesRoom', () => {
     now += 2000;
     await msg(room, 'vehicle_hit', d, { victim: 'far', velocity: { x: 15, y: 0, z: 0 } });
     expect(f.sent.some((s) => s.type === 'vehicle_hit')).toBe(false);
+  });
+});
+
+describe('carjacking', () => {
+  async function two(): Promise<{
+    room: AnyRoom;
+    presence: LocalPresence;
+    a: ReturnType<typeof fakeClient>;
+    b: ReturnType<typeof fakeClient>;
+  }> {
+    const presence = new LocalPresence();
+    const room = await boot(VehiclesRoom, presence, {});
+    await presence.hset(POS_HASH, 'a', encodePos({ x: 0, z: 0, at: now }));
+    await presence.hset(POS_HASH, 'b', encodePos({ x: 2, z: 0, at: now }));
+    const a = fakeClient('sa');
+    const b = fakeClient('sb');
+    await room.onJoin!(a, { userId: 'a' });
+    await room.onJoin!(b, { userId: 'b' });
+    return { room, presence, a, b };
+  }
+  const vehicles = (room: AnyRoom): Map<string, { driver: string; x: number; z: number }> =>
+    (
+      room as unknown as {
+        state: { vehicles: Map<string, { driver: string; x: number; z: number }> };
+      }
+    ).state.vehicles;
+  const metaOf = (room: AnyRoom, id: string): { spawnedBy: string | null } =>
+    (room as unknown as { meta: Map<string, { spawnedBy: string | null }> }).meta.get(id)!;
+  const lastCode = (c: ReturnType<typeof fakeClient>): unknown => c.sent.at(-1)?.payload.code;
+
+  it('steals an NPC traffic car with steal:true and adds heat; without the flag it asks for it', async () => {
+    const { room, b } = await two();
+    await msg(room, 'vehicle_enter', b, { id: 'traffic_7', kind: 'compact', x: 3, z: 0 });
+    expect(lastCode(b)).toBe('STEAL_REQUIRED');
+    expect(heatCalls).toHaveLength(0);
+    await msg(room, 'vehicle_enter', b, {
+      id: 'traffic_7',
+      kind: 'compact',
+      x: 3,
+      z: 0,
+      steal: true,
+    });
+    expect(vehicles(room).get('traffic_7')?.driver).toBe('b');
+    expect(heatCalls).toEqual([{ userId: 'b', delta: 8, source: 'steal_npc', refId: 'traffic_7' }]);
+  });
+
+  it('validates distance server-side and rate limits steals', async () => {
+    const { room, presence, b } = await two();
+    await msg(room, 'vehicle_enter', b, {
+      id: 'traffic_far',
+      kind: 'compact',
+      x: 30,
+      z: 0,
+      steal: true,
+    });
+    expect(lastCode(b)).toBe('VEHICLE_TOO_FAR');
+    expect(heatCalls).toHaveLength(0);
+
+    await msg(room, 'vehicle_enter', b, {
+      id: 'traffic_1',
+      kind: 'compact',
+      x: 3,
+      z: 0,
+      steal: true,
+    });
+    msg(room, 'vehicle_exit', b, { id: 'traffic_1', x: 3, z: 0, yaw: 0 });
+    now += 2_000;
+    await msg(room, 'vehicle_enter', b, {
+      id: 'traffic_2',
+      kind: 'compact',
+      x: 3,
+      z: 0,
+      steal: true,
+    });
+    expect(lastCode(b)).toBe('RATE_LIMITED');
+    expect(heatCalls).toHaveLength(1);
+    now += 15_000;
+    await presence.hset(POS_HASH, 'b', encodePos({ x: 2, z: 0, at: now }));
+    await msg(room, 'vehicle_enter', b, {
+      id: 'traffic_2',
+      kind: 'compact',
+      x: 3,
+      z: 0,
+      steal: true,
+    });
+    expect(vehicles(room).get('traffic_2')?.driver).toBe('b');
+    expect(heatCalls).toHaveLength(2);
+  });
+
+  it('steals a parked player-owned car, tells the owner, never transfers ownership, and hands it back', async () => {
+    const { room, a, b } = await two();
+    await msg(room, 'vehicle_enter', a, { id: 'carA', kind: 'sports', x: 1, z: 0 });
+    msg(room, 'vehicle_exit', a, { id: 'carA', x: 1, z: 0, yaw: 0 });
+    expect(vehicles(room).get('carA')?.driver).toBe('');
+
+    await msg(room, 'vehicle_enter', b, { id: 'carA' });
+    expect(lastCode(b)).toBe('STEAL_REQUIRED');
+    await msg(room, 'vehicle_enter', b, { id: 'carA', steal: true });
+    expect(vehicles(room).get('carA')?.driver).toBe('b');
+    expect(heatCalls).toEqual([{ userId: 'b', delta: 15, source: 'steal_player', refId: 'carA' }]);
+    expect(metaOf(room, 'carA').spawnedBy).toBe('a');
+    const stolen = a.sent.find((m) => m.type === 'vehicle_stolen');
+    expect(stolen?.payload).toMatchObject({ vehicleId: 'carA', kind: 'sports', by: 'b' });
+
+    // Driven away and parked elsewhere: it returns to where the owner left it.
+    now += 1_000;
+    await msg(room, 'vehicle_move', b, {
+      id: 'carA',
+      x: 40,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      speed: 30,
+    });
+    await msg(room, 'vehicle_exit', b, {
+      id: 'carA',
+      x: vehicles(room).get('carA')!.x,
+      z: 0,
+      yaw: 0,
+    });
+    expect(vehicles(room).get('carA')?.x).toBe(1);
+    expect(vehicles(room).get('carA')?.driver).toBe('');
+    expect(metaOf(room, 'carA').spawnedBy).toBe('a');
+    expect(a.sent.some((m) => m.type === 'vehicle_returned')).toBe(true);
+  });
+
+  it('hands a stolen player car back after 3 minutes even if still driven', async () => {
+    const { room, a, b } = await two();
+    await msg(room, 'vehicle_enter', a, { id: 'carA', kind: 'suv', x: 1, z: 0 });
+    msg(room, 'vehicle_exit', a, { id: 'carA', x: 1, z: 0, yaw: 0 });
+    await msg(room, 'vehicle_enter', b, { id: 'carA', steal: true });
+    expect(vehicles(room).get('carA')?.driver).toBe('b');
+    now += 3 * 60_000 + 1_000;
+    await (room as unknown as { tick: (t: number) => Promise<void> }).tick(now);
+    expect(vehicles(room).get('carA')?.driver).toBe('');
+    expect(vehicles(room).get('carA')?.x).toBe(1);
+    expect(
+      b.sent.some((m) => m.type === 'vehicle_returned' && m.payload.reason === 'timeout'),
+    ).toBe(true);
+    expect(a.sent.some((m) => m.type === 'vehicle_returned')).toBe(true);
+  });
+
+  it('refuses to steal a vehicle a player is driving', async () => {
+    const { room, a, b } = await two();
+    await msg(room, 'vehicle_enter', a, { id: 'carA', kind: 'suv', x: 1, z: 0 });
+    await msg(room, 'vehicle_enter', b, { id: 'carA', steal: true });
+    expect(lastCode(b)).toBe('VEHICLE_TAKEN');
+    expect(vehicles(room).get('carA')?.driver).toBe('a');
+    expect(heatCalls).toHaveLength(0);
+  });
+
+  it('never steals the hovercar: traffic roadstar or a player-owned one', async () => {
+    const { room, b } = await two();
+    await msg(room, 'vehicle_enter', b, {
+      id: 'traffic_hover',
+      kind: 'roadstar',
+      x: 3,
+      z: 0,
+      steal: true,
+    });
+    expect(lastCode(b)).toBe('VEHICLE_NOT_STEALABLE');
+    expect(vehicles(room).has('traffic_hover')).toBe(false);
+
+    // A roadstar parked by player a (seeded straight into the room; owning it needs the pass).
+    const v = new VehicleState();
+    v.id = 'hoverA';
+    v.kind = 'roadstar';
+    v.x = 1;
+    v.z = 0;
+    (room as unknown as { state: { vehicles: Map<string, object> } }).state.vehicles.set(
+      'hoverA',
+      v,
+    );
+    (room as unknown as { meta: Map<string, object> }).meta.set('hoverA', {
+      spawnedBy: 'a',
+      bay: null,
+      spawnedAt: now,
+      driverSession: null,
+      at: now,
+      budget: 0,
+      idleSince: now,
+      stolen: null,
+    });
+    await msg(room, 'vehicle_enter', b, { id: 'hoverA', steal: true });
+    expect(lastCode(b)).toBe('VEHICLE_NOT_STEALABLE');
+    expect(vehicles(room).get('hoverA')?.driver).toBe('');
+    expect(heatCalls).toHaveLength(0);
+  });
+
+  it('a jailed player cannot enter any vehicle', async () => {
+    const { room, b } = await two();
+    jailed.add('b');
+    await msg(room, 'vehicle_enter', b, { id: 'mine', kind: 'compact', x: 3, z: 0 });
+    expect(lastCode(b)).toBe('JAILED');
+    expect(vehicles(room).has('mine')).toBe(false);
+  });
+
+  it('hitting a player adds heat, at most once per 10 s', async () => {
+    const { room, presence, a, b } = await two();
+    await msg(room, 'vehicle_enter', a, { id: 'carA', kind: 'sports', x: 1, z: 0 });
+    await presence.hset(POS_HASH, 'b', encodePos({ x: 5, z: 0, at: now }));
+    now += 500;
+    msg(room, 'vehicle_move', a, {
+      id: 'carA',
+      x: 4,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      speed: 15,
+    });
+    await msg(room, 'vehicle_hit', a, { victim: 'b', velocity: { x: 15, y: 2, z: 0 } });
+    expect(b.sent.filter((m) => m.type === 'vehicle_hit')).toHaveLength(1);
+    expect(heatCalls).toEqual([{ userId: 'a', delta: 3, source: 'vehicle_hit', refId: 'b' }]);
+    now += 2_000;
+    await presence.hset(POS_HASH, 'b', encodePos({ x: 5, z: 0, at: now }));
+    await msg(room, 'vehicle_hit', a, { victim: 'b', velocity: { x: 15, y: 2, z: 0 } });
+    expect(b.sent.filter((m) => m.type === 'vehicle_hit')).toHaveLength(2);
+    expect(heatCalls).toHaveLength(1);
+    now += 9_000;
+    await presence.hset(POS_HASH, 'b', encodePos({ x: 5, z: 0, at: now }));
+    await msg(room, 'vehicle_hit', a, { victim: 'b', velocity: { x: 15, y: 2, z: 0 } });
+    expect(heatCalls).toHaveLength(2);
   });
 });

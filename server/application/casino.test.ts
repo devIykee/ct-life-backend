@@ -380,8 +380,11 @@ describe('crash', () => {
   });
 
   it('an open round hides its seed and the crash point', async () => {
-    const u = await newUser();
-    const res = await placeCrashBet(ctx, u, 500, null, T0);
+    // Not an instant bust (about 6% of rounds): listing settles a round whose crash time has
+    // passed, which would reveal its seed legitimately.
+    const open = await openCrashWith(200, T0);
+    const u = open.userId;
+    const res = await getMyRound(ctx, u, open.roundId, T0);
     expect(res.round.status).toBe('open');
     expect(res.round.seed).toBeNull();
     expect(res.round.outcome).toBeNull();
@@ -389,7 +392,7 @@ describe('crash', () => {
     expect(res.round.params).toMatchObject({ startedAtMs: T0.getTime(), growthPerSecond: 0.07 });
     expect(JSON.stringify(res)).not.toContain('crashPoint');
     // listing it does not leak the seed either
-    const list = await listMyRounds(ctx, u, { limit: 10, before: null }, at(10));
+    const list = await listMyRounds(ctx, u, { limit: 10, before: null }, at(1));
     expect(list.rounds[0]!.seed).toBeNull();
     const stored = await pool.query<{ seed: string }>(
       `SELECT seed FROM casino_rounds WHERE round_id = $1`,
@@ -398,7 +401,7 @@ describe('crash', () => {
     expect(JSON.stringify(list)).not.toContain(stored.rows[0]!.seed);
     expect(JSON.stringify(res)).not.toContain(stored.rows[0]!.seed);
     // only the stake has moved
-    expect(await ledger(u)).toEqual([{ reason: 'casino_stake', delta: -500 }]);
+    expect(await ledger(u)).toEqual([{ reason: 'casino_stake', delta: -open.stake }]);
   });
 
   it('a cashout BEFORE the crash pays the server multiplier at that instant', async () => {

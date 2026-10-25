@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireNotJailed } from '../middleware/jail.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   FACTORY_TEMPLATES,
@@ -57,7 +58,7 @@ export function registerFactoryRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/factory/coins',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireNotJailed, withIdempotency()] },
     async (req, reply) => {
       const body = LaunchBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });

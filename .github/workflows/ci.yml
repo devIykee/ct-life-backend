@@ -22,9 +22,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -50,9 +50,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -70,9 +70,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -107,14 +107,18 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        run: pnpm db:migrate:env
+      - name: Write a throwaway .env (generated keys, nothing real)
+        run: pnpm exec tsx tools/scripts/ci-env.ts
       - run: pnpm test:unit
 
   contract-check:
@@ -124,9 +128,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -179,14 +183,18 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        run: pnpm db:migrate:env
+      - name: Write a throwaway .env (generated keys, nothing real)
+        run: pnpm exec tsx tools/scripts/ci-env.ts
       - run: pnpm test:integration
 
   # Runs nightly or manually. Hits external services (Helius, devnet airdrop).
@@ -222,9 +230,9 @@ jobs:
       RUN_MAINNET_TESTS: ${{ secrets.RUN_MAINNET_TESTS || '0' }}
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}

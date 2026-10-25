@@ -25,11 +25,25 @@ title = "CT Life secrets"
   regex = '''[1-9A-HJ-NP-Za-km-z]{86,88}'''
   tags = ["solana", "keypair"]
 
+  # A base58-looking string of this length is also a public transaction signature or a
+  # slice of base64 account data. These two files hold those, copied from mainnet (an RPC
+  # fixture and a verification note), not keypairs.
+  [[rules.allowlists]]
+    description = "public mainnet signatures and account data"
+    paths = ['''^server/shared/solana/fixtures/ore-mainnet\.json$''', '''^docs/UNVERIFIED\.md$''']
+
 [[rules]]
   id = "ctlife-jwt-private-key"
   description = "PEM private key"
   regex = '''-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----'''
   tags = ["key", "jwt"]
+
+  # Test files carry an obviously fake placeholder PEM (`FAKE_PKCS8`, not valid DER).
+  # Real keys in a test file would still be caught by the other rules; only the
+  # PEM header is allowed here, and only under server/ test files.
+  [[rules.allowlists]]
+    description = "placeholder PEM in test fixtures"
+    paths = ['''^server/.*\.test\.ts$''']
 
 [[rules]]
   id = "ctlife-helius-api-key"

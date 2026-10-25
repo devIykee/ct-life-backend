@@ -23,6 +23,7 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireNotJailed } from '../middleware/jail.js';
 import { withRateLimit } from '../middleware/rate-limit.js';
 import { RateLimitedError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { perUserTokenBucket } from '../../shared/infra/rate-limit.js';
@@ -88,7 +89,15 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
 export function registerCasinoRoutes(app: FastifyInstance): void {
   const read = { preHandler: requireAuth };
   const write = { preHandler: [requireAuth, withIdempotency(), withRateLimit()] };
-  const bet = { preHandler: [requireAuth, withIdempotency(), withRateLimit(), casinoBetLimit()] };
+  const bet = {
+    preHandler: [
+      requireAuth,
+      requireNotJailed,
+      withIdempotency(),
+      withRateLimit(),
+      casinoBetLimit(),
+    ],
+  };
 
   app.get('/v1/casino/state', read, async (req, reply) =>
     reply.send(await getCasinoState(req.ctx, req.user!.sub)),
