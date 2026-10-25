@@ -422,7 +422,8 @@ export function loadConfig(): Config {
       oreReader: asBool('ORE_READER_ENABLED', false),
     },
 
-    llmModel: process.env.LLM_MODEL ?? 'claude-opus-4-6',
+    // `||`, not `??`: .env.example ships `LLM_MODEL=` (empty), which must mean "default".
+    llmModel: process.env.LLM_MODEL || 'claude-opus-4-6',
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
 
     xLink: {

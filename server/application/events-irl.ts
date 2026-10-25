@@ -4,6 +4,7 @@
  *   POST /v1/events/{slug}/checkin              — prove you are at the venue
  *   PUT  /v1/events/{slug}/checkin/visibility   — appear on / leave the board
  *   GET  /v1/events/{slug}/irl                  — the visible attendees
+ *   POST /v1/events/{slug}/irl/{handle}/dm      — message an attendee by handle
  *
  * PRIVACY (UK GDPR; the event is in London). The client sends its position;
  * the server compares it with the venue geofence in memory and discards it.
@@ -29,12 +30,14 @@ import { runInTransaction } from '../shared/db/uow.js';
 import {
   CheckinRejectedError,
   EventNotLiveError,
+  ForbiddenError,
   NotFoundError,
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { perUserTokenBucket } from '../shared/infra/rate-limit.js';
 import type { AppContext } from './context.js';
 import { grantCosmetic, ensureCatalog } from './cosmetics.js';
+import { sendDm } from './social-graph.js';
 import { ensureEventsSynced, loadCalendar, loadEvent, statusOf } from './events.js';
 import { publishToCityExcept } from './realtime-bus.js';
 
@@ -282,6 +285,14 @@ async function announceIrl(
 }
 
 export interface IrlAttendee {
+  /**
+   * Opaque per-event handle: `POST /events/{slug}/irl/{handle}/dm` takes it.
+   * It is an HMAC of (event, user) under a server key, so it carries no user
+   * id, can not be turned back into one, and differs between events.
+   */
+  readonly handle: string;
+  /** True for the caller's own row (do not offer "message"). */
+  readonly self: boolean;
   readonly alias: string;
   readonly look: unknown;
   readonly tribeId: string | null;
@@ -298,6 +309,28 @@ function cursorMac(ctx: AppContext, payload: string): string {
     .update('irl-board-cursor:' + ctx.config.jwt.privateKeyPem)
     .digest();
   return createHmac('sha256', key).update(payload).digest('hex').slice(0, 32);
+}
+
+/** HMAC key for attendee handles; a different derivation from the cursor key. */
+function handleKey(ctx: AppContext): Buffer {
+  return createHash('sha256')
+    .update('irl-attendee-handle:' + ctx.config.jwt.privateKeyPem)
+    .digest();
+}
+
+/**
+ * The opaque handle of one attendee at one event (22 base64url characters,
+ * 128 bits of the HMAC).
+ * @param ctx - The app context.
+ * @param eventId - The event id.
+ * @param userId - The attendee.
+ */
+export function attendeeHandle(ctx: AppContext, eventId: string, userId: string): string {
+  return createHmac('sha256', handleKey(ctx))
+    .update(`${eventId}:${userId}`)
+    .digest()
+    .subarray(0, 16)
+    .toString('base64url');
 }
 
 /** Opaque, signed cursor over (checked_in_at, checkin_id). Carries no user id. */
@@ -347,6 +380,7 @@ export async function listAttendees(
       keyset = `AND (ch.checked_in_at, ch.checkin_id) < ($4, $5)`;
     }
     const r = await c.query<{
+      user_id: string;
       checkin_id: string;
       checked_in_at: Date;
       alias: string;
@@ -354,7 +388,7 @@ export async function listAttendees(
       tribe_id: string | null;
       likeness_job_id: string | null;
     }>(
-      `SELECT ch.checkin_id, ch.checked_in_at, c.alias, c.look, c.tribe_id, c.likeness_job_id
+      `SELECT ch.user_id, ch.checkin_id, ch.checked_in_at, c.alias, c.look, c.tribe_id, c.likeness_job_id
          FROM event_checkins ch
          JOIN characters c ON c.user_id = ch.user_id
         WHERE ch.event_id = $1 AND ch.visible ${keyset}
@@ -374,6 +408,8 @@ export async function listAttendees(
         : null;
     return {
       items: page.map((x) => ({
+        handle: attendeeHandle(ctx, ev.id, x.user_id),
+        self: x.user_id === userId,
         alias: x.alias,
         look: x.look,
         tribeId: x.tribe_id,
@@ -383,4 +419,58 @@ export async function listAttendees(
       next,
     };
   });
+}
+
+/** Messages per player per hour through attendee handles. */
+export const IRL_DM_PER_HOUR = 10;
+
+/**
+ * Send a DM to a visible attendee named by their opaque handle. The caller
+ * must be checked in at the event themselves. A handle that is unknown, not
+ * visible, belongs to someone who blocked the caller (or was blocked by them),
+ * or is the caller's own answers `404`, so the call tells nothing about who
+ * is behind a handle. The reply carries no user id. (The DM itself, like every
+ * DM, shows the sender to the recipient; the handle protects the attendee
+ * board, not the person you choose to write to.)
+ * @param ctx - The app context.
+ * @param userId - The caller.
+ * @param slug - The event slug.
+ * @param handle - The attendee handle from `GET /events/{slug}/irl`.
+ * @param text - The message, 1 to 500 characters.
+ * @throws ForbiddenError when the caller has not checked in; NotFoundError.
+ */
+export async function messageAttendee(
+  ctx: AppContext,
+  userId: string,
+  slug: string,
+  handle: string,
+  text: string,
+): Promise<{ slug: string; sent: true; messageId: string; at: string }> {
+  await ensureEventsSynced(ctx.db);
+  const target = await ctx.db.withConnection(async (c) => {
+    const ev = await loadEvent(c, slug);
+    const mine = await c.query(
+      `SELECT 1 FROM event_checkins WHERE event_id = $1 AND user_id = $2`,
+      [ev.id, userId],
+    );
+    if (mine.rowCount === 0) throw new ForbiddenError({ reason: 'checkin_required' });
+    const r = await c.query<{ user_id: string }>(
+      `SELECT ch.user_id FROM event_checkins ch
+        WHERE ch.event_id = $1 AND ch.visible AND ch.user_id <> $2
+          AND NOT EXISTS (
+            SELECT 1 FROM blocks b
+             WHERE (b.blocker_user_id = $2 AND b.blocked_user_id = ch.user_id)
+                OR (b.blocker_user_id = ch.user_id AND b.blocked_user_id = $2))`,
+      [ev.id, userId],
+    );
+    const want = Buffer.from(handle);
+    for (const row of r.rows) {
+      const got = Buffer.from(attendeeHandle(ctx, ev.id, row.user_id));
+      if (got.length === want.length && timingSafeEqual(got, want)) return row.user_id;
+    }
+    return null;
+  });
+  if (target === null) throw new NotFoundError({ resource: 'attendee' });
+  const dm = await sendDm(ctx, userId, target, text);
+  return { slug, sent: true, messageId: dm.messageId, at: dm.at };
 }

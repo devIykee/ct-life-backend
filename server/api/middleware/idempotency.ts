@@ -11,7 +11,9 @@
  *      respond 400 VALIDATION_FAILED (the contract requires it).
  *   2. Reserve the key. If a cached response is present, replay it.
  *   3. If acquired=true, run the handler, then store the response.
- *   4. On handler error, abort the reservation.
+ *   4. On a non-2xx response (a handler error), abort the reservation in the
+ *      onSend hook so the key is free to retry at once. If the process dies
+ *      mid-request the lock expires after its TTL (30 s).
  *
  * The middleware serializes body → hash before reserving, so a
  * key reused with a different body returns `bodyHashMismatch: true`
@@ -89,7 +91,13 @@ export function idempotencyOnSend(): onSendHookHandler {
     ).__idem;
     if (!meta || meta.replayed) return payload;
     const status = reply.statusCode;
-    if (status < 200 || status >= 300) return payload;
+    if (status < 200 || status >= 300) {
+      // A failed request caches nothing and must not leave its key locked: release
+      // it now, so the same key can be retried at once (not 409 IN_FLIGHT until the
+      // lock's TTL). Only the request that holds the lock releases it.
+      await req.ctx.idempotency.abort(req.user?.sub ?? 'anon', meta.key, meta.lockToken);
+      return payload;
+    }
     const bodyStr =
       typeof payload === 'string' ? payload : payload === null ? '' : JSON.stringify(payload);
     const cached: CachedResponse = {

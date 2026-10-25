@@ -293,6 +293,11 @@
       "message": "Wait before launching another coin."
     },
     {
+      "code": "TRIVIA_COOLDOWN",
+      "httpStatus": 429,
+      "message": "That trivia question is cooling down after a wrong answer; try it again later."
+    },
+    {
       "code": "CAREER_SWITCH_COOLDOWN",
       "httpStatus": 409,
       "message": "You switched career ladders recently; wait for the cooldown to end."

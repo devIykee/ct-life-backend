@@ -23,7 +23,7 @@ The reward is recorded in the ordinary ledger (`event_irl_bonus`) and cosmetic i
 
 - Latitude, longitude, reported accuracy and the computed distance. They are read from the request, compared with the venue circle in memory, and dropped. They are not written to any table, cache, queue or error. A rejection returns only a reason code (`outside_geofence`, `poor_accuracy`, ...), never a distance.
 - Request bodies and coordinate fields in logs: Fastify does not log bodies, and the API logger additionally redacts `req.body`, `body`, `lat`, `lng`, `latitude`, `longitude`, `accuracyM` (`REDACT_PATHS` in `server/shared/logger/logger.ts`, covered by a test). Reverse proxies and CDNs in front of the API must not log bodies either; that is outside this code.
-- The attendee board (`GET /v1/events/{slug}/irl`) returns alias, look, tribe, avatar id and `checkedInAt` only, for players who opted in, minus anyone blocked in either direction. No location and no user id. The `irl_checkin` city message carries the alias only.
+- The attendee board (`GET /v1/events/{slug}/irl`) returns alias, look, tribe, avatar id and `checkedInAt` only, for players who opted in, minus anyone blocked in either direction. No location and no user id. Each row has an opaque per-event `handle` (HMAC of the event and user under a server key) that `POST /v1/events/{slug}/irl/{handle}/dm` accepts, so players can message each other without the list exposing ids; an unknown, hidden or blocked handle all answer 404. The `irl_checkin` city message carries the alias only.
 
 The venue geofence (centre, radius, source) is public venue data stored on `events`, not personal data.
 

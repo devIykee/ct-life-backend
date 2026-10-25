@@ -2,7 +2,7 @@
   "_owner": "FE",
   "_provisional": false,
   "version": "1.0.0",
-  "_note": "CT Island v2 bounds for the street and vehicles rooms, generated from the frontend island plan (ct-life origin/dev fa36912f, 2026-10-18) by tools/scripts/import-districts.ts. Island metres, +X east, +Z north, origin at the downtown plaza. `island` is a list of land polygons (coast, islet, causeway); `districts` maps each district id to its polygon. `venues` places each venue's local frame on the island: origin [x, y, z], yaw in degrees clockwise from north, door [x, z]. Points are [x, z].",
+  "_note": "CT Island v2 bounds for the street and vehicles rooms, generated from the frontend island plan (tools/world/islandgen/out/plan.json, ct-life feat/v3-studio-world 2026-10-24) by tools/world/islandgen/export_districts.py (the backend importer's format plus pads over the water). Island metres, +X east, +Z north, origin at the downtown plaza. `island` is a list of land polygons (coast, islet, causeway, then pier pads such as The Rug Room); `districts` maps each district id to its polygon. `venues` places each venue's local frame on the island: origin [x, y, z], yaw in degrees clockwise from north, door [x, z]. Points are [x, z].",
   "units": "island metres",
   "island": [
     [
@@ -753,6 +753,18 @@
       [795, -598],
       [795, -532.11],
       [793, -470.23]
+    ],
+    [
+      [135.5, -250.5],
+      [116.5, -250.5],
+      [116.5, -273.5],
+      [135.5, -273.5]
+    ],
+    [
+      [115.5, -237.5],
+      [76.5, -237.5],
+      [76.5, -275.5],
+      [115.5, -275.5]
     ]
   ],
   "districts": {

@@ -26,6 +26,14 @@
  *       (`contract/config/event_trivia.json`). A question is answered once,
  *       right or wrong, so the four choices cannot be brute-forced.
  *
+ * Trivia can be retried. A wrong answer is recorded in `event_trivia_attempts`
+ * (the wrong choice can not be tried again on that question) and puts THAT
+ * question on a cooldown of 60 s, then 10 min, then 60 min for the 1st, 2nd and
+ * 3rd wrong try. So a player who misses two questions can still reach the
+ * required number, and guessing one question through all four choices takes
+ * more than 70 minutes of waiting. The reward is still paid once per player
+ * (`event_completions`), so retrying can not farm it.
+ *
  * Completing every step pays `reward_cents` (ledger reason `event_reward`)
  * and grants the off-chain cosmetic `reward_item_key` (inventory source
  * 'grant'), once, in one transaction.
@@ -38,6 +46,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import {
   EventNotLiveError,
   EventStepInvalidError,
+  TriviaCooldownError,
   NotFoundError,
   ValidationFailedError,
 } from '../shared/domain/errors.js';
@@ -76,8 +85,15 @@ export interface StepProgress {
     id: string;
     prompt: string;
     choices: ReadonlyArray<{ id: string; label: string }>;
+    /** True once the question was answered right. */
     answered: boolean;
+    /** The wrong choice ids already tried (they can not be tried again). */
+    triedChoices: ReadonlyArray<string>;
+    /** When the next try is allowed (ISO), or null when it is allowed now. */
+    retryAt: string | null;
   }>;
+  /** Interaction steps only: the booth / nod ids the caller has already done. */
+  readonly doneIds?: ReadonlyArray<string>;
 }
 
 export interface QuestProgress {
@@ -86,8 +102,30 @@ export interface QuestProgress {
   readonly reward: { cashCents: number; itemKey: string | null; claimedAt: string | null };
 }
 
+export interface IrlState {
+  /** The event has a geofence, so the opt-in check-in exists. */
+  readonly available: boolean;
+  readonly checkedIn: boolean;
+  readonly checkedInAt: string | null;
+  /** Whether the caller is listed on the attendee board. */
+  readonly visible: boolean;
+}
+
 export interface EventDetails extends EventSummary {
   readonly quest: QuestProgress;
+  /** The caller's IRL check-in state, so the client can restore after a relaunch. */
+  readonly irl: IrlState;
+}
+
+/** Wait before the next try on a question after its n-th wrong choice (n >= 1). */
+export const TRIVIA_COOLDOWNS_S: readonly number[] = [60, 600, 3600];
+
+/**
+ * @param wrongTries - How many wrong choices the question has had (>= 1).
+ * @returns Seconds the player waits before the next try on that question.
+ */
+export function triviaCooldownS(wrongTries: number): number {
+  return TRIVIA_COOLDOWNS_S[Math.min(Math.max(wrongTries, 1), TRIVIA_COOLDOWNS_S.length) - 1]!;
 }
 
 export interface ProgressResult extends QuestProgress {
@@ -375,7 +413,19 @@ export async function loadEvent(
 
 type Q = { query: (sql: string, params: unknown[]) => Promise<{ rows: unknown[] }> };
 
-async function questProgress(client: Q, row: EventRow, userId: string): Promise<QuestProgress> {
+async function questProgress(
+  client: Q,
+  row: EventRow,
+  userId: string,
+  now: Date,
+): Promise<QuestProgress> {
+  const attempts = (
+    await client.query(
+      `SELECT question_id, choice_id, created_at FROM event_trivia_attempts
+        WHERE user_id = $1 AND event_id = $2`,
+      [userId, row.id],
+    )
+  ).rows as Array<{ question_id: string; choice_id: string; created_at: Date }>;
   const prog = (
     await client.query(
       `SELECT step, item_id, ok FROM event_progress WHERE user_id = $1 AND event_id = $2`,
@@ -401,14 +451,24 @@ async function questProgress(client: Q, row: EventRow, userId: string): Promise<
       complete: count >= s.required,
       ...(s.kind === 'trivia'
         ? {
-            questions: (s.questions ?? []).map((q) => ({
-              id: q.id,
-              prompt: q.prompt,
-              choices: q.choices,
-              answered: mine.some((p) => p.item_id === q.id),
-            })),
+            questions: (s.questions ?? []).map((q) => {
+              const wrong = attempts.filter((a) => a.question_id === q.id);
+              const last = wrong.reduce((m, a) => Math.max(m, a.created_at.getTime()), 0);
+              const until = wrong.length > 0 ? last + triviaCooldownS(wrong.length) * 1000 : 0;
+              const answered = mine.some((p) => p.item_id === q.id && p.ok);
+              return {
+                id: q.id,
+                prompt: q.prompt,
+                choices: q.choices,
+                answered,
+                triedChoices: wrong.map((a) => a.choice_id).filter((c) => c !== '?'),
+                retryAt: !answered && until > now.getTime() ? new Date(until).toISOString() : null,
+              };
+            }),
           }
-        : {}),
+        : {
+            doneIds: mine.filter((p) => p.ok).map((p) => p.item_id),
+          }),
     };
   });
   return {
@@ -438,7 +498,23 @@ export async function getEvent(
   await ensureEventsSynced(ctx.db);
   return ctx.db.withConnection(async (c) => {
     const row = await loadEvent(c, slug);
-    return { ...toSummary(row, now), quest: await questProgress(c, row, userId) };
+    const ci = (
+      await c.query<{ checked_in_at: Date; visible: boolean }>(
+        `SELECT checked_in_at, visible FROM event_checkins WHERE event_id = $1 AND user_id = $2`,
+        [row.id, userId],
+      )
+    ).rows[0];
+    const summary = toSummary(row, now);
+    return {
+      ...summary,
+      quest: await questProgress(c, row, userId, now),
+      irl: {
+        available: summary.irlCheckin,
+        checkedIn: ci !== undefined,
+        checkedInAt: ci ? ci.checked_in_at.toISOString() : null,
+        visible: ci?.visible ?? false,
+      },
+    };
   });
 }
 
@@ -452,6 +528,38 @@ export interface EventPatch {
   realVenue?: string;
   streamUrl?: string | null;
   sourceUrl?: string;
+  /** The venue geofence for the IRL check-in; null removes it (check-in off). */
+  geofence?: { lat: number; lng: number; radiusM: number; source: string } | null;
+}
+
+/** Bounds the admin API accepts for a venue geofence. */
+export const GEOFENCE_MIN_RADIUS_M = 20;
+export const GEOFENCE_MAX_RADIUS_M = 5000;
+
+/**
+ * Check a geofence from the admin API.
+ * @param g - The geofence.
+ * @throws ValidationFailedError when a value is out of range.
+ */
+export function assertGeofence(g: {
+  lat: number;
+  lng: number;
+  radiusM: number;
+  source: string;
+}): void {
+  const bad = (reason: string): never => {
+    throw new ValidationFailedError({ reason });
+  };
+  if (!Number.isFinite(g.lat) || g.lat < -90 || g.lat > 90) bad('geofence.lat must be -90..90');
+  if (!Number.isFinite(g.lng) || g.lng < -180 || g.lng > 180) bad('geofence.lng must be -180..180');
+  if (
+    !Number.isInteger(g.radiusM) ||
+    g.radiusM < GEOFENCE_MIN_RADIUS_M ||
+    g.radiusM > GEOFENCE_MAX_RADIUS_M
+  ) {
+    bad(`geofence.radiusM must be an integer ${GEOFENCE_MIN_RADIUS_M}..${GEOFENCE_MAX_RADIUS_M}`);
+  }
+  if (g.source.trim() === '' || g.source.length > 500) bad('geofence.source is required');
 }
 
 /**
@@ -479,9 +587,16 @@ export async function updateEvent(
     if (endsAt.getTime() <= startsAt.getTime()) {
       throw new ValidationFailedError({ reason: 'endsAt must be after startsAt' });
     }
+    if (patch.geofence) assertGeofence(patch.geofence);
+    const setGeo = patch.geofence !== undefined;
+    const g = patch.geofence ?? null;
     const r = await client.query<EventRow>(
       `UPDATE events SET title = $2, starts_at = $3, ends_at = $4, city = $5, real_venue = $6,
-              stream_url = $7, source_url = $8, admin_edited_at = now()
+              stream_url = $7, source_url = $8, admin_edited_at = now(),
+              geo_lat = CASE WHEN $9::boolean THEN $10::double precision ELSE geo_lat END,
+              geo_lng = CASE WHEN $9::boolean THEN $11::double precision ELSE geo_lng END,
+              geo_radius_m = CASE WHEN $9::boolean THEN $12::integer ELSE geo_radius_m END,
+              geo_source = CASE WHEN $9::boolean THEN $13::text ELSE geo_source END
         WHERE slug = $1 RETURNING ${COLS}`,
       [
         slug,
@@ -492,6 +607,11 @@ export async function updateEvent(
         patch.realVenue ?? cur.real_venue,
         patch.streamUrl === undefined ? cur.stream_url : patch.streamUrl,
         patch.sourceUrl ?? cur.source_url,
+        setGeo,
+        g?.lat ?? null,
+        g?.lng ?? null,
+        g?.radiusM ?? null,
+        g?.source ?? null,
       ],
     );
     return r.rows[0]!;
@@ -533,7 +653,7 @@ export async function submitProgress(
     throw e;
   });
   await catalogReady;
-  let wrong: { id: string } | null = null;
+  let wrong: { id: string; retryAfterSeconds: number; triedChoices: string[] } | null = null;
   const result = await runInTransaction(async (client) => {
     const row = await loadEvent(client, slug);
     if (statusOf(row, now) !== 'live') {
@@ -554,7 +674,7 @@ export async function submitProgress(
     const def = defs[idx];
     if (!def) throw new EventStepInvalidError({ reason: 'unknown_step', step });
 
-    const before = await questProgress(client, row, userId);
+    const before = await questProgress(client, row, userId, now);
     if (before.completed) {
       return { ...before, slug, accepted: false, justCompleted: false };
     }
@@ -567,6 +687,7 @@ export async function submitProgress(
     }
 
     let ok = true;
+    let wrongTries = 0;
     if (def.kind === 'interaction') {
       if (!(def.items ?? []).some((i) => i.id === proof.id)) {
         throw new EventStepInvalidError({ reason: 'unknown_id', step });
@@ -576,7 +697,47 @@ export async function submitProgress(
       if (!q || proof.answer === undefined || !q.choices.some((c) => c.id === proof.answer)) {
         throw new EventStepInvalidError({ reason: 'unknown_question_or_choice', step });
       }
+      const prior = (
+        await client.query(
+          `SELECT choice_id, created_at FROM event_trivia_attempts
+            WHERE user_id = $1 AND event_id = $2 AND question_id = $3`,
+          [userId, row.id, q.id],
+        )
+      ).rows as Array<{ choice_id: string; created_at: Date }>;
+      if (before.steps[idx]!.questions?.find((x) => x.id === q.id)?.answered) {
+        throw new EventStepInvalidError({ reason: 'already_answered', step, id: proof.id });
+      }
+      if (prior.some((a) => a.choice_id === proof.answer)) {
+        throw new EventStepInvalidError({ reason: 'already_tried', step, id: proof.id });
+      }
+      wrongTries = prior.length;
+      if (wrongTries > 0) {
+        const last = prior.reduce((m, a) => Math.max(m, a.created_at.getTime()), 0);
+        const until = last + triviaCooldownS(wrongTries) * 1000;
+        if (now.getTime() < until) {
+          throw new TriviaCooldownError({
+            step,
+            id: proof.id,
+            retryAt: new Date(until).toISOString(),
+            retryAfterSeconds: Math.ceil((until - now.getTime()) / 1000),
+          });
+        }
+      }
       ok = loadAnswers()[q.id] === proof.answer;
+      if (!ok) {
+        await client.query(
+          `INSERT INTO event_trivia_attempts (user_id, event_id, question_id, choice_id, created_at)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [userId, row.id, q.id, proof.answer, now],
+        );
+        // Commit the recorded wrong choice, then refuse (thrown below).
+        wrong = {
+          id: proof.id,
+          retryAfterSeconds: triviaCooldownS(wrongTries + 1),
+          triedChoices: [...prior.map((a) => a.choice_id).filter((c) => c !== '?'), proof.answer],
+        };
+        return { ...before, slug, accepted: false, justCompleted: false };
+      }
     }
 
     const ins = await client.query(
@@ -590,13 +751,8 @@ export async function submitProgress(
     if (!fresh && def.kind === 'trivia') {
       throw new EventStepInvalidError({ reason: 'already_answered', step, id: proof.id });
     }
-    if (fresh && !ok) {
-      // Commit the locked-in wrong answer, then refuse (thrown below).
-      wrong = { id: proof.id };
-      return { ...before, slug, accepted: false, justCompleted: false };
-    }
 
-    let after = await questProgress(client, row, userId);
+    let after = await questProgress(client, row, userId, now);
     let justCompleted = false;
     if (after.steps.every((s) => s.complete)) {
       const claim = await client.query(
@@ -627,12 +783,20 @@ export async function submitProgress(
         if (row.reward_item_key) {
           await grantCosmetic(client, userId, row.reward_item_key);
         }
-        after = await questProgress(client, row, userId);
+        after = await questProgress(client, row, userId, now);
       }
     }
     return { ...after, slug, accepted: fresh, justCompleted };
   });
-  const w = wrong as { id: string } | null;
-  if (w) throw new EventStepInvalidError({ reason: 'wrong_answer', step, id: w.id });
+  const w = wrong as { id: string; retryAfterSeconds: number; triedChoices: string[] } | null;
+  if (w) {
+    throw new EventStepInvalidError({
+      reason: 'wrong_answer',
+      step,
+      id: w.id,
+      retryAfterSeconds: w.retryAfterSeconds,
+      triedChoices: w.triedChoices,
+    });
+  }
   return result;
 }

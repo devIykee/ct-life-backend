@@ -212,7 +212,9 @@ describe('attendee board', () => {
       'alias',
       'avatarId',
       'checkedInAt',
+      'handle',
       'look',
+      'self',
       'tribeId',
     ]);
     expect(JSON.stringify(board)).not.toMatch(/lat|lng|user_?id/i);

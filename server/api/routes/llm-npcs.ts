@@ -55,7 +55,9 @@ export function registerLlmNpcRoutes(app: FastifyInstance): void {
         });
       }
       // Dev/test: use stub when API key missing
-      const client = stubLlmClient("I'm thinking about the latest launches. Ask me about something specific.");
+      const client = stubLlmClient(
+        "I'm thinking about the latest launches. Ask me about something specific.",
+      );
       const out = await chatWithLlmNpc(
         req.ctx,
         {

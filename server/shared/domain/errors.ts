@@ -463,6 +463,17 @@ export class EventStepInvalidError extends DomainError {
   }
 }
 
+export class TriviaCooldownError extends DomainError {
+  readonly code = 'TRIVIA_COOLDOWN';
+  constructor(details: Record<string, unknown> = {}) {
+    super(
+      'That trivia question is cooling down after a wrong answer; try it again later.',
+      details,
+    );
+    this.httpStatus = 429;
+  }
+}
+
 // Rugpull Factory ---------------------------------------------------------
 
 export class NameNotAllowedError extends DomainError {

@@ -161,8 +161,8 @@ function extractOpenapiErrors(): Set<string> {
   try {
     const text = readText(path);
     const out = new Set<string>();
-    // YAML match for `code: SOME_ERROR` lines.
-    for (const m of text.matchAll(/^\s*code:\s*([A-Z][A-Z0-9_]+)\s*$/gm)) {
+    // `code: SOME_ERROR` as a block line or inside a flow mapping (`{ code: X, ... }`).
+    for (const m of text.matchAll(/\bcode:\s*["']?([A-Z][A-Z0-9_]+)["']?(?=\s*[,}]|\s*$)/gm)) {
       const v = m[1];
       if (v) out.add(v);
     }
@@ -242,6 +242,8 @@ function checkMarkdownLinks(): string[] {
   const docsRoot = join(REPO, 'docs');
   for (const file of walk(docsRoot)) {
     if (!MD_EXT.has(extname(file))) continue;
+    // An archived handoff dump whose links point into a tree that was not copied.
+    if (file.includes('/docs/ct-life-backend-handoff-2026-10-08/')) continue;
     const text = readText(file);
     // Match [text](relative-path) — skip absolute URLs and in-page anchors.
     for (const m of text.matchAll(/\[[^\]]*\]\((?!https?:\/\/|#)([^)]+)\)/g)) {

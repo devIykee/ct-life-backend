@@ -1008,7 +1008,16 @@ paths:
     patch:
       tags: [player]
       operationId: patchCharactersMeLook
-      summary: Change the character's look.
+      summary: Change the character's look (equip an owned cosmetic).
+      description: >-
+        Send any of the seven look fields (at least one). Every id that is a cosmetic in the
+        catalogue (shop, ORE or event-grant items such as the Breakpoint lanyard) must be owned by
+        the caller and sit in the right slot, else `403 ITEM_NOT_OWNED` or `400
+        VALIDATION_FAILED` (`look_item_wrong_slot`). The ownership check is on the server; the
+        client's claim is not trusted. A slot that is not changing is left as it is. Base-look ids
+        the catalogue does not know are accepted as at character creation, and the character
+        palettes still apply (an owned cosmetic stands in for the slot's base item). A character
+        with a personal avatar keeps its head. Setting a slot back to its base id un-equips.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -1016,7 +1025,19 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/Look' }
+            schema:
+              type: object
+              additionalProperties: false
+              minProperties: 1
+              properties:
+                skinTone: { type: string }
+                headId: { type: string }
+                hairId: { type: string }
+                topId: { type: string }
+                bottomId: { type: string }
+                shoesId: { type: string }
+                accId: { type: string }
+            example: { accId: lanyard_breakpoint_2026 }
       responses:
         '200':
           description: Character
@@ -1024,6 +1045,22 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Character' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: A cosmetic in the request is not owned
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: ITEM_NOT_OWNED,
+                      message: 'You do not own this item.',
+                      details: { itemId: lanyard_breakpoint_2026 },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /homes:
     get:
@@ -4785,6 +4822,9 @@ paths:
         `skinId` names the in-game venue skin (for example `london_2026` on the Conference
         Center). `streamUrl` is a link-out to the official stream; open it in the browser, never
         embed it; null until the organiser publishes one. Trivia answers are never returned.
+        The answer also restores the caller's state after a relaunch: `quest.steps[].doneIds`
+        (the booth or nod ids already done), the trivia `questions[]` state and `irl` (the
+        caller's check-in).
       x-phase: 4
       parameters:
         - name: slug
@@ -4810,8 +4850,14 @@ paths:
         `booths` and `nods`, `proof.id` is the interaction id from the quest set; each id counts
         once and the server only checks that the id belongs to that step. It cannot prove the
         player stood there. For `trivia`, `proof.id` is the question id and `proof.answer` the
-        choice id; it is checked against a server-only key and a question is answered once, right
-        or wrong (`reason: wrong_answer` / `already_answered`). Only inside the event window.
+        choice id; it is checked against a server-only key. A right answer is final
+        (`already_answered`). A wrong one is recorded (`400 EVENT_STEP_INVALID`, `reason:
+        wrong_answer`, with `retryAfterSeconds` and `triedChoices`): that wrong choice can not be
+        tried again on the question (`reason: already_tried`) and the question cools down for 60 s,
+        then 10 min, then 60 min for the 1st, 2nd and 3rd wrong choice (`429 TRIVIA_COOLDOWN`,
+        `details.retryAt`, `retryAfterSeconds`). Other questions are not affected, so a player who
+        misses some can still reach the required number. The reward is still paid once per player.
+        Only inside the event window.
         Idempotent: a proof already counted returns the progress with `accepted: false`.
         Completing the chain pays Cash (ledger reason `event_reward`) and grants the off-chain
         cosmetic once (`justCompleted: true` on that call). Rate limited per player (burst 8,
@@ -4873,7 +4919,26 @@ paths:
                       details: { slug: breakpoint-2026, status: upcoming },
                     },
                 }
-        '429': { $ref: '#/components/responses/RateLimited' }
+        '429':
+          description: Rate limited, or the trivia question is cooling down after a wrong answer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRIVIA_COOLDOWN,
+                      message: 'That trivia question is cooling down after a wrong answer; try it again later.',
+                      details:
+                        {
+                          step: trivia,
+                          id: bp26.q_city,
+                          retryAt: '2026-11-16T12:01:00.000Z',
+                          retryAfterSeconds: 60,
+                        },
+                    },
+                }
 
   /events/{slug}/checkin:
     post:
@@ -5003,7 +5068,9 @@ paths:
       summary: Players who checked in at the venue and chose to be listed.
       description: >-
         Newest first, keyset paginated with `next`. Only players who opted in; anyone you blocked
-        or who blocked you is left out. No location of any kind, and no user id.
+        or who blocked you is left out. No location of any kind, and no user id: each row has an
+        opaque per-event `handle` (an HMAC of the event and the user under a server key, not
+        reversible, different at every event) that `POST /events/{slug}/irl/{handle}/dm` accepts.
       x-phase: 4
       parameters:
         - name: slug
@@ -5034,6 +5101,57 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /events/{slug}/irl/{handle}/dm:
+    post:
+      tags: [liveops]
+      operationId: postEventsSlugIrlHandleDm
+      summary: Message a listed attendee by their opaque handle.
+      description: >-
+        The caller must have checked in at the event. `handle` comes from `GET /events/{slug}/irl`.
+        An unknown handle, a hidden attendee, someone you blocked or who blocked you, and your own
+        handle all answer `404`, so the call reveals nothing about who is behind a handle; a
+        caller who has not checked in gets `403`. The reply carries no user id. The text is
+        delivered as an ordinary DM (`dm` realtime message), so the recipient sees who wrote, as with
+        every DM. At most 10 messages an hour per player.
+      x-phase: 4
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+        - name: handle
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{22}$' }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 500 }
+      responses:
+        '201':
+          description: Sent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [slug, sent, messageId, at]
+                properties:
+                  slug: { type: string }
+                  sent: { type: boolean, enum: [true] }
+                  messageId: { type: string, format: uuid }
+                  at: { type: string, format: date-time }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /admin/events/{slug}:
     put:
       tags: [admin]
@@ -5041,7 +5159,11 @@ paths:
       summary: Correct an event's dates, stream link or wording (admin only).
       description: >-
         Admin wallets only (`ADMIN_WALLETS`). Send any of the fields; `streamUrl` is `https://` or
-        null. Once edited, the calendar file stops overwriting the event.
+        null. `geofence` sets the venue circle for the opt-in IRL check-in (all four fields,
+        `lat` -90..90, `lng` -180..180, `radiusM` an integer 20..5000, `source` a non-empty
+        citation) or removes it with null (check-in off). Omit it to leave it alone. Out-of-range
+        values answer `VALIDATION_FAILED`. Once edited, the calendar file stops overwriting the
+        event.
       x-phase: 4
       parameters:
         - name: slug
@@ -5063,6 +5185,15 @@ paths:
                 realVenue: { type: string }
                 streamUrl: { type: [string, 'null'] }
                 sourceUrl: { type: string }
+                geofence:
+                  type: [object, 'null']
+                  additionalProperties: false
+                  required: [lat, lng, radiusM, source]
+                  properties:
+                    lat: { type: number, minimum: -90, maximum: 90 }
+                    lng: { type: number, minimum: -180, maximum: 180 }
+                    radiusM: { type: integer, minimum: 20, maximum: 5000 }
+                    source: { type: string, minLength: 1, maxLength: 500 }
       responses:
         '200':
           description: The updated event
@@ -7872,16 +8003,28 @@ components:
         required: { type: integer }
         done: { type: integer }
         complete: { type: boolean }
+        doneIds:
+          type: array
+          description: Interaction steps only (booths, nods). The ids the caller has already done.
+          items: { type: string }
         questions:
           type: array
           description: Trivia steps only. Answers are never returned.
           items:
             type: object
-            required: [id, prompt, choices, answered]
+            required: [id, prompt, choices, answered, triedChoices, retryAt]
             properties:
               id: { type: string }
               prompt: { type: string }
-              answered: { type: boolean }
+              answered: { type: boolean, description: True once answered right. }
+              triedChoices:
+                type: array
+                description: Wrong choice ids already tried; they can not be tried again.
+                items: { type: string }
+              retryAt:
+                type: [string, 'null']
+                format: date-time
+                description: When the next try is allowed; null when it is allowed now.
               choices:
                 type: array
                 items:
@@ -7902,16 +8045,30 @@ components:
           type: object
           required: [cashCents, itemKey, claimedAt]
           properties:
-            cashCents: { type: integer }
+            cashCents:
+              type: integer
+              description: >-
+                In-game Cash in cents, like every `*Cents` field: 20000 is $200 of play Cash,
+                about two mid-level shifts. Paid once per player.
             itemKey: { type: [string, 'null'], example: lanyard_breakpoint_2026 }
             claimedAt: { type: [string, 'null'], format: date-time }
     CalendarEventDetails:
       allOf:
         - $ref: '#/components/schemas/CalendarEvent'
         - type: object
-          required: [quest]
+          required: [quest, irl]
           properties:
             quest: { $ref: '#/components/schemas/EventQuestProgress' }
+            irl:
+              type: object
+              description: The caller's IRL check-in, to restore the UI after a relaunch.
+              required: [available, checkedIn, checkedInAt, visible]
+              properties:
+                available: { type: boolean, description: The event has a geofence. }
+                checkedIn: { type: boolean }
+                checkedInAt: { type: [string, 'null'], format: date-time }
+                visible:
+                  { type: boolean, description: Whether the caller is on the attendee board. }
     EventProgressResult:
       allOf:
         - $ref: '#/components/schemas/EventQuestProgress'
@@ -7940,8 +8097,13 @@ components:
             itemKeys: { type: array, items: { type: string } }
     IrlAttendee:
       type: object
-      required: [alias, look, tribeId, avatarId, checkedInAt]
+      required: [handle, self, alias, look, tribeId, avatarId, checkedInAt]
       properties:
+        handle:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{22}$'
+          description: Opaque per-event handle for `POST /events/{slug}/irl/{handle}/dm`.
+        self: { type: boolean, description: True for the caller's own row. }
         alias: { type: string }
         look: {}
         tribeId: { type: [string, 'null'] }

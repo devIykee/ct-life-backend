@@ -68,6 +68,20 @@ async function userWithDailyVerb(...verbs: QuestVerb[]): Promise<string> {
   throw new Error('no user found');
 }
 
+/** Like userWithDailyVerb, but the verb must also be picked on each of `otherDays`. */
+async function userWithDailyVerbOnDays(verb: QuestVerb, otherDays: Date[]): Promise<string> {
+  const days = [utcDate(new Date()), ...otherDays.map(utcDate)];
+  for (let i = 0; i < 20_000; i++) {
+    const id = uuidv7();
+    if (days.every((d) => pickQuests(id, d, dailyPool, 3).some((q) => q.verb === verb))) {
+      await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `quest-${id}`]);
+      await pool.query(`INSERT INTO balances (user_id, cash_cents) VALUES ($1, 1000000)`, [id]);
+      return id;
+    }
+  }
+  throw new Error('no user found');
+}
+
 beforeEach(() => {
   vi.mocked(publishToUser).mockClear();
 });
@@ -330,7 +344,10 @@ describe('progress from real server events', () => {
   });
 
   it('paid_call credits a pair of players once per window, whichever way round', async () => {
-    const x = await userWithDailyVerb('paid_call');
+    // The verb must be among the player's picks on BOTH days, or the later call is
+    // (correctly) not recorded at all and the count stays at 2 on some calendar days.
+    const later = new Date(Date.now() + (PAID_CALL_PAIR_COOLDOWN_DAYS + 1) * 86_400_000);
+    const x = await userWithDailyVerbOnDays('paid_call', [later]);
     const y = await newUser();
     const z = await newUser();
     const rule = (other: string): { key: string; cooldownDays: number } => ({
@@ -343,7 +360,6 @@ describe('progress from real server events', () => {
     await recordQuestEvent(ctx, x, 'paid_call', 'call-3', new Date(), rule(z));
     expect(await events(x, 'paid_call')).toBe(2);
     // After the window the same pair counts again.
-    const later = new Date(Date.now() + (PAID_CALL_PAIR_COOLDOWN_DAYS + 1) * 86_400_000);
     await recordQuestEvent(ctx, x, 'paid_call', 'call-4', later, rule(y));
     expect(await events(x, 'paid_call')).toBe(3);
   });

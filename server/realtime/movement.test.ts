@@ -108,6 +108,42 @@ describe('contract/ids/districts.json', () => {
     expect(onLand(geo.island, 2000, 0)).toBe(false);
     expect(distanceToLand(geo.island, 2000, 0)).toBeGreaterThan(1000);
   });
+
+  it('includes the Prediction Pit pier deck and still rejects the sea beyond it', () => {
+    // The deck (x 76.5..115.5, z -275.5..-237.5) is built out over the water.
+    for (const [x, z] of [
+      [96, -256],
+      [80, -272],
+      [114, -272],
+    ] as const) {
+      expect(onLand(geo.island, x, z), `${x},${z}`).toBe(true);
+    }
+    for (const [x, z] of [
+      [96, -280],
+      [96, -300],
+      [80, -278],
+    ] as const) {
+      expect(onLand(geo.island, x, z), `${x},${z}`).toBe(false);
+    }
+  });
+
+  it("includes The Rug Room's pier pad and still rejects the sea beyond it", () => {
+    // The pad (x 116.5..135.5, z -273.5..-250.5) is built out over the water.
+    for (const [x, z] of [
+      [126, -262],
+      [118, -272],
+      [134, -252],
+    ] as const) {
+      expect(onLand(geo.island, x, z), `${x},${z}`).toBe(true);
+    }
+    for (const [x, z] of [
+      [126, -275],
+      [126, -290],
+      [126, -300],
+    ] as const) {
+      expect(onLand(geo.island, x, z), `${x},${z}`).toBe(false);
+    }
+  });
 });
 
 describe('venue placement', () => {
