@@ -291,6 +291,11 @@
       "code": "LAUNCH_COOLDOWN",
       "httpStatus": 429,
       "message": "Wait before launching another coin."
+    },
+    {
+      "code": "TRIVIA_COOLDOWN",
+      "httpStatus": 429,
+      "message": "That trivia question is cooling down after a wrong answer; try it again later."
     }
   ]
 }

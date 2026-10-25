@@ -21,6 +21,7 @@ import {
   EventNotLiveError,
   EventStepInvalidError,
   NotFoundError,
+  TriviaCooldownError,
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import {
@@ -217,7 +218,7 @@ describe('quest chain', () => {
     );
   });
 
-  it('checks trivia against the server key; a wrong answer is final', async () => {
+  it('checks trivia against the server key; a wrong choice is recorded and cools the question down', async () => {
     const u = await newUser();
     for (const id of ['bp26.booth_1', 'bp26.booth_2', 'bp26.booth_3']) {
       await submitProgress(ctx, u, BP, 'booths', { id }, DURING);
@@ -231,17 +232,22 @@ describe('quest chain', () => {
       DURING,
     ).catch((e: unknown) => e);
     expect(wrong).toBeInstanceOf(EventStepInvalidError);
-    expect((wrong as EventStepInvalidError).details).toMatchObject({ reason: 'wrong_answer' });
-    // The same question cannot be retried with the right answer.
-    const retry = await submitProgress(
+    expect((wrong as EventStepInvalidError).details).toMatchObject({
+      reason: 'wrong_answer',
+      retryAfterSeconds: 60,
+      triedChoices: ['d'],
+    });
+    // The same question is cooling down, even with the right answer.
+    const soon = await submitProgress(
       ctx,
       u,
       BP,
       'trivia',
       { id: 'bp26.q_city', answer: answers()['bp26.q_city'] },
-      DURING,
+      new Date(DURING.getTime() + 30_000),
     ).catch((e: unknown) => e);
-    expect((retry as EventStepInvalidError).details).toMatchObject({ reason: 'already_answered' });
+    expect(soon).toBeInstanceOf(TriviaCooldownError);
+    expect((soon as TriviaCooldownError).details).toMatchObject({ retryAfterSeconds: 30 });
     // A choice that does not exist is invalid, not merely wrong.
     await expect(
       submitProgress(ctx, u, BP, 'trivia', { id: 'bp26.q_venue', answer: 'z' }, DURING),
@@ -249,7 +255,10 @@ describe('quest chain', () => {
     const d = await getEvent(ctx, u, BP, DURING);
     const t = d.quest.steps[1]!;
     expect(t.done).toBe(0);
-    expect(t.questions!.find((q) => q.id === 'bp26.q_city')!.answered).toBe(true);
+    const q = t.questions!.find((x) => x.id === 'bp26.q_city')!;
+    expect(q.answered).toBe(false);
+    expect(q.triedChoices).toEqual(['d']);
+    expect(q.retryAt).toBe(new Date(DURING.getTime() + 60_000).toISOString());
   });
 
   it('pays Cash and the lanyard once, and ignores replays and later proofs', async () => {
