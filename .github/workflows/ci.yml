@@ -22,9 +22,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -50,9 +50,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -70,9 +70,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -107,9 +107,9 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -124,9 +124,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -179,9 +179,9 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -222,9 +222,9 @@ jobs:
       RUN_MAINNET_TESTS: ${{ secrets.RUN_MAINNET_TESTS || '0' }}
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here: package.json `packageManager` is the single source
+      # (setting both makes pnpm/action-setup fail with "Multiple versions").
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
