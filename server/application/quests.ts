@@ -34,7 +34,7 @@ import { nextUtcMidnight, utcDate } from './daily-streak.js';
 import { recordCareerAction } from './ladders.js';
 import { publishToUser } from './realtime-bus.js';
 import { weekIso } from './season-clock.js';
-import { lockOnboarding } from './onboarding-store.js';
+import { isNewAccount, lockOnboarding } from './onboarding-store.js';
 import type { AppContext } from './context.js';
 
 export type QuestVerb =
@@ -247,6 +247,9 @@ export async function ensureStarterQuests(
   userId: string,
   now: Date,
 ): Promise<string[]> {
+  // Eligibility is the account's age, never "a row exists": an old account that replayed
+  // the first session has a row and must still get nothing (no seeding, no late trade quest).
+  if (!(await isNewAccount(client, userId))) return [];
   const row = await lockOnboarding(client, userId, now);
   if (!row) return [];
   const starters = loadQuestDefs(ctx).filter((d) => d.pool === 'starter');

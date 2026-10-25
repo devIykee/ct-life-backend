@@ -363,6 +363,44 @@ describe('the first session', () => {
     expect((await replayFirstSession(p1, u)).state).toBe('active');
   });
 
+  it('REGRESSION: an old account that replays stays ineligible when markets open later', async () => {
+    const old = await newUser({ old: true });
+    await replayFirstSession(p1, old); // creates an onboarding row with starter_seeded_at set
+    const row = await pool.query(
+      `SELECT starter_seeded_at FROM onboarding_state WHERE user_id = $1`,
+      [old],
+    );
+    expect(row.rows[0].starter_seeded_at).not.toBeNull(); // the row exists and looks "seeded"
+    // LIVE_PHASE goes to 2: the late "add the trade quest" branch runs on every read.
+    expect((await listQuests(p2, old)).starter.quests).toEqual([]);
+    expect((await listQuests(p2, old)).starter.quests).toEqual([]);
+    await onCharacterCreated(p2, old);
+    expect(await starterRows(old)).toEqual([]);
+    // Nothing can be earned or claimed: the verb does not progress anything...
+    await recordOnboardingEvent(p2, old, 'trade_open', 'late-1');
+    const progress = await pool.query(`SELECT 1 FROM quest_progress WHERE user_id = $1`, [old]);
+    expect(progress.rowCount).toBe(0);
+    // ...and the starter ids are not claimable (404, no Cash).
+    for (const id of ['q_starter_trade', 'q_starter_shift', 'q_starter_chest']) {
+      await expect(claimQuest(p2, old, id)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    }
+    expect(await ledger(old, 'quest_reward')).toEqual([]);
+    expect(await cash(old)).toBe(100_000);
+  });
+
+  it('a new account still gets the late trade quest when markets open, and can earn it', async () => {
+    const u = await newUser();
+    expect((await listQuests(p1, u)).starter.quests.map((q) => q.verb)).not.toContain('trade_open');
+    const late = await listQuests(p2, u);
+    expect(late.starter.quests.map((q) => q.id)).toContain('q_starter_trade');
+    await recordOnboardingEvent(p2, u, 'trade_open', 'late-2');
+    expect(await starterView(p2, u, 'q_starter_trade')).toMatchObject({ completed: true });
+    expect((await claimQuest(p2, u, 'q_starter_trade')).reward).toEqual({
+      cashCents: 500,
+      seasonXp: 20,
+    });
+  });
+
   it('an old account that replays gets a first session but still no starter quests', async () => {
     const old = await newUser({ old: true });
     expect((await replayFirstSession(p1, old)).state).toBe('active');

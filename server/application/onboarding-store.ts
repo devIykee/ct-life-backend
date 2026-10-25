@@ -47,3 +47,17 @@ export async function lockOnboarding(
   );
   return r.rows[0] ?? null;
 }
+
+/**
+ * Is this a NEW account: created at or after the onboarding epoch? This, and only this,
+ * decides starter-quest eligibility. The existence of an onboarding row does not: a replay
+ * by an old account creates one, and that must never make it eligible.
+ */
+export async function isNewAccount(client: Q, userId: string): Promise<boolean> {
+  const r = await client.query<{ is_new: boolean }>(
+    `SELECT u.created_at >= (SELECT epoch FROM onboarding_meta LIMIT 1) AS is_new
+       FROM users u WHERE u.id = $1`,
+    [userId],
+  );
+  return r.rows[0]?.is_new === true;
+}
