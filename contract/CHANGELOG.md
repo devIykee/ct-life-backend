@@ -1,3 +1,14 @@
+## 2026-10-25 - Cash tips burn a 3% fee
+
+Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
+
+- `POST /tips` (Cash): the sender still pays `amountCents` in full; a fee of `ceil(3% of amount)` cents (at least 1) is BURNED, nobody is credited it, and the recipient gets `amountCents - feeCents`. The reply (201) now carries `feeCents` and `receivedCents` next to `amountCents`; the same fields are on `GET /tips` rows (cash tips; `feeCents` is 0 for tips sent before this change). The openapi entry for `/tips` described an old shape (`cashCents`); it now matches the real request (`amountCents`, optional `message`) and the reply (`CashTip`).
+- A 1 cent tip is refused with `VALIDATION_FAILED` (the fee would take all of it), so the smallest tip is 2 cents. Maximum is unchanged (1,000,000).
+- Ledger: the sender has `tip_out` (-received) and a new `tip_fee_burn` (-fee) that add up to the amount; the recipient has `tip` (+received). `GET /me/ledger`-style history labels `tip_fee_burn` "Tip fee (burned)". New `tips.fee_cents` column stores the fee per tip.
+- Rate: env `TIP_FEE_BPS`, default 300, allowed 0 to 2000 (0 turns the fee off).
+- Quests and careers count the tip event exactly as before, by the amount the sender sent. The ping-pong and per-recipient rules are unchanged. On-chain tips are not affected.
+- FE tip sheet: show "3% fee, they get $X" with X = amount - ceil(amount * 0.03).
+
 ## 2026-10-25 - Breakpoint follow-ups: trivia retry, restore state, admin geofence, attendee handle, equip
 
 Stacked on #15 (it also carries c55f22e, the crash-round settle fix that was pushed after #15 merged). Migration 093.

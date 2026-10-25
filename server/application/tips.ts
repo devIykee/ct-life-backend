@@ -28,6 +28,19 @@ import {
 import type { AppContext } from './context.js';
 
 const TIP_TEXT_MAX = 200;
+const TIP_MAX_CENTS = 1_000_000;
+
+/**
+ * The burned fee on a Cash tip: ceil(amount * feeBps / 10000), at least 1 cent
+ * while the rate is above 0. The sender pays the whole amount, the recipient
+ * gets amount - fee, nobody is credited the fee.
+ * @param amountCents - The tip, in cents.
+ * @param feeBps - Basis points (300 = 3%).
+ */
+export function tipFeeCents(amountCents: number, feeBps: number): number {
+  if (feeBps <= 0) return 0;
+  return Math.max(1, Math.ceil((amountCents * feeBps) / 10_000));
+}
 const TIP_LIST_DEFAULT = 50;
 
 export interface TipRow {
@@ -35,7 +48,12 @@ export interface TipRow {
   readonly fromUserId: string;
   readonly toUserId: string;
   readonly kind: 'cash' | 'onchain';
+  /** What the sender paid. */
   readonly amountCents: number | null;
+  /** The part burned (cash tips); 0 for tips sent before the fee. */
+  readonly feeCents: number | null;
+  /** What the recipient got: amountCents - feeCents (cash tips). */
+  readonly receivedCents: number | null;
   readonly amountLamports: string | null;
   readonly mint: string | null;
   readonly signature: string | null;
@@ -50,6 +68,7 @@ interface TipDbRow {
   to_user_id: string;
   kind: 'cash' | 'onchain';
   amount_cents: string | null;
+  fee_cents: string;
   amount_lamports: string | null;
   mint: string | null;
   signature: string | null;
@@ -65,6 +84,8 @@ function rowToTip(r: TipDbRow): TipRow {
     toUserId: r.to_user_id,
     kind: r.kind,
     amountCents: r.amount_cents !== null ? Number(r.amount_cents) : null,
+    feeCents: r.amount_cents !== null ? Number(r.fee_cents) : null,
+    receivedCents: r.amount_cents !== null ? Number(r.amount_cents) - Number(r.fee_cents) : null,
     amountLamports: r.amount_lamports,
     mint: r.mint,
     signature: r.signature,
@@ -102,9 +123,19 @@ export async function sendCashTip(
   if (fromUserId === toUserId) {
     throw new ValidationFailedError({ reason: 'cannot tip self' });
   }
-  if (amountCents <= 0 || amountCents > 1_000_000) {
-    throw new ValidationFailedError({ reason: 'amountCents 1..1_000_000' });
+  const feeBps = ctx.config.tips.feeBps;
+  const feeCents = tipFeeCents(amountCents, feeBps);
+  if (amountCents <= 0 || amountCents > TIP_MAX_CENTS) {
+    throw new ValidationFailedError({ reason: `amountCents 1..${TIP_MAX_CENTS}` });
   }
+  if (amountCents - feeCents < 1) {
+    // The fee would take the whole tip (1 cent at 3%): nothing would reach the recipient.
+    throw new ValidationFailedError({
+      reason: 'tip too small: the fee would take all of it',
+      feeCents,
+    });
+  }
+  const receivedCents = amountCents - feeCents;
   if (message !== null && message.length > TIP_TEXT_MAX) {
     throw new ValidationFailedError({ reason: `message length 0..${TIP_TEXT_MAX}` });
   }
@@ -139,27 +170,33 @@ export async function sendCashTip(
     );
     await client.query(
       `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now() WHERE user_id = $2`,
-      [amountCents, toUserId],
+      [receivedCents, toUserId],
     );
-    // Two ledger rows: a 'tip' row for the recipient and a
-    // matching cash debit on the sender. The sender-side row uses
-    // reason='tip_out' so the ledger is balanced (out from sender,
-    // in to recipient).
+    // Ledger: the sender is debited the full amount as two rows that add up to it
+    // (tip_out = what the recipient gets, tip_fee_burn = the burned fee); the
+    // recipient gets a 'tip' row for amount - fee. Nobody is credited the fee.
     await client.query(
       `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
        VALUES ($1, $2, 'cash', 'tip_out', 'tip', $3, $4)`,
-      [fromUserId, -amountCents, tipId, `tip-out:${tipId}`],
+      [fromUserId, -receivedCents, tipId, `tip-out:${tipId}`],
     );
+    if (feeCents > 0) {
+      await client.query(
+        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+         VALUES ($1, $2, 'cash', 'tip_fee_burn', 'tip', $3, $4)`,
+        [fromUserId, -feeCents, tipId, `tip-fee:${tipId}`],
+      );
+    }
     await client.query(
       `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
        VALUES ($1, $2, 'cash', 'tip', 'tip', $3, $4)`,
-      [toUserId, amountCents, tipId, `tip-in:${tipId}`],
+      [toUserId, receivedCents, tipId, `tip-in:${tipId}`],
     );
     await client.query(
       `INSERT INTO tips
-         (tip_id, from_user_id, to_user_id, kind, amount_cents, message, status)
-       VALUES ($1, $2, $3, 'cash', $4, $5, 'confirmed')`,
-      [tipId, fromUserId, toUserId, amountCents, message],
+         (tip_id, from_user_id, to_user_id, kind, amount_cents, fee_cents, message, status)
+       VALUES ($1, $2, $3, 'cash', $4, $5, $6, 'confirmed')`,
+      [tipId, fromUserId, toUserId, amountCents, feeCents, message],
     );
   });
   // Quest rules against two accounts looping tips: the amount must be at least the minimum,
@@ -173,7 +210,7 @@ export async function sendCashTip(
   }
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<TipDbRow>(
-      `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, amount_lamports,
+      `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, fee_cents, amount_lamports,
               mint, signature, message, status, created_at
        FROM tips WHERE tip_id = $1`,
       [tipId],
@@ -225,7 +262,7 @@ export async function recordOnchainTip(
   }
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<TipDbRow>(
-      `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, amount_lamports,
+      `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, fee_cents, amount_lamports,
               mint, signature, message, status, created_at
        FROM tips WHERE tip_id = $1`,
       [tipId],
@@ -243,7 +280,7 @@ export async function listTipsTo(
   const lim = Math.min(Math.max(1, limit), 200);
   const r = await ctx.db.withConnection(async (c) => {
     return c.query<TipDbRow>(
-      `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, amount_lamports,
+      `SELECT tip_id, from_user_id, to_user_id, kind, amount_cents, fee_cents, amount_lamports,
               mint, signature, message, status, created_at
        FROM tips WHERE to_user_id = $1 ORDER BY created_at DESC LIMIT $2`,
       [toUserId, lim],

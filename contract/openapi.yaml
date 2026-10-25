@@ -3186,11 +3186,15 @@ paths:
     post:
       tags: [social]
       operationId: postTips
-      summary: Send a Cash tip to another player.
+      summary: Send a Cash tip to another player (3% of it is burned).
       description: |
-        Daily cap comes from `economy.json`. The recipient is credited the
-        Cash on a SERIALIZABLE ledger entry. Cross-checked against the
-        sender's tip-out total for the UTC day.
+        The sender pays `amountCents` in full. A fee of `ceil(3% of amount)` cents (at least 1;
+        the rate is `TIP_FEE_BPS`, default 300) is BURNED: nobody is credited it. The recipient
+        gets `receivedCents = amountCents - feeCents`. The fee has its own sender-side ledger row
+        (`tip_fee_burn`) next to `tip_out`, so it is auditable. A tip whose fee would take all of it
+        (1 cent) is refused with `VALIDATION_FAILED`. The tip sheet should show "3% fee, they get
+        $X" from these numbers (compute it as `amount - ceil(amount * 0.03)`, or send and read
+        the reply). Quests count the tip by the amount sent. Idempotent by `Idempotency-Key`.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3200,25 +3204,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [toUserId, cashCents]
+              required: [toUserId, amountCents]
               properties:
                 toUserId: { type: string, format: uuid }
-                cashCents: { type: integer, minimum: 1 }
+                amountCents: { type: integer, minimum: 2, maximum: 1000000 }
+                message: { type: string, maxLength: 200 }
       responses:
-        '200':
+        '201':
           description: Tipped
           content:
             application/json:
-              schema:
-                type: object
-                required: [cashCents]
-                properties:
-                  cashCents: { type: integer, description: 'The new balance of the sender.' }
-        '402':
-          description: Insufficient cash
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: '#/components/schemas/CashTip' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /tips/onchain:
     post:
@@ -7681,6 +7679,27 @@ components:
                     rtp: { type: number }
                     h2hHouseCutBps: { type: integer }
                     challengeTtlSeconds: { type: integer }
+    CashTip:
+      type: object
+      required:
+        [tipId, fromUserId, toUserId, kind, amountCents, feeCents, receivedCents, status, createdAt]
+      properties:
+        tipId: { type: string, format: uuid }
+        fromUserId: { type: string, format: uuid }
+        toUserId: { type: string, format: uuid }
+        kind: { type: string, enum: [cash] }
+        amountCents: { type: integer, description: What the sender paid. }
+        feeCents:
+          {
+            type: integer,
+            description: The burned part (ceil 3%,
+            at least 1; 0 for tips sent before the fee).,
+          }
+        receivedCents:
+          { type: integer, description: What the recipient got, amountCents minus feeCents. }
+        message: { type: [string, 'null'] }
+        status: { type: string, enum: [confirmed] }
+        createdAt: { type: string, format: date-time }
     ShopOrder:
       type: object
       required:

@@ -195,7 +195,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     const afterA = await readCashCents(alice.sub);
     const afterB = await readCashCents(bob.sub);
     expect(afterA).toBe(beforeA - 100);
-    expect(afterB).toBe(beforeB + 100);
+    expect(afterB).toBe(beforeB + 97); // 3% fee (3 cents) is burned
   });
 
   it('tips endpoint: alice cannot trick the server into debiting bob (no actor param)', async () => {
@@ -569,7 +569,7 @@ describe('authz: cross-user isolation', () => {
     // field; the server derives `from` from the JWT and debits
     // alice (not bob). The assertion: alice's cash goes DOWN by
     // exactly amountCents; bob's cash goes UP by exactly that
-    // same amount; the extra `fromUserId` field is harmless.
+    // same amount minus the burned fee; the extra `fromUserId` field is harmless.
     const r = await app.inject({
       method: 'POST',
       url: '/v1/tips',
@@ -585,6 +585,6 @@ describe('authz: cross-user isolation', () => {
     const afterAlice = await readCashCents(alice.sub);
     const afterBob = await readCashCents(bob.sub);
     expect(afterAlice).toBe(beforeAlice - 7);
-    expect(afterBob).toBe(beforeBob + 7);
+    expect(afterBob).toBe(beforeBob + 6); // ceil(3% of 7) = 1 cent burned
   });
 });
