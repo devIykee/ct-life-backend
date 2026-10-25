@@ -21,6 +21,7 @@
  */
 import { createHash } from 'node:crypto';
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import { NotFoundError, QuestNotCompleteError } from '../shared/domain/errors.js';
 import { nextUtcMidnight, utcDate } from './daily-streak.js';
 import { recordCareerAction } from './ladders.js';
@@ -406,6 +407,16 @@ export async function claimQuest(
         [userId, q.reward.seasonXp, `${periodKey}:${q.id}`, weekIso(now), now],
       );
     }
+    await recordEvent(
+      client,
+      userId,
+      {
+        name: 'quest_claimed',
+        props: { questId: q.id, period: inDaily ? 'daily' : 'weekly' },
+        amountCents: q.reward.cashCents,
+      },
+      now,
+    );
     return { questId: q.id, alreadyClaimed: false, reward: q.reward };
   });
 }

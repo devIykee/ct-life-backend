@@ -31,6 +31,9 @@
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
+ *   - Analytics retention: a daily job (03:15 UTC) deletes product events
+ *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
+ *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
  * configured `PORT_WORKERS` if non-zero.
@@ -50,6 +53,7 @@ import { handleShopDelivery } from './shop-delivery.js';
 import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
+import { ANALYTICS_PRUNE_QUEUE, handleAnalyticsPrune } from './analytics-prune.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -126,6 +130,7 @@ export async function buildWorkers(likeness?: {
   const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
   const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
+  const analyticsQueue = new Queue(ANALYTICS_PRUNE_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -215,6 +220,15 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'casino-sweep failed'),
   );
 
+  const analyticsWorker = new Worker(
+    ANALYTICS_PRUNE_QUEUE,
+    async (job) => handleAnalyticsPrune(job, ctx),
+    { connection: newClient(redis) },
+  );
+  analyticsWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'analytics-prune failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
   const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
@@ -271,6 +285,13 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // Analytics retention (ANALYTICS_RETENTION_DAYS).
+  await analyticsQueue.upsertJobScheduler(
+    'analytics-prune',
+    { pattern: '15 3 * * *' },
+    { name: 'prune', data: {} },
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -298,6 +319,7 @@ export async function buildWorkers(likeness?: {
   void pushWorker;
   void eventWorker;
   void casinoWorker;
+  void analyticsWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -307,6 +329,7 @@ export async function buildWorkers(likeness?: {
   void pushQueue;
   void eventQueue;
   void casinoQueue;
+  void analyticsQueue;
   void log;
   void cfg;
 
@@ -327,6 +350,7 @@ export async function buildWorkers(likeness?: {
       await pushWorker.close();
       await eventWorker.close();
       await casinoWorker.close();
+      await analyticsWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -337,6 +361,7 @@ export async function buildWorkers(likeness?: {
       await pushQueue.close();
       await eventQueue.close();
       await casinoQueue.close();
+      await analyticsQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

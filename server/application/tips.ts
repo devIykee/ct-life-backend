@@ -17,6 +17,7 @@
  * server/application/helius-webhook.ts handles the credit.
  */
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import {
@@ -198,6 +199,12 @@ export async function sendCashTip(
        VALUES ($1, $2, $3, 'cash', $4, $5, $6, 'confirmed')`,
       [tipId, fromUserId, toUserId, amountCents, feeCents, message],
     );
+    // The recipient is not recorded: the sender's id is the only identifier.
+    await recordEvent(client, fromUserId, {
+      name: 'tip_sent',
+      props: { feeCents },
+      amountCents,
+    });
   });
   // Quest rules against two accounts looping tips: the amount must be at least the minimum,
   // each recipient counts once per window, and a tip to someone who tipped the sender

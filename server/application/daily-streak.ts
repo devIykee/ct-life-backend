@@ -20,6 +20,7 @@
  * and the ledger's `idempotency_ref` both stop a second payout for the same day.
  */
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import { FreezeLimitReachedError, InsufficientCashError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ensureCatalog } from './cosmetics.js';
@@ -316,6 +317,16 @@ export async function claimDaily(
       `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref, created_at)
        VALUES ($1, $2, 'cash', 'daily_streak', 'daily', $3, $4, $5)`,
       [userId, cashCents, today, `daily:${userId}:${today}`, now],
+    );
+    await recordEvent(
+      client,
+      userId,
+      {
+        name: 'daily_claimed',
+        props: { streakDay: plan.day, reset: plan.reset },
+        amountCents: cashCents,
+      },
+      now,
     );
     const after: StreakRow = {
       streak_day: plan.day,

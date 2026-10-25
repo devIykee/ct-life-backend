@@ -7,6 +7,7 @@
  * which the service maps to AliasTakenError.
  */
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import {
   AliasTakenError,
   ForbiddenError,
@@ -257,6 +258,10 @@ export class CharacterService {
          ON CONFLICT (user_id) DO NOTHING`,
         [userId],
       );
+      await recordEvent(client, userId, {
+        name: 'character_created',
+        props: { tribeId: input.tribeId, likeness: Boolean(input.likenessJobId) },
+      });
       return {
         alias: input.alias,
         look: input.look,
