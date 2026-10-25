@@ -1,3 +1,8 @@
+## 2026-10-26 - Factory error details
+
+- `LAUNCH_LIMIT_REACHED` `details.retryAfterMs` now counts to the OLDEST launch in the rolling 24 hours (it was counted from the LAST launch), so now + `retryAfterMs` equals `GET /factory/me` `nextLaunchAt`.
+- `INSUFFICIENT_CASH` `details` now always carries `shortfallCents` (need minus have, an integer number, never negative) wherever `have` and `need` are sent, which includes `POST /factory/coins`; `have` and `need` stay for compatibility. Read `shortfallCents`.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
