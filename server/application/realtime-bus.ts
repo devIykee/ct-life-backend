@@ -36,6 +36,10 @@ export type UserMessageType =
   | 'event_live'
   | 'event_ended'
   | 'irl_checkin'
+  | 'police_pursuit'
+  | 'police_pursuit_end'
+  | 'jailed'
+  | 'released'
   | 'event';
 
 export interface UserMessage {

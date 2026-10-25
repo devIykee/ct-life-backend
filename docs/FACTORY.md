@@ -69,8 +69,8 @@ least 30% of the units that were in circulation, and other players bought at lea
 It is flagged once per coin (`factory_coins.rug_flagged_at`). Then:
 
 - **Heat:** `35 + up to 15` by the share sold, capped at 100, in `player_heat` with an event row
-  in `player_heat_events`. Heat halves every 24 h (decayed on read). Nothing punishes heat yet; it
-  is stored for the police and jail loop (V3 backlog #10). `GET /v1/factory/me` returns it.
+  in `player_heat_events`. Heat halves every 24 h (decayed on read). At `wanted` the police start a pursuit
+  (see `docs/HEAT.md`). `GET /v1/factory/me` and `GET /v1/heat/me` return it.
 - **Timeline:** one post by the Sleuth (author `npc:sleuth`, a parody original character) in
   `feed_posts` with `kind = 'sleuth'` and `meta {coinId, ticker, launcherUserId, launcherAlias,
 sellSharePct, heat, deepLink: "venue:launchpad_tower"}`. Text is templated in our own words (six

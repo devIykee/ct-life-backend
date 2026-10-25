@@ -2166,6 +2166,138 @@ paths:
                     },
                 }
 
+  /heat/me:
+    get:
+      tags: [markets]
+      operationId: getHeatMe
+      summary: My heat, level, police pursuit and CT Jail state (the HeatPlate).
+      description: >-
+        `heat` is 0..100 and halves every 24 hours. `level` is `cool` (under 10), `warm` (10),
+        `hot` (35) or `wanted` (70 and up). `decayAt` is when the heat will have decayed below the
+        floor of the current level (null when cool); `wantedUntil` is set only while `wanted` and is the
+        later of `decayAt` and the end of the active pursuit. `pursuit` is the active police pursuit
+        (null if none). `jail` is the current stay in CT Jail (venue `ct_jail`) with the bail in whole
+        Cash cents (null if free). Parody, game Cash only. Rules and numbers: `docs/HEAT.md`.
+      x-phase: 4
+      responses:
+        '200':
+          description: Caller state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeatMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /heat/caught:
+    post:
+      tags: [markets]
+      operationId: postHeatCaught
+      summary: Report that a cruiser caught you (the server verifies it).
+      description: >-
+        The cruisers are client AI, so the server cannot see them; it judges the pursuit by the
+        position hash and its own timers and will catch a player whose pursuit timer ends. This
+        endpoint lets the client end it sooner. It is believed only when the pursuit is the caller's own
+        and active (`NO_PURSUIT` otherwise), at least 10 seconds old, the server has a position for the
+        player under 15 seconds old, and the reported `x`/`z` is within 15 metres of it
+        (`CATCH_NOT_VERIFIED`, 422, with `details.reason` `too_early`, `position_unknown` or
+        `position_mismatch`). At most 6 a minute. There is no endpoint to report an escape; the server
+        decides that. On success the player is in CT Jail and the response is the new `HeatMe`.
+      x-phase: 4
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [pursuitId, x, z]
+              properties:
+                pursuitId: { type: string, format: uuid }
+                x: { type: number, description: 'Island metres.' }
+                z: { type: number, description: 'Island metres.' }
+      responses:
+        '200':
+          description: Jailed; the new state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HeatMe' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: There is no active pursuit for the caller with that id (`NO_PURSUIT`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NO_PURSUIT,
+                      message: 'There is no active police pursuit for you.',
+                      details: {},
+                    },
+                }
+        '422':
+          description: The server could not verify the catch (`CATCH_NOT_VERIFIED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CATCH_NOT_VERIFIED,
+                      message: 'The server could not verify that the police caught you.',
+                      details: { reason: 'position_mismatch' },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /heat/bail:
+    post:
+      tags: [markets]
+      operationId: postHeatBail
+      summary: Pay bail and leave CT Jail.
+      description: >-
+        Debits the bail fixed at arrest (heat times 50 cents, at least 1,000; ledger reason
+        `police_bail`, a Cash sink) and ends the stay. Idempotent per stay. Without bail the stay
+        ends by itself when `jail.until` passes. While jailed the player cannot launch coins, buy,
+        open perps, bet in the casino, drive or enter other venues (`403 JAILED`); selling, closing
+        positions and reading stay open.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Released
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [released, bailCents, cashCents]
+                properties:
+                  released: { type: boolean, enum: [true] }
+                  bailCents: { type: integer }
+                  cashCents: { type: integer, description: 'Cash left.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the bail (`INSUFFICIENT_CASH`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '4000' },
+                    },
+                }
+        '409':
+          description: The caller is not in CT Jail (`NOT_JAILED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                { error: { code: NOT_JAILED, message: 'You are not in CT Jail.', details: {} } }
   /factory/config:
     get:
       tags: [markets]
@@ -2189,8 +2321,8 @@ paths:
       operationId: getFactoryMe
       summary: My heat and launch allowance.
       description: >-
-        `heat` is 0..100 and halves every 24 hours; it is stored for the future police loop and
-        punishes nothing yet. `nextLaunchAt` is null when a launch is allowed now.
+        `heat` is 0..100 and halves every 24 hours; at `wanted` the police start a pursuit (see
+        `GET /heat/me`). `nextLaunchAt` is null when a launch is allowed now.
       x-phase: 4
       responses:
         '200':
@@ -2267,6 +2399,20 @@ paths:
                       code: INSUFFICIENT_CASH,
                       message: 'Cash balance is insufficient.',
                       details: { have: '1200', need: '5500' },
+                    },
+                }
+        '403':
+          description: The caller is in CT Jail (`JAILED`); pay bail with `POST /heat/bail`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: JAILED,
+                      message: 'You are in CT Jail. Pay bail or wait it out.',
+                      details: { until: '2026-10-24T14:10:00.000Z', bailCents: 4000 },
                     },
                 }
         '409':
@@ -6717,6 +6863,46 @@ components:
         rug:
           type: object
           properties: { sellBps: { type: integer }, windowMin: { type: integer } }
+    HeatMe:
+      type: object
+      required: [heat, level, decayAt, wantedUntil, levels, pursuit, jail]
+      properties:
+        heat: { type: number, description: '0..100, one decimal.' }
+        level: { type: string, enum: [cool, warm, hot, wanted] }
+        decayAt: { type: string, format: date-time, nullable: true }
+        wantedUntil: { type: string, format: date-time, nullable: true }
+        levels:
+          type: object
+          description: Heat floor of each level above cool.
+          required: [warm, hot, wanted]
+          properties:
+            warm: { type: integer }
+            hot: { type: integer }
+            wanted: { type: integer }
+        pursuit:
+          nullable: true
+          type: object
+          required: [pursuitId, units, startedAt, expiresAt, escapeRadiusM, escapeSeconds]
+          properties:
+            pursuitId: { type: string, format: uuid }
+            units: { type: integer, minimum: 1, maximum: 4 }
+            startedAt: { type: string, format: date-time }
+            expiresAt: { type: string, format: date-time }
+            escapeRadiusM:
+              {
+                type: integer,
+                description: 'Stay farther than this from the last wanted position...',
+              }
+            escapeSeconds: { type: integer, description: '...for this long to escape.' }
+        jail:
+          nullable: true
+          type: object
+          required: [venueId, jailedAt, until, bailCents]
+          properties:
+            venueId: { type: string, enum: [ct_jail] }
+            jailedAt: { type: string, format: date-time }
+            until: { type: string, format: date-time }
+            bailCents: { type: integer }
     FactoryMe:
       type: object
       required: [heat, heatLevel, launchesToday, dailyLaunchCap, nextLaunchAt]

@@ -39,6 +39,7 @@ import {
 import {
   DISTRICTS,
   POS_FRESH_MS,
+  POLICE_CHANNEL,
   POS_HASH,
   VEHICLE_EXIT_CHANNEL,
   decodePos,
@@ -94,6 +95,7 @@ export class StreetRoom extends Room {
   /** userId -> vehicle exit position, from the vehicles room. */
   private exitGrants = new Map<string, IslandPos>();
   private onExit = (data: unknown): void => this.handleVehicleExit(data);
+  private onPolice = (data: unknown): void => this.handlePolice(data);
 
   /**
    * @param options - `{ district }`, one of DISTRICTS.
@@ -121,6 +123,7 @@ export class StreetRoom extends Room {
     this.onMessage('say', (client, msg) => this.handleSay(client, msg));
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
+    await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
   }
 
   /**
@@ -128,6 +131,7 @@ export class StreetRoom extends Room {
    */
   override async onDispose(): Promise<void> {
     await this.presence?.unsubscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
+    await this.presence?.unsubscribe(POLICE_CHANNEL, this.onPolice);
   }
 
   /**
@@ -296,6 +300,19 @@ export class StreetRoom extends Room {
     if (![d.x, d.z, d.at].every((n) => typeof n === 'number' && Number.isFinite(n))) return;
     if (![...this.sessions.values()].some((s) => s.userId === d.userId)) return;
     this.exitGrants.set(d.userId, { x: d.x!, z: d.z!, at: d.at! });
+  }
+
+  /**
+   * Fan a police event out to everyone in this room, but only in the room that
+   * holds the pursued player, so bystanders see the same cruisers.
+   * @param data - `{ type, targetUserId, payload }` from the police referee.
+   */
+  private handlePolice(data: unknown): void {
+    const d = data as { type?: unknown; targetUserId?: unknown; payload?: unknown } | null;
+    if (!d || typeof d.targetUserId !== 'string' || typeof d.payload !== 'object') return;
+    if (d.type !== 'police_pursuit' && d.type !== 'police_pursuit_end') return;
+    if (![...this.sessions.values()].some((s) => s.userId === d.targetUserId)) return;
+    this.broadcast(d.type, d.payload);
   }
 
   // --- Helpers -----------------------------------------------------

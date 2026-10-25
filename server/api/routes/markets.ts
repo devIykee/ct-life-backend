@@ -12,6 +12,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { assertNotJailed } from '../../application/heat.js';
+import { requireNotJailed } from '../middleware/jail.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   executeTrade,
@@ -75,6 +77,8 @@ export function registerMarketRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const body = TradeBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      // Buying opens new risk and is refused in jail; selling stays open.
+      if (body.data.side === 'buy') await assertNotJailed(req.ctx, req.user!.sub);
       const result = await executeTrade(req.ctx, {
         userId: req.user!.sub,
         coinId: body.data.coinId,
@@ -94,7 +98,7 @@ export function registerMarketRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/market/launchpad',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireNotJailed, withIdempotency()] },
     async (req, reply) => {
       const body = LaunchBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
@@ -110,7 +114,7 @@ export function registerMarketRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/market/launchpad/:coinId/buy',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireNotJailed, withIdempotency()] },
     async (req, reply) => {
       const { coinId } = req.params as { coinId: string };
       const body = LaunchpadBuyBody.safeParse(req.body);

@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireNotJailed } from '../middleware/jail.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   closePerp,
@@ -34,18 +35,22 @@ const ListPerpsQuery = z.object({
  * @param app - The Fastify instance.
  */
 export function registerPerpRoutes(app: FastifyInstance): void {
-  app.post('/v1/perps', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
-    const body = OpenPerpBody.safeParse(req.body);
-    if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-    const perp = await openPerp(req.ctx, {
-      userId: req.user!.sub,
-      coinId: body.data.coinId,
-      side: body.data.side as PerpSide,
-      leverage: body.data.leverage,
-      marginCents: body.data.marginCents,
-    });
-    return reply.send(perp); // B38: return 200, not 201
-  });
+  app.post(
+    '/v1/perps',
+    { preHandler: [requireAuth, requireNotJailed, withIdempotency()] },
+    async (req, reply) => {
+      const body = OpenPerpBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const perp = await openPerp(req.ctx, {
+        userId: req.user!.sub,
+        coinId: body.data.coinId,
+        side: body.data.side as PerpSide,
+        leverage: body.data.leverage,
+        marginCents: body.data.marginCents,
+      });
+      return reply.send(perp); // B38: return 200, not 201
+    },
+  );
 
   app.post(
     '/v1/perps/:perpId/close',
