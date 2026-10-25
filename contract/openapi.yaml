@@ -1688,12 +1688,18 @@ paths:
     post:
       tags: [work]
       operationId: postJobsRektBurgerShiftStart
-      summary: 'Start a Rekt Burger shift (idempotent while one is open).'
+      summary: 'Clock in at the Rekt Burger counter (idempotent while a shift is open).'
       description: >-
-        Takes no body. The server holds the shift and its clock. The first shift after being out
-        starts the employment and writes a "Back to the trenches" Timeline post (at most one per
-        24 hours). `403 JOB_LOCKED` when not unlocked; `409 JOB_DAILY_CAP` when today's pay cap is
-        already reached. Rate limited per player.
+        Takes no body. The shift is a simple clock-in: the avatar works in 3D (client-side only)
+        and pay builds by SERVER time, `ratePerMinuteCents` while the clock runs, up to the daily
+        cap and `maxEndsAt`. The player may close the app. A new shift needs the server's own
+        FRESH position for the player (street room, at most 30 s old) within `counter.radiusM` of
+        the counter (`GET /jobs/rekt-burger` gives the counter), else `409 POSITION_UNKNOWN` or
+        `409 COUNTER_TOO_FAR` (`details.distanceM`). Calling it again while a shift is open returns
+        that shift with `resumed: true` and needs no position (so a relaunch can resume). The
+        first shift after being out starts the employment and writes a "Back to the trenches"
+        Timeline post (at most one per 24 hours). `403 JOB_LOCKED` when not unlocked; `409
+        JOB_DAILY_CAP` when today's pay cap is already reached. Rate limited per player.
       x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -1702,7 +1708,7 @@ paths:
           description: The open shift
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/RektBurgerShift' }
+              schema: { $ref: '#/components/schemas/RektBurgerStart' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: Not unlocked (`JOB_LOCKED`)
@@ -1715,94 +1721,103 @@ paths:
                   message: 'This job is not unlocked for you.'
                   details: { jobId: rekt-burger, cashCents: 500000, debtCents: 0 }
         '409':
-          description: Daily pay cap reached (`JOB_DAILY_CAP`)
+          description: Daily pay cap reached (`JOB_DAILY_CAP`), no fresh position (`POSITION_UNKNOWN`) or too far from the counter (`COUNTER_TOO_FAR`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-              example:
-                error:
-                  code: JOB_DAILY_CAP
-                  message: "You have earned today's maximum pay from this job."
-                  details: { dailyCapCents: 4500, resetsAt: '2026-10-25T00:00:00.000Z' }
+              examples:
+                cap:
+                  value:
+                    error:
+                      code: JOB_DAILY_CAP
+                      message: "You have earned today's maximum pay from this job."
+                      details: { dailyCapCents: 4500, resetsAt: '2026-10-25T00:00:00.000Z' }
+                far:
+                  value:
+                    error:
+                      code: COUNTER_TOO_FAR
+                      message: "The server's last position for you is too far from the Rekt Burger counter."
+                      details: { radiusM: 25, distanceM: 140 }
+                unknown:
+                  value:
+                    error:
+                      code: POSITION_UNKNOWN
+                      message: 'The server has no recent street position for the player.'
+                      details: { reason: no fresh position }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/shift/end:
+    post:
+      tags: [work]
+      operationId: postJobsRektBurgerShiftEnd
+      summary: Clock out; the server pays by the time on its clock.
+      description: >-
+        Takes no body (any field is ignored; there is no amount to send). Pay is
+        `floor(seconds x ratePerMinuteCents / 60)` of the time since the shift started, capped at
+        `maxShiftSec` and trimmed to what is left of the UTC-day cap (`cappedCents` is what the cap
+        withheld). Ledger reason `job_rekt_burger`. A shift left running is closed and paid by the
+        server at `maxEndsAt` (a per-minute worker, or on the next read), so the player does not have
+        to come back; `endReason` is `clock_out`, `auto` or `left`. `careerXp` is time-based
+        (`xpPerMinute`), only for a player on a career ladder, behind the shared daily action cap, and
+        only for a shift of at least `minCountedSec` (so is the `shift_complete` quest, Season XP
+        through it, and the Rekt Burger Uniform on the first such shift). Two ends racing pay once.
+        `404` when there is no open shift (never started, or already ended). Needs no position.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurgerEnd' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/shift/current:
+    get:
+      tags: [work]
+      operationId: getJobsRektBurgerShiftCurrent
+      summary: My open shift (to restore after a relaunch) and my last paid shift.
+      description: >-
+        `shift` is the open shift with `accruedCents` (what clocking out at `serverNow` would pay,
+        after the daily cap) or null. If the open shift ran to its maximum it is closed and paid first,
+        so `shift` is null and `lastShift` shows what was paid (`endReason: auto`). Use `serverNow`
+        for the on-screen timer, not the device clock.
+      x-phase: 5
+      responses:
+        '200':
+          description: Current shift
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurgerCurrent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
   /jobs/rekt-burger/shift/finish:
     post:
       tags: [work]
       operationId: postJobsRektBurgerShiftFinish
-      summary: Finish the shift with the minigame's order timings; the server validates and pays.
+      deprecated: true
+      summary: Removed. The per-ticket minigame was replaced by the clock-in shift.
       description: >-
-        The body carries only what the player did: for each ticket its index, when it appeared,
-        when it was served (ms since the shift started) and whether it was right. There is no
-        amount field and unknown fields are `400`. The server checks the report against its own
-        clock for the shift: at least `minDurationSec` elapsed (else `400 SHIFT_NOT_FINISHED`, the
-        shift stays open), at most `maxDurationSec` (else `409`, shift void), order count within
-        bounds, tickets numbered 0..n-1, each served after it appeared and in
-        `minServeMs..maxServeMs`, serves at least `minGapMs` apart, none after the shift ended,
-        and timings not machine-regular. A report that fails answers `422
-        SHIFT_RESULT_IMPLAUSIBLE` and burns the shift. Pay is `baseCents + perCorrectOrderCents *
-        correct` (correct capped at `maxCorrectOrdersPaid`), then trimmed to the UTC-day cap;
-        ledger reason `job_rekt_burger`. The first finish grants the Rekt Burger Uniform.
-        Completion counts for the `shift_complete` quests (and so Season XP).
+        Always answers `410 GONE` with `details.use` naming `POST /jobs/rekt-burger/shift/end`.
       x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [result]
-              additionalProperties: false
-              properties:
-                shiftId:
-                  type: string
-                  format: uuid
-                  description: Optional; defaults to your open shift. Must be yours (else 404).
-                result:
-                  type: object
-                  required: [orders]
-                  additionalProperties: false
-                  properties:
-                    orders:
-                      type: array
-                      maxItems: 200
-                      items: { $ref: '#/components/schemas/RektBurgerOrder' }
-            example:
-              result:
-                orders:
-                  - { i: 0, startedMs: 3200, servedMs: 9400, correct: true }
-                  - { i: 1, startedMs: 8100, servedMs: 15800, correct: false }
       responses:
-        '200':
-          description: Paid
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/RektBurgerFinish' }
-        '400':
-          description: Body invalid, or finished too early (`SHIFT_NOT_FINISHED`)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409':
-          description: Already finished or void (`CONFLICT`)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '422':
-          description: The report is not humanly possible (`SHIFT_RESULT_IMPLAUSIBLE`)
+        '410':
+          description: Gone
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
               example:
                 error:
-                  code: SHIFT_RESULT_IMPLAUSIBLE
-                  message: 'The shift result does not look like a real shift.'
-                  details: { shiftId: '0198...', reason: too_fast }
-        '429': { $ref: '#/components/responses/RateLimited' }
+                  code: GONE
+                  message: 'This endpoint was removed; see details.use for its replacement.'
+                  details: { use: '/jobs/rekt-burger/shift/end' }
 
   /jobs/rekt-burger/leave:
     post:
@@ -1810,7 +1825,7 @@ paths:
       operationId: postJobsRektBurgerLeave
       summary: 'Hang up the apron. Writes a "Glow-up" post if your net worth recovered.'
       description: >-
-        Takes no body. A shift still open is voided. If the stint began with net worth (Cash minus
+        Takes no body. A shift still open is clocked out and paid first (`endedShift`). If the stint began with net worth (Cash minus
         debt) below `glowUpNetWorthCents`, has at least one paid shift and ends at or above it,
         a "Glow-up" Timeline post is written (at most one per 24 hours). Harmless when you have
         no job.
@@ -1824,13 +1839,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [employed, wasEmployed, glowUp, postId, netWorthCents]
+                required: [employed, wasEmployed, glowUp, postId, netWorthCents, endedShift]
                 properties:
                   employed: { type: boolean, enum: [false] }
                   wasEmployed: { type: boolean }
                   glowUp: { type: boolean }
                   postId: { type: string, nullable: true }
                   netWorthCents: { type: integer }
+                  endedShift:
+                    allOf: [{ $ref: '#/components/schemas/RektBurgerEnd' }]
+                    nullable: true
+                    description: The open shift this paid on the way out, if there was one.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
@@ -6650,62 +6669,92 @@ components:
         xp: { type: integer }
         joinedAt: { type: string, format: date-time }
         nextSwitchAt: { type: string, format: date-time }
-    RektBurgerOrder:
-      type: object
-      required: [i, startedMs, servedMs, correct]
-      additionalProperties: false
-      properties:
-        i: { type: integer, minimum: 0, description: 'Ticket number, 0..n-1 in serving order.' }
-        startedMs:
-          {
-            type: integer,
-            minimum: 0,
-            description: 'When the ticket appeared, ms since the shift started.',
-          }
-        servedMs:
-          {
-            type: integer,
-            minimum: 0,
-            description: 'When it was served, ms since the shift started.',
-          }
-        correct: { type: boolean }
     RektBurgerShift:
       type: object
-      required: [shiftId, startedAt, minFinishAt, expiresAt, rules, resumed, postId]
+      required:
+        [
+          shiftId,
+          startedAt,
+          ratePerMinuteCents,
+          capRemainingCents,
+          maxEndsAt,
+          accruedCents,
+          serverNow,
+        ]
       properties:
         shiftId: { type: string, format: uuid }
         startedAt: { type: string, format: date-time }
-        minFinishAt: { type: string, format: date-time }
-        expiresAt: { type: string, format: date-time }
-        rules:
-          type: object
-          properties:
-            minOrders: { type: integer }
-            maxOrders: { type: integer }
-            minServeMs: { type: integer }
-            minGapMs: { type: integer }
-            maxServeMs: { type: integer }
-            maxCorrectOrdersPaid: { type: integer }
-        resumed: { type: boolean, description: 'An already-open shift was returned.' }
-        postId:
+        ratePerMinuteCents: { type: integer }
+        capRemainingCents: { type: integer, description: "What is left of today's cap." }
+        maxEndsAt:
           {
             type: string,
-            nullable: true,
-            description: 'The "Back to the trenches" post, when this start wrote one.',
+            format: date-time,
+            description: The server closes and pays the shift here.,
           }
-    RektBurgerFinish:
+        accruedCents:
+          { type: integer, description: 'What clocking out at serverNow pays, after the cap.' }
+        serverNow: { type: string, format: date-time }
+    RektBurgerStart:
+      allOf:
+        - $ref: '#/components/schemas/RektBurgerShift'
+        - type: object
+          required: [resumed, postId]
+          properties:
+            resumed: { type: boolean, description: 'An already-open shift was returned.' }
+            postId:
+              type: [string, 'null']
+              description: 'The "Back to the trenches" post, when this start wrote one.'
+    RektBurgerEnd:
       type: object
       required:
-        [shiftId, orders, correct, payCents, cappedCents, remainingTodayCents, uniformGranted]
+        [
+          shiftId,
+          paidCents,
+          minutes,
+          seconds,
+          careerXp,
+          cappedCents,
+          capRemainingCents,
+          uniformGranted,
+          endReason,
+        ]
       properties:
         shiftId: { type: string, format: uuid }
-        orders: { type: integer }
-        correct: { type: integer }
-        payCents: { type: integer, description: 'Paid, after the shift and daily caps.' }
+        paidCents: { type: integer, description: 'Paid, after the daily cap.' }
+        minutes:
+          { type: integer, description: Whole minutes on the clock (at most the maximum shift). }
+        seconds: { type: integer }
+        careerXp:
+          {
+            type: integer,
+            description: Career XP added (time-based; 0 off a ladder,
+            under the minimum or past the daily cap).,
+          }
         cappedCents: { type: integer, description: 'Withheld by the daily cap.' }
-        remainingTodayCents: { type: integer }
+        capRemainingCents: { type: integer }
         uniformGranted:
-          { type: boolean, description: 'First finish only: the Rekt Burger Uniform cosmetic.' }
+          {
+            type: boolean,
+            description: 'First counted shift only: the Rekt Burger Uniform cosmetic.',
+          }
+        endReason: { type: string, enum: [clock_out, auto, left] }
+    RektBurgerLastShift:
+      type: object
+      required: [shiftId, endedAt, paidCents, minutes, careerXp, endReason]
+      properties:
+        shiftId: { type: string, format: uuid }
+        endedAt: { type: string, format: date-time }
+        paidCents: { type: integer }
+        minutes: { type: integer }
+        careerXp: { type: integer }
+        endReason: { type: [string, 'null'], enum: [clock_out, auto, left, null] }
+    RektBurgerCurrent:
+      type: object
+      required: [shift, lastShift]
+      properties:
+        shift: { allOf: [{ $ref: '#/components/schemas/RektBurgerShift' }], nullable: true }
+        lastShift: { allOf: [{ $ref: '#/components/schemas/RektBurgerLastShift' }], nullable: true }
     RektBurger:
       type: object
       required:
@@ -6722,6 +6771,7 @@ components:
           netWorthCents,
           glowUpNetWorthCents,
           pay,
+          counter,
           shift,
           uniformCosmeticId,
           hasUniform,
@@ -6748,13 +6798,21 @@ components:
         pay:
           type: object
           properties:
-            baseCents: { type: integer }
-            perCorrectOrderCents: { type: integer }
-            maxShiftCents: { type: integer }
+            ratePerMinuteCents: { type: integer }
+            maxShiftCents:
+              { type: integer, description: The most one shift pays before the daily cap. }
+            maxShiftSec: { type: integer }
             dailyCapCents: { type: integer }
             earnedTodayCents: { type: integer }
             remainingTodayCents: { type: integer }
             resetsAt: { type: string, format: date-time }
+        counter:
+          type: object
+          description: Where to stand (island metres) to clock in.
+          properties:
+            x: { type: number }
+            z: { type: number }
+            radiusM: { type: number }
         shift: { allOf: [{ $ref: '#/components/schemas/RektBurgerShift' }], nullable: true }
         uniformCosmeticId: { type: string }
         hasUniform: { type: boolean }

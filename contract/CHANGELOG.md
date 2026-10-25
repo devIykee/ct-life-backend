@@ -1,3 +1,17 @@
+## 2026-10-25 - Rekt Burger is a clock-in job (replaces the per-ticket minigame)
+
+Migration 096. Changes what #16 shipped.
+
+- `POST /jobs/rekt-burger/shift/start` now needs the player at the counter: the server's own fresh position (30 s) within `counter.radiusM` of `counter` (both in `GET /jobs/rekt-burger`), else `409 POSITION_UNKNOWN` or the new `409 COUNTER_TOO_FAR` (`details: {radiusM, distanceM}`). Still one open shift per player and idempotent while open (`resumed: true`, no position needed). Reply: `{shiftId, startedAt, ratePerMinuteCents, capRemainingCents, maxEndsAt, accruedCents, serverNow, resumed, postId}`; `minFinishAt`, `expiresAt` and `rules` are gone.
+- New `POST /jobs/rekt-burger/shift/end` (no body) -> `{shiftId, paidCents, minutes, seconds, careerXp, cappedCents, capRemainingCents, uniformGranted, endReason}`. Pay = `floor(seconds x rate / 60)`, at most 3,600 s counted, trimmed to the 4,500 cent UTC-day cap; ledger reason `job_rekt_burger`. `endReason` is `clock_out`, `auto` or `left`. `404` with no open shift; racing ends pay once.
+- New `GET /jobs/rekt-burger/shift/current` -> `{shift, lastShift}` for restore after a relaunch (an expired shift is closed and paid first).
+- The server closes and pays a shift left running at `maxEndsAt` (a per-minute worker, and on the next read), so the player may leave the app. `POST /leave` now clocks an open shift out and pays it (`endedShift`) instead of voiding it.
+- `POST /jobs/rekt-burger/shift/finish` (per-ticket minigame) is removed: it answers `410 GONE` with `details.use`. The error code `SHIFT_RESULT_IMPLAUSIBLE` is removed with it. New codes `GONE` (410), `COUNTER_TOO_FAR` (409).
+- `GET /jobs/rekt-burger` `pay` is now `{ratePerMinuteCents, maxShiftCents, maxShiftSec, dailyCapCents, earnedTodayCents, remainingTodayCents, resetsAt}` (no `baseCents`/`perCorrectOrderCents`) and adds `counter: {x, z, radiusM}`; its `shift` is the new shift object.
+- Economics (config `careers.json` `rektBurger`): 50 cents/minute, longest shift 3,600 s (3,000 cents), daily cap unchanged at 4,500 cents (90 minutes on the clock); the per-ticket design paid up to 1,500 cents per 3-minute shift and the same 4,500 cap.
+- Career XP is time-based (1 per minute), only for a player on a ladder, under the shared daily action cap; a shift under 120 s is paid but earns no XP, quest progress or uniform. Unlock rules (Trencher, broke, liquidated) are unchanged.
+- Migration 096 adds `rekt_burger_shifts.seconds, end_reason, career_xp` and an index for the sweep.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
