@@ -508,3 +508,37 @@ export class LaunchCooldownError extends DomainError {
     this.httpStatus = 429;
   }
 }
+
+// Careers + Rekt Burger -----------------------------------------------------
+
+export class CareerSwitchCooldownError extends DomainError {
+  readonly code = 'CAREER_SWITCH_COOLDOWN';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You switched career ladders recently; wait for the cooldown to end.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class JobLockedError extends DomainError {
+  readonly code = 'JOB_LOCKED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This job is not unlocked for you.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class JobDailyCapError extends DomainError {
+  readonly code = 'JOB_DAILY_CAP';
+  constructor(details: Record<string, unknown> = {}) {
+    super("You have earned today's maximum pay from this job.", details);
+    this.httpStatus = 409;
+  }
+}
+
+export class ShiftResultImplausibleError extends DomainError {
+  readonly code = 'SHIFT_RESULT_IMPLAUSIBLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The shift result does not look like a real shift.', details);
+    this.httpStatus = 422;
+  }
+}

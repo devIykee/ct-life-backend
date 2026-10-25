@@ -1,23 +1,43 @@
 {
   "title": "careers.json",
   "type": "object",
-  "required": ["version", "careers"],
+  "required": [
+    "version",
+    "careers",
+    "ladders",
+    "rektBurger",
+    "cosmetics",
+    "ladderJoinCooldownHours",
+    "ladderActionXpDailyCap"
+  ],
   "properties": {
-    "version": { "type": "string" },
+    "version": {
+      "type": "string"
+    },
     "careers": {
       "type": "array",
       "items": {
         "type": "object",
         "required": ["id", "name", "active", "phase", "levels"],
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
           "active": {
             "type": "boolean",
             "description": "Whether the career is in the active Phase 1 set (true) or reserved for a later phase (false)."
           },
-          "phase": { "type": "integer", "minimum": 1, "maximum": 6 },
-          "skillGates": { "type": "object" },
+          "phase": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6
+          },
+          "skillGates": {
+            "type": "object"
+          },
           "levels": {
             "type": "array",
             "minItems": 5,
@@ -26,14 +46,291 @@
               "type": "object",
               "required": ["level", "payCents", "shiftSec", "xp", "miniGameId"],
               "properties": {
-                "level": { "type": "integer", "minimum": 1, "maximum": 5 },
-                "payCents": { "type": "integer", "minimum": 0 },
-                "shiftSec": { "type": "integer", "minimum": 1 },
-                "xp": { "type": "integer", "minimum": 0 },
-                "miniGameId": { "type": "string" }
+                "level": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 5
+                },
+                "payCents": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "shiftSec": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "xp": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "miniGameId": {
+                  "type": "string"
+                }
               }
             }
           }
+        }
+      }
+    },
+    "ladderJoinCooldownHours": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Hours before a player can move from one career ladder to another."
+    },
+    "ladderActionXpDailyCap": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Max XP per ladder per UTC day from related actions (shift XP is not capped here)."
+    },
+    "cosmetics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["cosmeticId", "name", "slot"],
+        "additionalProperties": false,
+        "properties": {
+          "cosmeticId": {
+            "type": "string",
+            "pattern": "^reward_[a-z0-9_]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slot": {
+            "enum": ["skin", "head", "hair", "top", "bottom", "shoes", "acc"]
+          }
+        }
+      }
+    },
+    "ladders": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "tribeIds", "jobIds", "actionXp", "ranks"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z_]+$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tribeIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "jobIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "ids of entries in `careers`; shifts there earn ladder XP and the rank pay bonus"
+          },
+          "actionXp": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "action verb -> XP per occurrence"
+          },
+          "ranks": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 7,
+            "items": {
+              "type": "object",
+              "required": [
+                "rank",
+                "id",
+                "title",
+                "xpRequired",
+                "payBonusBps",
+                "venueAccess",
+                "cosmeticId"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rank": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "xpRequired": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "cumulative ladder XP to hold this rank"
+                },
+                "payBonusBps": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 10000
+                },
+                "venueAccess": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-z_]+:[a-z_]+$"
+                  }
+                },
+                "cosmeticId": {
+                  "type": ["string", "null"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "rektBurger": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "venueId",
+        "propId",
+        "preUnlockTribeIds",
+        "unlock",
+        "glowUpNetWorthCents",
+        "postCooldownHours",
+        "pay",
+        "shift",
+        "uniformCosmeticId"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "venueId": {
+          "type": "string"
+        },
+        "propId": {
+          "type": "string"
+        },
+        "preUnlockTribeIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unlock": {
+          "type": "object",
+          "required": ["brokeCashCentsAtMost", "requiresDebt", "liquidationCashBelowCents"],
+          "properties": {
+            "brokeCashCentsAtMost": {
+              "type": "integer"
+            },
+            "requiresDebt": {
+              "type": "boolean"
+            },
+            "liquidationCashBelowCents": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "glowUpNetWorthCents": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "postCooldownHours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pay": {
+          "type": "object",
+          "required": [
+            "baseCents",
+            "perCorrectOrderCents",
+            "maxCorrectOrdersPaid",
+            "dailyCapCents"
+          ],
+          "properties": {
+            "baseCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "perCorrectOrderCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxCorrectOrdersPaid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "dailyCapCents": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "shift": {
+          "type": "object",
+          "required": [
+            "minDurationSec",
+            "maxDurationSec",
+            "minOrders",
+            "maxOrders",
+            "minServeMs",
+            "minGapMs",
+            "maxServeMs",
+            "toleranceMs",
+            "minServeJitterMs"
+          ],
+          "properties": {
+            "minDurationSec": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxDurationSec": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minOrders": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxOrders": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minServeMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minGapMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "maxServeMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "toleranceMs": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minServeJitterMs": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "uniformCosmeticId": {
+          "type": "string"
         }
       }
     }

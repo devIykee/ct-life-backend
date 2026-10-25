@@ -1541,24 +1541,65 @@ paths:
     get:
       tags: [work]
       operationId: getCareers
-      summary: All careers with my level and XP.
+      summary: All careers with my level and XP (or, with `view=ladders`, the career ladders).
+      description: >-
+        Default (`view=jobs`): the job list, unchanged. `view=ladders`: the five career ladders
+        (Builder, Trader, Caller, Farmer, Founder) with my rank, XP, next rank and perks; see
+        `docs/CAREERS.md`. Ladders sit on top of the jobs: a ladder names which jobs earn its XP.
       x-phase: 1
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema: { type: string, enum: [jobs, ladders], default: jobs }
       responses:
         '200':
-          description: Careers
+          description: Careers (an array for `jobs`; a `LaddersResponse` for `ladders`)
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
-                  required: [id, name, level, xp, active]
-                  properties:
-                    id: { type: string }
-                    name: { type: string }
-                    level: { type: integer, minimum: 0, maximum: 5 }
-                    xp: { type: integer, minimum: 0 }
-                    active: { type: boolean }
+                oneOf:
+                  - $ref: '#/components/schemas/LaddersResponse'
+                  - $ref: '#/components/schemas/CareerJobList'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /careers/{ladderId}/join:
+    post:
+      tags: [work]
+      operationId: postCareersLadderIdJoin
+      summary: Join a career ladder, or switch to another (a cooldown applies after the first).
+      description: >-
+        Takes no body. The first deliberate join is free; moving to a different ladder needs
+        `joinCooldownHours` (72) since the last deliberate join, else `409
+        CAREER_SWITCH_COOLDOWN` with `details.retryAt`. XP and rank are kept per ladder, so
+        switching back restores them. Joining the ladder you are on is `200` with
+        `alreadyMember: true`. Unknown ladder is `404`.
+      x-phase: 5
+      parameters:
+        - name: ladderId
+          in: path
+          required: true
+          schema: { type: string, enum: [builder, trader, caller, farmer, founder] }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Joined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LadderJoinResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Switched too recently (`CAREER_SWITCH_COOLDOWN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: CAREER_SWITCH_COOLDOWN
+                  message: 'You switched career ladders recently; wait for the cooldown to end.'
+                  details:
+                    { retryAt: '2026-10-27T12:00:00.000Z', retryAfterMs: 259200000, currentLadderId: builder }
 
   /careers/{careerId}/apply:
     post:
@@ -1580,6 +1621,177 @@ paths:
               schema: { $ref: '#/components/schemas/Job' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /jobs/rekt-burger:
+    get:
+      tags: [work]
+      operationId: getJobsRektBurger
+      summary: Rekt Burger, the fallback job: unlocked?, why, pay, caps and my open shift.
+      description: >-
+        Rekt Burger is our own parody fast-food brand. Trenchers have it from the start;
+        everyone else unlocks it for good when Cash is at or below 0 while in debt (checked on
+        this read and on shift start) or when a perp liquidation leaves Cash under
+        `liquidationCashBelowCents`. A new unlock also arrives as the realtime `job_unlocked`.
+        See `docs/CAREERS.md`.
+      x-phase: 5
+      responses:
+        '200':
+          description: Job state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurger' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/shift/start:
+    post:
+      tags: [work]
+      operationId: postJobsRektBurgerShiftStart
+      summary: Start a Rekt Burger shift (idempotent while one is open).
+      description: >-
+        Takes no body. The server holds the shift and its clock. The first shift after being out
+        starts the employment and writes a "Back to the trenches" Timeline post (at most one per
+        24 hours). `403 JOB_LOCKED` when not unlocked; `409 JOB_DAILY_CAP` when today's pay cap is
+        already reached. Rate limited per player.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: The open shift
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurgerShift' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Not unlocked (`JOB_LOCKED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: JOB_LOCKED
+                  message: 'This job is not unlocked for you.'
+                  details: { jobId: rekt-burger, cashCents: 500000, debtCents: 0 }
+        '409':
+          description: Daily pay cap reached (`JOB_DAILY_CAP`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: JOB_DAILY_CAP
+                  message: "You have earned today's maximum pay from this job."
+                  details: { dailyCapCents: 4500, resetsAt: '2026-10-25T00:00:00.000Z' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/shift/finish:
+    post:
+      tags: [work]
+      operationId: postJobsRektBurgerShiftFinish
+      summary: Finish the shift with the minigame's order timings; the server validates and pays.
+      description: >-
+        The body carries only what the player did: for each ticket its index, when it appeared,
+        when it was served (ms since the shift started) and whether it was right. There is no
+        amount field and unknown fields are `400`. The server checks the report against its own
+        clock for the shift: at least `minDurationSec` elapsed (else `400 SHIFT_NOT_FINISHED`, the
+        shift stays open), at most `maxDurationSec` (else `409`, shift void), order count within
+        bounds, tickets numbered 0..n-1, each served after it appeared and in
+        `minServeMs..maxServeMs`, serves at least `minGapMs` apart, none after the shift ended,
+        and timings not machine-regular. A report that fails answers `422
+        SHIFT_RESULT_IMPLAUSIBLE` and burns the shift. Pay is `baseCents + perCorrectOrderCents *
+        correct` (correct capped at `maxCorrectOrdersPaid`), then trimmed to the UTC-day cap;
+        ledger reason `job_rekt_burger`. The first finish grants the Rekt Burger Uniform.
+        Completion counts for the `shift_complete` quests (and so Season XP).
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              additionalProperties: false
+              properties:
+                shiftId:
+                  type: string
+                  format: uuid
+                  description: Optional; defaults to your open shift. Must be yours (else 404).
+                result:
+                  type: object
+                  required: [orders]
+                  additionalProperties: false
+                  properties:
+                    orders:
+                      type: array
+                      maxItems: 200
+                      items: { $ref: '#/components/schemas/RektBurgerOrder' }
+            example:
+              result:
+                orders:
+                  - { i: 0, startedMs: 3200, servedMs: 9400, correct: true }
+                  - { i: 1, startedMs: 8100, servedMs: 15800, correct: false }
+      responses:
+        '200':
+          description: Paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurgerFinish' }
+        '400':
+          description: Body invalid, or finished too early (`SHIFT_NOT_FINISHED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Already finished or void (`CONFLICT`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422':
+          description: The report is not humanly possible (`SHIFT_RESULT_IMPLAUSIBLE`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: SHIFT_RESULT_IMPLAUSIBLE
+                  message: 'The shift result does not look like a real shift.'
+                  details: { shiftId: '0198...', reason: too_fast }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/leave:
+    post:
+      tags: [work]
+      operationId: postJobsRektBurgerLeave
+      summary: Hang up the apron. Writes a "Glow-up" post if your net worth recovered.
+      description: >-
+        Takes no body. A shift still open is voided. If the stint began with net worth (Cash minus
+        debt) below `glowUpNetWorthCents`, has at least one paid shift and ends at or above it,
+        a "Glow-up" Timeline post is written (at most one per 24 hours). Harmless when you have
+        no job.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Left
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [employed, wasEmployed, glowUp, postId, netWorthCents]
+                properties:
+                  employed: { type: boolean, enum: [false] }
+                  wasEmployed: { type: boolean }
+                  glowUp: { type: boolean }
+                  postId: { type: string, nullable: true }
+                  netWorthCents: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /shifts:
     post:
@@ -1653,9 +1865,22 @@ paths:
                 type: object
                 required: [payCents, xp, promoted]
                 properties:
-                  payCents: { type: integer }
+                  payCents: { type: integer, description: 'Includes the ladder rank bonus, if any.' }
                   xp: { type: integer }
-                  promoted: { type: boolean }
+                  promoted: { type: boolean, description: 'The job level rose.' }
+                  ladder:
+                    type: object
+                    description: >-
+                      Present only when the shift's job is on the player's career ladder.
+                      `bonusCents` is already inside `payCents`.
+                    required: [ladderId, rank, title, bonusCents, xpAdded, promoted]
+                    properties:
+                      ladderId: { type: string }
+                      rank: { type: integer }
+                      title: { type: string }
+                      bonusCents: { type: integer }
+                      xpAdded: { type: integer }
+                      promoted: { type: boolean, description: 'The ladder rank rose (also sent as career_promoted).' }
               example:
                 payCents: 5500
                 xp: 120
@@ -1838,84 +2063,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
           description: Not enough Cash
-  /factory/config:
-    get:
-      tags: [markets]
-      operationId: getFactoryConfig
-      summary: Rugpull Factory rules for the Launchpad Tower UI.
-      description: >-
-        Fee, liquidity range, dev allocation cap, daily cap, cooldown, the art template ids,
-        the arc odds the server uses (percent; informational, the arc of a coin is hidden)
-        and the rug rule. All numbers are Cash cents or basis points.
-      x-phase: 4
-      responses:
-        '200':
-          description: Rules
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FactoryConfig' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-
-  /factory/me:
-    get:
-      tags: [markets]
-      operationId: getFactoryMe
-      summary: My heat and launch allowance.
-      description: >-
-        `heat` is 0..100 and halves every 24 hours; it is stored for the future police loop and
-        punishes nothing yet. `nextLaunchAt` is null when a launch is allowed now.
-      x-phase: 4
-      responses:
-        '200':
-          description: Caller state
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FactoryMe' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-
-  /factory/coins:
-    post:
-      tags: [markets]
-      operationId: postFactoryCoins
-      summary: Launch a Rugpull Factory coin.
-      description: >-
-        Parody, game-Cash-only, server-simulated: no token, no chain, nothing withdrawable.
-        Debits the launch fee (ledger `factory_launch_fee`, a Cash sink) plus the liquidity
-        (`factory_liquidity`, locked in the coin) in one transaction and creates a coin flagged
-        `playerLaunched` with the caller as creator. The creator is credited `devAllocationBps`
-        of the units the liquidity buys at the launch price. The coin shows on the Pulse board
-        (market room `CoinState.playerLaunched`) and `evt_coin_launch` is broadcast. The hidden
-        arc is sampled by the server from its own odds (rug 25, slow bleed 40, sideways 20, moon
-        15) and is never accepted from or sent to the client; unknown body fields are a 400.
-        Name and ticker pass a character allow-list and a profanity, slur, link and brand
-        filter. Limits: 3 launches per rolling 24 hours and a 10 minute cooldown. A replay with
-        the same `Idempotency-Key` returns the same coin without charging again. Trade the coin
-        with `POST /market/trades`.
-      x-phase: 4
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [name, ticker, templateId, liquidityCents, devAllocationBps]
-              properties:
-                name: { type: string, minLength: 2, maxLength: 24 }
-                ticker: { type: string, minLength: 2, maxLength: 6 }
-                templateId: { $ref: '#/components/schemas/FactoryTemplateId' }
-                liquidityCents: { type: integer, minimum: 1000, maximum: 100000 }
-                devAllocationBps: { type: integer, minimum: 0, maximum: 5000 }
-      responses:
-        '201':
-          description: The launched coin
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FactoryCoin' }
-        '400':
-          description: Validation failed, or the name or ticker is not allowed (`NAME_NOT_ALLOWED`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1930,28 +2077,6 @@ paths:
                 }
         '409':
           description: Already holding the maximum
-                      code: NAME_NOT_ALLOWED,
-                      message: 'That coin name or ticker is not allowed.',
-                      details: { reason: 'name or ticker not allowed' },
-                    },
-                }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '402':
-          description: Not enough Cash for the fee plus liquidity
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-              example:
-                {
-                  error:
-                    {
-                      code: INSUFFICIENT_CASH,
-                      message: 'Cash balance is insufficient.',
-                      details: { have: '1200', need: '5500' },
-                    },
-                }
-        '409':
-          description: The ticker is already used (`TICKER_TAKEN`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -2006,6 +2131,144 @@ paths:
       responses:
         '200':
           description: What was paid
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [questId, alreadyClaimed, reward]
+                properties:
+                  questId: { type: string }
+                  alreadyClaimed: { type: boolean }
+                  reward: { $ref: '#/components/schemas/QuestReward' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The target is not reached yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: QUEST_NOT_COMPLETE,
+                      message: 'This quest is not finished yet.',
+                      details: { questId: q_daily_shift_2, progress: 1, target: 2 },
+                    },
+                }
+
+  /factory/config:
+    get:
+      tags: [markets]
+      operationId: getFactoryConfig
+      summary: Rugpull Factory rules for the Launchpad Tower UI.
+      description: >-
+        Fee, liquidity range, dev allocation cap, daily cap, cooldown, the art template ids,
+        the arc odds the server uses (percent; informational, the arc of a coin is hidden)
+        and the rug rule. All numbers are Cash cents or basis points.
+      x-phase: 4
+      responses:
+        '200':
+          description: Rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryConfig' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /factory/me:
+    get:
+      tags: [markets]
+      operationId: getFactoryMe
+      summary: My heat and launch allowance.
+      description: >-
+        `heat` is 0..100 and halves every 24 hours; it is stored for the future police loop and
+        punishes nothing yet. `nextLaunchAt` is null when a launch is allowed now.
+      x-phase: 4
+      responses:
+        '200':
+          description: Caller state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryMe' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /factory/coins:
+    post:
+      tags: [markets]
+      operationId: postFactoryCoins
+      summary: Launch a Rugpull Factory coin.
+      description: >-
+        Parody, game-Cash-only, server-simulated: no token, no chain, nothing withdrawable.
+        Debits the launch fee (ledger `factory_launch_fee`, a Cash sink) plus the liquidity
+        (`factory_liquidity`, locked in the coin) in one transaction and creates a coin flagged
+        `playerLaunched` with the caller as creator. The creator is credited `devAllocationBps`
+        of the units the liquidity buys at the launch price. The coin shows on the Pulse board
+        (market room `CoinState.playerLaunched`) and `evt_coin_launch` is broadcast. The hidden
+        arc is sampled by the server from its own odds (rug 25, slow bleed 40, sideways 20, moon
+        15) and is never accepted from or sent to the client; unknown body fields are a 400.
+        Name and ticker pass a character allow-list and a profanity, slur, link and brand
+        filter. Limits: 3 launches per rolling 24 hours and a 10 minute cooldown. A replay with
+        the same `Idempotency-Key` returns the same coin without charging again. Trade the coin
+        with `POST /market/trades`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, ticker, templateId, liquidityCents, devAllocationBps]
+              properties:
+                name: { type: string, minLength: 2, maxLength: 24 }
+                ticker: { type: string, minLength: 2, maxLength: 6 }
+                templateId: { $ref: '#/components/schemas/FactoryTemplateId' }
+                liquidityCents: { type: integer, minimum: 1000, maximum: 100000 }
+                devAllocationBps: { type: integer, minimum: 0, maximum: 5000 }
+      responses:
+        '201':
+          description: The launched coin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryCoin' }
+        '400':
+          description: Validation failed, or the name or ticker is not allowed (`NAME_NOT_ALLOWED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NAME_NOT_ALLOWED,
+                      message: 'That coin name or ticker is not allowed.',
+                      details: { reason: 'name or ticker not allowed' },
+                    },
+                }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the fee plus liquidity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '1200', need: '5500' },
+                    },
+                }
+        '409':
+          description: The ticker is already used (`TICKER_TAKEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
                       code: TICKER_TAKEN,
                       message: 'That ticker is already used by another coin.',
                       details: {},
@@ -2055,27 +2318,6 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [questId, alreadyClaimed, reward]
-                properties:
-                  questId: { type: string }
-                  alreadyClaimed: { type: boolean }
-                  reward: { $ref: '#/components/schemas/QuestReward' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409':
-          description: The target is not reached yet
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-              example:
-                {
-                  error:
-                    {
-                      code: QUEST_NOT_COMPLETE,
-                      message: 'This quest is not finished yet.',
-                      details: { questId: q_daily_shift_2, progress: 1, target: 2 },
-                    },
-                }
                 required: [coins]
                 properties:
                   coins:
@@ -2083,7 +2325,6 @@ paths:
                     items: { $ref: '#/components/schemas/FactoryCoin' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-
   /factory/coins/{coinId}:
     get:
       tags: [markets]
@@ -2108,7 +2349,6 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
-
   /market/coins:
     get:
       tags: [markets]
@@ -6022,6 +6262,146 @@ components:
       properties:
         homeId: { type: string }
         guests: { type: array, items: { type: string, format: uuid } }
+    CareerJobList:
+      type: array
+      items:
+        type: object
+        required: [id, name, level, xp, active]
+        properties:
+          id: { type: string }
+          name: { type: string }
+          level: { type: integer, minimum: 0, maximum: 5 }
+          xp: { type: integer, minimum: 0 }
+          active: { type: boolean }
+    LadderRank:
+      type: object
+      required: [rank, id, title, xpRequired, payBonusBps, venueAccess, cosmeticId, status]
+      properties:
+        rank: { type: integer, minimum: 1, maximum: 7 }
+        id: { type: string, description: 'intern, junior, mid, senior, lead, head, legend' }
+        title: { type: string }
+        xpRequired: { type: integer, description: 'Cumulative ladder XP to hold this rank.' }
+        payBonusBps:
+          type: integer
+          description: Extra pay on shifts of the ladder's jobs, in basis points (700 = +7%), rounded down to whole cents.
+        venueAccess:
+          type: array
+          items: { type: string, example: 'perp_pit:high_roller_floor' }
+          description: 'Venue-area flags this rank unlocks, `venueId:area`.'
+        cosmeticId: { type: string, nullable: true, description: 'A `reward_career_*` cosmetic granted on reaching this rank.' }
+        status: { type: string, enum: [achieved, current, next, locked] }
+    LadderView:
+      type: object
+      required: [id, name, tribeIds, jobIds, active, suggested, xp, rank, title, payBonusBps, nextRank, xpToNext, ranks]
+      properties:
+        id: { type: string, enum: [builder, trader, caller, farmer, founder] }
+        name: { type: string }
+        tribeIds: { type: array, items: { type: string } }
+        jobIds: { type: array, items: { type: string }, description: 'Jobs (ids from the job list) whose shifts earn this ladder XP and the pay bonus.' }
+        active: { type: boolean, description: 'The ladder I am on now.' }
+        suggested: { type: boolean, description: 'Matches my tribe.' }
+        xp: { type: integer }
+        rank: { type: integer }
+        title: { type: string }
+        payBonusBps: { type: integer }
+        nextRank: { type: object, nullable: true }
+        xpToNext: { type: integer, nullable: true }
+        ranks: { type: array, items: { $ref: '#/components/schemas/LadderRank' } }
+    LaddersResponse:
+      type: object
+      required: [myLadderId, suggestedLadderId, joinCooldownHours, canSwitchAt, venueAccess, ladders]
+      properties:
+        myLadderId: { type: string, nullable: true }
+        suggestedLadderId: { type: string, nullable: true }
+        joinCooldownHours: { type: integer }
+        canSwitchAt: { type: string, format: date-time, nullable: true, description: 'Null when switching is allowed now.' }
+        venueAccess: { type: array, items: { type: string }, description: 'Cumulative venue-area flags of the ladder I am on.' }
+        ladders: { type: array, items: { $ref: '#/components/schemas/LadderView' } }
+    LadderJoinResult:
+      type: object
+      required: [ladderId, alreadyMember, rank, title, xp, joinedAt, nextSwitchAt]
+      properties:
+        ladderId: { type: string }
+        alreadyMember: { type: boolean }
+        rank: { type: integer }
+        title: { type: string }
+        xp: { type: integer }
+        joinedAt: { type: string, format: date-time }
+        nextSwitchAt: { type: string, format: date-time }
+    RektBurgerOrder:
+      type: object
+      required: [i, startedMs, servedMs, correct]
+      additionalProperties: false
+      properties:
+        i: { type: integer, minimum: 0, description: 'Ticket number, 0..n-1 in serving order.' }
+        startedMs: { type: integer, minimum: 0, description: 'When the ticket appeared, ms since the shift started.' }
+        servedMs: { type: integer, minimum: 0, description: 'When it was served, ms since the shift started.' }
+        correct: { type: boolean }
+    RektBurgerShift:
+      type: object
+      required: [shiftId, startedAt, minFinishAt, expiresAt, rules, resumed, postId]
+      properties:
+        shiftId: { type: string, format: uuid }
+        startedAt: { type: string, format: date-time }
+        minFinishAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        rules:
+          type: object
+          properties:
+            minOrders: { type: integer }
+            maxOrders: { type: integer }
+            minServeMs: { type: integer }
+            minGapMs: { type: integer }
+            maxServeMs: { type: integer }
+            maxCorrectOrdersPaid: { type: integer }
+        resumed: { type: boolean, description: 'An already-open shift was returned.' }
+        postId: { type: string, nullable: true, description: 'The "Back to the trenches" post, when this start wrote one.' }
+    RektBurgerFinish:
+      type: object
+      required: [shiftId, orders, correct, payCents, cappedCents, remainingTodayCents, uniformGranted]
+      properties:
+        shiftId: { type: string, format: uuid }
+        orders: { type: integer }
+        correct: { type: integer }
+        payCents: { type: integer, description: 'Paid, after the shift and daily caps.' }
+        cappedCents: { type: integer, description: 'Withheld by the daily cap.' }
+        remainingTodayCents: { type: integer }
+        uniformGranted: { type: boolean, description: 'First finish only: the Rekt Burger Uniform cosmetic.' }
+    RektBurger:
+      type: object
+      required: [jobId, name, venueId, propId, unlocked, reason, lockedHint, employed, stintShifts, netWorthCents, glowUpNetWorthCents, pay, shift, uniformCosmeticId, hasUniform]
+      properties:
+        jobId: { type: string, enum: [rekt-burger] }
+        name: { type: string }
+        venueId: { type: string, description: 'The venue it sits in (the_trenches).' }
+        propId: { type: string }
+        unlocked: { type: boolean }
+        reason: { type: string, nullable: true, enum: [trencher, broke, liquidated, null] }
+        lockedHint:
+          type: object
+          nullable: true
+          properties:
+            cashCents: { type: integer }
+            debtCents: { type: integer }
+            brokeCashCentsAtMost: { type: integer }
+            liquidationCashBelowCents: { type: integer }
+        employed: { type: boolean }
+        stintShifts: { type: integer }
+        netWorthCents: { type: integer, description: 'Cash minus debt.' }
+        glowUpNetWorthCents: { type: integer }
+        pay:
+          type: object
+          properties:
+            baseCents: { type: integer }
+            perCorrectOrderCents: { type: integer }
+            maxShiftCents: { type: integer }
+            dailyCapCents: { type: integer }
+            earnedTodayCents: { type: integer }
+            remainingTodayCents: { type: integer }
+            resetsAt: { type: string, format: date-time }
+        shift: { allOf: [{ $ref: '#/components/schemas/RektBurgerShift' }], nullable: true }
+        uniformCosmeticId: { type: string }
+        hasUniform: { type: boolean }
     Job:
       type: object
       required: [careerId, level, xp]
@@ -6439,14 +6819,18 @@ components:
         at: { type: string, format: date-time }
         kind:
           type: string
-          enum: [player, sleuth]
-          description: '`sleuth` is an NPC exposé on a rugged Factory coin (author "The Sleuth").'
+          enum: [player, sleuth, career]
+          description: >-
+            `sleuth` is an NPC exposé on a rugged Factory coin (author "The Sleuth"). `career` is
+            a server-written post about the author's own job (their alias, fixed text), e.g. "Back
+            to the trenches" or "Glow-up" for Rekt Burger.
         meta:
           type: object
           nullable: true
           description: >-
-            Sleuth posts only: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat,
-            deepLink}`; `deepLink` is `venue:launchpad_tower`.
+            Sleuth posts: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat,
+            deepLink}`; `deepLink` is `venue:launchpad_tower`. Career posts: `{event:
+            back_to_trenches|glow_up, jobId: rekt-burger, deepLink: venue:the_trenches}`.
           additionalProperties: true
     Business:
       type: object

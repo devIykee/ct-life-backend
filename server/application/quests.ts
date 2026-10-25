@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { runInTransaction } from '../shared/db/uow.js';
 import { NotFoundError, QuestNotCompleteError } from '../shared/domain/errors.js';
 import { nextUtcMidnight, utcDate } from './daily-streak.js';
+import { recordCareerAction } from './ladders.js';
 import { publishToUser } from './realtime-bus.js';
 import { weekIso } from './season-clock.js';
 import type { AppContext } from './context.js';
@@ -275,6 +276,9 @@ export async function recordQuestEvent(
   now: Date = new Date(),
   counterpart?: CounterpartRule,
 ): Promise<void> {
+  // The same real event also feeds the player's career ladder (never throws). A shift has
+  // its own, richer path in `ShiftsService`, so it is not counted twice here.
+  if (verb !== 'shift_complete') await recordCareerAction(ctx, userId, verb, ref, now, counterpart);
   try {
     const p = picksFor(ctx, userId, now);
     const matches = [

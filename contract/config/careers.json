@@ -50,7 +50,10 @@
       "name": "Junior Analyst",
       "active": true,
       "phase": 1,
-      "skillGates": { "skill": "coding", "level": 1 },
+      "skillGates": {
+        "skill": "coding",
+        "level": 1
+      },
       "levels": [
         {
           "level": 1,
@@ -94,7 +97,10 @@
       "name": "KOL Engagement",
       "active": true,
       "phase": 1,
-      "skillGates": { "skill": "writing", "level": 2 },
+      "skillGates": {
+        "skill": "writing",
+        "level": 2
+      },
       "levels": [
         {
           "level": 1,
@@ -138,7 +144,10 @@
       "name": "Copywriter",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "writing", "level": 1 },
+      "skillGates": {
+        "skill": "writing",
+        "level": 1
+      },
       "levels": [
         {
           "level": 1,
@@ -182,7 +191,10 @@
       "name": "Graphic Designer",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "design", "level": 1 },
+      "skillGates": {
+        "skill": "design",
+        "level": 1
+      },
       "levels": [
         {
           "level": 1,
@@ -226,9 +238,18 @@
       "name": "Smart Contract Auditor",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "security", "level": 3 },
+      "skillGates": {
+        "skill": "security",
+        "level": 3
+      },
       "levels": [
-        { "level": 1, "payCents": 8000, "shiftSec": 70, "xp": 150, "miniGameId": "auditor_report" },
+        {
+          "level": 1,
+          "payCents": 8000,
+          "shiftSec": 70,
+          "xp": 150,
+          "miniGameId": "auditor_report"
+        },
         {
           "level": 2,
           "payCents": 11000,
@@ -250,7 +271,13 @@
           "xp": 225,
           "miniGameId": "auditor_report"
         },
-        { "level": 5, "payCents": 28000, "shiftSec": 80, "xp": 250, "miniGameId": "auditor_report" }
+        {
+          "level": 5,
+          "payCents": 28000,
+          "shiftSec": 80,
+          "xp": 250,
+          "miniGameId": "auditor_report"
+        }
       ]
     },
     {
@@ -258,11 +285,32 @@
       "name": "Yield Farmer",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "coding", "level": 2 },
+      "skillGates": {
+        "skill": "coding",
+        "level": 2
+      },
       "levels": [
-        { "level": 1, "payCents": 5000, "shiftSec": 50, "xp": 110, "miniGameId": "yield_farm_apy" },
-        { "level": 2, "payCents": 7000, "shiftSec": 55, "xp": 130, "miniGameId": "yield_farm_apy" },
-        { "level": 3, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "yield_farm_apy" },
+        {
+          "level": 1,
+          "payCents": 5000,
+          "shiftSec": 50,
+          "xp": 110,
+          "miniGameId": "yield_farm_apy"
+        },
+        {
+          "level": 2,
+          "payCents": 7000,
+          "shiftSec": 55,
+          "xp": 130,
+          "miniGameId": "yield_farm_apy"
+        },
+        {
+          "level": 3,
+          "payCents": 9500,
+          "shiftSec": 60,
+          "xp": 150,
+          "miniGameId": "yield_farm_apy"
+        },
         {
           "level": 4,
           "payCents": 12000,
@@ -270,7 +318,13 @@
           "xp": 170,
           "miniGameId": "yield_farm_apy"
         },
-        { "level": 5, "payCents": 16000, "shiftSec": 65, "xp": 200, "miniGameId": "yield_farm_apy" }
+        {
+          "level": 5,
+          "payCents": 16000,
+          "shiftSec": 65,
+          "xp": 200,
+          "miniGameId": "yield_farm_apy"
+        }
       ]
     },
     {
@@ -278,13 +332,46 @@
       "name": "Shill Runner",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "clout", "level": 1 },
+      "skillGates": {
+        "skill": "clout",
+        "level": 1
+      },
       "levels": [
-        { "level": 1, "payCents": 3500, "shiftSec": 45, "xp": 80, "miniGameId": "shill_post" },
-        { "level": 2, "payCents": 5000, "shiftSec": 45, "xp": 100, "miniGameId": "shill_post" },
-        { "level": 3, "payCents": 7000, "shiftSec": 50, "xp": 120, "miniGameId": "shill_post" },
-        { "level": 4, "payCents": 9500, "shiftSec": 50, "xp": 140, "miniGameId": "shill_post" },
-        { "level": 5, "payCents": 12500, "shiftSec": 55, "xp": 160, "miniGameId": "shill_post" }
+        {
+          "level": 1,
+          "payCents": 3500,
+          "shiftSec": 45,
+          "xp": 80,
+          "miniGameId": "shill_post"
+        },
+        {
+          "level": 2,
+          "payCents": 5000,
+          "shiftSec": 45,
+          "xp": 100,
+          "miniGameId": "shill_post"
+        },
+        {
+          "level": 3,
+          "payCents": 7000,
+          "shiftSec": 50,
+          "xp": 120,
+          "miniGameId": "shill_post"
+        },
+        {
+          "level": 4,
+          "payCents": 9500,
+          "shiftSec": 50,
+          "xp": 140,
+          "miniGameId": "shill_post"
+        },
+        {
+          "level": 5,
+          "payCents": 12500,
+          "shiftSec": 55,
+          "xp": 160,
+          "miniGameId": "shill_post"
+        }
       ]
     },
     {
@@ -292,13 +379,46 @@
       "name": "Doxx Researcher",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "clout", "level": 2 },
+      "skillGates": {
+        "skill": "clout",
+        "level": 2
+      },
       "levels": [
-        { "level": 1, "payCents": 5000, "shiftSec": 55, "xp": 110, "miniGameId": "doxx_thread" },
-        { "level": 2, "payCents": 7000, "shiftSec": 55, "xp": 130, "miniGameId": "doxx_thread" },
-        { "level": 3, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "doxx_thread" },
-        { "level": 4, "payCents": 12500, "shiftSec": 60, "xp": 170, "miniGameId": "doxx_thread" },
-        { "level": 5, "payCents": 17000, "shiftSec": 65, "xp": 200, "miniGameId": "doxx_thread" }
+        {
+          "level": 1,
+          "payCents": 5000,
+          "shiftSec": 55,
+          "xp": 110,
+          "miniGameId": "doxx_thread"
+        },
+        {
+          "level": 2,
+          "payCents": 7000,
+          "shiftSec": 55,
+          "xp": 130,
+          "miniGameId": "doxx_thread"
+        },
+        {
+          "level": 3,
+          "payCents": 9500,
+          "shiftSec": 60,
+          "xp": 150,
+          "miniGameId": "doxx_thread"
+        },
+        {
+          "level": 4,
+          "payCents": 12500,
+          "shiftSec": 60,
+          "xp": 170,
+          "miniGameId": "doxx_thread"
+        },
+        {
+          "level": 5,
+          "payCents": 17000,
+          "shiftSec": 65,
+          "xp": 200,
+          "miniGameId": "doxx_thread"
+        }
       ]
     },
     {
@@ -306,13 +426,46 @@
       "name": "Trend Hunter",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "clout", "level": 3 },
+      "skillGates": {
+        "skill": "clout",
+        "level": 3
+      },
       "levels": [
-        { "level": 1, "payCents": 6000, "shiftSec": 50, "xp": 120, "miniGameId": "trend_call" },
-        { "level": 2, "payCents": 8000, "shiftSec": 55, "xp": 140, "miniGameId": "trend_call" },
-        { "level": 3, "payCents": 11000, "shiftSec": 55, "xp": 160, "miniGameId": "trend_call" },
-        { "level": 4, "payCents": 14500, "shiftSec": 60, "xp": 180, "miniGameId": "trend_call" },
-        { "level": 5, "payCents": 19500, "shiftSec": 60, "xp": 200, "miniGameId": "trend_call" }
+        {
+          "level": 1,
+          "payCents": 6000,
+          "shiftSec": 50,
+          "xp": 120,
+          "miniGameId": "trend_call"
+        },
+        {
+          "level": 2,
+          "payCents": 8000,
+          "shiftSec": 55,
+          "xp": 140,
+          "miniGameId": "trend_call"
+        },
+        {
+          "level": 3,
+          "payCents": 11000,
+          "shiftSec": 55,
+          "xp": 160,
+          "miniGameId": "trend_call"
+        },
+        {
+          "level": 4,
+          "payCents": 14500,
+          "shiftSec": 60,
+          "xp": 180,
+          "miniGameId": "trend_call"
+        },
+        {
+          "level": 5,
+          "payCents": 19500,
+          "shiftSec": 60,
+          "xp": 200,
+          "miniGameId": "trend_call"
+        }
       ]
     },
     {
@@ -320,13 +473,46 @@
       "name": "KOL Manager",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "clout", "level": 4 },
+      "skillGates": {
+        "skill": "clout",
+        "level": 4
+      },
       "levels": [
-        { "level": 1, "payCents": 7000, "shiftSec": 60, "xp": 130, "miniGameId": "kol_negotiate" },
-        { "level": 2, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "kol_negotiate" },
-        { "level": 3, "payCents": 13000, "shiftSec": 65, "xp": 170, "miniGameId": "kol_negotiate" },
-        { "level": 4, "payCents": 17500, "shiftSec": 65, "xp": 190, "miniGameId": "kol_negotiate" },
-        { "level": 5, "payCents": 23000, "shiftSec": 70, "xp": 220, "miniGameId": "kol_negotiate" }
+        {
+          "level": 1,
+          "payCents": 7000,
+          "shiftSec": 60,
+          "xp": 130,
+          "miniGameId": "kol_negotiate"
+        },
+        {
+          "level": 2,
+          "payCents": 9500,
+          "shiftSec": 60,
+          "xp": 150,
+          "miniGameId": "kol_negotiate"
+        },
+        {
+          "level": 3,
+          "payCents": 13000,
+          "shiftSec": 65,
+          "xp": 170,
+          "miniGameId": "kol_negotiate"
+        },
+        {
+          "level": 4,
+          "payCents": 17500,
+          "shiftSec": 65,
+          "xp": 190,
+          "miniGameId": "kol_negotiate"
+        },
+        {
+          "level": 5,
+          "payCents": 23000,
+          "shiftSec": 70,
+          "xp": 220,
+          "miniGameId": "kol_negotiate"
+        }
       ]
     },
     {
@@ -334,13 +520,46 @@
       "name": "DevRel",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "writing", "level": 3 },
+      "skillGates": {
+        "skill": "writing",
+        "level": 3
+      },
       "levels": [
-        { "level": 1, "payCents": 6000, "shiftSec": 55, "xp": 120, "miniGameId": "devrel_ama" },
-        { "level": 2, "payCents": 8000, "shiftSec": 55, "xp": 140, "miniGameId": "devrel_ama" },
-        { "level": 3, "payCents": 11000, "shiftSec": 60, "xp": 160, "miniGameId": "devrel_ama" },
-        { "level": 4, "payCents": 14500, "shiftSec": 60, "xp": 180, "miniGameId": "devrel_ama" },
-        { "level": 5, "payCents": 19500, "shiftSec": 65, "xp": 200, "miniGameId": "devrel_ama" }
+        {
+          "level": 1,
+          "payCents": 6000,
+          "shiftSec": 55,
+          "xp": 120,
+          "miniGameId": "devrel_ama"
+        },
+        {
+          "level": 2,
+          "payCents": 8000,
+          "shiftSec": 55,
+          "xp": 140,
+          "miniGameId": "devrel_ama"
+        },
+        {
+          "level": 3,
+          "payCents": 11000,
+          "shiftSec": 60,
+          "xp": 160,
+          "miniGameId": "devrel_ama"
+        },
+        {
+          "level": 4,
+          "payCents": 14500,
+          "shiftSec": 60,
+          "xp": 180,
+          "miniGameId": "devrel_ama"
+        },
+        {
+          "level": 5,
+          "payCents": 19500,
+          "shiftSec": 65,
+          "xp": 200,
+          "miniGameId": "devrel_ama"
+        }
       ]
     },
     {
@@ -348,13 +567,46 @@
       "name": "Alpha Lead",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "trading", "level": 3 },
+      "skillGates": {
+        "skill": "trading",
+        "level": 3
+      },
       "levels": [
-        { "level": 1, "payCents": 7000, "shiftSec": 55, "xp": 130, "miniGameId": "alpha_call" },
-        { "level": 2, "payCents": 9500, "shiftSec": 60, "xp": 150, "miniGameId": "alpha_call" },
-        { "level": 3, "payCents": 13000, "shiftSec": 60, "xp": 170, "miniGameId": "alpha_call" },
-        { "level": 4, "payCents": 17500, "shiftSec": 65, "xp": 190, "miniGameId": "alpha_call" },
-        { "level": 5, "payCents": 23000, "shiftSec": 65, "xp": 220, "miniGameId": "alpha_call" }
+        {
+          "level": 1,
+          "payCents": 7000,
+          "shiftSec": 55,
+          "xp": 130,
+          "miniGameId": "alpha_call"
+        },
+        {
+          "level": 2,
+          "payCents": 9500,
+          "shiftSec": 60,
+          "xp": 150,
+          "miniGameId": "alpha_call"
+        },
+        {
+          "level": 3,
+          "payCents": 13000,
+          "shiftSec": 60,
+          "xp": 170,
+          "miniGameId": "alpha_call"
+        },
+        {
+          "level": 4,
+          "payCents": 17500,
+          "shiftSec": 65,
+          "xp": 190,
+          "miniGameId": "alpha_call"
+        },
+        {
+          "level": 5,
+          "payCents": 23000,
+          "shiftSec": 65,
+          "xp": 220,
+          "miniGameId": "alpha_call"
+        }
       ]
     },
     {
@@ -362,14 +614,542 @@
       "name": "Rug Sleuth",
       "active": false,
       "phase": 4,
-      "skillGates": { "skill": "security", "level": 4 },
+      "skillGates": {
+        "skill": "security",
+        "level": 4
+      },
       "levels": [
-        { "level": 1, "payCents": 8000, "shiftSec": 60, "xp": 150, "miniGameId": "sleuth_thread" },
-        { "level": 2, "payCents": 11000, "shiftSec": 60, "xp": 175, "miniGameId": "sleuth_thread" },
-        { "level": 3, "payCents": 15000, "shiftSec": 65, "xp": 200, "miniGameId": "sleuth_thread" },
-        { "level": 4, "payCents": 20000, "shiftSec": 70, "xp": 225, "miniGameId": "sleuth_thread" },
-        { "level": 5, "payCents": 28000, "shiftSec": 75, "xp": 250, "miniGameId": "sleuth_thread" }
+        {
+          "level": 1,
+          "payCents": 8000,
+          "shiftSec": 60,
+          "xp": 150,
+          "miniGameId": "sleuth_thread"
+        },
+        {
+          "level": 2,
+          "payCents": 11000,
+          "shiftSec": 60,
+          "xp": 175,
+          "miniGameId": "sleuth_thread"
+        },
+        {
+          "level": 3,
+          "payCents": 15000,
+          "shiftSec": 65,
+          "xp": 200,
+          "miniGameId": "sleuth_thread"
+        },
+        {
+          "level": 4,
+          "payCents": 20000,
+          "shiftSec": 70,
+          "xp": 225,
+          "miniGameId": "sleuth_thread"
+        },
+        {
+          "level": 5,
+          "payCents": 28000,
+          "shiftSec": 75,
+          "xp": 250,
+          "miniGameId": "sleuth_thread"
+        }
       ]
+    }
+  ],
+  "ladderJoinCooldownHours": 72,
+  "ladderActionXpDailyCap": 120,
+  "ladders": [
+    {
+      "id": "builder",
+      "name": "Builder",
+      "tribeIds": ["builder"],
+      "jobIds": ["junior_analyst", "dev_rel", "smart_contract_auditor"],
+      "actionXp": {
+        "project_found": 10,
+        "project_launch": 25
+      },
+      "ranks": [
+        {
+          "rank": 1,
+          "id": "intern",
+          "title": "Builder Intern",
+          "xpRequired": 0,
+          "payBonusBps": 0,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 2,
+          "id": "junior",
+          "title": "Junior Dev",
+          "xpRequired": 200,
+          "payBonusBps": 300,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 3,
+          "id": "mid",
+          "title": "Shipper",
+          "xpRequired": 600,
+          "payBonusBps": 700,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_builder_mid"
+        },
+        {
+          "rank": 4,
+          "id": "senior",
+          "title": "Senior Builder",
+          "xpRequired": 1500,
+          "payBonusBps": 1200,
+          "venueAccess": ["hackathon_house:vip_desk"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 5,
+          "id": "lead",
+          "title": "Tech Lead",
+          "xpRequired": 3500,
+          "payBonusBps": 1800,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_builder_lead"
+        },
+        {
+          "rank": 6,
+          "id": "head",
+          "title": "Head of Eng",
+          "xpRequired": 7000,
+          "payBonusBps": 2600,
+          "venueAccess": ["launchpad_tower:roof_deck"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 7,
+          "id": "legend",
+          "title": "Builder Legend",
+          "xpRequired": 12000,
+          "payBonusBps": 3500,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_builder_legend"
+        }
+      ]
+    },
+    {
+      "id": "trader",
+      "name": "Trader",
+      "tribeIds": ["perp_degen", "prediction_shark"],
+      "jobIds": ["junior_analyst", "alpha_lead"],
+      "actionXp": {
+        "perp_open": 4,
+        "perp_close": 8,
+        "prediction_place": 4
+      },
+      "ranks": [
+        {
+          "rank": 1,
+          "id": "intern",
+          "title": "Trading Intern",
+          "xpRequired": 0,
+          "payBonusBps": 0,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 2,
+          "id": "junior",
+          "title": "Scalper",
+          "xpRequired": 200,
+          "payBonusBps": 300,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 3,
+          "id": "mid",
+          "title": "Swing Trader",
+          "xpRequired": 600,
+          "payBonusBps": 700,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_trader_mid"
+        },
+        {
+          "rank": 4,
+          "id": "senior",
+          "title": "Desk Trader",
+          "xpRequired": 1500,
+          "payBonusBps": 1200,
+          "venueAccess": ["perp_pit:high_roller_floor"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 5,
+          "id": "lead",
+          "title": "Prop Lead",
+          "xpRequired": 3500,
+          "payBonusBps": 1800,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_trader_lead"
+        },
+        {
+          "rank": 6,
+          "id": "head",
+          "title": "Fund Manager",
+          "xpRequired": 7000,
+          "payBonusBps": 2600,
+          "venueAccess": ["prediction_pit:vip_booth"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 7,
+          "id": "legend",
+          "title": "Trading Legend",
+          "xpRequired": 12000,
+          "payBonusBps": 3500,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_trader_legend"
+        }
+      ]
+    },
+    {
+      "id": "caller",
+      "name": "Caller",
+      "tribeIds": ["caller"],
+      "jobIds": ["kol_engagement", "shill_runner", "kol_manager"],
+      "actionXp": {
+        "alpha_call": 15,
+        "paid_call": 12,
+        "tip_send": 3
+      },
+      "ranks": [
+        {
+          "rank": 1,
+          "id": "intern",
+          "title": "Call Intern",
+          "xpRequired": 0,
+          "payBonusBps": 0,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 2,
+          "id": "junior",
+          "title": "Reply Guy",
+          "xpRequired": 200,
+          "payBonusBps": 300,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 3,
+          "id": "mid",
+          "title": "Alpha Poster",
+          "xpRequired": 600,
+          "payBonusBps": 700,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_caller_mid"
+        },
+        {
+          "rank": 4,
+          "id": "senior",
+          "title": "KOL",
+          "xpRequired": 1500,
+          "payBonusBps": 1200,
+          "venueAccess": ["spaces_studio:green_room"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 5,
+          "id": "lead",
+          "title": "Shot Caller",
+          "xpRequired": 3500,
+          "payBonusBps": 1800,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_caller_lead"
+        },
+        {
+          "rank": 6,
+          "id": "head",
+          "title": "Cabal Voice",
+          "xpRequired": 7000,
+          "payBonusBps": 2600,
+          "venueAccess": ["cabal_lounge:guest_list"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 7,
+          "id": "legend",
+          "title": "Caller Legend",
+          "xpRequired": 12000,
+          "payBonusBps": 3500,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_caller_legend"
+        }
+      ]
+    },
+    {
+      "id": "farmer",
+      "name": "Farmer",
+      "tribeIds": ["airdrop_farmer"],
+      "jobIds": ["discord_mod", "yield_farmer"],
+      "actionXp": {
+        "airdrop_claim": 20,
+        "home_visit": 4
+      },
+      "ranks": [
+        {
+          "rank": 1,
+          "id": "intern",
+          "title": "Farm Intern",
+          "xpRequired": 0,
+          "payBonusBps": 0,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 2,
+          "id": "junior",
+          "title": "Dust Farmer",
+          "xpRequired": 200,
+          "payBonusBps": 300,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 3,
+          "id": "mid",
+          "title": "Quest Grinder",
+          "xpRequired": 600,
+          "payBonusBps": 700,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_farmer_mid"
+        },
+        {
+          "rank": 4,
+          "id": "senior",
+          "title": "Points Farmer",
+          "xpRequired": 1500,
+          "payBonusBps": 1200,
+          "venueAccess": ["airdrop_fields:greenhouse"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 5,
+          "id": "lead",
+          "title": "Farm Lead",
+          "xpRequired": 3500,
+          "payBonusBps": 1800,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_farmer_lead"
+        },
+        {
+          "rank": 6,
+          "id": "head",
+          "title": "Airdrop Baron",
+          "xpRequired": 7000,
+          "payBonusBps": 2600,
+          "venueAccess": ["ore_refinery:foreman_office"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 7,
+          "id": "legend",
+          "title": "Farmer Legend",
+          "xpRequired": 12000,
+          "payBonusBps": 3500,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_farmer_legend"
+        }
+      ]
+    },
+    {
+      "id": "founder",
+      "name": "Founder",
+      "tribeIds": [],
+      "jobIds": ["discord_mod", "dev_rel"],
+      "actionXp": {
+        "project_found": 25,
+        "project_launch": 40
+      },
+      "ranks": [
+        {
+          "rank": 1,
+          "id": "intern",
+          "title": "Founder Intern",
+          "xpRequired": 0,
+          "payBonusBps": 0,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 2,
+          "id": "junior",
+          "title": "Stealth Founder",
+          "xpRequired": 200,
+          "payBonusBps": 300,
+          "venueAccess": [],
+          "cosmeticId": null
+        },
+        {
+          "rank": 3,
+          "id": "mid",
+          "title": "Pre-Seed Founder",
+          "xpRequired": 600,
+          "payBonusBps": 700,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_founder_mid"
+        },
+        {
+          "rank": 4,
+          "id": "senior",
+          "title": "Seed Founder",
+          "xpRequired": 1500,
+          "payBonusBps": 1200,
+          "venueAccess": ["vc_row:pitch_room"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 5,
+          "id": "lead",
+          "title": "Serial Founder",
+          "xpRequired": 3500,
+          "payBonusBps": 1800,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_founder_lead"
+        },
+        {
+          "rank": 6,
+          "id": "head",
+          "title": "Unicorn Founder",
+          "xpRequired": 7000,
+          "payBonusBps": 2600,
+          "venueAccess": ["launchpad_tower:penthouse"],
+          "cosmeticId": null
+        },
+        {
+          "rank": 7,
+          "id": "legend",
+          "title": "Founder Legend",
+          "xpRequired": 12000,
+          "payBonusBps": 3500,
+          "venueAccess": [],
+          "cosmeticId": "reward_career_founder_legend"
+        }
+      ]
+    }
+  ],
+  "rektBurger": {
+    "id": "rekt-burger",
+    "name": "Rekt Burger",
+    "venueId": "the_trenches",
+    "propId": "rekt_burger_counter",
+    "preUnlockTribeIds": ["trencher"],
+    "unlock": {
+      "brokeCashCentsAtMost": 0,
+      "requiresDebt": true,
+      "liquidationCashBelowCents": 2000
+    },
+    "glowUpNetWorthCents": 100000,
+    "postCooldownHours": 24,
+    "pay": {
+      "baseCents": 300,
+      "perCorrectOrderCents": 60,
+      "maxCorrectOrdersPaid": 20,
+      "dailyCapCents": 4500
+    },
+    "shift": {
+      "minDurationSec": 45,
+      "maxDurationSec": 180,
+      "minOrders": 3,
+      "maxOrders": 40,
+      "minServeMs": 1200,
+      "minGapMs": 900,
+      "maxServeMs": 30000,
+      "toleranceMs": 1500,
+      "minServeJitterMs": 15
+    },
+    "uniformCosmeticId": "reward_rekt_burger_uniform"
+  },
+  "cosmetics": [
+    {
+      "cosmeticId": "reward_career_builder_mid",
+      "name": "Builder Lanyard",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_career_builder_lead",
+      "name": "Shipper Hoodie",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_career_builder_legend",
+      "name": "Builder Legend Halo",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_career_trader_mid",
+      "name": "Trader Terminal Pin",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_career_trader_lead",
+      "name": "Prop Desk Vest",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_career_trader_legend",
+      "name": "Trading Legend Halo",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_career_caller_mid",
+      "name": "Caller Ring Light Pin",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_career_caller_lead",
+      "name": "Verified Blazer",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_career_caller_legend",
+      "name": "Caller Legend Halo",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_career_farmer_mid",
+      "name": "Farmer Watering Can Pin",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_career_farmer_lead",
+      "name": "Overalls of Many Wallets",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_career_farmer_legend",
+      "name": "Farmer Legend Halo",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_career_founder_mid",
+      "name": "Founder Pitch Deck Pin",
+      "slot": "acc"
+    },
+    {
+      "cosmeticId": "reward_career_founder_lead",
+      "name": "Founder Quarter-Zip",
+      "slot": "top"
+    },
+    {
+      "cosmeticId": "reward_career_founder_legend",
+      "name": "Founder Legend Halo",
+      "slot": "head"
+    },
+    {
+      "cosmeticId": "reward_rekt_burger_uniform",
+      "name": "Rekt Burger Uniform",
+      "slot": "top"
     }
   ]
 }

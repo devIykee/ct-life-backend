@@ -30,14 +30,15 @@ export function readContractJson<T>(...parts: string[]): T {
 
 let cosmeticsSynced: Promise<void> | null = null;
 
-/** Every reward cosmetic defined by `season_tracks.json` and `nods.json`. */
+/** Every reward cosmetic defined by `season_tracks.json`, `nods.json` and `careers.json`. */
 export function allRewardCosmetics(): RewardCosmeticDef[] {
   const season = readContractJson<{ cosmetics: RewardCosmeticDef[] }>(
     'config',
     'season_tracks.json',
   );
   const nods = readContractJson<{ cosmetics: RewardCosmeticDef[] }>('ids', 'nods.json');
-  return [...season.cosmetics, ...nods.cosmetics];
+  const careers = readContractJson<{ cosmetics: RewardCosmeticDef[] }>('config', 'careers.json');
+  return [...season.cosmetics, ...nods.cosmetics, ...careers.cosmetics];
 }
 
 /**

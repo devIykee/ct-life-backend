@@ -38,6 +38,7 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { notifyLiquidated } from './push-delivery.js';
 import { recordQuestEvent } from './quests.js';
+import { onPlayerRekt } from './rekt-burger.js';
 import type { AppContext } from './context.js';
 
 export type PerpSide = 'long' | 'short';
@@ -134,10 +135,14 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     });
   }
   const opened = await runInTransaction(async (client) => {
-    const cr = await client.query<{ coin_id: string; ticker: string; price_micros: string; stage: string }>(
-      `SELECT coin_id, ticker, price_micros, stage FROM coins WHERE coin_id = $1 FOR UPDATE`,
-      [input.coinId],
-    );
+    const cr = await client.query<{
+      coin_id: string;
+      ticker: string;
+      price_micros: string;
+      stage: string;
+    }>(`SELECT coin_id, ticker, price_micros, stage FROM coins WHERE coin_id = $1 FOR UPDATE`, [
+      input.coinId,
+    ]);
     if ((cr.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'coin', id: input.coinId });
     const coin = cr.rows[0]!;
     // B38: reject dead coins
@@ -155,7 +160,10 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');
     if (cash < BigInt(input.marginCents)) {
       // B38: use InsufficientCashError (402) instead of ForbiddenError
-      throw new InsufficientCashError({ have: cash.toString(), need: input.marginCents.toString() });
+      throw new InsufficientCashError({
+        have: cash.toString(),
+        need: input.marginCents.toString(),
+      });
     }
     await client.query(
       `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now() WHERE user_id = $2`,
@@ -206,11 +214,7 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
  *   long  : (close - entry) * units where units = margin * leverage
  *   short : (entry - close) * units
  */
-export async function closePerp(
-  ctx: AppContext,
-  userId: string,
-  perpId: string,
-): Promise<PerpRow> {
+export async function closePerp(ctx: AppContext, userId: string, perpId: string): Promise<PerpRow> {
   const closed: PerpRow = await runInTransaction(async (client) => {
     const pr = await client.query<{
       perp_id: string;
@@ -368,7 +372,10 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
   });
   // After the commit: the push never holds up, or fails, the liquidation.
   const r = rekt as { userId: string; lossCents: bigint } | null;
-  if (liquidated && r) await notifyLiquidated(ctx, r.userId, perpId, r.lossCents);
+  if (liquidated && r) {
+    await notifyLiquidated(ctx, r.userId, perpId, r.lossCents);
+    await onPlayerRekt(ctx, r.userId);
+  }
   return liquidated;
 }
 

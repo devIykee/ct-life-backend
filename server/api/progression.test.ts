@@ -151,7 +151,7 @@ describe('career progression', () => {
     const done = { results: [{ miniGameId: 'discord_mod_ban', score: 3 }] };
     const first = await call(u, 'POST', `/v1/shifts/${shiftId}/complete`, done, key);
     expect(first.status).toBe(200);
-    expect(first.body).toEqual({ payCents: 1200, xp: 30, promoted: false });
+    expect(first.body).toMatchObject({ payCents: 1200, xp: 30, promoted: false });
 
     const replay = await call(u, 'POST', `/v1/shifts/${shiftId}/complete`, done, key);
     expect(replay.body).toEqual(first.body);
@@ -180,13 +180,13 @@ describe('career progression', () => {
     const s1 = await startFinishedShift(u);
     const r1 = await call(u, 'POST', `/v1/shifts/${s1}/complete`, perfect);
     // Level 1 pay; 90 + 100 XP crosses the 100 threshold with 90 left.
-    expect(r1.body).toEqual({ payCents: 4000, xp: 100, promoted: true });
+    expect(r1.body).toMatchObject({ payCents: 4000, xp: 100, promoted: true });
     expect(await discordMod(u)).toMatchObject({ level: 2, xp: 90, payCents: 5500 });
 
     const s2 = await startFinishedShift(u);
     const r2 = await call(u, 'POST', `/v1/shifts/${s2}/complete`, perfect);
     // Level 2 pay; 90 + 100 XP crosses the 120 threshold with 70 left.
-    expect(r2.body).toEqual({ payCents: 5500, xp: 100, promoted: true });
+    expect(r2.body).toMatchObject({ payCents: 5500, xp: 100, promoted: true });
     expect(await discordMod(u)).toMatchObject({ level: 3, xp: 70 });
   });
 });

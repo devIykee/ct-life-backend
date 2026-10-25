@@ -291,6 +291,26 @@
       "code": "LAUNCH_COOLDOWN",
       "httpStatus": 429,
       "message": "Wait before launching another coin."
+    },
+    {
+      "code": "CAREER_SWITCH_COOLDOWN",
+      "httpStatus": 409,
+      "message": "You switched career ladders recently; wait for the cooldown to end."
+    },
+    {
+      "code": "JOB_LOCKED",
+      "httpStatus": 403,
+      "message": "This job is not unlocked for you."
+    },
+    {
+      "code": "JOB_DAILY_CAP",
+      "httpStatus": 409,
+      "message": "You have earned today's maximum pay from this job."
+    },
+    {
+      "code": "SHIFT_RESULT_IMPLAUSIBLE",
+      "httpStatus": 422,
+      "message": "The shift result does not look like a real shift."
     }
   ]
 }

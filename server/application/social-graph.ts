@@ -183,9 +183,15 @@ export interface FeedPost {
   readonly alias: string;
   readonly text: string;
   readonly createdAt: string;
-  /** 'player' for a normal post, 'sleuth' for an NPC exposé. */
-  readonly kind?: 'player' | 'sleuth';
-  /** Sleuth posts: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat, deepLink}`. */
+  /**
+   * 'player' for a normal post, 'sleuth' for an NPC exposé, 'career' for a server-written
+   * post about the player's own career (author = the player; text is server-templated).
+   */
+  readonly kind?: 'player' | 'sleuth' | 'career';
+  /**
+   * Sleuth posts: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat, deepLink}`.
+   * Career posts: `{event: 'back_to_trenches' | 'glow_up', jobId, deepLink}`.
+   */
   readonly meta?: Record<string, unknown> | null;
 }
 
@@ -239,8 +245,8 @@ export async function listFeed(
     alias: row.alias,
     text: row.text,
     createdAt: row.created_at.toISOString(),
-    kind: row.kind === 'sleuth' ? 'sleuth' : 'player',
-    meta: row.kind === 'sleuth' ? row.meta : null,
+    kind: row.kind === 'sleuth' ? 'sleuth' : row.kind === 'career' ? 'career' : 'player',
+    meta: row.kind === 'sleuth' || row.kind === 'career' ? row.meta : null,
   }));
 }
 
