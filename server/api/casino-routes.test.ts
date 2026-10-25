@@ -263,10 +263,17 @@ describe('The Rug Room over HTTP', () => {
     for (const u of [a, b, c]) await makeAdult(u, 10_000);
     const made = await call(a, 'POST', '/v1/casino/coinflip/challenges', {
       opponentUserId: b.sub,
-      stakeCents: 1_000,
       side: 'heads',
     });
     expect(made.status, JSON.stringify(made.body)).toBe(201);
+    // No stake: a client that still sends one is told so (400), and no Cash moves.
+    const staked = await call(a, 'POST', '/v1/casino/coinflip/challenges', {
+      opponentUserId: b.sub,
+      stakeCents: 1_000,
+      side: 'heads',
+    });
+    expect(staked.status).toBe(400);
+    expect(errCode(staked.body)).toBe('VALIDATION_FAILED');
     const id = (made.body.challenge as { challengeId: string }).challengeId;
     expect((await call(c, 'GET', '/v1/casino/coinflip/challenges')).body.challenges).toEqual([]);
     expect((await call(b, 'GET', '/v1/casino/coinflip/challenges')).body.challenges).toHaveLength(
@@ -278,6 +285,8 @@ describe('The Rug Room over HTTP', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.disclaimer).toBe(DISCLAIMER);
     expect((ok.body.challenge as { status: string }).status).toBe('settled');
+    expect(await casinoLedger(a)).toEqual([]);
+    expect(await casinoLedger(b)).toEqual([]);
     const dup = await call(b, 'POST', `/v1/casino/coinflip/challenges/${id}/accept`);
     expect(dup.status).toBe(409);
     expect(errCode(dup.body)).toBe('CHALLENGE_NOT_OPEN');

@@ -59,7 +59,6 @@ import {
   crashTimeMs,
   drawStream,
   flipCoin,
-  h2hSplit,
   hashSeed,
   newSeed,
   payoutFor,
@@ -114,7 +113,6 @@ export interface ChallengeView {
   readonly challengerAlias: string | null;
   readonly opponentId: string;
   readonly opponentAlias: string | null;
-  readonly stakeCents: number;
   readonly challengerSide: CoinSide;
   readonly status: 'open' | 'settled' | 'expired' | 'cancelled' | 'declined';
   readonly seedHash: string;
@@ -122,9 +120,6 @@ export interface ChallengeView {
   readonly seed: string | null;
   readonly result: CoinSide | null;
   readonly winnerId: string | null;
-  readonly potCents: number | null;
-  readonly houseCutCents: number | null;
-  readonly payoutCents: number | null;
   readonly createdAt: string;
   readonly expiresAt: string;
   readonly settledAt: string | null;
@@ -198,8 +193,6 @@ const CHALLENGE_COLUMNS = `challenge_id, challenger_id, opponent_id, stake_cents
        seed, seed_hash, result, winner_id, pot_cents, house_cut_cents, payout_cents,
        created_at, expires_at, settled_at`;
 
-const numOrNull = (v: string | null): number | null => (v === null ? null : Number(v));
-
 function toChallenge(
   r: ChallengeRow,
   viewer: string,
@@ -212,16 +205,12 @@ function toChallenge(
     challengerAlias: aliases.get(r.challenger_id) ?? null,
     opponentId: r.opponent_id,
     opponentAlias: aliases.get(r.opponent_id) ?? null,
-    stakeCents: Number(r.stake_cents),
     challengerSide: r.challenger_side,
     status: r.status,
     seedHash: r.seed_hash,
     seed: r.status === 'settled' ? r.seed : null,
     result: r.result,
     winnerId: r.winner_id,
-    potCents: numOrNull(r.pot_cents),
-    houseCutCents: numOrNull(r.house_cut_cents),
-    payoutCents: numOrNull(r.payout_cents),
     createdAt: r.created_at.toISOString(),
     expiresAt: r.expires_at.toISOString(),
     settledAt: r.settled_at === null ? null : r.settled_at.toISOString(),
@@ -359,6 +348,22 @@ async function gateStake(
       netLossCents: used.netLossCents,
       resetsAt: new Date(utcDayStart(now).getTime() + DAY_MS).toISOString(),
     });
+  }
+}
+
+/**
+ * The gates in front of anything that is not a stake (a Cash-free heads-up challenge): 18+
+ * and self-exclusion only. No caps, no Cash.
+ */
+async function gateAccess(client: PoolClient, userId: string, now: Date): Promise<void> {
+  const excludedUntil = await lockPlayer(client, userId);
+  const age = await client.query<{ age_confirmed_at: Date | null }>(
+    `SELECT age_confirmed_at FROM characters WHERE user_id = $1`,
+    [userId],
+  );
+  if (age.rows[0]?.age_confirmed_at == null) throw new AgeRequiredError();
+  if (excludedUntil !== null && excludedUntil.getTime() > now.getTime()) {
+    throw new SelfExcludedError({ until: excludedUntil.toISOString() });
   }
 }
 
@@ -835,24 +840,28 @@ async function loadChallenge(
   return r.rows[0] ?? null;
 }
 
-/** Return the escrowed stake to the challenger and close the challenge. */
+/** Close the challenge (and return a legacy escrowed stake, if any). */
 async function refundChallenge(
   client: PoolClient,
   ch: ChallengeRow,
   status: 'expired' | 'cancelled' | 'declined',
   now: Date,
 ): Promise<ChallengeRow> {
-  await lockCash(client, ch.challenger_id);
-  await post(
-    client,
-    ch.challenger_id,
-    Number(ch.stake_cents),
-    CASINO_REFUND,
-    'casino_challenge',
-    ch.challenge_id,
-    `casino-refund:${ch.challenger_id}:${ch.challenge_id}`,
-    now,
-  );
+  // Challenges are Cash-free now (stake 0). A challenge from before that (stake > 0) was
+  // refunded by migration 099, so this only closes the row.
+  if (Number(ch.stake_cents) > 0) {
+    await lockCash(client, ch.challenger_id);
+    await post(
+      client,
+      ch.challenger_id,
+      Number(ch.stake_cents),
+      CASINO_REFUND,
+      'casino_challenge',
+      ch.challenge_id,
+      `casino-refund:${ch.challenger_id}:${ch.challenge_id}`,
+      now,
+    );
+  }
   const r = await client.query<ChallengeRow>(
     `UPDATE casino_challenges SET status = $2, settled_at = $3
       WHERE challenge_id = $1 RETURNING ${CHALLENGE_COLUMNS}`,
@@ -870,13 +879,13 @@ async function viewChallenge(
 }
 
 /**
- * Challenge another player to a head-to-head coinflip. The challenger's
- * stake is escrowed now (ledger `casino_stake`) and refunded if the
- * opponent does not accept within `challengeTtlSeconds`.
+ * Challenge another player to a head-to-head coinflip for BRAGGING RIGHTS. No Cash moves:
+ * Cash never goes between players. The challenge has no stake, no escrow and no ledger row;
+ * the coin comes from a seed committed at creation. It expires after `challengeTtlSeconds`.
+ * Age and self-exclusion still apply; the stake caps do not (there is no stake).
  * @param ctx - The app context.
  * @param userId - The challenger.
  * @param opponentId - The challenged player.
- * @param stakeCents - The stake each player puts in.
  * @param side - The side the challenger takes.
  * @param now - The current time (injectable for tests).
  */
@@ -884,7 +893,6 @@ export async function createChallenge(
   ctx: AppContext,
   userId: string,
   opponentId: string,
-  stakeCents: number,
   side: CoinSide,
   now: Date = new Date(),
 ): Promise<Meta & { challenge: ChallengeView; cashCents: number }> {
@@ -892,7 +900,7 @@ export async function createChallenge(
   if (opponentId === userId) throw new ValidationFailedError({ reason: 'cannot challenge self' });
   return runInTransaction(
     async (client) => {
-      await gateStake(client, ctx, cfg, userId, stakeCents, now);
+      await gateAccess(client, userId, now);
       const opp = await client.query(`SELECT 1 FROM users WHERE id = $1`, [opponentId]);
       if (opp.rowCount === 0) throw new NotFoundError();
       const blocked = await client.query(
@@ -914,18 +922,16 @@ export async function createChallenge(
       }
       const challengeId = uuidv7();
       const seed = newSeed();
-      await takeStake(client, userId, stakeCents, 'casino_challenge', challengeId, now);
       const r = await client.query<ChallengeRow>(
         `INSERT INTO casino_challenges
          (challenge_id, challenger_id, opponent_id, stake_cents, challenger_side,
           seed, seed_hash, created_at, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8)
        RETURNING ${CHALLENGE_COLUMNS}`,
         [
           challengeId,
           userId,
           opponentId,
-          stakeCents,
           side,
           seed,
           hashSeed(seed),
@@ -945,17 +951,13 @@ export async function createChallenge(
 }
 
 type AcceptOutcome =
-  | {
-      kind: 'settled';
-      value: Meta & { challenge: ChallengeView; round: RoundView; cashCents: number };
-    }
+  | { kind: 'settled'; value: Meta & { challenge: ChallengeView; cashCents: number } }
   | { kind: 'expired' };
 
 /**
- * Accept a challenge (the challenged player only). Debits the opponent's
- * stake, flips the coin from the challenge's committed seed, pays the
- * winner the pot minus the house cut and writes a round for each player.
- * An expired challenge is refunded and answers `CHALLENGE_EXPIRED`.
+ * Accept a challenge (the challenged player only). Flips the coin from the challenge's
+ * committed seed and records the winner. NO Cash moves and no `casino_rounds` row is written.
+ * An expired challenge is closed and answers `CHALLENGE_EXPIRED`.
  * @param ctx - The app context.
  * @param userId - The challenged player.
  * @param challengeId - The challenge.
@@ -966,7 +968,7 @@ export async function acceptChallenge(
   userId: string,
   challengeId: string,
   now: Date = new Date(),
-): Promise<Meta & { challenge: ChallengeView; round: RoundView; cashCents: number }> {
+): Promise<Meta & { challenge: ChallengeView; cashCents: number }> {
   const cfg = cfgOf(ctx);
   const out = await runInTransaction<AcceptOutcome>(
     async (client) => {
@@ -985,63 +987,21 @@ export async function acceptChallenge(
         await refundChallenge(client, ch, 'expired', now);
         return { kind: 'expired' };
       }
-      const stake = Number(ch.stake_cents);
-      await gateStake(client, ctx, cfg, userId, stake, now);
-      await takeStake(client, userId, stake, 'casino_challenge', challengeId, now);
+      await gateAccess(client, userId, now);
 
       const result = flipCoin(drawStream(ch.seed, `coinflip_h2h:${challengeId}`)());
       const winnerId = result === ch.challenger_side ? ch.challenger_id : ch.opponent_id;
-      const loserId = winnerId === ch.challenger_id ? ch.opponent_id : ch.challenger_id;
-      const split = h2hSplit(stake, cfg.coinflip.h2hHouseCutBps);
-      await lockCash(client, winnerId);
-      await payWin(client, winnerId, split.payoutCents, 'casino_challenge', challengeId, now);
-
       const upd = await client.query<ChallengeRow>(
         `UPDATE casino_challenges
-          SET status = 'settled', result = $2, winner_id = $3, pot_cents = $4,
-              house_cut_cents = $5, payout_cents = $6, settled_at = $7
+          SET status = 'settled', result = $2, winner_id = $3, settled_at = $4
         WHERE challenge_id = $1 RETURNING ${CHALLENGE_COLUMNS}`,
-        [challengeId, result, winnerId, split.potCents, split.cutCents, split.payoutCents, now],
+        [challengeId, result, winnerId, now],
       );
-      const settled = upd.rows[0]!;
-      // One audit row per player, the same committed seed.
-      const rounds: Record<string, RoundView> = {};
-      for (const pid of [ch.challenger_id, ch.opponent_id]) {
-        const won = pid === winnerId;
-        rounds[pid] = await insertRound(
-          client,
-          {
-            roundId: uuidv7(),
-            userId: pid,
-            game: 'coinflip_h2h',
-            status: 'settled',
-            stakeCents: stake,
-            payoutCents: won ? split.payoutCents : 0,
-            params: {
-              side: pid === ch.challenger_id ? ch.challenger_side : otherSide(ch.challenger_side),
-              vs: pid === ch.challenger_id ? ch.opponent_id : ch.challenger_id,
-            },
-            outcome: {
-              result,
-              won,
-              potCents: split.potCents,
-              houseCutCents: split.cutCents,
-              winnerId,
-              loserId,
-            },
-            seedHash: ch.seed_hash,
-            seed: ch.seed,
-            challengeId,
-          },
-          now,
-        );
-      }
       return {
         kind: 'settled',
         value: {
           ...(await sessionOf(client, userId, now, cfg)),
-          challenge: await viewChallenge(client, settled, userId),
-          round: rounds[userId]!,
+          challenge: await viewChallenge(client, upd.rows[0]!, userId),
           cashCents: await cashOf(client, userId),
         },
       };
@@ -1049,18 +1009,13 @@ export async function acceptChallenge(
     {},
     ctx.db,
   );
-  // The refund is committed above; only then tell the caller it expired.
   if (out.kind === 'expired') throw new ChallengeExpiredError({ challengeId });
   return out.value;
 }
 
-function otherSide(s: CoinSide): CoinSide {
-  return s === 'heads' ? 'tails' : 'heads';
-}
-
 /**
  * Close an open challenge early: the challenger cancels, or the opponent
- * declines. The escrowed stake is refunded. A challenge that already ran
+ * declines. Nothing moves. A challenge that already ran
  * past its expiry is closed as `expired` instead.
  * @param ctx - The app context.
  * @param userId - The caller.

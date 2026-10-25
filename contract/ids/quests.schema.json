@@ -28,7 +28,6 @@
               "prediction_place",
               "alpha_call",
               "paid_call",
-              "tip_send",
               "home_visit"
             ]
           },

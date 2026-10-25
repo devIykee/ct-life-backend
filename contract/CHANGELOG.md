@@ -1,3 +1,14 @@
+## 2026-10-25 - Cash: purchasable, non-transferable, no cash-out, no on-chain
+
+Migration 099. Cash can be bought with the crypto top-ups (unchanged) but never moves between players and never goes on-chain.
+
+- **Cash tips removed.** `POST /tips` always answers `410 CASH_NOT_TRANSFERABLE` (new code). The 3% tip fee of the previous change, `TIP_FEE_BPS` and the `tip_fee_burn` ledger reason are gone (the `tips.fee_cents` column stays for old rows). `tip_send` is no longer a quest verb: `q_daily_tip_1` and `q_weekly_tip_3` are removed from `quests.json`, and the Caller ladder no longer gives XP for it. `GET /tips` still lists old rows.
+- **On-chain tips never credit Cash.** `POST /tips/onchain` keeps working as a note about a wallet-to-wallet transfer (`status: pending`, informational: nothing verifies it and no webhook ever moved Cash for it). It now takes `amountLamports` (required, as before in the code) and is documented as such.
+- **Heads-up casino challenges are stake-free bragging rights.** `POST /casino/coinflip/challenges` takes `{opponentUserId, side}`; a `stakeCents` field is `400 VALIDATION_FAILED`. No stake, escrow, pot, house cut, `casino_*` ledger row or `casino_rounds` row; accept just flips the committed coin and records the winner. `CasinoChallenge` loses `stakeCents`, `potCents`, `houseCutCents`, `payoutCents`; the accept reply has no `round`; INSUFFICIENT_CASH and the stake caps no longer apply to challenges (18+ and self-exclusion do). Migration 099 cancels every open challenge that held a stake and returns it (`casino_refund`).
+- **Paid calls move no Cash.** Settlement (off-chain math and the program-event webhook) no longer credits the payee a Cash `tip` row or debits the payer a Cash `fee` row. The creator's share is paid on-chain by the escrow program.
+- **`POST /nft/mint` is closed for Cash items.** It answers `403 NFT_MINT_NOT_ALLOWED` (new code, `details.reason` `bought_with_cash` or `earned_in_game`) unless the owned item was acquired on-chain (`cosmetic_inventory.source = 'mint'`). `assertMintable` is the guard any future on-chain swap must call.
+- FE: remove the Cash tip sheet; change the heads-up challenge UI to a no-stake challenge (side + opponent, no amount, no Cash result); do not call `/nft/mint`.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.

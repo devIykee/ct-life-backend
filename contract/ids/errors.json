@@ -250,7 +250,7 @@
     {
       "code": "CHALLENGE_EXPIRED",
       "httpStatus": 410,
-      "message": "This challenge expired; the stake was refunded."
+      "message": "This challenge expired."
     },
     {
       "code": "CHALLENGE_NOT_OPEN",
@@ -346,6 +346,16 @@
       "code": "STEAL_REQUIRED",
       "httpStatus": 409,
       "message": "Realtime: this vehicle belongs to someone else; send vehicle_enter with steal: true."
+    },
+    {
+      "code": "CASH_NOT_TRANSFERABLE",
+      "httpStatus": 410,
+      "message": "Cash never moves between players. This feature was removed; see details.reason."
+    },
+    {
+      "code": "NFT_MINT_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "This item cannot be minted as an NFT: it was not acquired on-chain."
     }
   ]
 }
