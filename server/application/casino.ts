@@ -952,7 +952,8 @@ export async function createChallenge(
 
 type AcceptOutcome =
   | { kind: 'settled'; value: Meta & { challenge: ChallengeView; cashCents: number } }
-  | { kind: 'expired' };
+  | { kind: 'expired' }
+  | { kind: 'legacy' };
 
 /**
  * Accept a challenge (the challenged player only). Flips the coin from the challenge's
@@ -987,6 +988,14 @@ export async function acceptChallenge(
         await refundChallenge(client, ch, 'expired', now);
         return { kind: 'expired' };
       }
+      if (Number(ch.stake_cents) > 0) {
+        // A challenge staked before Cash became non-transferable (e.g. made by an old instance
+        // during a rolling deploy). Settling it with no payout would strand the creator's
+        // stake: cancel it and give the stake back instead. refundChallenge's ledger row has a
+        // fixed idempotency ref, so it can only ever refund once.
+        await refundChallenge(client, ch, 'cancelled', now);
+        return { kind: 'legacy' };
+      }
       await gateAccess(client, userId, now);
 
       const result = flipCoin(drawStream(ch.seed, `coinflip_h2h:${challengeId}`)());
@@ -1010,6 +1019,13 @@ export async function acceptChallenge(
     ctx.db,
   );
   if (out.kind === 'expired') throw new ChallengeExpiredError({ challengeId });
+  if (out.kind === 'legacy') {
+    throw new ChallengeNotOpenError({
+      challengeId,
+      status: 'cancelled',
+      reason: 'cash_stakes_removed',
+    });
+  }
   return out.value;
 }
 
@@ -1081,7 +1097,7 @@ export async function sweepCasino(
   const due = await ctx.db.withConnection((c) =>
     c.query<{ challenge_id: string }>(
       `SELECT challenge_id FROM casino_challenges
-        WHERE status = 'open' AND expires_at <= $1
+        WHERE status = 'open' AND (expires_at <= $1 OR stake_cents > 0)
           AND ($2::uuid IS NULL OR challenger_id = $2 OR opponent_id = $2)
         ORDER BY expires_at ASC LIMIT 200`,
       [now, onlyUserId],
@@ -1094,7 +1110,10 @@ export async function sweepCasino(
         const ch = await loadChallenge(client, challenge_id, true);
         if (ch === null || ch.status !== 'open') return;
         await lockPlayer(client, ch.challenger_id);
-        await refundChallenge(client, ch, 'expired', now);
+        // An open challenge that still holds a stake (made by an old instance during a rolling
+        // deploy) is cancelled and refunded whether or not it has expired.
+        const due = ch.expires_at.getTime() <= now.getTime();
+        await refundChallenge(client, ch, due ? 'expired' : 'cancelled', now);
         challenges += 1;
       },
       {},

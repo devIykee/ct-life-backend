@@ -655,6 +655,101 @@ describe('head-to-head coinflip: bragging rights, no Cash moves', () => {
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
   });
 
+  describe('a legacy staked challenge (made before Cash became non-transferable)', () => {
+    /** An open challenge whose creator's stake was already debited, as the old code left it. */
+    async function legacy(stake: number, expiresInMs = 120_000) {
+      const a = await newUser({ cash: 10_000 });
+      const b = await newUser({ cash: 10_000 });
+      const id = uuidv7();
+      await pool.query(`UPDATE balances SET cash_cents = cash_cents - $2 WHERE user_id = $1`, [
+        a,
+        stake,
+      ]);
+      await pool.query(
+        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref, created_at)
+         VALUES ($1, $2, 'cash', 'casino_stake', 'casino_challenge', $3, $4, $5)`,
+        [a, -stake, id, `casino-stake:${a}:${id}`, T0],
+      );
+      await pool.query(
+        `INSERT INTO casino_challenges (challenge_id, challenger_id, opponent_id, stake_cents,
+           challenger_side, seed, seed_hash, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, 'heads', 's', 'h', $5, $6)`,
+        [id, a, b, stake, T0, at(expiresInMs)],
+      );
+      return { a, b, id };
+    }
+
+    it('accepting it is refused and refunds the creator exactly once; no second refund', async () => {
+      const { a, b, id } = await legacy(1_000);
+      expect(await cash(a)).toBe(9_000);
+      await expect(acceptChallenge(ctx, b, id, at(1_000))).rejects.toBeInstanceOf(
+        ChallengeNotOpenError,
+      );
+      expect(await cash(a)).toBe(10_000);
+      expect(await ledger(a)).toEqual([
+        { reason: 'casino_stake', delta: -1_000 },
+        { reason: 'casino_refund', delta: 1_000 },
+      ]);
+      expect(await cash(b)).toBe(10_000);
+      expect(await ledger(b)).toEqual([]);
+      // Again, and the other ways out: nothing is refunded twice.
+      await expect(acceptChallenge(ctx, b, id, at(2_000))).rejects.toBeInstanceOf(
+        ChallengeNotOpenError,
+      );
+      await expect(closeChallenge(ctx, a, id, 'cancel', at(3_000))).rejects.toBeInstanceOf(
+        ChallengeNotOpenError,
+      );
+      await sweepCasino(ctx, at(500_000));
+      expect(await cash(a)).toBe(10_000);
+      const row = await pool.query(`SELECT status FROM casino_challenges WHERE challenge_id = $1`, [
+        id,
+      ]);
+      expect(row.rows[0].status).toBe('cancelled');
+    });
+
+    it('two racing accepts refund once', async () => {
+      const { a, b, id } = await legacy(700);
+      await Promise.allSettled([
+        acceptChallenge(ctx, b, id, at(1)),
+        acceptChallenge(ctx, b, id, at(1)),
+      ]);
+      expect(await cash(a)).toBe(10_000);
+      expect((await ledger(a)).filter((r) => r.reason === 'casino_refund')).toHaveLength(1);
+    });
+
+    it('the creator cancelling, or the sweep expiring it, also returns the stake once', async () => {
+      const c1 = await legacy(500);
+      await closeChallenge(ctx, c1.a, c1.id, 'cancel', at(1_000));
+      expect(await cash(c1.a)).toBe(10_000);
+      const c2 = await legacy(600, 1_000);
+      await sweepCasino(ctx, at(5_000), c2.a);
+      await sweepCasino(ctx, at(6_000), c2.a);
+      expect(await cash(c2.a)).toBe(10_000);
+      expect((await ledger(c2.a)).filter((r) => r.reason === 'casino_refund')).toHaveLength(1);
+    });
+
+    it('the sweep refunds a staked challenge even before it expires', async () => {
+      const { a, id } = await legacy(800);
+      expect((await sweepCasino(ctx, at(10_000), a)).challenges).toBe(1);
+      expect(await cash(a)).toBe(10_000);
+      const row = await pool.query(`SELECT status FROM casino_challenges WHERE challenge_id = $1`, [
+        id,
+      ]);
+      expect(row.rows[0].status).toBe('cancelled');
+      expect((await sweepCasino(ctx, at(20_000), a)).challenges).toBe(0);
+    });
+
+    it('new stake-free challenges still work next to it', async () => {
+      const { b, id } = await legacy(1_000);
+      await expect(acceptChallenge(ctx, b, id, at(1_000))).rejects.toBeDefined();
+      const a2 = await newUser();
+      const fresh = await createChallenge(ctx, a2, b, 'tails', at(5_000));
+      expect(
+        (await acceptChallenge(ctx, b, fresh.challenge.challengeId, at(6_000))).challenge.status,
+      ).toBe('settled');
+    });
+  });
+
   it('keeps the 18+ and self-exclusion gates (but no stake caps)', async () => {
     const a = await newUser();
     const minor = await newUser({ adult: false });
