@@ -45,7 +45,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { nextUtcMidnight } from './daily-streak.js';
 import { decodePos, POS_FRESH_MS, POS_HASH } from '../realtime/movement.js';
 import { awardActionXpInTx, publishPromotion, type PromotionInfo } from './ladders.js';
-import { publishToUser } from './realtime-bus.js';
+import { publishToUser, refreshOutfit } from './realtime-bus.js';
 import { recordQuestEvent } from './quests.js';
 import { creditCash, ensureRewardCatalog, grantCosmetic } from './rewards.js';
 import type { AppContext } from './context.js';
@@ -451,6 +451,8 @@ async function afterSettle(
   settled: Settled,
   now: Date,
 ): Promise<void> {
+  // The shift is over: viewers see the player out of the crew outfit again.
+  await refreshOutfit(ctx, userId);
   if (settled.promotion) await publishPromotion(ctx, userId, settled.promotion, now);
   if (settled.counted) {
     await recordQuestEvent(ctx, userId, 'shift_complete', `rb:${settled.result.shiftId}`, now);
@@ -732,6 +734,8 @@ export async function startShift(
     };
   });
   if (out.unlock.newly) await announceUnlock(ctx, userId, out.unlock.reason, now);
+  // A new shift puts the player in the crew outfit for everyone who can see them.
+  if (!out.resumed) await refreshOutfit(ctx, userId);
   return { ...out.view, resumed: out.resumed, postId: out.postId };
 }
 

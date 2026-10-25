@@ -1,3 +1,9 @@
+## 2026-10-26 - PlayerState.outfit (Rekt Burger crew outfit)
+
+Stacked on the Rekt Burger clock-in (#21).
+
+- Realtime `PlayerState` (street, venue and home rooms) gets `outfit: string` as its last field (absent, null on the client, when none). It is `rekt_burger_crew` while the player has an open Rekt Burger shift, or has `reward_rekt_burger_uniform` equipped in their look, so every viewer sees the on-shift uniform. Server-authoritative: it is read from the database on join and pushed to the rooms when it changes (clock in, clock out, the server's auto-close at the maximum, leaving the job, `PATCH /characters/me/look` equipping or removing the uniform). No client message carries or sets it. No REST change and no migration.
+
 ## 2026-10-25 - Rekt Burger is a clock-in job (replaces the per-ticket minigame)
 
 Migration 096. Changes what #16 shipped.

@@ -23,6 +23,7 @@ import {
 } from '../shared/domain/character-palettes.js';
 import type { AppContext } from './context.js';
 import { ensureCatalog } from './cosmetics.js';
+import { refreshOutfit } from './realtime-bus.js';
 
 interface TribesConfig {
   tribes: Array<{ id: string }>;
@@ -324,7 +325,7 @@ export async function updateLook(
     throw e;
   });
   await equipCatalogReady;
-  return runInTransaction(
+  const out = await runInTransaction(
     async (client) => {
       const r = await client.query<{
         alias: string;
@@ -426,4 +427,7 @@ export async function updateLook(
     {},
     ctx.db,
   );
+  // Equipping (or taking off) the Rekt Burger Uniform changes what other players see.
+  await refreshOutfit(ctx, userId);
+  return out;
 }
