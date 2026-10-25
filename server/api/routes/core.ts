@@ -16,7 +16,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { NotFoundError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { LotteryService } from '../../application/lottery.js';
-import { CharacterService } from '../../application/character.js';
+import { CharacterService, updateLook } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
 import { PublicProfileService } from '../../application/public-profile.js';
 import { debtSchedule } from '../../application/bank.js';
@@ -57,6 +57,20 @@ const CharacterBody = z.object({
   tribeId: z.string(),
   ageConfirmed: z.literal(true),
 });
+
+// Any subset of the seven look fields (at least one). Unknown fields are refused.
+const LookPatchBody = z
+  .strictObject({
+    skinTone: z.string().min(1).max(64),
+    headId: z.string().min(1).max(100),
+    hairId: z.string().min(1).max(100),
+    topId: z.string().min(1).max(100),
+    bottomId: z.string().min(1).max(100),
+    shoesId: z.string().min(1).max(100),
+    accId: z.string().min(1).max(100),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, { message: 'at least one look field' });
 
 const NeedsActionBody = z.object({
   actionId: z.enum(['eat', 'sleep', 'shower', 'touch_grass', 'party']),
@@ -156,6 +170,17 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       const svc = new CharacterService(req.ctx.configCache);
       const created = await svc.create(req.user!.sub, body.data);
       return reply.status(201).send(created);
+    },
+  );
+
+  // PATCH /v1/characters/me/look: equip an owned cosmetic or change the look
+  app.patch(
+    '/v1/characters/me/look',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const body = LookPatchBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      return reply.send(await updateLook(req.ctx, req.user!.sub, body.data));
     },
   );
 

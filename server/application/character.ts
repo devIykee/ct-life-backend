@@ -10,12 +10,19 @@ import { runInTransaction } from '../shared/db/uow.js';
 import {
   AliasTakenError,
   ForbiddenError,
+  ItemNotOwnedError,
   NotFoundError,
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { ConfigCache } from './context.js';
-import { validateCharacterPalette } from '../shared/domain/character-palettes.js';
+import {
+  CHARACTER_PALETTES,
+  validateCharacterPalette,
+  type CharacterLook,
+} from '../shared/domain/character-palettes.js';
+import type { AppContext } from './context.js';
+import { ensureCatalog } from './cosmetics.js';
 
 interface TribesConfig {
   tribes: Array<{ id: string }>;
@@ -146,7 +153,8 @@ export class CharacterService {
    */
   private originHomeId(outcome: string | undefined): string {
     const lottery = this.configCache.load<LotteryConfig>('lottery');
-    const out = (outcome !== undefined ? lottery.outcomes[outcome] : undefined) ??
+    const out =
+      (outcome !== undefined ? lottery.outcomes[outcome] : undefined) ??
       lottery.outcomes['exit_liquidity'];
     if (out === undefined) {
       throw new ValidationFailedError({ reason: 'lottery_outcome_unknown', outcome });
@@ -260,4 +268,162 @@ export class CharacterService {
       };
     });
   }
+}
+
+// --- Equip: PATCH /v1/characters/me/look ----------------------------------
+
+export type LookPatch = Partial<CharacterLook>;
+
+export interface CharacterView {
+  readonly alias: string;
+  readonly look: CharacterLook;
+  readonly tribeId: string;
+  readonly traitIds: string[];
+  readonly dreamId: string;
+  readonly homeId: string;
+  readonly likenessJobId: string | null;
+}
+
+const ITEM_FIELDS: ReadonlyArray<{ key: Exclude<keyof CharacterLook, 'skinTone'>; slot: string }> =
+  [
+    { key: 'headId', slot: 'head' },
+    { key: 'hairId', slot: 'hair' },
+    { key: 'topId', slot: 'top' },
+    { key: 'bottomId', slot: 'bottom' },
+    { key: 'shoesId', slot: 'shoes' },
+    { key: 'accId', slot: 'acc' },
+  ];
+
+let equipCatalogReady: Promise<void> | null = null;
+
+/**
+ * Change part of the character's look. Every id that is a cosmetic in
+ * `cosmetic_items` (the shop, ORE and event-grant items) must be OWNED by the
+ * caller (`cosmetic_inventory`) and sit in the right slot, checked here under a
+ * row lock; the client's word is not trusted. An id the catalogue does not know
+ * is a base-look id (as at character creation) and is accepted. A slot left as
+ * it is stays valid even if the item is not owned (the creation look). The
+ * result is checked against the character palettes as at creation, with an
+ * owned cosmetic standing in for the slot's base item, since a palette only
+ * knows base items. A character with a personal avatar keeps its head.
+ * @param ctx - The app context.
+ * @param userId - The caller.
+ * @param patch - The fields to change (at least one).
+ * @returns The character after the change.
+ * @throws ItemNotOwnedError, ValidationFailedError, NotFoundError (no character).
+ */
+export async function updateLook(
+  ctx: AppContext,
+  userId: string,
+  patch: LookPatch,
+): Promise<CharacterView> {
+  const items = ctx.configCache.load<ItemsConfig>('items');
+  const slotById = new Map(items.items.map((i) => [i.id, i.slot]));
+  equipCatalogReady ??= ensureCatalog(ctx).catch((e: unknown) => {
+    equipCatalogReady = null;
+    throw e;
+  });
+  await equipCatalogReady;
+  return runInTransaction(
+    async (client) => {
+      const r = await client.query<{
+        alias: string;
+        look: CharacterLook;
+        tribe_id: string;
+        trait_ids: string[];
+        dream_id: string;
+        home_id: string;
+        likeness_job_id: string | null;
+      }>(
+        `SELECT alias, look, tribe_id, trait_ids, dream_id, home_id, likeness_job_id
+           FROM characters WHERE user_id = $1 FOR UPDATE`,
+        [userId],
+      );
+      const ch = r.rows[0];
+      if (!ch) throw new NotFoundError({ kind: 'character' });
+      const view = (look: CharacterLook): CharacterView => ({
+        alias: ch.alias,
+        look,
+        tribeId: ch.tribe_id,
+        traitIds: ch.trait_ids,
+        dreamId: ch.dream_id,
+        homeId: ch.home_id,
+        likenessJobId: ch.likeness_job_id,
+      });
+      const cur = ch.look;
+      const next: CharacterLook = { ...cur, ...patch };
+      const changed = (Object.keys(next) as Array<keyof CharacterLook>).filter(
+        (k) => next[k] !== cur[k],
+      );
+      if (changed.length === 0) return view(cur);
+      if (ch.likeness_job_id !== null && next.headId !== cur.headId) {
+        throw new ValidationFailedError({ reason: 'head_locked_by_likeness' });
+      }
+      if (typeof next.skinTone !== 'string' || next.skinTone.trim() === '') {
+        throw new ValidationFailedError({ reason: 'invalid_skin_tone' });
+      }
+
+      const overlays = new Set<keyof CharacterLook>();
+      for (const { key, slot } of ITEM_FIELDS) {
+        if (!changed.includes(key)) continue;
+        const id = next[key];
+        if (typeof id !== 'string' || id === '') {
+          throw new ValidationFailedError({ reason: 'invalid_look_item', slot, itemId: id });
+        }
+        const known = slotById.get(id);
+        if (known !== undefined && known !== slot) {
+          throw new ValidationFailedError({
+            reason: 'look_item_wrong_slot',
+            itemId: id,
+            expected: slot,
+            actual: known,
+          });
+        }
+        const cos = await client.query<{ item_id: string; slot: string }>(
+          `SELECT item_id, slot FROM cosmetic_items WHERE item_key = $1`,
+          [id],
+        );
+        const item = cos.rows[0];
+        if (!item) continue; // a base-look id
+        if (item.slot !== slot) {
+          throw new ValidationFailedError({
+            reason: 'look_item_wrong_slot',
+            itemId: id,
+            expected: slot,
+            actual: item.slot,
+          });
+        }
+        const owned = await client.query(
+          `SELECT 1 FROM cosmetic_inventory WHERE user_id = $1 AND item_id = $2`,
+          [userId, item.item_id],
+        );
+        if (owned.rowCount === 0) throw new ItemNotOwnedError({ itemId: id });
+        overlays.add(key);
+      }
+
+      // A palette knows only base items: validate with the slot's base item
+      // standing in for an owned cosmetic.
+      const forPalette: Record<string, string> = { ...next };
+      const model = CHARACTER_PALETTES.models.find((m) => m.headId === next.headId);
+      if (model) {
+        const baseOf: Record<string, readonly string[]> = {
+          hairId: model.hairIds,
+          topId: model.topIds,
+          bottomId: model.bottomIds,
+          shoesId: model.shoesIds,
+          accId: model.accIds,
+        };
+        for (const k of overlays) {
+          const base = baseOf[k as string]?.[0];
+          if (base !== undefined) forPalette[k as string] = base;
+        }
+      }
+      validateCharacterPalette(forPalette as unknown as CharacterLook);
+
+      await client.query(`UPDATE characters SET look = $2 WHERE user_id = $1`, [userId, next]);
+      return view(next);
+    },
+    {},
+    ctx.db,
+  );
 }
