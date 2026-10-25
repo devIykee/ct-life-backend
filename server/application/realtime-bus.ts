@@ -17,7 +17,7 @@
 import type { Redis } from 'ioredis';
 import type { AppContext } from './context.js';
 import { OUTFIT_CHANNEL } from '../realtime/movement.js';
-import { computeOutfit } from '../shared/domain/outfit.js';
+import { computeOutfit, outfitStateSql } from '../shared/domain/outfit.js';
 
 /** Redis pub/sub channel carrying every targeted message. */
 export const USER_CHANNEL = 'rt:user';
@@ -121,15 +121,18 @@ export async function publishOutfit(
 export async function refreshOutfit(ctx: AppContext, userId: string): Promise<void> {
   try {
     const r = await ctx.db.withConnection((c) =>
-      c.query<{ on_shift: boolean; look: unknown }>(
-        `SELECT EXISTS (SELECT 1 FROM rekt_burger_shifts s WHERE s.user_id = $1 AND s.status = 'open') AS on_shift,
-                (SELECT look FROM characters WHERE user_id = $1) AS look`,
+      c.query<{ on_shift: boolean; uniform_equipped: boolean }>(
+        `SELECT ${outfitStateSql('u.id', '(SELECT look FROM characters WHERE user_id = u.id)')}
+           FROM users u WHERE u.id = $1`,
         [userId],
       ),
     );
     const row = r.rows[0];
-    const look = row?.look && typeof row.look === 'object' ? Object.values(row.look as object) : [];
-    await publishOutfit(ctx, userId, computeOutfit(row?.on_shift === true, look.map(String)));
+    await publishOutfit(
+      ctx,
+      userId,
+      computeOutfit(row?.on_shift === true, row?.uniform_equipped === true),
+    );
   } catch {
     // Never fail the action that triggered it.
   }

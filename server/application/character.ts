@@ -139,6 +139,12 @@ export class CharacterService {
     // is 'tan'), so only emptiness is rejected. The previous
     // /^skin_tone[1-6]$/ rule was not in the contract and refused every
     // tone the creator sends.
+    if (slotById.has(input.look.skinTone)) {
+      throw new ValidationFailedError({
+        reason: 'look_item_in_non_item_field',
+        field: 'skinTone',
+      });
+    }
     if (typeof input.look.skinTone !== 'string' || input.look.skinTone.trim() === '') {
       throw new ValidationFailedError({
         reason: 'invalid_skin_tone',
@@ -362,6 +368,20 @@ export async function updateLook(
       }
       if (typeof next.skinTone !== 'string' || next.skinTone.trim() === '') {
         throw new ValidationFailedError({ reason: 'invalid_skin_tone' });
+      }
+      if (changed.includes('skinTone')) {
+        // skinTone is a free string, not an item slot: a catalogue or cosmetic key there is a
+        // crafted look (it must never be read as an equipped item), so it is refused.
+        const known =
+          slotById.has(next.skinTone) ||
+          (await client.query(`SELECT 1 FROM cosmetic_items WHERE item_key = $1`, [next.skinTone]))
+            .rowCount !== 0;
+        if (known) {
+          throw new ValidationFailedError({
+            reason: 'look_item_in_non_item_field',
+            field: 'skinTone',
+          });
+        }
       }
 
       const overlays = new Set<keyof CharacterLook>();

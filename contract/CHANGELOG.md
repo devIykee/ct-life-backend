@@ -2,7 +2,7 @@
 
 Stacked on the Rekt Burger clock-in (#21).
 
-- Realtime `PlayerState` (street, venue and home rooms) gets `outfit: string` as its last field (absent, null on the client, when none). It is `rekt_burger_crew` while the player has an open Rekt Burger shift, or has `reward_rekt_burger_uniform` equipped in their look, so every viewer sees the on-shift uniform. Server-authoritative: it is read from the database on join and pushed to the rooms when it changes (clock in, clock out, the server's auto-close at the maximum, leaving the job, `PATCH /characters/me/look` equipping or removing the uniform). No client message carries or sets it. No REST change and no migration.
+- Realtime `PlayerState` (street, venue and home rooms) gets `outfit: string` as its last field (absent, null on the client, when none). It is `rekt_burger_crew` while the player has an open Rekt Burger shift, or owns `reward_rekt_burger_uniform` and has it in the `topId` field of their look (the key in any other field, or in `topId` without owning it, shows nothing), so every viewer sees the on-shift uniform. Server-authoritative: it is read from the database on join and pushed to the rooms when it changes (clock in, clock out, the server's auto-close at the maximum, leaving the job, `PATCH /characters/me/look` equipping or removing the uniform). No client message carries or sets it. `PATCH /characters/me/look` (and character creation) now refuse a catalogue or cosmetic key as `skinTone` (`400 VALIDATION_FAILED`, `reason: look_item_in_non_item_field`). No migration.
 
 ## 2026-10-25 - Rekt Burger is a clock-in job (replaces the per-ticket minigame)
 

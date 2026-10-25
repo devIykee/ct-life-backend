@@ -12,6 +12,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { computeOutfit, OUTFIT_REKT_BURGER_CREW } from '../shared/domain/outfit.js';
 import { encodePos, OUTFIT_CHANNEL, POS_HASH } from '../realtime/movement.js';
 import { loadPlayerState } from '../realtime/player.js';
+import { refreshOutfit } from './realtime-bus.js';
 import { endShift, leaveJob, rektConfig, startShift, sweepRektShifts } from './rekt-burger.js';
 import { updateLook } from './character.js';
 import { ensureCatalog, grantCosmetic } from './cosmetics.js';
@@ -80,10 +81,10 @@ const stand = (u: string, base: Date) =>
   );
 
 describe('computeOutfit', () => {
-  it('is the crew outfit on shift or with the uniform in the look, else none', () => {
-    expect(computeOutfit(true, [])).toBe(OUTFIT_REKT_BURGER_CREW);
-    expect(computeOutfit(false, ['a', 'reward_rekt_burger_uniform'])).toBe(OUTFIT_REKT_BURGER_CREW);
-    expect(computeOutfit(false, ['a', 'b'])).toBeNull();
+  it('is the crew outfit on shift or with the uniform owned and equipped, else none', () => {
+    expect(computeOutfit(true, false)).toBe(OUTFIT_REKT_BURGER_CREW);
+    expect(computeOutfit(false, true)).toBe(OUTFIT_REKT_BURGER_CREW);
+    expect(computeOutfit(false, false)).toBeNull();
   });
 });
 
@@ -98,9 +99,91 @@ describe('loadPlayerState', () => {
     expect((await loadPlayerState(u)).outfit).toBeUndefined();
   });
 
-  it('shows the crew outfit when the uniform is equipped', async () => {
+  async function own(u: string): Promise<void> {
+    await ensureCatalog(ctx);
+    await ensureRewardCatalog(ctx.db);
+    const c = await pool.connect();
+    try {
+      await grantCosmetic(c, u, 'reward_rekt_burger_uniform');
+    } finally {
+      c.release();
+    }
+  }
+
+  it('shows the crew outfit when the uniform is owned and in its slot (topId)', async () => {
     const u = await newPlayer({ ...BASE, topId: 'reward_rekt_burger_uniform' });
+    await own(u);
     expect((await loadPlayerState(u)).outfit).toBe('rekt_burger_crew');
+  });
+
+  it('REGRESSION: the key in any other look field, or in topId without owning it, shows nothing', async () => {
+    const key = 'reward_rekt_burger_uniform';
+    // Owned, but crafted into fields that are not the uniform's slot.
+    const owner = await newPlayer({
+      ...BASE,
+      skinTone: key,
+      hairId: key,
+      accId: key,
+      shoesId: key,
+    });
+    await own(owner);
+    expect((await loadPlayerState(owner)).outfit).toBeUndefined();
+    // In the right slot, but never owned (creation accepts unknown ids as a base look).
+    const thief = await newPlayer({ ...BASE, topId: key });
+    expect((await loadPlayerState(thief)).outfit).toBeUndefined();
+    // And the live path (refreshOutfit) decides the same way.
+    publishCalls.length = 0;
+    await refreshOutfit(ctx, thief);
+    await refreshOutfit(ctx, owner);
+    expect(published(thief)).toEqual([null]);
+    expect(published(owner)).toEqual([null]);
+    // A legacy array look is read at its top index only.
+    const legacy = await newPlayer(BASE);
+    await pool.query(`UPDATE characters SET look = $2::jsonb WHERE user_id = $1`, [
+      legacy,
+      JSON.stringify(['tan', key, 'h', 't', 'b', 's', 'a']),
+    ]);
+    await own(legacy);
+    expect((await loadPlayerState(legacy)).outfit).toBeUndefined();
+    await pool.query(`UPDATE characters SET look = $2::jsonb WHERE user_id = $1`, [
+      legacy,
+      JSON.stringify(['tan', 'h', 'h', key, 'b', 's', 'a']),
+    ]);
+    expect((await loadPlayerState(legacy)).outfit).toBe('rekt_burger_crew');
+  });
+});
+
+describe('PATCH look refuses item keys in non-item fields', () => {
+  it('rejects a catalogue or cosmetic key as skinTone, and a uniform in the wrong slot', async () => {
+    const u = await newPlayer();
+    await ensureCatalog(ctx);
+    await ensureRewardCatalog(ctx.db);
+    const c = await pool.connect();
+    try {
+      await grantCosmetic(c, u, 'reward_rekt_burger_uniform');
+    } finally {
+      c.release();
+    }
+    for (const skinTone of [
+      'reward_rekt_burger_uniform',
+      'top_hoodie_black',
+      'lanyard_breakpoint_2026',
+    ]) {
+      await expect(updateLook(ctx, u, { skinTone })).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: { reason: 'look_item_in_non_item_field', field: 'skinTone' },
+      });
+    }
+    // Owned, but in a slot it does not occupy.
+    for (const field of ['hairId', 'accId', 'shoesId', 'headId', 'bottomId'] as const) {
+      await expect(
+        updateLook(ctx, u, { [field]: 'reward_rekt_burger_uniform' }),
+      ).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+      });
+    }
+    // A normal tone still works.
+    expect((await updateLook(ctx, u, { skinTone: 'brown' })).look.skinTone).toBe('brown');
   });
 });
 
