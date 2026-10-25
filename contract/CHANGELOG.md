@@ -1,3 +1,7 @@
+## 2026-10-25 - Real nod positions
+
+- `contract/ids/nods.json` is the frontend's confirmed export (ct-life 0d2713066, version 1.0.0, no longer provisional): the 80 nods now have the placed props' real island positions instead of placeholder grid points. No id, name, set, tier or district changed (checked against the previous file: 0 added, 0 removed, 6 sets identical). `POST /nods/{id}/collect` still checks the server's own fresh position against `x`/`z` within `radiusM` (default 15 m), so collects now work where the props actually stand. Every nod is on island land and at least 16 m from the next.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
