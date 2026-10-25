@@ -337,8 +337,10 @@ export interface ShiftEndResult {
   /** What was paid, after the daily cap. */
   readonly paidCents: number;
   /** Whole minutes on the clock (capped at the maximum shift). */
+  /** Total time on the clock in seconds (at most the maximum shift). */
+  readonly durationSec: number;
+  /** Whole minutes: floor(durationSec / 60). Not a remainder; do not add it to seconds. */
   readonly minutes: number;
-  readonly seconds: number;
   /** Career XP added (0 without a ladder, under the minimum, or past the daily action cap). */
   readonly careerXp: number;
   /** What the daily cap withheld from this shift. */
@@ -428,8 +430,8 @@ async function settleOpenShift(
     result: {
       shiftId: shift.shift_id,
       paidCents: pay,
+      durationSec: seconds,
       minutes: Math.floor(seconds / 60),
-      seconds,
       careerXp,
       cappedCents: full - pay,
       capRemainingCents: remaining - pay,
@@ -469,6 +471,9 @@ export interface LastShift {
   readonly shiftId: string;
   readonly endedAt: string;
   readonly paidCents: number;
+  /** Total time on the clock in seconds. */
+  readonly durationSec: number;
+  /** floor(durationSec / 60). */
   readonly minutes: number;
   readonly careerXp: number;
   readonly endReason: EndReason | null;
@@ -497,6 +502,7 @@ async function lastShift(
     shiftId: row.shift_id,
     endedAt: row.finished_at.toISOString(),
     paidCents: Number(row.pay_cents),
+    durationSec: row.seconds ?? 0,
     minutes: Math.floor((row.seconds ?? 0) / 60),
     careerXp: row.career_xp ?? 0,
     endReason: row.end_reason,

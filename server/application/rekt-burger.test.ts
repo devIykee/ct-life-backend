@@ -207,7 +207,7 @@ describe('the clock-in shift', () => {
     expect(r).toMatchObject({
       paidCents: 500,
       minutes: 10,
-      seconds: 600,
+      durationSec: 600,
       careerXp: 0, // not on a ladder
       cappedCents: 0,
       endReason: 'clock_out',
@@ -218,7 +218,16 @@ describe('the clock-in shift', () => {
     expect(await ledger(u, 'job_rekt_burger')).toEqual([500]);
     // A second shift pays too but grants no second uniform.
     const again = await work(u, at(T0, 1200), 100);
-    expect(again).toMatchObject({ paidCents: 83, minutes: 1, uniformGranted: false });
+    expect(again).toMatchObject({
+      paidCents: 83,
+      durationSec: 100,
+      minutes: 1,
+      uniformGranted: false,
+    });
+    // 65 s: durationSec is the total, minutes the floor; they are not 1 m + 5 s fields.
+    const odd = await work(await newUser({ cash: 0, debt: 1 }), T0, 65);
+    expect(odd).toMatchObject({ durationSec: 65, minutes: 1 });
+    expect(odd).not.toHaveProperty('seconds');
     expect(clockPayCents(cfg, 100)).toBe(83); // floor(100 * 50 / 60)
   });
 
@@ -274,7 +283,7 @@ describe('the clock-in shift', () => {
     await startShift(ctx, u, T0);
     const r = await endShift(ctx, u, at(T0, 5 * 3600)); // clocked out five hours later
     expect(r).toMatchObject({
-      seconds: cfg.shift.maxDurationSec,
+      durationSec: cfg.shift.maxDurationSec,
       minutes: cfg.shift.maxDurationSec / 60,
       paidCents: maxShiftPayCents(cfg),
       endReason: 'auto',
@@ -347,6 +356,7 @@ describe('the clock-in shift', () => {
     expect(later.lastShift).toMatchObject({
       shiftId: s.shiftId,
       paidCents: 3000,
+      durationSec: 3600,
       minutes: 60,
       endReason: 'auto',
     });

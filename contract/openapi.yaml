@@ -6711,8 +6711,8 @@ components:
         [
           shiftId,
           paidCents,
+          durationSec,
           minutes,
-          seconds,
           careerXp,
           cappedCents,
           capRemainingCents,
@@ -6722,9 +6722,16 @@ components:
       properties:
         shiftId: { type: string, format: uuid }
         paidCents: { type: integer, description: 'Paid, after the daily cap.' }
+        durationSec:
+          {
+            type: integer,
+            description: Total time on the clock in seconds (at most the maximum shift).,
+          }
         minutes:
-          { type: integer, description: Whole minutes on the clock (at most the maximum shift). }
-        seconds: { type: integer }
+          {
+            type: integer,
+            description: 'floor(durationSec / 60). Not a remainder: 65 s is minutes 1, durationSec 65.',
+          }
         careerXp:
           {
             type: integer,
@@ -6741,12 +6748,13 @@ components:
         endReason: { type: string, enum: [clock_out, auto, left] }
     RektBurgerLastShift:
       type: object
-      required: [shiftId, endedAt, paidCents, minutes, careerXp, endReason]
+      required: [shiftId, endedAt, paidCents, durationSec, minutes, careerXp, endReason]
       properties:
         shiftId: { type: string, format: uuid }
         endedAt: { type: string, format: date-time }
         paidCents: { type: integer }
-        minutes: { type: integer }
+        durationSec: { type: integer, description: Total time on the clock in seconds. }
+        minutes: { type: integer, description: 'floor(durationSec / 60).' }
         careerXp: { type: integer }
         endReason: { type: [string, 'null'], enum: [clock_out, auto, left, null] }
     RektBurgerCurrent:

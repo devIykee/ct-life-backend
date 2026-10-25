@@ -288,6 +288,7 @@ describe('Rekt Burger over HTTP', () => {
     expect(done.body).toMatchObject({
       shiftId,
       paidCents: 250,
+      durationSec: 300,
       minutes: 5,
       careerXp: 0,
       capRemainingCents: 4250,
