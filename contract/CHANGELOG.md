@@ -1,3 +1,14 @@
+## 2026-10-25 - Starter quests and the first session (onboarding)
+
+Stacked on #21 (clock-in) and #22 (`LIVE_PHASE`); merge those first. Migration 097.
+
+- **Starter quests.** `GET /quests` gets a `starter: {quests}` group, listed first (the response is `{starter, daily, weekly}`), and every quest now has `pool: starter|daily|weekly`. A NEW account (created after migration 097) is given them once, at character creation or on its first `GET /quests`, and they are never reseeded; older accounts get none (`starter.quests` is `[]`). `q_starter_shift` First shift (verb `shift_start`, 1000 cents + 20 Season XP, `ctlife://jobs`), `q_starter_trade` First trade (verb `trade_open`, 500 + 20, `ctlife://pulse`), `q_starter_chest` GM (verb `chest_open`, 500 + 20, `ctlife://chest`). The trade quest is only given while markets are live for the deployment (`livePhase` 2 or more); if markets open later it is added to accounts already seeded. They claim like any quest: `POST /quests/{id}/claim`, ledger `quest_reward`, Season XP.
+- **New verbs.** `shift_start` (a Rekt Burger clock-in that opens a shift, or `POST /shifts`), `trade_open` (a market buy, or a perp open), `chest_open` (the daily chest claim, first claim of the day). Each fires from the real server action after it commits.
+- **`GET /me` `flags.firstSession`** = `{state: active|skipped|done, startedAt, completedAt, beats}`, `beats` a subset of `origin, character, home, moved, shift, trade, quest, chest`. A new account starts `active`; an older account reads `{state: 'done', startedAt: null, completedAt: null, beats: []}`.
+- **`POST /me/first-session`** (auth, Idempotency-Key, 20 a minute): exactly one of `{beat}`, `{skip: true}`, `{replay: true}`; the reply is the new object. An unknown beat or any other body is `400 VALIDATION_FAILED`. It becomes `done` when every applicable beat is in (`trade` applies only while markets are live). `skip` sets `skipped`. `replay` sets `active`, clears `moved, shift, trade, quest, chest`, keeps `origin, character, home`, restarts `startedAt`.
+- **Server-set beats.** `origin` on `POST /lottery/roll`, `character` on `POST /characters`, `shift`, `trade` and `chest` from the same events as the starter quests. The client reports `home`, `moved`, `quest`.
+- Migration 097 adds `onboarding_meta` (the epoch: when it ran), `onboarding_state`, `starter_quests` and lets `quest_progress.pool` be `starter`.
+
 ## 2026-10-25 - Rekt Burger is a clock-in job (replaces the per-ticket minigame)
 
 Migration 096. Changes what #16 shipped.

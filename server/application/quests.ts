@@ -15,6 +15,14 @@
  * `quest_events (user_id, verb, ref)` makes it count once however often the hook fires.
  * A failure here is logged and swallowed: it must never fail the action that triggered it.
  *
+ * Starter quests (pool 'starter') are not picked by date. A NEW account (created after the
+ * onboarding migration) is given them once, at its first onboarding contact (character
+ * creation, or the first GET /quests); they are recorded in `starter_quests` and never
+ * reseeded. Old accounts get none. `q_starter_trade` is only given while markets are live
+ * (`LIVE_PHASE` >= 2); if markets open later it is added then. Their progress uses
+ * `quest_progress` with period_key 'starter', so claim, Cash (`quest_reward`) and Season XP
+ * are the ordinary ones.
+ *
  * Rewards come from the definitions file, never from the request. A claim pays Cash with
  * ledger reason `quest_reward` and records Season XP in `season_xp`. Only quests in the
  * caller's current picks can be claimed, so another player's quest id is a plain 404.
@@ -26,6 +34,7 @@ import { nextUtcMidnight, utcDate } from './daily-streak.js';
 import { recordCareerAction } from './ladders.js';
 import { publishToUser } from './realtime-bus.js';
 import { weekIso } from './season-clock.js';
+import { lockOnboarding } from './onboarding-store.js';
 import type { AppContext } from './context.js';
 
 export type QuestVerb =
@@ -36,7 +45,10 @@ export type QuestVerb =
   | 'alpha_call'
   | 'paid_call'
   | 'tip_send'
-  | 'home_visit';
+  | 'home_visit'
+  | 'shift_start'
+  | 'trade_open'
+  | 'chest_open';
 
 export interface QuestDef {
   readonly id: string;
@@ -45,7 +57,7 @@ export interface QuestDef {
   readonly verb: QuestVerb;
   readonly target: number;
   readonly reward: { readonly cashCents: number; readonly seasonXp: number };
-  readonly pool: 'daily' | 'weekly';
+  readonly pool: 'daily' | 'weekly' | 'starter';
   readonly deepLink?: string;
 }
 
@@ -156,6 +168,7 @@ function nextMondayUtc(now: Date): Date {
 
 export interface QuestView {
   readonly id: string;
+  readonly pool: 'starter' | 'daily' | 'weekly';
   readonly title: string;
   readonly description: string | null;
   readonly verb: QuestVerb;
@@ -170,6 +183,10 @@ export interface QuestView {
 }
 
 export interface QuestsResponse {
+  /** The starter quests, first. Empty for an old account or once none are left to show. */
+  readonly starter: {
+    readonly quests: QuestView[];
+  };
   readonly daily: {
     readonly date: string;
     readonly resetsAt: string;
@@ -200,6 +217,7 @@ function view(
   const progress = Math.min(r?.progress ?? 0, q.target);
   return {
     id: q.id,
+    pool: q.pool,
     title: q.title,
     description: q.description ?? null,
     verb: q.verb,
@@ -211,6 +229,69 @@ function view(
     deepLink: q.deepLink ?? null,
     ...(step !== undefined ? { step } : {}),
   };
+}
+
+const STARTER_KEY = 'starter';
+/** Markets are live for the deployment (LIVE_PHASE 2 or more). */
+const marketsLive = (ctx: AppContext): boolean => ctx.config.livePhase >= 2;
+
+/**
+ * Seed the starter quests for a NEW account, once. Run in a transaction. Creates the
+ * onboarding row if needed. Accounts from before the onboarding migration get nothing.
+ * Later it also adds `q_starter_trade` if markets went live after the first seeding.
+ * @returns The seeded quest ids (empty for an old account).
+ */
+export async function ensureStarterQuests(
+  client: Parameters<typeof lockOnboarding>[0],
+  ctx: AppContext,
+  userId: string,
+  now: Date,
+): Promise<string[]> {
+  const row = await lockOnboarding(client, userId, now);
+  if (!row) return [];
+  const starters = loadQuestDefs(ctx).filter((d) => d.pool === 'starter');
+  const wanted = starters.filter((d) => d.verb !== 'trade_open' || marketsLive(ctx));
+  if (row.starter_seeded_at === null) {
+    for (const q of wanted) {
+      await client.query(
+        `INSERT INTO starter_quests (user_id, quest_id, seeded_at) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [userId, q.id, now],
+      );
+    }
+    await client.query(
+      `UPDATE onboarding_state SET starter_seeded_at = $2, updated_at = $2 WHERE user_id = $1`,
+      [userId, now],
+    );
+  } else if (marketsLive(ctx)) {
+    const trade = starters.find((d) => d.verb === 'trade_open');
+    if (trade) {
+      await client.query(
+        `INSERT INTO starter_quests (user_id, quest_id, seeded_at) VALUES ($1, $2, $3)
+         ON CONFLICT DO NOTHING`,
+        [userId, trade.id, now],
+      );
+    }
+  }
+  const r = await client.query<{ quest_id: string }>(
+    `SELECT quest_id FROM starter_quests WHERE user_id = $1`,
+    [userId],
+  );
+  return r.rows.map((x) => x.quest_id);
+}
+
+/** The starter quests the player holds, in the file's order. */
+async function starterQuestsOf(
+  ctx: AppContext,
+  c: Parameters<typeof lockOnboarding>[0],
+  userId: string,
+): Promise<QuestDef[]> {
+  const r = await c.query<{ quest_id: string }>(
+    `SELECT quest_id FROM starter_quests WHERE user_id = $1`,
+    [userId],
+  );
+  const mine = new Set(r.rows.map((x) => x.quest_id));
+  return loadQuestDefs(ctx).filter((d) => d.pool === 'starter' && mine.has(d.id));
 }
 
 /**
@@ -226,15 +307,28 @@ export async function listQuests(
   now: Date = new Date(),
 ): Promise<QuestsResponse> {
   const p = picksFor(ctx, userId, now);
-  const rows = await ctx.db.withConnection(async (c) => {
+  // A new account that has not been seeded yet (or an old one: nothing happens) gets its
+  // starter quests on this first read.
+  await runInTransaction(
+    async (client) => {
+      await ensureStarterQuests(client, ctx, userId, now);
+    },
+    {},
+    ctx.db,
+  );
+  const { rows, starters } = await ctx.db.withConnection(async (c) => {
     const r = await c.query<ProgressRow>(
       `SELECT period_key, quest_id, progress, completed_at, claimed_at
          FROM quest_progress WHERE user_id = $1 AND period_key = ANY($2::text[])`,
-      [userId, [p.dayKey, p.weekKey]],
+      [userId, [p.dayKey, p.weekKey, STARTER_KEY]],
     );
-    return new Map(r.rows.map((x) => [`${x.period_key}|${x.quest_id}`, x]));
+    return {
+      rows: new Map(r.rows.map((x) => [`${x.period_key}|${x.quest_id}`, x])),
+      starters: await starterQuestsOf(ctx, c, userId),
+    };
   });
   return {
+    starter: { quests: starters.map((q) => view(q, rows, STARTER_KEY)) },
     daily: {
       date: p.dayKey,
       resetsAt: nextUtcMidnight(now).toISOString(),
@@ -250,7 +344,7 @@ export async function listQuests(
 
 export interface QuestEventUpdate {
   readonly questId: string;
-  readonly pool: 'daily' | 'weekly';
+  readonly pool: 'daily' | 'weekly' | 'starter';
   readonly progress: number;
   readonly target: number;
   readonly completed: boolean;
@@ -281,7 +375,11 @@ export async function recordQuestEvent(
   if (verb !== 'shift_complete') await recordCareerAction(ctx, userId, verb, ref, now, counterpart);
   try {
     const p = picksFor(ctx, userId, now);
+    const starters = (await ctx.db.withConnection((c) => starterQuestsOf(ctx, c, userId))).filter(
+      (q) => q.verb === verb,
+    );
     const matches = [
+      ...starters.map((q) => ({ q, key: STARTER_KEY })),
       ...p.daily.filter((q) => q.verb === verb).map((q) => ({ q, key: p.dayKey })),
       ...p.weekly.filter((q) => q.verb === verb).map((q) => ({ q, key: p.weekKey })),
     ];
@@ -361,9 +459,15 @@ export async function claimQuest(
   const p = picksFor(ctx, userId, now);
   const inDaily = p.daily.find((q) => q.id === questId);
   const inWeekly = p.weekly.find((q) => q.id === questId);
-  const q = inDaily ?? inWeekly;
+  const inStarter =
+    inDaily || inWeekly
+      ? undefined
+      : (await ctx.db.withConnection((c) => starterQuestsOf(ctx, c, userId))).find(
+          (q) => q.id === questId,
+        );
+  const q = inDaily ?? inWeekly ?? inStarter;
   if (!q) throw new NotFoundError({ kind: 'quest', id: questId });
-  const periodKey = inDaily ? p.dayKey : p.weekKey;
+  const periodKey = inDaily ? p.dayKey : inWeekly ? p.weekKey : STARTER_KEY;
   return runInTransaction(async (client) => {
     const r = await client.query<{ progress: number; claimed_at: Date | null }>(
       `SELECT progress, claimed_at FROM quest_progress

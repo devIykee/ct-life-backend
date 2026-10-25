@@ -46,6 +46,7 @@ import { nextUtcMidnight } from './daily-streak.js';
 import { decodePos, POS_FRESH_MS, POS_HASH } from '../realtime/movement.js';
 import { awardActionXpInTx, publishPromotion, type PromotionInfo } from './ladders.js';
 import { publishToUser } from './realtime-bus.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { recordQuestEvent } from './quests.js';
 import { creditCash, ensureRewardCatalog, grantCosmetic } from './rewards.js';
 import type { AppContext } from './context.js';
@@ -732,6 +733,8 @@ export async function startShift(
     };
   });
   if (out.unlock.newly) await announceUnlock(ctx, userId, out.unlock.reason, now);
+  if (!out.resumed)
+    await recordOnboardingEvent(ctx, userId, 'shift_start', `rb:${out.view.shiftId}`, now);
   return { ...out.view, resumed: out.resumed, postId: out.postId };
 }
 
