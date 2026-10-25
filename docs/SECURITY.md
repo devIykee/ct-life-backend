@@ -37,20 +37,22 @@ The game moves real money (USDC, SOL, SKR, ORE) for top-ups, cosmetics, tips, pa
 **Current values**: `SIWS_DOMAIN=ctlife.fun`, `SIWS_URI=https://ctlife.fun/`
 
 ⚠️ **WARNING**: These are placeholder values for a domain we do not control. This weakens phishing resistance because:
+
 - The domain is owned by the team, so it cannot be registered by an attacker
 - Users cannot verify domain ownership
 - The SIWS message cannot be trusted to prove the correct service
 
 **Required before production**:
+
 1. Purchase and control a real domain (e.g., ctlife.app, ctlife.io)
 2. Update SIWS_DOMAIN and SIWS_URI environment variables
 3. Ensure domain matches the actual deployed service
 4. Remove this warning
 
 **Configured via**: Environment variables (never hardcoded)
+
 - `SIWS_DOMAIN` - bare hostname
 - `SIWS_URI` - absolute https URI
-
 
 ## Authorization matrix
 

@@ -42,7 +42,13 @@ const LogoutBody = z.object({ refreshToken: z.string().min(1) });
  * @returns The response body for verify, dev and refresh.
  */
 function authResponse(
-  user: { id: string; wallet: string; isSeeker: boolean; accessToken: string; refreshToken: string },
+  user: {
+    id: string;
+    wallet: string;
+    isSeeker: boolean;
+    accessToken: string;
+    refreshToken: string;
+  },
   hasCharacter: boolean,
 ): Record<string, unknown> {
   return {

@@ -146,7 +146,8 @@ export class CharacterService {
    */
   private originHomeId(outcome: string | undefined): string {
     const lottery = this.configCache.load<LotteryConfig>('lottery');
-    const out = (outcome !== undefined ? lottery.outcomes[outcome] : undefined) ??
+    const out =
+      (outcome !== undefined ? lottery.outcomes[outcome] : undefined) ??
       lottery.outcomes['exit_liquidity'];
     if (out === undefined) {
       throw new ValidationFailedError({ reason: 'lottery_outcome_unknown', outcome });

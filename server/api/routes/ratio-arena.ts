@@ -37,7 +37,9 @@ const SettleBody = z.object({
 
 const BeefListQuery = z.object({
   scope: z.enum(['all', 'mine']).default('all'),
-  status: z.enum(['open', 'active', 'voting', 'closed', 'declined', 'cancelled', 'expired']).optional(),
+  status: z
+    .enum(['open', 'active', 'voting', 'closed', 'declined', 'cancelled', 'expired'])
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 

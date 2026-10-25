@@ -5,15 +5,16 @@ service. Where this file previously disagreed with the code, the code won.
 
 ## Base URLs
 
-| Environment | REST API | Realtime (Colyseus) |
-| --- | --- | --- |
-| Local | `http://localhost:4010` | `ws://localhost:2567` |
+| Environment               | REST API                                       | Realtime (Colyseus)                               |
+| ------------------------- | ---------------------------------------------- | ------------------------------------------------- |
+| Local                     | `http://localhost:4010`                        | `ws://localhost:2567`                             |
 | Staging (Railway, devnet) | `https://ctlife-api-production.up.railway.app` | `wss://ctlife-realtime-production.up.railway.app` |
 
 The local API port comes from `PORT` or `PORT_API` (default 4010 when
 `APP_ENV=local`). Realtime reads `PORT_REALTIME` (default 2567).
 
 **Start locally**
+
 ```bash
 pnpm dev:up                        # postgres, redis, livekit, minio
 npx tsx server/api/main.ts         # REST API
@@ -23,12 +24,12 @@ npx tsx server/workers/main.ts     # workers
 
 ## Health
 
-| Method | Path | Notes |
-| --- | --- | --- |
-| GET | `/healthz` | liveness, always `200` |
-| GET | `/readyz` | checks postgres, redis and helius |
-| GET | `/metrics` | Prometheus text |
-| GET | `/docs` | rendered OpenAPI |
+| Method | Path       | Notes                             |
+| ------ | ---------- | --------------------------------- |
+| GET    | `/healthz` | liveness, always `200`            |
+| GET    | `/readyz`  | checks postgres, redis and helius |
+| GET    | `/metrics` | Prometheus text                   |
+| GET    | `/docs`    | rendered OpenAPI                  |
 
 `/readyz` returns `{"ok":true,"checks":{"postgres":{"ok":true},"redis":{"ok":true},"helius":{"ok":true}}}`.
 
@@ -116,7 +117,10 @@ const address = kp.publicKey.toBase58();
 const ch = await (await fetch(`${API}/v1/auth/challenge?wallet=${address}`)).json();
 const message = [
   `${ch.domain} wants you to sign in with your Solana account:`,
-  address, '', ch.statement, '',
+  address,
+  '',
+  ch.statement,
+  '',
   `URI: ${ch.uri}`,
   `Version: ${ch.version}`,
   `Chain ID: ${ch.chainId}`,
@@ -131,7 +135,8 @@ const key = createPrivateKey({
     Buffer.from('302e020100300506032b657004220420', 'hex'),
     Buffer.from(kp.secretKey.slice(0, 32)),
   ]),
-  format: 'der', type: 'pkcs8',
+  format: 'der',
+  type: 'pkcs8',
 });
 
 const res = await fetch(`${API}/v1/auth/verify`, {
@@ -230,7 +235,7 @@ POST /v1/careers/:careerId/apply                               -> 200
 Start takes `careerId`, not `venueId`. Complete takes `results`, not `scores`:
 
 ```json
-{ "results": [ { "miniGameId": "...", "score": 85 } ] }
+{ "results": [{ "miniGameId": "...", "score": 85 }] }
 ```
 
 Only assigned mini-games may be scored, and a shift cannot be completed twice (`409`).
@@ -279,10 +284,10 @@ POST /v1/payments/intents/:id/submitted     -> 200
 
 ```json
 {
-  "kind": "topup",        // topup | cosmetic | ad | season_pass
-  "currency": "USDC",     // USDC | SOL | SKR | ORE
-  "sku": "ramen",         // ramen | bag | whale | cabal | custom
-  "amountCents": 10000    // only for sku "custom"
+  "kind": "topup", // topup | cosmetic | ad | season_pass
+  "currency": "USDC", // USDC | SOL | SKR | ORE
+  "sku": "ramen", // ramen | bag | whale | cabal | custom
+  "amountCents": 10000 // only for sku "custom"
 }
 ```
 
@@ -433,15 +438,15 @@ while the first request is still running returns `409 IN_FLIGHT`.
 { "error": { "code": "ERROR_CODE", "message": "Human readable message", "details": {} } }
 ```
 
-| Code | Status |
-| --- | --- |
-| `VALIDATION_FAILED` | 400 |
-| `UNAUTHORIZED`, `SIGNATURE_INVALID` | 401 |
-| `FORBIDDEN` | 403 |
-| `NOT_FOUND` | 404 |
-| `CONFLICT`, `IN_FLIGHT` | 409 |
-| `UPGRADE_REQUIRED` | 426 |
-| `RATE_LIMITED` | 429 |
+| Code                                | Status |
+| ----------------------------------- | ------ |
+| `VALIDATION_FAILED`                 | 400    |
+| `UNAUTHORIZED`, `SIGNATURE_INVALID` | 401    |
+| `FORBIDDEN`                         | 403    |
+| `NOT_FOUND`                         | 404    |
+| `CONFLICT`, `IN_FLIGHT`             | 409    |
+| `UPGRADE_REQUIRED`                  | 426    |
+| `RATE_LIMITED`                      | 429    |
 
 **Rate limits**
 
@@ -486,14 +491,14 @@ while the first request is still running returns `409 IN_FLIGHT`.
 `joinOrCreate(<room>, {token, ...})`. The token is verified on join and the
 player profile is read from the database, never from the join options.
 
-| Room | Filter | Notes |
-| --- | --- | --- |
-| `city` | none | one per server; also the delivery point for targeted messages |
-| `market` | none | `coins` syncs from the coins table every 2s |
-| `venue` | `venueId` | players + NPCs; NPCs spawn on their own venue's spots |
-| `home` | `homeId` | one per home, host and guests |
-| `space` | per instance | audio Space state |
-| `video_call` | per instance | call participants |
+| Room         | Filter       | Notes                                                         |
+| ------------ | ------------ | ------------------------------------------------------------- |
+| `city`       | none         | one per server; also the delivery point for targeted messages |
+| `market`     | none         | `coins` syncs from the coins table every 2s                   |
+| `venue`      | `venueId`    | players + NPCs; NPCs spawn on their own venue's spots         |
+| `home`       | `homeId`     | one per home, host and guests                                 |
+| `space`      | per instance | audio Space state                                             |
+| `video_call` | per instance | call participants                                             |
 
 ### Targeted messages
 

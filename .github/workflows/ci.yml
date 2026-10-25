@@ -115,6 +115,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        run: pnpm db:migrate:env
+      - name: Write a throwaway .env (generated keys, nothing real)
+        run: pnpm exec tsx tools/scripts/ci-env.ts
       - run: pnpm test:unit
 
   contract-check:
@@ -187,6 +191,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+      - name: Migrate the test database
+        run: pnpm db:migrate:env
+      - name: Write a throwaway .env (generated keys, nothing real)
+        run: pnpm exec tsx tools/scripts/ci-env.ts
       - run: pnpm test:integration
 
   # Runs nightly or manually. Hits external services (Helius, devnet airdrop).

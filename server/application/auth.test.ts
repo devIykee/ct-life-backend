@@ -30,7 +30,7 @@ describe('B0: SPKI ed25519 signature verification', () => {
     const pub = createPublicKey({
       key: Buffer.concat([
         Buffer.from('302a300506032b6570032100', 'hex'),
-        Buffer.from(pubkey.toBytes())
+        Buffer.from(pubkey.toBytes()),
       ]),
       format: 'der',
       type: 'spki',
@@ -62,7 +62,7 @@ describe('B0: SPKI ed25519 signature verification', () => {
     const pub = createPublicKey({
       key: Buffer.concat([
         Buffer.from('302a300506032b6570032100', 'hex'),
-        Buffer.from(pubkey.toBytes())
+        Buffer.from(pubkey.toBytes()),
       ]),
       format: 'der',
       type: 'spki',

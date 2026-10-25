@@ -46,7 +46,15 @@ describe('Realtime Schema Validation', () => {
     expect(player.emoteAt).toBe(12345);
     expect(player.spotId).toBe('spot1');
     expect(player.talking).toBe(true);
-    expect([...player.look]).toEqual(['skin1', 'head1', 'hair1', 'top1', 'bottom1', 'shoes1', 'acc1']);
+    expect([...player.look]).toEqual([
+      'skin1',
+      'head1',
+      'hair1',
+      'top1',
+      'bottom1',
+      'shoes1',
+      'acc1',
+    ]);
     expect(player.look.length).toBe(7);
   });
 
@@ -172,7 +180,15 @@ describe('Realtime Schema Validation', () => {
     expect(state.players.size).toBe(1);
     expect(state.npcs.size).toBe(1);
     expect(state.players.get('session1')?.userId).toBe('user1');
-    expect([...(state.players.get('session1')?.look ?? [])]).toEqual(['a', 'b', 'c', 'd', 'e', 'f', 'g']);
+    expect([...(state.players.get('session1')?.look ?? [])]).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+      'f',
+      'g',
+    ]);
     expect(state.npcs.get('npc-town-crier')?.archetypeId).toBe('town_crier');
   });
 
