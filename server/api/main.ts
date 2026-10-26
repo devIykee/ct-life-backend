@@ -61,6 +61,7 @@ import { registerVenuesGatingRoutes } from './routes/venues-gating.js';
 import { registerLlmNpcRoutes } from './routes/llm-npcs.js';
 import { registerXLinkRoutes } from './routes/x-link.js';
 import { registerLikenessRoutes } from './routes/likeness.js';
+import { registerGroupRoutes } from './routes/groups.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
 
@@ -191,6 +192,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerVenuesGatingRoutes(app);
   registerLlmNpcRoutes(app);
   registerXLinkRoutes(app);
+  registerGroupRoutes(app);
   const likeness = await buildLikenessRuntime(ctx.config, ctx.db);
   registerLikenessRoutes(app, (_db, userId) => likeness.forOwner(userId));
 

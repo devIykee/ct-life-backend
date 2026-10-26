@@ -30,6 +30,8 @@ servers:
     description: local
 
 tags:
+  - name: groups
+    description: Group chats and alpha groups inside Messages (docs/GROUPS.md). Free and invite-only.
   - name: auth
     description: Sign In With Solana, JWT, refresh, JWKS. Phases 1+.
   - name: player
@@ -6324,6 +6326,550 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+  /groups:
+    get:
+      tags: [groups]
+      operationId: getGroups
+      summary: My groups, newest activity first (joins my tribe chat).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties:
+                    {
+                      groups: { type: array, items: { $ref: '#/components/schemas/GroupSummary' } },
+                    },
+                }
+    post:
+      tags: [groups]
+      operationId: postGroups
+      summary: Create a friends or alpha group (free; I am the owner).
+      description: >-
+        At most 5 owned groups (`CONFLICT`, `reason: too_many_groups`). Names go through the name filter (`NAME_NOT_ALLOWED`). `inviteUserIds` get direct invites; nobody joins without accepting.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, name]
+              properties:
+                kind: { type: string, enum: [friends, alpha] }
+                name: { type: string, minLength: 1, maxLength: 40 }
+                inviteUserIds: { type: array, maxItems: 49, items: { type: string, format: uuid } }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /groups/invites:
+    get:
+      tags: [groups]
+      operationId: getGroupInvites
+      summary: Direct invites waiting for me (the Invites list, kept apart like message requests).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties:
+                    {
+                      invites:
+                        { type: array, items: { $ref: '#/components/schemas/GroupInvitePreview' } },
+                    },
+                }
+
+  /groups/{id}:
+    get:
+      tags: [groups]
+      operationId: getGroup
+      summary: A group info sheet (members only; others get 404).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupInfo' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [groups]
+      operationId: patchGroup
+      summary: Rename (owner), rules and slow mode (owner or mod).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, maxLength: 40 }
+                rules: { type: string, maxLength: 500 }
+                slowMode:
+                  {
+                    type: object,
+                    description: 'Seconds per topic, 0..300; 0 turns it off.',
+                    additionalProperties: { type: integer },
+                  }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupInfo' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/members:
+    get:
+      tags: [groups]
+      operationId: getGroupMembers
+      summary: Members (owner, mods, then by join time).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties:
+                    {
+                      members:
+                        {
+                          type: array,
+                          items:
+                            {
+                              type: object,
+                              properties:
+                                {
+                                  userId: { type: string, format: uuid },
+                                  alias: { type: string },
+                                  role: { type: string, enum: [owner, mod, member] },
+                                  joinedAt: { type: string, format: date-time },
+                                },
+                            },
+                        },
+                    },
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/members/{userId}/remove:
+    post:
+      tags: [groups]
+      operationId: postGroupMemberRemove
+      summary: Remove a member (owner or mod); they cannot rejoin by invite.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Removed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/members/{userId}/role:
+    post:
+      tags: [groups]
+      operationId: postGroupMemberRole
+      summary: Make a member a mod or back (owner only).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { type: string, enum: [mod, member] }
+      responses:
+        '204': { description: Changed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/leave:
+    post:
+      tags: [groups]
+      operationId: postGroupLeave
+      summary: Leave. The owner hands over to the oldest mod, else member; tribe chats cannot be left (mute them).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Left }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/mute:
+    post:
+      tags: [groups]
+      operationId: postGroupMute
+      summary: Mute banners for N hours (0 unmutes).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hours]
+              properties:
+                hours: { type: integer, minimum: 0, maximum: 8760 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties: { mutedUntil: { type: string, format: date-time, nullable: true } },
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/read:
+    post:
+      tags: [groups]
+      operationId: postGroupRead
+      summary: Mark the group read (clears unread).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Read }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/report:
+    post:
+      tags: [groups]
+      operationId: postGroupReport
+      summary: Report a group (a member or an invitee; once per player). Three different reporters hide it.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reasonId]
+              properties:
+                reasonId: { type: string, description: 'report_reasons.json id' }
+                note: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: Reported
+          content:
+            application/json:
+              schema: { type: object, properties: { hidden: { type: boolean } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/invites:
+    post:
+      tags: [groups]
+      operationId: postGroupInvites
+      summary: 'A shareable invite link (friends: any member; alpha: owner or mod; tribe: none). Sharing earns nothing.'
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                maxUses: { type: integer, minimum: 1, maximum: 1000, default: 25 }
+                ttlHours: { type: integer, minimum: 1, maximum: 720, default: 168 }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupInviteLink' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/invites/user:
+    post:
+      tags: [groups]
+      operationId: postGroupInviteUser
+      summary: Invite one player directly (realtime `group_invite`). Blocked pairs get `BLOCKED`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string, format: uuid }
+      responses:
+        '201':
+          description: Invited
+          content:
+            application/json:
+              schema: { type: object, properties: { code: { type: string } } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /invites/{code}:
+    get:
+      tags: [groups]
+      operationId: getInvite
+      summary: Preview an invite (group, size, caller and Trust score for alpha groups, valid).
+      parameters:
+        - {
+            name: code,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: '^[A-Za-z0-9]{10}$' },
+          }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupInvitePreview' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /invites/{code}/accept:
+    post:
+      tags: [groups]
+      operationId: postInviteAccept
+      summary: 'Join with an invite. Atomic: the cap and max uses hold under concurrent joins (`CONFLICT`, `reason: group_full`; `FORBIDDEN` `invite_expired`, `removed_from_group`, `group_hidden`).'
+      parameters:
+        - {
+            name: code,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: '^[A-Za-z0-9]{10}$' },
+          }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /invites/{code}/decline:
+    post:
+      tags: [groups]
+      operationId: postInviteDecline
+      summary: Decline a direct invite.
+      parameters:
+        - {
+            name: code,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: '^[A-Za-z0-9]{10}$' },
+          }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Declined }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/messages:
+    get:
+      tags: [groups]
+      operationId: getGroupMessages
+      summary: A topic's messages, newest first (50). Authors I blocked are left out; call cards show the server's grade and the live price.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - {
+            name: topic,
+            in: query,
+            required: false,
+            schema: { type: string, enum: [chat, calls, wins], default: chat },
+          }
+        - { name: before, in: query, required: false, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties:
+                    {
+                      messages:
+                        { type: array, items: { $ref: '#/components/schemas/GroupMessage' } },
+                      nextBefore: { type: string, format: date-time, nullable: true },
+                    },
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [groups]
+      operationId: postGroupMessages
+      summary: Post to a topic.
+      description: >-
+        `chat` {text}: any member (friends and tribe groups have chat only). `calls` {coinId, targetX 1.05..100, stopPct 1..95, text?}: alpha groups, owner only; creates an alpha call with the server price as entry, graded by the existing evaluator. `wins` {coinId, text?}: alpha groups; needs realized profit on that coin. Links, e-mails, phones and wallet addresses are masked. Slow mode per topic (`RATE_LIMITED`, `details.slowModeSeconds`; owners and mods exempt) and a per-player burst of 10, then 1/s.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [topic]
+              properties:
+                topic: { type: string, enum: [chat, calls, wins] }
+                text: { type: string, maxLength: 500 }
+                coinId: { type: string, format: uuid }
+                targetX: { type: number, minimum: 1.05, maximum: 100 }
+                stopPct: { type: number, minimum: 1, maximum: 95 }
+      responses:
+        '201':
+          description: Posted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupMessage' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /groups/{id}/messages/{messageId}:
+    delete:
+      tags: [groups]
+      operationId: deleteGroupMessage
+      summary: Delete a message (its author, or an owner or mod).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: messageId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /venues/{venueId}/booths:
+    get:
+      tags: [groups]
+      operationId: getVenueBooths
+      summary: A venue's booths and the alpha group holding each, with how many members are there now.
+      parameters:
+        - {
+            name: venueId,
+            in: path,
+            required: true,
+            schema: { type: string, enum: [cabal_lounge, discord_heights] },
+          }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties:
+                    { booths: { type: array, items: { $ref: '#/components/schemas/VenueBooth' } } },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /groups/{id}/booth:
+    post:
+      tags: [groups]
+      operationId: postGroupBooth
+      summary: Claim a booth for an alpha group (owner; one booth per group; `CONFLICT` booth_taken).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [venueId, boothId]
+              properties:
+                venueId: { type: string, enum: [cabal_lounge, discord_heights] }
+                boothId:
+                  {
+                    type: string,
+                    description: 'cabal_lounge: booth_1..booth_6; discord_heights: general, alpha_maybe, gm, wen_token, support_ticket, memes',
+                  }
+      responses:
+        '201':
+          description: Claimed
+          content:
+            application/json:
+              schema:
+                {
+                  type: object,
+                  properties: { venueId: { type: string }, boothId: { type: string } },
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [groups]
+      operationId: deleteGroupBooth
+      summary: Give the booth back (owner).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Released }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -6509,6 +7055,126 @@ components:
                 },
             }
   schemas:
+    GroupSummary:
+      type: object
+      required:
+        [groupId, kind, name, role, memberCount, memberCap, unread, muted, lastMessage, booth]
+      properties:
+        groupId: { type: string, format: uuid }
+        kind: { type: string, enum: [friends, alpha, tribe] }
+        name: { type: string }
+        role: { type: string, enum: [owner, mod, member] }
+        memberCount: { type: integer }
+        memberCap: { type: integer, description: 'friends 12, alpha 50, tribe 200' }
+        unread: { type: integer, maximum: 99 }
+        muted: { type: boolean }
+        mutedUntil: { type: string, format: date-time, nullable: true }
+        lastMessage:
+          type: object
+          nullable: true
+          properties:
+            topic: { type: string, enum: [chat, calls, wins] }
+            authorAlias: { type: string }
+            preview: { type: string }
+            at: { type: string, format: date-time }
+        booth:
+          type: object
+          nullable: true
+          properties: { venueId: { type: string }, boothId: { type: string } }
+    GroupInfo:
+      type: object
+      properties:
+        groupId: { type: string, format: uuid }
+        kind: { type: string, enum: [friends, alpha, tribe] }
+        name: { type: string }
+        rules: { type: string }
+        role: { type: string, enum: [owner, mod, member] }
+        memberCount: { type: integer }
+        memberCap: { type: integer }
+        topics: { type: array, items: { type: string, enum: [calls, chat, wins] } }
+        slowMode: { type: object, additionalProperties: { type: integer } }
+        owner:
+          type: object
+          nullable: true
+          properties: { userId: { type: string, format: uuid }, alias: { type: string } }
+        trust:
+          type: object
+          nullable: true
+          description: "Alpha groups: the caller's server-graded record (GET /alpha-calls trust)."
+          properties:
+            hitRate: { type: number }
+            avgReturnBps: { type: integer }
+            maxDrawdownBps: { type: integer }
+            heldBagPct: { type: number }
+        booth:
+          type: object
+          nullable: true
+          properties: { venueId: { type: string }, boothId: { type: string } }
+        hereWithYou:
+          { type: integer, description: 'Members within 60 m of you now (server positions).' }
+        muted: { type: boolean }
+    GroupMessage:
+      type: object
+      required: [messageId, groupId, topic, authorUserId, authorAlias, text, card, at]
+      properties:
+        messageId: { type: string, format: uuid }
+        groupId: { type: string, format: uuid }
+        topic: { type: string, enum: [chat, calls, wins] }
+        authorUserId: { type: string, format: uuid }
+        authorAlias: { type: string }
+        text: { type: string, maxLength: 500 }
+        card:
+          type: object
+          nullable: true
+          description: >-
+            `call`: {type, callId, coinId, ticker, entryMicros, targetMicros, stopMicros, status
+            (open | hit_target | hit_stop | expired), priceMicros, deepLink}. `pnl`: {type, coinId,
+            ticker, realizedCents, deepLink}.
+          additionalProperties: true
+        at: { type: string, format: date-time }
+    GroupInviteLink:
+      type: object
+      properties:
+        code: { type: string }
+        deepLink: { type: string, example: 'ctlife://invite/Ab3dEf7hJk' }
+        groupId: { type: string, format: uuid }
+        expiresAt: { type: string, format: date-time }
+        maxUses: { type: integer }
+        uses: { type: integer }
+    GroupInvitePreview:
+      type: object
+      properties:
+        code: { type: string }
+        groupId: { type: string, format: uuid }
+        groupName: { type: string }
+        kind: { type: string, enum: [friends, alpha, tribe] }
+        memberCount: { type: integer }
+        memberCap: { type: integer }
+        from:
+          {
+            type: object,
+            properties: { userId: { type: string, format: uuid }, alias: { type: string } },
+          }
+        owner:
+          type: object
+          nullable: true
+          properties: { userId: { type: string, format: uuid }, alias: { type: string } }
+        trust: { type: object, nullable: true, additionalProperties: true }
+        expiresAt: { type: string, format: date-time }
+        valid: { type: boolean }
+    VenueBooth:
+      type: object
+      properties:
+        venueId: { type: string }
+        boothId: { type: string }
+        group:
+          type: object
+          nullable: true
+          properties:
+            groupId: { type: string, format: uuid }
+            name: { type: string }
+            memberCount: { type: integer }
+            here: { type: integer, description: 'Members within 60 m of the venue door now.' }
     LikenessCheckoutStatus:
       type: object
       required: [intentId, modelId, status, entitlementId]
