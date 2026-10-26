@@ -313,9 +313,14 @@
       "message": "You have earned today's maximum pay from this job."
     },
     {
-      "code": "SHIFT_RESULT_IMPLAUSIBLE",
-      "httpStatus": 422,
-      "message": "The shift result does not look like a real shift."
+      "code": "GONE",
+      "httpStatus": 410,
+      "message": "This endpoint was removed; see details.use for its replacement."
+    },
+    {
+      "code": "COUNTER_TOO_FAR",
+      "httpStatus": 409,
+      "message": "The server's last position for you is too far from the Rekt Burger counter."
     },
     {
       "code": "JAILED",

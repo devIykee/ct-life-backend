@@ -2,9 +2,10 @@
  * Rekt Burger: the "blew my port" fallback job.
  *
  *   GET  /v1/jobs/rekt-burger                 unlocked?, why, my shift state, pay and caps
- *   POST /v1/jobs/rekt-burger/shift/start     open a server-held shift
- *   POST /v1/jobs/rekt-burger/shift/finish    {result: {orders: [...]}}: validate, pay
- *   POST /v1/jobs/rekt-burger/leave           hang up the apron
+ *   POST /v1/jobs/rekt-burger/shift/start     clock in (near the counter)
+ *   POST /v1/jobs/rekt-burger/shift/end       clock out: pay by server time
+ *   GET  /v1/jobs/rekt-burger/shift/current   restore after a relaunch
+ *   POST /v1/jobs/rekt-burger/leave           hang up the apron (pays an open shift)
  *
  * "Rekt Burger" is our own parody brand (no real chain's name, logo or likeness).
  *
@@ -13,33 +14,39 @@
  * or started) or when a perp liquidation leaves their Cash under a floor (checked right
  * after the liquidation). Thresholds are in `contract/config/careers.json` `rektBurger`.
  *
- * Pay is a humble faucet and is decided only by the server. The client plays a short
- * minigame and reports the timing of each ticket; the server checks the report is
- * humanly possible for a shift it opened itself (see `validateOrders`), then pays
- * `baseCents + perCorrectOrderCents * correct orders`, in integer cents, capped per shift
- * and per UTC day. The client never sends an amount. A report that fails the plausibility
- * check burns the shift (it cannot be retried with tuned numbers) and answers 422.
+ * Pay is a humble faucet and is decided only by the server. It is a SIMPLE CLOCK-IN, like
+ * The Sims: the player taps Clock in at the counter (their server-known position must be
+ * within `counter.radiusM` of it and fresh), the avatar works in 3D (client-side animation
+ * only), pay builds by real server time (`ratePerMinuteCents`, floor of elapsed seconds),
+ * and Clock out pays. The player may leave the app: the shift runs on, and the server closes
+ * it at `maxDurationSec` (a per-minute sweep, or on the next read) and pays up to there.
+ * Pay is clamped to the UTC-day cap. The client sends no amount, no time and no position
+ * that is trusted. The old per-ticket minigame endpoint (`/shift/finish`) answers 410.
  *
  * Timeline. Starting work after being out (the first shift of a stint) writes a "Back to
  * the trenches" post; leaving after a stint that began below the glow-up net worth and
  * ended above it writes a "Glow-up" post. Both are server-templated, one per cooldown.
  *
- * Shift completion also counts for the quests (`shift_complete`), and through them the
- * Season XP that quests pay when claimed.
+ * A shift of at least `minCountedSec` counts for the quests (`shift_complete`, and through
+ * them Season XP) and earns career XP (`xpPerMinute`, under the shared daily action cap, and
+ * only for a player who is on a ladder); a shorter one is paid but counts for neither, so
+ * clocking in and out cannot farm them.
  */
 import type { PoolClient } from 'pg';
 import { runInTransaction } from '../shared/db/uow.js';
 import {
-  ConflictError,
   JobDailyCapError,
   JobLockedError,
+  CounterTooFarError,
   NotFoundError,
-  ShiftNotFinishedError,
-  ShiftResultImplausibleError,
+  PositionUnknownError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { nextUtcMidnight } from './daily-streak.js';
+import { decodePos, POS_FRESH_MS, POS_HASH } from '../realtime/movement.js';
+import { awardActionXpInTx, publishPromotion, type PromotionInfo } from './ladders.js';
 import { publishToUser } from './realtime-bus.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { recordQuestEvent } from './quests.js';
 import { creditCash, ensureRewardCatalog, grantCosmetic } from './rewards.js';
 import type { AppContext } from './context.js';
@@ -61,32 +68,27 @@ export interface RektBurgerConfig {
   };
   readonly glowUpNetWorthCents: number;
   readonly postCooldownHours: number;
+  /** Where the counter is (island metres) and how close a clock-in must be. */
+  readonly counter: {
+    readonly x: number;
+    readonly z: number;
+    readonly radiusM: number;
+    readonly source: string;
+  };
   readonly pay: {
-    readonly baseCents: number;
-    readonly perCorrectOrderCents: number;
-    readonly maxCorrectOrdersPaid: number;
+    /** Cents per minute on the clock (pay = floor(seconds * rate / 60)). */
+    readonly ratePerMinuteCents: number;
     readonly dailyCapCents: number;
   };
   readonly shift: {
-    readonly minDurationSec: number;
+    /** A shift never pays past this; the server closes it here. */
     readonly maxDurationSec: number;
-    readonly minOrders: number;
-    readonly maxOrders: number;
-    readonly minServeMs: number;
-    readonly minGapMs: number;
-    readonly maxServeMs: number;
-    readonly toleranceMs: number;
-    readonly minServeJitterMs: number;
+    /** A shift shorter than this is paid but counts for no quest, XP or uniform. */
+    readonly minCountedSec: number;
+    /** Career XP per minute on the clock (floored). */
+    readonly xpPerMinute: number;
   };
   readonly uniformCosmeticId: string;
-}
-
-/** One served ticket, as the client reports it. All times are ms since the shift started. */
-export interface OrderReport {
-  readonly i: number;
-  readonly startedMs: number;
-  readonly servedMs: number;
-  readonly correct: boolean;
 }
 
 /** The Rekt Burger config (cached by the context). */
@@ -94,67 +96,22 @@ export function rektConfig(ctx: AppContext): RektBurgerConfig {
   return ctx.configCache.load<{ rektBurger: RektBurgerConfig }>('careers').rektBurger;
 }
 
-/** The most a single shift can pay (the per-order cap reached). */
+/** The most one shift can pay, before the daily cap. */
 export function maxShiftPayCents(cfg: RektBurgerConfig): number {
-  return cfg.pay.baseCents + cfg.pay.perCorrectOrderCents * cfg.pay.maxCorrectOrdersPaid;
+  return Math.floor((cfg.shift.maxDurationSec * cfg.pay.ratePerMinuteCents) / 60);
 }
 
-/** Pay for a validated shift, before the daily cap. Integer cents. */
-export function shiftPayCents(cfg: RektBurgerConfig, correctOrders: number): number {
-  const paid = Math.min(Math.max(0, correctOrders), cfg.pay.maxCorrectOrdersPaid);
-  return cfg.pay.baseCents + cfg.pay.perCorrectOrderCents * paid;
+/** Pay for `seconds` on the clock, capped at the maximum shift. Integer cents. */
+export function clockPayCents(cfg: RektBurgerConfig, seconds: number): number {
+  const sec = Math.min(Math.max(0, Math.floor(seconds)), cfg.shift.maxDurationSec);
+  return Math.floor((sec * cfg.pay.ratePerMinuteCents) / 60);
 }
 
-function stddev(xs: readonly number[]): number {
-  const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
-  return Math.sqrt(xs.reduce((a, b) => a + (b - mean) ** 2, 0) / xs.length);
-}
-
-export type OrdersCheck =
-  | { readonly ok: true; readonly count: number; readonly correct: number }
-  | { readonly ok: false; readonly reason: string };
-
-/**
- * Is this report something a person could have produced in a shift the server timed?
- * Pure. `elapsedMs` is the server's own clock (finish minus start), never the client's.
- *
- * Checks: the order count is within bounds; tickets are numbered 0..n-1 in order; each
- * ticket was served after it appeared, no faster than a human can and not absurdly slow;
- * no ticket is served after the shift ended (plus a small network tolerance); consecutive
- * serves are at least `minGapMs` apart; and the timings are not machine-regular.
- */
-export function validateOrders(
-  orders: readonly OrderReport[],
-  elapsedMs: number,
-  cfg: RektBurgerConfig['shift'],
-): OrdersCheck {
-  const n = orders.length;
-  if (n < cfg.minOrders || n > cfg.maxOrders) return { ok: false, reason: 'order_count' };
-  let prevServed = -Infinity;
-  let correct = 0;
-  const serves: number[] = [];
-  const gaps: number[] = [];
-  for (let k = 0; k < n; k++) {
-    const o = orders[k]!;
-    if (o.i !== k) return { ok: false, reason: 'order_index' };
-    if (o.startedMs < 0 || o.servedMs < o.startedMs) return { ok: false, reason: 'order_times' };
-    const serve = o.servedMs - o.startedMs;
-    if (serve < cfg.minServeMs || serve > cfg.maxServeMs) {
-      return { ok: false, reason: 'serve_time' };
-    }
-    if (o.servedMs > elapsedMs + cfg.toleranceMs) {
-      return { ok: false, reason: 'served_after_finish' };
-    }
-    if (k > 0 && o.servedMs - prevServed < cfg.minGapMs) return { ok: false, reason: 'too_fast' };
-    if (k > 0) gaps.push(o.servedMs - prevServed);
-    prevServed = o.servedMs;
-    serves.push(serve);
-    if (o.correct) correct += 1;
-  }
-  if (n >= 5 && stddev(serves) < cfg.minServeJitterMs && stddev(gaps) < cfg.minServeJitterMs) {
-    return { ok: false, reason: 'robotic_timing' };
-  }
-  return { ok: true, count: n, correct };
+/** Career XP for `seconds` on the clock. */
+export function clockXp(cfg: RektBurgerConfig, seconds: number): number {
+  if (seconds < cfg.shift.minCountedSec) return 0;
+  const sec = Math.min(Math.max(0, Math.floor(seconds)), cfg.shift.maxDurationSec);
+  return Math.floor((sec * cfg.shift.xpPerMinute) / 60);
 }
 
 interface StateRow {
@@ -337,61 +294,219 @@ interface ShiftRow {
   started_at: Date;
 }
 
-/** Expire an open shift that ran past its maximum. Returns the live open shift, if any. */
-async function liveOpenShift(
+export type EndReason = 'clock_out' | 'auto' | 'left';
+
+/** The moment an open shift started at `startedAt` is closed by the server. */
+export function maxEndsAt(cfg: RektBurgerConfig, startedAt: Date): Date {
+  return new Date(startedAt.getTime() + cfg.shift.maxDurationSec * 1000);
+}
+
+export interface ShiftView {
+  readonly shiftId: string;
+  readonly startedAt: string;
+  readonly ratePerMinuteCents: number;
+  /** What is left of today's cap (before this shift is paid). */
+  readonly capRemainingCents: number;
+  /** The server closes the shift here and pays up to it. */
+  readonly maxEndsAt: string;
+  /** What the shift would pay if it ended at `serverNow` (after the daily cap). */
+  readonly accruedCents: number;
+  readonly serverNow: string;
+}
+
+function shiftView(
+  cfg: RektBurgerConfig,
+  shiftId: string,
+  startedAt: Date,
+  capRemaining: number,
+  now: Date,
+): ShiftView {
+  const seconds = Math.max(0, Math.floor((now.getTime() - startedAt.getTime()) / 1000));
+  return {
+    shiftId,
+    startedAt: startedAt.toISOString(),
+    ratePerMinuteCents: cfg.pay.ratePerMinuteCents,
+    capRemainingCents: capRemaining,
+    maxEndsAt: maxEndsAt(cfg, startedAt).toISOString(),
+    accruedCents: Math.min(clockPayCents(cfg, seconds), capRemaining),
+    serverNow: now.toISOString(),
+  };
+}
+
+export interface ShiftEndResult {
+  readonly shiftId: string;
+  /** What was paid, after the daily cap. */
+  readonly paidCents: number;
+  /** Whole minutes on the clock (capped at the maximum shift). */
+  /** Total time on the clock in seconds (at most the maximum shift). */
+  readonly durationSec: number;
+  /** Whole minutes: floor(durationSec / 60). Not a remainder; do not add it to seconds. */
+  readonly minutes: number;
+  /** Career XP added (0 without a ladder, under the minimum, or past the daily action cap). */
+  readonly careerXp: number;
+  /** What the daily cap withheld from this shift. */
+  readonly cappedCents: number;
+  readonly capRemainingCents: number;
+  /** First counted shift only: the Rekt Burger Uniform cosmetic. */
+  readonly uniformGranted: boolean;
+  readonly endReason: EndReason;
+}
+
+interface Settled {
+  readonly result: ShiftEndResult;
+  readonly promotion: PromotionInfo | null;
+  readonly counted: boolean;
+  readonly endedAt: Date;
+}
+
+/**
+ * Close one OPEN shift (the row must already be locked by the caller) and pay it, inside
+ * the caller's transaction. Pay is `floor(seconds * rate / 60)` of the time on the clock,
+ * capped at the maximum shift and trimmed to what the UTC-day cap leaves. The shift's end
+ * is `min(now, maxEndsAt)`, so a late sweep pays only up to the maximum, on the day worked.
+ */
+async function settleOpenShift(
   client: PoolClient,
+  ctx: AppContext,
   cfg: RektBurgerConfig,
   userId: string,
+  shift: ShiftRow,
+  reason: EndReason,
   now: Date,
-): Promise<ShiftRow | null> {
+): Promise<Settled> {
+  const limit = maxEndsAt(cfg, shift.started_at);
+  const endedAt = now.getTime() > limit.getTime() ? limit : now;
+  const seconds = Math.min(
+    cfg.shift.maxDurationSec,
+    Math.max(0, Math.floor((endedAt.getTime() - shift.started_at.getTime()) / 1000)),
+  );
+  const earned = await paidToday(client, userId, endedAt);
+  const remaining = Math.max(0, cfg.pay.dailyCapCents - earned);
+  const full = clockPayCents(cfg, seconds);
+  const pay = Math.min(full, remaining);
+  const counted = seconds >= cfg.shift.minCountedSec;
+  const xp = clockXp(cfg, seconds);
+  let careerXp = 0;
+  let promotion: PromotionInfo | null = null;
+  if (xp > 0) {
+    const r = await awardActionXpInTx(
+      client,
+      ctx,
+      userId,
+      xp,
+      `rekt_burger:${shift.shift_id}`,
+      endedAt,
+    );
+    careerXp = r.added;
+    promotion = r.promotion;
+  }
+  await client.query(
+    `UPDATE rekt_burger_shifts
+        SET status = 'done', finished_at = $2, pay_cents = $3, seconds = $4,
+            end_reason = $5, career_xp = $6
+      WHERE shift_id = $1`,
+    [shift.shift_id, endedAt, pay, seconds, reason, careerXp],
+  );
+  if (pay > 0) {
+    await creditCash(
+      client,
+      userId,
+      pay,
+      'job_rekt_burger',
+      'rekt_burger_shift',
+      shift.shift_id,
+      `rekt-burger:${shift.shift_id}`,
+    );
+    await client.query(
+      `UPDATE rekt_burger_state SET stint_shifts = stint_shifts + 1, updated_at = $2 WHERE user_id = $1`,
+      [userId, endedAt],
+    );
+  }
+  // Same as a career shift: the clock for need decay restarts at completion.
+  await client.query(`UPDATE needs SET last_action_at = $2 WHERE user_id = $1`, [userId, endedAt]);
+  const uniformGranted = counted
+    ? await grantCosmetic(client, userId, cfg.uniformCosmeticId)
+    : false;
+  return {
+    result: {
+      shiftId: shift.shift_id,
+      paidCents: pay,
+      durationSec: seconds,
+      minutes: Math.floor(seconds / 60),
+      careerXp,
+      cappedCents: full - pay,
+      capRemainingCents: remaining - pay,
+      uniformGranted,
+      endReason: reason,
+    },
+    promotion,
+    counted,
+    endedAt,
+  };
+}
+
+/** What happens after a shift settles and commits: the promotion notice and the quest. */
+async function afterSettle(
+  ctx: AppContext,
+  userId: string,
+  settled: Settled,
+  now: Date,
+): Promise<void> {
+  if (settled.promotion) await publishPromotion(ctx, userId, settled.promotion, now);
+  if (settled.counted) {
+    await recordQuestEvent(ctx, userId, 'shift_complete', `rb:${settled.result.shiftId}`, now);
+  }
+}
+
+/** The caller's open shift row, locked, or null. */
+async function lockOpenShift(client: PoolClient, userId: string): Promise<ShiftRow | null> {
   const r = await client.query<ShiftRow>(
     `SELECT shift_id, status, started_at FROM rekt_burger_shifts
       WHERE user_id = $1 AND status = 'open' FOR UPDATE`,
     [userId],
   );
-  const open = r.rows[0];
-  if (!open) return null;
-  const limit = open.started_at.getTime() + cfg.shift.maxDurationSec * 1000 + cfg.shift.toleranceMs;
-  if (now.getTime() <= limit) return open;
-  await client.query(
-    `UPDATE rekt_burger_shifts SET status = 'expired', finished_at = $2 WHERE shift_id = $1`,
-    [open.shift_id, now],
-  );
-  return null;
+  return r.rows[0] ?? null;
 }
 
-export interface ShiftStartView {
+export interface LastShift {
   readonly shiftId: string;
-  readonly startedAt: string;
-  /** Earliest moment the server accepts a finish. */
-  readonly minFinishAt: string;
-  /** After this the shift is void. */
-  readonly expiresAt: string;
-  readonly rules: {
-    readonly minOrders: number;
-    readonly maxOrders: number;
-    readonly minServeMs: number;
-    readonly minGapMs: number;
-    readonly maxServeMs: number;
-    readonly maxCorrectOrdersPaid: number;
-  };
+  readonly endedAt: string;
+  readonly paidCents: number;
+  /** Total time on the clock in seconds. */
+  readonly durationSec: number;
+  /** floor(durationSec / 60). */
+  readonly minutes: number;
+  readonly careerXp: number;
+  readonly endReason: EndReason | null;
 }
 
-function shiftView(cfg: RektBurgerConfig, shiftId: string, startedAt: Date): ShiftStartView {
-  const t = startedAt.getTime();
+async function lastShift(
+  client: Pick<PoolClient, 'query'>,
+  userId: string,
+): Promise<LastShift | null> {
+  const r = await client.query<{
+    shift_id: string;
+    finished_at: Date;
+    pay_cents: string;
+    seconds: number | null;
+    career_xp: number | null;
+    end_reason: EndReason | null;
+  }>(
+    `SELECT shift_id, finished_at, pay_cents, seconds, career_xp, end_reason
+       FROM rekt_burger_shifts WHERE user_id = $1 AND status = 'done'
+      ORDER BY finished_at DESC LIMIT 1`,
+    [userId],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
   return {
-    shiftId,
-    startedAt: startedAt.toISOString(),
-    minFinishAt: new Date(t + cfg.shift.minDurationSec * 1000).toISOString(),
-    expiresAt: new Date(t + cfg.shift.maxDurationSec * 1000).toISOString(),
-    rules: {
-      minOrders: cfg.shift.minOrders,
-      maxOrders: cfg.shift.maxOrders,
-      minServeMs: cfg.shift.minServeMs,
-      minGapMs: cfg.shift.minGapMs,
-      maxServeMs: cfg.shift.maxServeMs,
-      maxCorrectOrdersPaid: cfg.pay.maxCorrectOrdersPaid,
-    },
+    shiftId: row.shift_id,
+    endedAt: row.finished_at.toISOString(),
+    paidCents: Number(row.pay_cents),
+    durationSec: row.seconds ?? 0,
+    minutes: Math.floor((row.seconds ?? 0) / 60),
+    careerXp: row.career_xp ?? 0,
+    endReason: row.end_reason,
   };
 }
 
@@ -415,15 +530,17 @@ export interface RektBurgerView {
   readonly netWorthCents: number;
   readonly glowUpNetWorthCents: number;
   readonly pay: {
-    readonly baseCents: number;
-    readonly perCorrectOrderCents: number;
+    readonly ratePerMinuteCents: number;
     readonly maxShiftCents: number;
+    readonly maxShiftSec: number;
     readonly dailyCapCents: number;
     readonly earnedTodayCents: number;
     readonly remainingTodayCents: number;
     readonly resetsAt: string;
   };
-  readonly shift: ShiftStartView | null;
+  /** Where to stand to clock in (island metres). */
+  readonly counter: { readonly x: number; readonly z: number; readonly radiusM: number };
+  readonly shift: ShiftView | null;
   readonly uniformCosmeticId: string;
   readonly hasUniform: boolean;
 }
@@ -435,12 +552,13 @@ export async function getRektBurger(
   now: Date = new Date(),
 ): Promise<RektBurgerView> {
   const cfg = rektConfig(ctx);
+  await closeExpiredFor(ctx, userId, now);
   const v = await runInTransaction(async (client) => {
     const unlock = await ensureUnlocked(client, cfg, userId, now);
     const state = unlock ? await readState(client, userId, false) : null;
     const bal = await readBalances(client, userId);
     const earned = await paidToday(client, userId, now);
-    const open = unlock ? await liveOpenShift(client, cfg, userId, now) : null;
+    const open = unlock ? await lockOpenShift(client, userId) : null;
     const uniform = await client.query(
       `SELECT 1 FROM cosmetic_inventory ci JOIN cosmetic_items it ON it.item_id = ci.item_id
         WHERE ci.user_id = $1 AND it.item_key = $2`,
@@ -449,6 +567,7 @@ export async function getRektBurger(
     return { unlock, state, bal, earned, open, hasUniform: (uniform.rowCount ?? 0) > 0 };
   });
   if (v.unlock?.newly) await announceUnlock(ctx, userId, v.unlock.reason, now);
+  const remaining = Math.max(0, cfg.pay.dailyCapCents - v.earned);
   return {
     jobId: REKT_BURGER_ID,
     name: cfg.name,
@@ -469,32 +588,81 @@ export async function getRektBurger(
     netWorthCents: v.bal.cash - v.bal.debt,
     glowUpNetWorthCents: cfg.glowUpNetWorthCents,
     pay: {
-      baseCents: cfg.pay.baseCents,
-      perCorrectOrderCents: cfg.pay.perCorrectOrderCents,
+      ratePerMinuteCents: cfg.pay.ratePerMinuteCents,
       maxShiftCents: maxShiftPayCents(cfg),
+      maxShiftSec: cfg.shift.maxDurationSec,
       dailyCapCents: cfg.pay.dailyCapCents,
       earnedTodayCents: v.earned,
-      remainingTodayCents: Math.max(0, cfg.pay.dailyCapCents - v.earned),
+      remainingTodayCents: remaining,
       resetsAt: nextUtcMidnight(now).toISOString(),
     },
-    shift: v.open ? shiftView(cfg, v.open.shift_id, v.open.started_at) : null,
+    counter: { x: cfg.counter.x, z: cfg.counter.z, radiusM: cfg.counter.radiusM },
+    shift: v.open ? shiftView(cfg, v.open.shift_id, v.open.started_at, remaining, now) : null,
     uniformCosmeticId: cfg.uniformCosmeticId,
     hasUniform: v.hasUniform,
   };
 }
 
+/** Close (and pay) the caller's open shift if it ran to its maximum. Never throws. */
+async function closeExpiredFor(ctx: AppContext, userId: string, now: Date): Promise<void> {
+  try {
+    const cfg = rektConfig(ctx);
+    await ensureRewardCatalog(ctx.db);
+    const settled = await runInTransaction(async (client) => {
+      const open = await lockOpenShift(client, userId);
+      if (!open || now.getTime() < maxEndsAt(cfg, open.started_at).getTime()) return null;
+      return settleOpenShift(client, ctx, cfg, userId, open, 'auto', now);
+    });
+    if (settled) await afterSettle(ctx, userId, settled, now);
+  } catch (e) {
+    console.error('[rekt-burger] auto-close failed:', (e as Error).message);
+  }
+}
+
 /**
- * Open a shift. Idempotent while one is open (returns it). The first shift of a stint
+ * Close every open shift that ran to its maximum (the per-minute worker). Each is paid
+ * up to the maximum, on the day it was worked.
+ * @returns How many shifts were closed.
+ */
+export async function sweepRektShifts(ctx: AppContext, now: Date = new Date()): Promise<number> {
+  const cfg = rektConfig(ctx);
+  const due = await ctx.db.withConnection((c) =>
+    c.query<{ user_id: string }>(
+      `SELECT user_id FROM rekt_burger_shifts
+        WHERE status = 'open' AND started_at <= $1 ORDER BY started_at ASC LIMIT 200`,
+      [new Date(now.getTime() - cfg.shift.maxDurationSec * 1000)],
+    ),
+  );
+  let closed = 0;
+  for (const { user_id } of due.rows) {
+    const before = closed;
+    await closeExpiredFor(ctx, user_id, now);
+    const still = await ctx.db.withConnection((c) =>
+      c.query(`SELECT 1 FROM rekt_burger_shifts WHERE user_id = $1 AND status = 'open'`, [user_id]),
+    );
+    if ((still.rowCount ?? 0) === 0) closed = before + 1;
+  }
+  return closed;
+}
+
+/**
+ * Clock in. Idempotent while a shift is open (returns it with `resumed: true`, no position
+ * needed). A new shift needs the server's own fresh position for the player (street room,
+ * at most 30 s old) within `counter.radiusM` of the counter. The first shift of a stint
  * starts the employment and writes the "Back to the trenches" post.
  * @throws JobLockedError when the job is not unlocked.
  * @throws JobDailyCapError when today's pay cap is already reached.
+ * @throws PositionUnknownError when the server has no fresh position.
+ * @throws CounterTooFarError when the position is outside the counter radius.
  */
 export async function startShift(
   ctx: AppContext,
   userId: string,
   now: Date = new Date(),
-): Promise<ShiftStartView & { resumed: boolean; postId: string | null }> {
+): Promise<ShiftView & { resumed: boolean; postId: string | null }> {
   const cfg = rektConfig(ctx);
+  await closeExpiredFor(ctx, userId, now);
+  const pos = decodePos(await ctx.redis.main.hget(POS_HASH, userId));
   const out = await runInTransaction(async (client) => {
     const unlock = await ensureUnlocked(client, cfg, userId, now);
     if (!unlock) {
@@ -505,20 +673,31 @@ export async function startShift(
         debtCents: bal.debt,
       });
     }
-    const open = await liveOpenShift(client, cfg, userId, now);
+    const earned = await paidToday(client, userId, now);
+    const remaining = Math.max(0, cfg.pay.dailyCapCents - earned);
+    const open = await lockOpenShift(client, userId);
     if (open) {
       return {
-        view: shiftView(cfg, open.shift_id, open.started_at),
+        view: shiftView(cfg, open.shift_id, open.started_at, remaining, now),
         resumed: true,
         postId: null,
         unlock,
       };
     }
-    const earned = await paidToday(client, userId, now);
-    if (earned >= cfg.pay.dailyCapCents) {
+    if (remaining <= 0) {
       throw new JobDailyCapError({
         dailyCapCents: cfg.pay.dailyCapCents,
         resetsAt: nextUtcMidnight(now).toISOString(),
+      });
+    }
+    if (!pos || now.getTime() - pos.at > POS_FRESH_MS) {
+      throw new PositionUnknownError({ reason: 'no fresh position' });
+    }
+    const distance = Math.hypot(pos.x - cfg.counter.x, pos.z - cfg.counter.z);
+    if (distance > cfg.counter.radiusM) {
+      throw new CounterTooFarError({
+        radiusM: cfg.counter.radiusM,
+        distanceM: Math.round(distance),
       });
     }
     const shiftId = uuidv7();
@@ -546,130 +725,78 @@ export async function startShift(
         now,
       );
     }
-    return { view: shiftView(cfg, shiftId, now), resumed: false, postId, unlock };
+    return {
+      view: shiftView(cfg, shiftId, now, remaining, now),
+      resumed: false,
+      postId,
+      unlock,
+    };
   });
   if (out.unlock.newly) await announceUnlock(ctx, userId, out.unlock.reason, now);
+  if (!out.resumed)
+    await recordOnboardingEvent(ctx, userId, 'shift_start', `rb:${out.view.shiftId}`, now);
   return { ...out.view, resumed: out.resumed, postId: out.postId };
 }
 
-export interface ShiftFinishResult {
-  readonly shiftId: string;
-  readonly orders: number;
-  readonly correct: number;
-  /** What was paid, in cents (after the shift and daily caps). */
-  readonly payCents: number;
-  /** Pay that the daily cap withheld. */
-  readonly cappedCents: number;
-  readonly remainingTodayCents: number;
-  readonly uniformGranted: boolean;
-}
-
 /**
- * Finish a shift: validate the client's order timings against the server's own clock, then
- * pay. The result never carries a client amount.
- * @throws NotFoundError for a shift that is not the caller's (no IDOR).
- * @throws ConflictError for a shift already finished or void.
- * @throws ShiftNotFinishedError before the minimum duration (the shift stays open).
- * @throws ShiftResultImplausibleError for a report no player could produce (the shift is
- * burned).
+ * Clock out: close the caller's open shift and pay by server time. Two ends racing pay once
+ * (the shift row is locked; the loser finds no open shift).
+ * @throws NotFoundError when there is no open shift (never started, or already ended).
  */
-export async function finishShift(
+export async function endShift(
   ctx: AppContext,
   userId: string,
-  shiftIdOrNull: string | null,
-  orders: readonly OrderReport[],
   now: Date = new Date(),
-): Promise<ShiftFinishResult> {
+): Promise<ShiftEndResult> {
   const cfg = rektConfig(ctx);
   await ensureRewardCatalog(ctx.db);
-  type Outcome =
-    | { kind: 'paid'; res: ShiftFinishResult }
-    | { kind: 'void'; error: 'expired' | 'implausible'; reason: string; shiftId: string };
-  const out: Outcome = await runInTransaction(async (client): Promise<Outcome> => {
-    const sr = await client.query<ShiftRow>(
-      `SELECT shift_id, status, started_at FROM rekt_burger_shifts
-        WHERE user_id = $2 AND (shift_id = $1::uuid OR ($1::uuid IS NULL AND status = 'open'))
-        ORDER BY started_at DESC LIMIT 1 FOR UPDATE`,
-      [shiftIdOrNull, userId],
-    );
-    const shift = sr.rows[0];
-    if (!shift) throw new NotFoundError({ kind: 'shift', id: shiftIdOrNull ?? 'open' });
-    const shiftId = shift.shift_id;
-    if (shift.status !== 'open') {
-      throw new ConflictError({ shiftId, reason: `shift_${shift.status}` });
-    }
-    const state = await readState(client, userId, true);
-    if (!state) throw new JobLockedError({ jobId: REKT_BURGER_ID });
-    const elapsedMs = now.getTime() - shift.started_at.getTime();
-    if (elapsedMs < cfg.shift.minDurationSec * 1000) {
-      throw new ShiftNotFinishedError({
-        shiftId,
-        minFinishAt: new Date(
-          shift.started_at.getTime() + cfg.shift.minDurationSec * 1000,
-        ).toISOString(),
-      });
-    }
-    const burn = async (error: 'expired' | 'implausible', reason: string): Promise<Outcome> => {
-      await client.query(
-        `UPDATE rekt_burger_shifts SET status = 'expired', finished_at = $2 WHERE shift_id = $1`,
-        [shiftId, now],
-      );
-      return { kind: 'void', error, reason, shiftId };
-    };
-    if (elapsedMs > cfg.shift.maxDurationSec * 1000 + cfg.shift.toleranceMs) {
-      return burn('expired', 'shift_expired');
-    }
-    const check = validateOrders(orders, elapsedMs, cfg.shift);
-    if (!check.ok) return burn('implausible', check.reason);
+  const settled = await runInTransaction(async (client) => {
+    const open = await lockOpenShift(client, userId);
+    if (!open) throw new NotFoundError({ kind: 'shift', reason: 'no_open_shift' });
+    const reason: EndReason =
+      now.getTime() >= maxEndsAt(cfg, open.started_at).getTime() ? 'auto' : 'clock_out';
+    return settleOpenShift(client, ctx, cfg, userId, open, reason, now);
+  });
+  await afterSettle(ctx, userId, settled, now);
+  return settled.result;
+}
 
-    const earned = await paidToday(client, userId, now);
-    const remaining = Math.max(0, cfg.pay.dailyCapCents - earned);
-    const full = shiftPayCents(cfg, check.correct);
-    const pay = Math.min(full, remaining);
-    await client.query(
-      `UPDATE rekt_burger_shifts
-          SET status = 'done', finished_at = $2, orders = $3, correct = $4, pay_cents = $5
-        WHERE shift_id = $1`,
-      [shiftId, now, check.count, check.correct, pay],
+export interface CurrentShift {
+  readonly shift: ShiftView | null;
+  /** The most recent finished shift, so a relaunch learns an auto-close paid. */
+  readonly lastShift: LastShift | null;
+}
+
+/** The caller's open shift (closing it first if it ran to its maximum) and the last paid one. */
+export async function getCurrentShift(
+  ctx: AppContext,
+  userId: string,
+  now: Date = new Date(),
+): Promise<CurrentShift> {
+  const cfg = rektConfig(ctx);
+  await closeExpiredFor(ctx, userId, now);
+  return ctx.db.withConnection(async (client) => {
+    const open = await client.query<ShiftRow>(
+      `SELECT shift_id, status, started_at FROM rekt_burger_shifts
+        WHERE user_id = $1 AND status = 'open'`,
+      [userId],
     );
-    if (pay > 0) {
-      await creditCash(
-        client,
+    const earned = await client.query<{ n: string }>(
+      `SELECT COALESCE(SUM(pay_cents), 0) AS n FROM rekt_burger_shifts
+        WHERE user_id = $1 AND status = 'done' AND finished_at >= $2 AND finished_at < $3`,
+      [
         userId,
-        pay,
-        'job_rekt_burger',
-        'rekt_burger_shift',
-        shiftId,
-        `rekt-burger:${shiftId}`,
-      );
-    }
-    await client.query(
-      `UPDATE rekt_burger_state SET stint_shifts = stint_shifts + 1, updated_at = $2 WHERE user_id = $1`,
-      [userId, now],
+        new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+        nextUtcMidnight(now),
+      ],
     );
-    // Same as a career shift: the clock for need decay restarts at completion.
-    await client.query(`UPDATE needs SET last_action_at = $2 WHERE user_id = $1`, [userId, now]);
-    const uniformGranted = await grantCosmetic(client, userId, cfg.uniformCosmeticId);
+    const remaining = Math.max(0, cfg.pay.dailyCapCents - Number(earned.rows[0]?.n ?? 0));
+    const row = open.rows[0];
     return {
-      kind: 'paid',
-      res: {
-        shiftId,
-        orders: check.count,
-        correct: check.correct,
-        payCents: pay,
-        cappedCents: full - pay,
-        remainingTodayCents: remaining - pay,
-        uniformGranted,
-      },
+      shift: row ? shiftView(cfg, row.shift_id, row.started_at, remaining, now) : null,
+      lastShift: await lastShift(client, userId),
     };
   });
-  if (out.kind === 'void') {
-    if (out.error === 'expired')
-      throw new ConflictError({ shiftId: out.shiftId, reason: out.reason });
-    throw new ShiftResultImplausibleError({ shiftId: out.shiftId, reason: out.reason });
-  }
-  await recordQuestEvent(ctx, userId, 'shift_complete', `rb:${out.res.shiftId}`, now);
-  return out.res;
 }
 
 export interface LeaveResult {
@@ -679,12 +806,14 @@ export interface LeaveResult {
   readonly glowUp: boolean;
   readonly postId: string | null;
   readonly netWorthCents: number;
+  /** The open shift this paid on the way out, if there was one. */
+  readonly endedShift: ShiftEndResult | null;
 }
 
 /**
- * Leave the job. A shift still open is voided. Leaving after a stint that began below the
- * glow-up net worth and ended at or above it, with at least one paid shift, writes the
- * "Glow-up" post.
+ * Leave the job. A shift still open is clocked out and paid first. Leaving after a stint that
+ * began below the glow-up net worth and ended at or above it, with at least one paid shift,
+ * writes the "Glow-up" post.
  */
 export async function leaveJob(
   ctx: AppContext,
@@ -692,27 +821,32 @@ export async function leaveJob(
   now: Date = new Date(),
 ): Promise<LeaveResult> {
   const cfg = rektConfig(ctx);
-  return runInTransaction(async (client) => {
+  await ensureRewardCatalog(ctx.db);
+  const out = await runInTransaction(async (client) => {
     const state = await readState(client, userId, true);
+    const open = state ? await lockOpenShift(client, userId) : null;
+    const settled = open
+      ? await settleOpenShift(client, ctx, cfg, userId, open, 'left', now)
+      : null;
+    const fresh = settled ? await readState(client, userId, true) : state;
     const bal = await readBalances(client, userId);
     const netWorth = bal.cash - bal.debt;
-    if (!state || !state.employed) {
+    if (!fresh || !fresh.employed) {
       return {
-        employed: false,
-        wasEmployed: false,
-        glowUp: false,
-        postId: null,
-        netWorthCents: netWorth,
+        settled,
+        res: {
+          employed: false as const,
+          wasEmployed: false,
+          glowUp: false,
+          postId: null,
+          netWorthCents: netWorth,
+          endedShift: settled?.result ?? null,
+        },
       };
     }
-    await client.query(
-      `UPDATE rekt_burger_shifts SET status = 'expired', finished_at = $2
-        WHERE user_id = $1 AND status = 'open'`,
-      [userId, now],
-    );
-    const started = Number(state.stint_networth_cents ?? '0');
+    const started = Number(fresh.stint_networth_cents ?? '0');
     const recovered =
-      state.stint_shifts >= 1 &&
+      fresh.stint_shifts >= 1 &&
       started < cfg.glowUpNetWorthCents &&
       netWorth >= cfg.glowUpNetWorthCents;
     let postId: string | null = null;
@@ -734,11 +868,17 @@ export async function leaveJob(
       [userId, now],
     );
     return {
-      employed: false,
-      wasEmployed: true,
-      glowUp: postId !== null,
-      postId,
-      netWorthCents: netWorth,
+      settled,
+      res: {
+        employed: false as const,
+        wasEmployed: true,
+        glowUp: postId !== null,
+        postId,
+        netWorthCents: netWorth,
+        endedShift: settled?.result ?? null,
+      },
     };
   });
+  if (out.settled) await afterSettle(ctx, userId, out.settled, now);
+  return out.res;
 }

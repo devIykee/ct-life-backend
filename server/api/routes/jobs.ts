@@ -3,35 +3,26 @@
  *
  *   GET  /v1/jobs/rekt-burger
  *   POST /v1/jobs/rekt-burger/shift/start
- *   POST /v1/jobs/rekt-burger/shift/finish   {result: {orders: [...]}}
+ *   POST /v1/jobs/rekt-burger/shift/end      (clock out; pays by server time)
+ *   GET  /v1/jobs/rekt-burger/shift/current  (restore after a relaunch)
+ *   POST /v1/jobs/rekt-burger/shift/finish   (410 Gone: the per-ticket minigame was removed)
  *   POST /v1/jobs/rekt-burger/leave
  *
  * Every route works on the caller's own job state and shifts (the user id comes from the
  * token, never from the path or body); a shift id that is not the caller's is a 404.
  */
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
-import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { RateLimitedError, ValidationFailedError } from '../../shared/domain/errors.js';
+import { GoneError, RateLimitedError } from '../../shared/domain/errors.js';
 import { perUserTokenBucket } from '../../shared/infra/rate-limit.js';
-import { finishShift, getRektBurger, leaveJob, startShift } from '../../application/rekt-burger.js';
-
-const Order = z
-  .object({
-    i: z.number().int().min(0).max(1000),
-    startedMs: z.number().int().min(0).max(3_600_000),
-    servedMs: z.number().int().min(0).max(3_600_000),
-    correct: z.boolean(),
-  })
-  .strict();
-
-const FinishBody = z
-  .object({
-    shiftId: z.string().uuid().optional(),
-    result: z.object({ orders: z.array(Order).max(200) }).strict(),
-  })
-  .strict();
+import {
+  endShift,
+  getCurrentShift,
+  getRektBurger,
+  leaveJob,
+  startShift,
+} from '../../application/rekt-burger.js';
 
 /** Per-player bucket: `capacity` burst, `perSec` refill. */
 function limit(name: string, capacity: number, perSec: number): preHandlerHookHandler {
@@ -62,21 +53,22 @@ export function registerJobRoutes(app: FastifyInstance): void {
   );
 
   app.post(
-    '/v1/jobs/rekt-burger/shift/finish',
-    { preHandler: [requireAuth, withIdempotency(), limit('finish', 5, 0.1)] },
-    async (req, reply) => {
-      const body = FinishBody.safeParse(req.body);
-      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      return reply.send(
-        await finishShift(
-          req.ctx,
-          req.user!.sub,
-          body.data.shiftId ?? null,
-          body.data.result.orders,
-        ),
-      );
-    },
+    '/v1/jobs/rekt-burger/shift/end',
+    { preHandler: [requireAuth, withIdempotency(), limit('end', 5, 0.1)] },
+    async (req, reply) => reply.send(await endShift(req.ctx, req.user!.sub)),
   );
+
+  app.get(
+    '/v1/jobs/rekt-burger/shift/current',
+    { preHandler: [requireAuth, limit('current', 20, 2)] },
+    async (req, reply) => reply.send(await getCurrentShift(req.ctx, req.user!.sub)),
+  );
+
+  // The per-ticket minigame is gone: pay is by time on the clock. Kept as an explicit 410 so an
+  // old client gets a clear answer instead of a 404.
+  app.post('/v1/jobs/rekt-burger/shift/finish', { preHandler: [requireAuth] }, async () => {
+    throw new GoneError({ use: '/v1/jobs/rekt-burger/shift/end' });
+  });
 
   app.post(
     '/v1/jobs/rekt-burger/leave',

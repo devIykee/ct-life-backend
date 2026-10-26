@@ -205,7 +205,8 @@
         "postCooldownHours",
         "pay",
         "shift",
-        "uniformCosmeticId"
+        "uniformCosmeticId",
+        "counter"
       ],
       "properties": {
         "id": {
@@ -252,22 +253,9 @@
         },
         "pay": {
           "type": "object",
-          "required": [
-            "baseCents",
-            "perCorrectOrderCents",
-            "maxCorrectOrdersPaid",
-            "dailyCapCents"
-          ],
+          "required": ["ratePerMinuteCents", "dailyCapCents"],
           "properties": {
-            "baseCents": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "perCorrectOrderCents": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "maxCorrectOrdersPaid": {
+            "ratePerMinuteCents": {
               "type": "integer",
               "minimum": 1
             },
@@ -279,51 +267,17 @@
         },
         "shift": {
           "type": "object",
-          "required": [
-            "minDurationSec",
-            "maxDurationSec",
-            "minOrders",
-            "maxOrders",
-            "minServeMs",
-            "minGapMs",
-            "maxServeMs",
-            "toleranceMs",
-            "minServeJitterMs"
-          ],
+          "required": ["maxDurationSec", "minCountedSec", "xpPerMinute"],
           "properties": {
-            "minDurationSec": {
-              "type": "integer",
-              "minimum": 0
-            },
             "maxDurationSec": {
               "type": "integer",
-              "minimum": 0
+              "minimum": 60
             },
-            "minOrders": {
+            "minCountedSec": {
               "type": "integer",
               "minimum": 0
             },
-            "maxOrders": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "minServeMs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "minGapMs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "maxServeMs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "toleranceMs": {
-              "type": "integer",
-              "minimum": 0
-            },
-            "minServeJitterMs": {
+            "xpPerMinute": {
               "type": "integer",
               "minimum": 0
             }
@@ -331,6 +285,26 @@
         },
         "uniformCosmeticId": {
           "type": "string"
+        },
+        "counter": {
+          "type": "object",
+          "required": ["x", "z", "radiusM", "source"],
+          "properties": {
+            "x": {
+              "type": "number"
+            },
+            "z": {
+              "type": "number"
+            },
+            "radiusM": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "source": {
+              "type": "string"
+            }
+          }
         }
       }
     }
