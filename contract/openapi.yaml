@@ -2339,18 +2339,34 @@ paths:
     get:
       tags: [markets]
       operationId: getFactoryConfig
-      summary: Rugpull Factory rules for the Launchpad Tower UI.
+      summary: Real token launch rules (Meteora DBC) for the Launchpad Tower UI.
       description: >-
-        Fee, liquidity range, dev allocation cap, daily cap, cooldown, the art template ids,
-        the arc odds the server uses (percent; informational, the arc of a coin is hidden)
-        and the rug rule. All numbers are Cash cents or basis points.
+        `enabled` is false until the server has a DBC partner config and a metadata store
+        (launches then answer 503 FACTORY_UNAVAILABLE). `onChain` mirrors the partner config
+        (fee claimer, creator fee share, pool creation fee, graduation threshold). Show
+        `riskWarning.text` before every launch and send `riskAccepted: true`; 18+ only. See
+        docs/FACTORY-REAL.md.
       x-phase: 4
       responses:
         '200':
           description: Rules
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/FactoryConfig' }
+              schema:
+                type: object
+                properties:
+                  real: { type: boolean }
+                  enabled: { type: boolean }
+                  cluster: { type: string, enum: [devnet, mainnet] }
+                  dbcConfig: { type: string, nullable: true }
+                  partnerFeeWallet: { type: string, nullable: true }
+                  onChain: { type: object, nullable: true, additionalProperties: true }
+                  riskWarning:
+                    type: object
+                    properties: { version: { type: string }, text: { type: string } }
+                  ageGate: { type: integer }
+                  limits: { type: object, additionalProperties: { type: integer } }
+                  estimatedCostSol: { type: number }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /factory/me:
     get:
@@ -2372,8 +2388,13 @@ paths:
     post:
       tags: [markets]
       operationId: postFactoryCoins
-      summary: Launch a Rugpull Factory coin.
+      deprecated: true
+      summary: 'Retired: answers 410 FACTORY_CASH_RETIRED. Use POST /factory/launch/prepare.'
       description: >-
+        RETIRED 2026-10-26 (the Cash sandbox is gone; launches are real tokens). Every call
+        answers 410 FACTORY_CASH_RETIRED. Buying a Cash player coin with POST /market/trades also
+        answers 410; selling an old position still works. The text below describes the old
+        behaviour.
         Parody, game-Cash-only, server-simulated: no token, no chain, nothing withdrawable.
         Debits the launch fee (ledger `factory_launch_fee`, a Cash sink) plus the liquidity
         (`factory_liquidity`, locked in the coin) in one transaction and creates a coin flagged
@@ -2404,6 +2425,19 @@ paths:
                 liquidityCents: { type: integer, minimum: 1000, maximum: 100000 }
                 devAllocationBps: { type: integer, minimum: 0, maximum: 5000 }
       responses:
+        '410':
+          description: Retired
+          content:
+            application/json:
+              example:
+                {
+                  error:
+                    {
+                      code: FACTORY_CASH_RETIRED,
+                      message: 'The Cash Factory is retired. Launch a real token instead.',
+                      details: {},
+                    },
+                }
         '201':
           description: The launched coin
           content:
@@ -2541,6 +2575,289 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /factory/launch/prepare:
+    post:
+      tags: [markets]
+      operationId: postFactoryLaunchPrepare
+      summary: Build a real token launch (Meteora DBC create-pool tx, mint pre-signed).
+      description: >-
+        18+ (character age confirmation, AGE_REQUIRED), not jailed (JAILED), `riskAccepted`
+        true (RISK_NOT_ACCEPTED). Name (2..24) and ticker (2..6, A-Z0-9) pass the Factory
+        filter, the description (0..200) has no links or blocked words (NAME_NOT_ALLOWED); the
+        ticker is unique per cluster (TICKER_TAKEN); 3 launches per 24 h (LAUNCH_LIMIT_REACHED);
+        5 prepares then 1 per 2 minutes (RATE_LIMITED). The image (PNG/JPEG/WebP, at most 2 MB,
+        base64) is re-encoded to a 512x512 PNG and uploaded with the metadata JSON. Returns a
+        legacy transaction: priority-fee instructions included, fee payer = the caller's wallet,
+        a fresh blockhash (about 60-90 s of life), already signed by the new mint. Pass these
+        exact bytes to MWA sign_and_send_transactions, then call /factory/launch/confirm. 503
+        FACTORY_UNAVAILABLE when the server has no partner config.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, ticker, imageBase64, riskAccepted]
+              properties:
+                name: { type: string, maxLength: 24 }
+                ticker: { type: string, maxLength: 6 }
+                description: { type: string, maxLength: 200 }
+                imageBase64: { type: string }
+                riskAccepted: { type: boolean }
+                riskWarningVersion: { type: string }
+      responses:
+        '201':
+          description: Prepared
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  launchId: { type: string, format: uuid }
+                  txBase64: { type: string }
+                  mint: { type: string }
+                  pool: { type: string }
+                  cluster: { type: string, enum: [devnet, mainnet] }
+                  lastValidBlockHeight: { type: integer }
+                  expiresAt: { type: string, format: date-time }
+                  metadataUri: { type: string }
+                  imageUri: { type: string }
+        '400':
+          description: VALIDATION_FAILED, NAME_NOT_ALLOWED, RISK_NOT_ACCEPTED
+          content:
+            application/json:
+              example:
+                {
+                  error:
+                    {
+                      code: RISK_NOT_ACCEPTED,
+                      message: 'Accept the risk warning before launching a real token.',
+                      details: {},
+                    },
+                }
+        '403':
+          description: AGE_REQUIRED, JAILED
+        '409':
+          description: TICKER_TAKEN, LAUNCH_LIMIT_REACHED
+        '503':
+          description: FACTORY_UNAVAILABLE
+          content:
+            application/json:
+              example:
+                {
+                  error:
+                    {
+                      code: FACTORY_UNAVAILABLE,
+                      message: 'Real token launches are not configured on this server.',
+                      details: {},
+                    },
+                }
+  /factory/launch/confirm:
+    post:
+      tags: [markets]
+      operationId: postFactoryLaunchConfirm
+      summary: Confirm a launch the wallet sent; registers the token (idempotent).
+      description: >-
+        Verifies the signature on chain (fee payer = your wallet, the mint, pool and DBC program
+        in the transaction) and the pool account (creator = your wallet, our partner config).
+        409 LAUNCH_NOT_CONFIRMED while it is not found yet (retry) or if it failed on chain;
+        422 LAUNCH_TX_MISMATCH if the signature is some other transaction. On success the token
+        joins the board and `evt_coin_launch` (params `real: "1"`) goes to the city.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [launchId, signature]
+              properties:
+                launchId: { type: string, format: uuid }
+                signature: { type: string }
+      responses:
+        '200':
+          description: The token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryToken' }
+        '409':
+          description: LAUNCH_NOT_CONFIRMED
+          content:
+            application/json:
+              example:
+                {
+                  error:
+                    {
+                      code: LAUNCH_NOT_CONFIRMED,
+                      message: 'The launch transaction is not confirmed on chain (yet).',
+                      details: {},
+                    },
+                }
+        '422':
+          description: LAUNCH_TX_MISMATCH
+          content:
+            application/json:
+              example:
+                {
+                  error:
+                    {
+                      code: LAUNCH_TX_MISMATCH,
+                      message: 'The signed transaction is not the launch that was prepared.',
+                      details: {},
+                    },
+                }
+  /factory/launch/submit:
+    post:
+      tags: [markets]
+      operationId: postFactoryLaunchSubmit
+      summary: 'Fallback: send a wallet-signed launch; the server signs with the mint last.'
+      description: >-
+        Use when the wallet rewrote the transaction (for example a different priority fee),
+        which breaks the mint signature: ask the wallet to only sign (MWA sign_transactions, if
+        get_capabilities lists solana:signTransactions) and post it here. The server accepts it
+        only if it is the prepared launch (same fee payer, blockhash and non-ComputeBudget
+        instructions; at most four ComputeBudget instructions) with a valid wallet signature
+        (422 LAUNCH_TX_MISMATCH), signs with the mint, sends and confirms. 409 LAUNCH_EXPIRED
+        after the blockhash (or the 15-minute mint key) expired: prepare again.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [launchId, signedTxBase64]
+              properties:
+                launchId: { type: string, format: uuid }
+                signedTxBase64: { type: string }
+      responses:
+        '200':
+          description: Sent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  signature: { type: string }
+                  status: { type: string, enum: [submitted, confirmed] }
+                  token:
+                    nullable: true
+                    allOf: [{ $ref: '#/components/schemas/FactoryToken' }]
+        '409':
+          description: LAUNCH_EXPIRED
+          content:
+            application/json:
+              example:
+                {
+                  error:
+                    {
+                      code: LAUNCH_EXPIRED,
+                      message: 'This launch expired. Prepare a new one.',
+                      details: {},
+                    },
+                }
+        '422':
+          description: LAUNCH_TX_MISMATCH
+  /factory/launch/{launchId}:
+    get:
+      tags: [markets]
+      operationId: getFactoryLaunch
+      summary: Status of one of my launches (prepared, submitted, confirmed, expired, failed).
+      x-phase: 4
+      parameters:
+        - { name: launchId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: The launch }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /factory/tokens:
+    get:
+      tags: [markets]
+      operationId: getFactoryTokens
+      summary: Live real tokens (new, trending by 24 h volume, or mine).
+      x-phase: 4
+      parameters:
+        - {
+            name: view,
+            in: query,
+            required: false,
+            schema: { type: string, enum: [new, trending, mine] },
+          }
+        - {
+            name: limit,
+            in: query,
+            required: false,
+            schema: { type: integer, minimum: 1, maximum: 50 },
+          }
+      responses:
+        '200':
+          description: Tokens
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tokens: { type: array, items: { $ref: '#/components/schemas/FactoryToken' } }
+  /factory/tokens/{mint}:
+    get:
+      tags: [markets]
+      operationId: getFactoryToken
+      summary: One real token with numbers from the on-chain pool (refreshed at most every 15 s).
+      x-phase: 4
+      parameters:
+        - { name: mint, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FactoryToken' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /factory/tokens/{mint}/trades:
+    get:
+      tags: [markets]
+      operationId: getFactoryTokenTrades
+      summary: Recent swaps on the token (from the Helius raw webhook), newest first.
+      x-phase: 4
+      parameters:
+        - { name: mint, in: path, required: true, schema: { type: string } }
+        - { name: limit, in: query, required: false, schema: { type: integer, maximum: 200 } }
+      responses:
+        '200': { description: '{trades: [{signature, side, trader, tokens, sol, at}]}' }
+  /factory/metadata/{id}:
+    get:
+      tags: [markets]
+      operationId: getFactoryMetadata
+      summary: Public token image or metadata JSON (metadata store `self`).
+      security: []
+      x-phase: 4
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200': { description: The bytes (image/png or application/json) }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /webhooks/helius/factory:
+    post:
+      tags: [markets]
+      operationId: postHeliusFactoryWebhook
+      summary: Helius raw webhook for our pools and creator wallets (trades, creator sells).
+      description: >-
+        Server-to-server. The Authorization header must equal HELIUS_FACTORY_WEBHOOK_AUTH (403
+        otherwise). Body is the Helius raw delivery (an array of transactions); duplicates are
+        ignored. A creator-wallet sell of a launched mint adds heat and, for 30% or more of
+        their holding, one exposé post (penalties only); a transfer out adds a smaller heat.
+      security: []
+      x-phase: 4
+      responses:
+        '200': { description: '{processed, trades, creatorMoves}' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /market/coins:
     get:
       tags: [markets]
@@ -6188,6 +6505,34 @@ components:
                 },
             }
   schemas:
+    FactoryToken:
+      type: object
+      properties:
+        mint: { type: string }
+        pool: { type: string }
+        cluster: { type: string, enum: [devnet, mainnet] }
+        name: { type: string }
+        ticker: { type: string }
+        imageUri: { type: string }
+        metadataUri: { type: string }
+        creator:
+          type: object
+          properties:
+            userId: { type: string, format: uuid }
+            alias: { type: string }
+            wallet: { type: string }
+        launchedAt: { type: string, format: date-time }
+        signature: { type: string }
+        priceSol: { type: number, nullable: true, description: 'SOL per whole token' }
+        marketCapSol: { type: number, nullable: true, description: 'priceSol x 1,000,000,000' }
+        quoteReserveSol: { type: number, nullable: true }
+        progressBps:
+          { type: integer, nullable: true, description: 'Curve progress to graduation, 0..10000' }
+        migrated: { type: boolean, description: 'Graduated to a DAMM v2 pool' }
+        rugged: { type: boolean, description: 'The creator sold 30%+ of their holding' }
+        volume24hSol: { type: number }
+        trades24h: { type: integer }
+        stateAt: { type: string, format: date-time, nullable: true }
     LikenessCheckoutStatus:
       type: object
       required: [intentId, modelId, status, entitlementId]

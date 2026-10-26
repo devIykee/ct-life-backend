@@ -146,6 +146,31 @@ export interface Config {
     readonly dailyNetLossCapCents: number;
   };
 
+  /**
+   * Real token launches on Meteora DBC (docs/FACTORY-REAL.md). The partner
+   * config is created once on-chain (tools/factory/create-dbc-config.ts) and
+   * only its public address lives here. No private key is ever configured.
+   */
+  readonly factory: {
+    /** The DBC partner config account; empty = launches are unavailable (503). */
+    readonly dbcConfig: string;
+    /** Public address that claims our trading fees (the config's feeClaimer). */
+    readonly partnerFeeWallet: string;
+    /** Priority fee the server puts in every launch tx (wallets then leave it alone). */
+    readonly priorityMicroLamports: number;
+    readonly computeUnitLimit: number;
+    /** 'pinata' (permanent IPFS) or 'self' (served by this API; devnet). */
+    readonly metadataStore: 'pinata' | 'self';
+    readonly pinataJwt: string;
+    readonly pinataGateway: string;
+    /** Public base URL of this API, for the 'self' metadata store. */
+    readonly publicBaseUrl: string;
+    /** Helius webhook that watches creator wallets and pools (raw / rawDevnet). */
+    readonly heliusWebhookId: string;
+    /** The exact Authorization header value Helius sends to our receiver. */
+    readonly heliusWebhookAuth: string;
+  };
+
   /** Cash tips. */
   readonly tips: {
     /** Fee burned on every Cash tip, in basis points of the amount (300 = 3%). */
@@ -428,6 +453,19 @@ export function loadConfig(): Config {
 
     tips: {
       feeBps: asBoundedInt('TIP_FEE_BPS', 300, 0, 2000),
+    },
+
+    factory: {
+      dbcConfig: optionalEnv('FACTORY_DBC_CONFIG', ''),
+      partnerFeeWallet: optionalEnv('PARTNER_FEE_WALLET', ''),
+      priorityMicroLamports: asBoundedInt('FACTORY_PRIORITY_MICROLAMPORTS', 50_000, 0, 10_000_000),
+      computeUnitLimit: asBoundedInt('FACTORY_COMPUTE_UNIT_LIMIT', 300_000, 150_000, 1_400_000),
+      metadataStore: optionalEnv('FACTORY_METADATA_STORE', 'self') === 'pinata' ? 'pinata' : 'self',
+      pinataJwt: optionalEnv('PINATA_JWT', ''),
+      pinataGateway: optionalEnv('PINATA_GATEWAY', ''),
+      publicBaseUrl: optionalEnv('PUBLIC_API_BASE_URL', ''),
+      heliusWebhookId: optionalEnv('HELIUS_FACTORY_WEBHOOK_ID', ''),
+      heliusWebhookAuth: optionalEnv('HELIUS_FACTORY_WEBHOOK_AUTH', ''),
     },
 
     features: {

@@ -8,7 +8,6 @@ import { config as loadDotenv } from 'dotenv';
 import { Keypair } from '@solana/web3.js';
 import { buildServer } from './main.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { createDb } from '../shared/db/pool.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 
 const FAKE_PKCS8 = `-----BEGIN PRIVATE KEY-----
@@ -22,7 +21,6 @@ loadDotenv({ path: process.cwd() + '/.env' });
 
 let app: Awaited<ReturnType<typeof buildServer>>['app'];
 let stop: () => Promise<void>;
-const db = createDb();
 
 beforeAll(async () => {
   process.env.APP_ENV = process.env.APP_ENV ?? 'local';
@@ -99,100 +97,41 @@ async function call(
   return { status: r.statusCode, body: r.json() };
 }
 
-it('launches over HTTP: strict body, idempotent replay, one charge, creator-only earnings', async () => {
+it('the Cash Factory is retired: launching answers 410 FACTORY_CASH_RETIRED', async () => {
   const creator = await devAuth();
-  const other = await devAuth();
-  await db.withConnection((c) =>
-    c.query(
-      `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 100000), ($2, 100000)
-       ON CONFLICT (user_id) DO UPDATE SET cash_cents = 100000`,
-      [creator.sub, other.sub],
-    ),
-  );
-  const t = `ZR${Math.floor(Math.random() * 9000 + 1000)}`;
-  const body = {
-    name: 'Route Frog',
-    ticker: t,
+  const r = await call(creator, 'POST', '/v1/factory/coins', {
+    name: 'Old Frog',
+    ticker: 'OLDF',
     templateId: 'rf_frog',
     liquidityCents: 5000,
-    devAllocationBps: 2000,
-  };
-
-  const anon = await app.inject({ method: 'POST', url: '/v1/factory/coins', payload: body });
-  expect(anon.statusCode).toBe(401);
-
-  // The client cannot pick the arc, price, creator or anything else.
-  for (const extra of [
-    { hiddenArc: { outcome: 'moon' } },
-    { creatorId: other.sub },
-    { priceMicros: 1 },
-  ]) {
-    const r = await call(creator, 'POST', '/v1/factory/coins', { ...body, ...extra });
-    expect(r.status).toBe(400);
-  }
-  expect(
-    (await call(creator, 'POST', '/v1/factory/coins', { ...body, name: 'F.u.c.k' })).status,
-  ).toBe(400);
-
-  const key = uuidv7();
-  const post = (): Promise<Awaited<ReturnType<typeof app.inject>>> =>
-    app.inject({
-      method: 'POST',
-      url: '/v1/factory/coins',
-      headers: { authorization: `Bearer ${creator.accessToken}`, 'idempotency-key': key },
-      payload: body,
-    });
-  const a = await post();
-  const b = await post();
-  expect(a.statusCode, a.body).toBe(201);
-  expect(b.statusCode).toBe(201);
-  const coin = a.json() as { coinId: string };
-  expect((b.json() as { coinId: string }).coinId).toBe(coin.coinId);
-  const bal = await db.withConnection((c) =>
-    c.query<{ cash_cents: string }>(`SELECT cash_cents FROM balances WHERE user_id = $1`, [
-      creator.sub,
-    ]),
-  );
-  expect(Number(bal.rows[0]!.cash_cents)).toBe(100000 - 500 - 5000);
-
-  // A second launch straight away hits the cooldown.
-  const again = await call(creator, 'POST', '/v1/factory/coins', {
-    ...body,
-    ticker: `${t}X`.slice(0, 6),
+    devAllocationBps: 0,
   });
-  expect(again.status).toBe(429);
-  expect((again.body as { error: { code: string } }).error.code).toBe('LAUNCH_COOLDOWN');
+  expect(r.status, JSON.stringify(r.body)).toBe(410);
+  expect((r.body.error as { code: string }).code).toBe('FACTORY_CASH_RETIRED');
+  const cfg = await call(creator, 'GET', '/v1/factory/config');
+  expect(cfg.status).toBe(200);
+  expect(cfg.body).toMatchObject({ real: true, ageGate: 18 });
+});
 
-  // Another player buys through the market endpoint; sees no creator earnings.
-  const trade = await call(other, 'POST', '/v1/market/trades', {
-    coinId: coin.coinId,
-    side: 'buy',
-    cashCents: 1000,
+it('real Factory routes: the Helius webhook needs its Authorization header; unknown metadata is 404', async () => {
+  const hook = await app.inject({
+    method: 'POST',
+    url: '/v1/webhooks/helius/factory',
+    payload: [],
   });
-  expect(trade.status, JSON.stringify(trade.body)).toBe(200);
-  const seen = await call(other, 'GET', `/v1/factory/coins/${coin.coinId}`);
-  expect(seen.status).toBe(200);
-  expect(seen.body['creatorFeesCents']).toBeNull();
-  expect(JSON.stringify(seen.body)).not.toContain('hiddenArc');
-  const mine = await call(creator, 'GET', `/v1/factory/coins/${coin.coinId}`);
-  expect(mine.body['creatorFeesCents']).toBe('0');
-
-  const list = await call(creator, 'GET', '/v1/factory/coins?view=mine');
-  expect((list.body['coins'] as Array<{ coinId: string }>).map((c) => c.coinId)).toContain(
-    coin.coinId,
-  );
-  const others = await call(other, 'GET', '/v1/factory/coins?view=mine');
-  expect(others.body['coins']).toEqual([]);
-  expect((await call(other, 'GET', '/v1/factory/coins?view=bogus')).status).toBe(400);
-
-  const cfg = await call(other, 'GET', '/v1/factory/config');
-  expect(cfg.body['launchFeeCents']).toBe(500);
-  expect(Object.keys(cfg.body['arcOddsPct'] as object).sort()).toEqual([
-    'moon',
-    'rug',
-    'sideways',
-    'slow_bleed',
-  ]);
-  const me = await call(creator, 'GET', '/v1/factory/me');
-  expect(me.body['launchesToday']).toBe(1);
+  expect(hook.statusCode).toBe(403);
+  const meta = await app.inject({
+    method: 'GET',
+    url: `/v1/factory/metadata/${'a'.repeat(40)}.png`,
+  });
+  expect(meta.statusCode).toBe(404);
+  const u = await devAuth();
+  const prep = await call(u, 'POST', '/v1/factory/launch/prepare', {
+    name: 'No Config',
+    ticker: 'NOCFG',
+    imageBase64: 'AA==',
+    riskAccepted: true,
+  });
+  expect(prep.status).toBe(503);
+  expect((prep.body.error as { code: string }).code).toBe('FACTORY_UNAVAILABLE');
 });

@@ -587,3 +587,51 @@ export class CatchNotVerifiedError extends DomainError {
     this.httpStatus = 422;
   }
 }
+
+export class FactoryCashRetiredError extends DomainError {
+  readonly code = 'FACTORY_CASH_RETIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The Cash Factory is retired. Launch a real token instead.', details);
+    this.httpStatus = 410;
+  }
+}
+
+export class FactoryUnavailableError extends DomainError {
+  readonly code = 'FACTORY_UNAVAILABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Real token launches are not configured on this server.', details);
+    this.httpStatus = 503;
+  }
+}
+
+export class LaunchExpiredError extends DomainError {
+  readonly code = 'LAUNCH_EXPIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This launch expired (its blockhash is too old). Prepare a new one.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class LaunchTxMismatchError extends DomainError {
+  readonly code = 'LAUNCH_TX_MISMATCH';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The signed transaction is not the launch that was prepared.', details);
+    this.httpStatus = 422;
+  }
+}
+
+export class LaunchNotConfirmedError extends DomainError {
+  readonly code = 'LAUNCH_NOT_CONFIRMED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The launch transaction is not confirmed on chain (yet).', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class RiskNotAcceptedError extends DomainError {
+  readonly code = 'RISK_NOT_ACCEPTED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Accept the risk warning before launching a real token.', details);
+    this.httpStatus = 400;
+  }
+}

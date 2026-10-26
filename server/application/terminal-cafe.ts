@@ -33,6 +33,7 @@ import {
   NotFoundError,
   SlippageExceededError,
   ValidationFailedError,
+  FactoryCashRetiredError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ammQuote } from './amm.js';
@@ -361,6 +362,11 @@ export async function executeTrade(ctx: AppContext, input: TradeInput): Promise<
     const coin = cr.rows[0]!;
     if (coin.stage === 'dead') {
       throw new ValidationFailedError({ reason: 'coin is dead' });
+    }
+    // The Cash Factory is retired: no new buys of Cash player coins (selling an
+    // old position still works, so no Cash is stuck). Real tokens: factory-real.ts.
+    if (coin.player_launched && input.side === 'buy') {
+      throw new FactoryCashRetiredError({ use: 'real tokens' });
     }
     const quotePriceMicros = BigInt(coin.price_micros);
     if (quotePriceMicros <= 0n) {
