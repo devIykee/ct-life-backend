@@ -22,6 +22,7 @@ import type { AppContext } from './context.js';
 import { isBlockedText } from './factory-filter.js';
 import { addHeat } from './player-heat.js';
 import { publishWorldEvent } from './realtime-bus.js';
+import { cardCoinRug } from './city-cards.js';
 
 /** The Sleuth's author id (seeded by migration 089). */
 export const SLEUTH_USER_ID = '00000000-0000-4000-8000-0000000051e7';
@@ -256,5 +257,6 @@ export async function checkCreatorRug(
     launcherAlias: out.alias,
     heat: String(out.heat),
   });
+  await cardCoinRug(ctx, { coinId, ticker: out.ticker, reason: 'creator_dump', alias: out.alias });
   return { flagged: true, heat: out.heat, postId: out.postId, sellSharePct: out.pct };
 }

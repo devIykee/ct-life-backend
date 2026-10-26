@@ -104,6 +104,12 @@ export interface Config {
   readonly flags: {
     readonly wireV3Kinds: boolean;
   };
+  /**
+   * The release phase the deployment has opened (1 to 6). `GET /config` sends it as the
+   * top-level `livePhase`; the client opens the apps of every phase up to it and shows
+   * "Coming soon" for the rest.
+   */
+  readonly livePhase: number;
 
   readonly helius: {
     readonly apiKey: string;
@@ -227,7 +233,12 @@ function asInt(name: string, fallback: number): number {
 }
 
 function asBoundedInt(name: string, fallback: number, min: number, max: number): number {
-  const n = asInt(name, fallback);
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  // Strict: "3.5", "1e1" and "6abc" are mistakes, not 3, 1 and 6.
+  if (!/^-?\d+$/.test(raw.trim()))
+    throw new ConfigError(name, `expected an integer ${min}..${max}`);
+  const n = Number(raw.trim());
   if (n < min || n > max) throw new ConfigError(name, `expected an integer ${min}..${max}`);
   return n;
 }
@@ -407,6 +418,9 @@ export function loadConfig(): Config {
       // Tells the client to send the v3 vehicle kinds; turn on once they are deployed.
       wireV3Kinds: optionalEnv('WIRE_V3_KINDS', 'false').toLowerCase() === 'true',
     },
+
+    // LIVE_PHASE 1 to 6, default 1 (nothing changes until it is set). Anything else fails the load.
+    livePhase: asBoundedInt('LIVE_PHASE', 1, 1, 6),
 
     helius: {
       apiKey: requireEnv('HELIUS_API_KEY', 'Helius API key'),

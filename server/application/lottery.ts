@@ -14,6 +14,7 @@
  * sets a balance, so the only path to a balance is through here).
  */
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import { AlreadyRolledError, NotFoundError } from '../shared/domain/errors.js';
 import { SeededRng } from '../shared/domain/rng.js';
 import type { AppContext } from './context.js';
@@ -135,6 +136,11 @@ export class LotteryService {
           [userId, debt, chosen, `lottery-debt:${userId}`],
         );
       }
+      await recordEvent(client, userId, {
+        name: 'lottery_rolled',
+        props: { outcome: chosen },
+        amountCents: cash,
+      });
       return { outcome: chosen, cashCents: cash, debtCents: debt, homeId };
     });
   }

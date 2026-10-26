@@ -282,7 +282,7 @@
     {
       "code": "CHALLENGE_EXPIRED",
       "httpStatus": 410,
-      "message": "This challenge expired; the stake was refunded."
+      "message": "This challenge expired."
     },
     {
       "code": "CHALLENGE_NOT_OPEN",
@@ -303,6 +303,21 @@
       "code": "NOD_TOO_FAR",
       "httpStatus": 409,
       "message": "The server's last position for you is more than the collect radius from this nod."
+    },
+    {
+      "code": "CONTENT_NOT_ALLOWED",
+      "httpStatus": 400,
+      "message": "That text contains words that are not allowed."
+    },
+    {
+      "code": "ACCOUNT_MUTED",
+      "httpStatus": 403,
+      "message": "This account is muted and cannot send messages or posts right now."
+    },
+    {
+      "code": "ACCOUNT_BANNED",
+      "httpStatus": 403,
+      "message": "This account has been banned."
     },
     {
       "code": "NAME_NOT_ALLOWED",
@@ -345,9 +360,14 @@
       "message": "You have earned today's maximum pay from this job."
     },
     {
-      "code": "SHIFT_RESULT_IMPLAUSIBLE",
-      "httpStatus": 422,
-      "message": "The shift result does not look like a real shift."
+      "code": "GONE",
+      "httpStatus": 410,
+      "message": "This endpoint was removed; see details.use for its replacement."
+    },
+    {
+      "code": "COUNTER_TOO_FAR",
+      "httpStatus": 409,
+      "message": "The server's last position for you is too far from the Rekt Burger counter."
     },
     {
       "code": "JAILED",
@@ -408,6 +428,14 @@
       "code": "RISK_NOT_ACCEPTED",
       "httpStatus": 400,
       "message": "Accept the risk warning before launching a real token."
+      "code": "CASH_NOT_TRANSFERABLE",
+      "httpStatus": 410,
+      "message": "Cash never moves between players. This feature was removed; see details.reason."
+    },
+    {
+      "code": "NFT_MINT_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "This item cannot be minted as an NFT: it was not acquired on-chain."
     }
   ]
 }

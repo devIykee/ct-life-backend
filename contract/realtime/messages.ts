@@ -223,6 +223,7 @@ export const RejectedMessage = z.object({
     'FORBIDDEN',
     'BLOCKED',
     'RATE_LIMITED',
+    'ACCOUNT_MUTED',
     'INSUFFICIENT_CASH',
     'LEVERAGE_NOT_ALLOWED',
     'SLIPPAGE_EXCEEDED',
@@ -294,6 +295,36 @@ export const DmMessage = z.object({
   at: z.number().int().nonnegative(),
 });
 export type DmMessage = z.infer<typeof DmMessage>;
+
+/**
+ * A group chat message (docs/GROUPS.md), to every member but the author and
+ * anyone who blocked the author. `muted`: the member muted the group, so show
+ * an unread dot, not a banner. `card` is a server-built call or PnL card.
+ */
+export const GroupMsgMessage = z.object({
+  messageId: z.string().uuid(),
+  groupId: z.string().uuid(),
+  groupName: z.string(),
+  kind: z.enum(['friends', 'alpha', 'tribe']),
+  topic: z.enum(['chat', 'calls', 'wins']),
+  authorUserId: z.string().uuid(),
+  authorAlias: z.string(),
+  text: z.string().max(500),
+  card: z.record(z.string(), z.unknown()).nullable(),
+  at: z.string(),
+  muted: z.boolean(),
+});
+export type GroupMsgMessage = z.infer<typeof GroupMsgMessage>;
+
+/** Someone invited you to a group (shows under Invites, kept apart like message requests). */
+export const GroupInviteMessage = z.object({
+  code: z.string().length(10),
+  groupId: z.string().uuid(),
+  groupName: z.string(),
+  fromUserId: z.string().uuid(),
+  at: z.number().int().nonnegative(),
+});
+export type GroupInviteMessage = z.infer<typeof GroupInviteMessage>;
 
 /** Duo Shop: the courier leaves, about 60 s before `etaAt` (epoch ms). `unitId` is null for a locker. */
 export const DeliveryOutMessage = z.object({
