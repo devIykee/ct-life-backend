@@ -52,14 +52,17 @@ import { VenueState, NpcState, type PlayerState } from '../../../contract/realti
 import { z } from 'zod';
 import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
 import {
+  applyOutfitMessage,
   authenticateJoin,
   loadPlayerState,
   filterSay,
+  loadSayPolicy,
   newMessageId,
   SAY_COOLDOWN_MS,
   EMOTE_COOLDOWN_MS,
 } from '../player.js';
 import {
+  OUTFIT_CHANNEL,
   POS_HASH,
   encodePos,
   getIslandGeometry,
@@ -71,6 +74,7 @@ import {
   type MoveAnchor,
   type VenuePlacement,
 } from '../movement.js';
+import { BanGuard } from '../ban-guard.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -131,6 +135,7 @@ interface VenueConfig {
 }
 
 export class VenueRoom extends Room {
+  private readonly ban = new BanGuard(this);
   /**
    *
    */
@@ -162,10 +167,27 @@ export class VenueRoom extends Room {
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
+  private onOutfit = (data: unknown): void => applyOutfitMessage(this.state.players, data);
+
+  /**
+   * Stop listening for outfit changes.
+   */
+  override async onDispose(): Promise<void> {
+    await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
+  }
+
+  /**
+   * Stop listening for bans.
+   */
+  override async onDispose(): Promise<void> {
+    await this.ban.detach();
+  }
+
   /**
    *
    */
   override async onCreate(_options: unknown): Promise<void> {
+    await this.ban.attach();
     this.maxClients = 50;
     this.patchRate = 100;
     this.spotsCfg = this.loadVenueConfig();
@@ -189,6 +211,8 @@ export class VenueRoom extends Room {
     this.onMessage('say', (client, msg) => this.handleSay(client, msg));
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     this.onMessage('npc_tap', (client, msg) => this.handleNpcTap(client, msg));
+    // The api tells every room when a player's outfit changes (shift start/end, uniform equip).
+    await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
     // Spawn NPC brains per venue archetype.
     this.spawnNpcBrains();
     // 1 Hz NPC tick.
@@ -202,12 +226,15 @@ export class VenueRoom extends Room {
   override async onJoin(client: Client, options: unknown): Promise<void> {
     // Identity and look come from the database, never from join options.
     const userId = await authenticateJoin(options);
+    this.ban.track(client, userId);
     // Police custody: a jailed player may only be in CT Jail. Fails open if the
     // database cannot be reached; the REST gates still hold.
     if (this.state.venueId !== 'ct_jail' && (await isInPoliceCustody(userId))) {
       throw new Error('JAILED');
     }
     const player = await loadPlayerState(userId);
+    // Last check, no await before the player is stored.
+    await this.ban.confirm(userId);
 
     // Place the player on the venue's entrance spot. Joining a second
     // venue (or a street room) while still in another is allowed; rooms
@@ -241,6 +268,7 @@ export class VenueRoom extends Room {
    *
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     const player = this.state.players.get(client.sessionId);
     if (player && player.spotId) {
       this.spotOccupants.delete(player.spotId);
@@ -443,20 +471,41 @@ export class VenueRoom extends Room {
     this.lastSayAt.set(client.sessionId, now);
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
-    const id = newMessageId();
-    // Broadcast to every other client in the room; block-aware
-    // filtering happens in M5. M2 fans out to everyone.
-    this.broadcast(
-      'said',
-      {
-        messageId: id,
-        userId: player.userId,
-        sessionId: client.sessionId,
-        text,
-        at: now,
-      },
-      { except: client },
-    );
+    const payload = {
+      messageId: newMessageId(),
+      userId: player.userId,
+      sessionId: client.sessionId,
+      text,
+      at: now,
+    };
+    void this.deliverSay(client, player.userId, payload);
+  }
+
+  /**
+   * Fan a `said` out to everyone except the speaker and anyone who blocked them
+   * (or whom they blocked). A muted speaker is told and nothing is sent. If the
+   * policy cannot be read the message is dropped (fail closed).
+   */
+  private async deliverSay(
+    client: Client,
+    userId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const policy = await loadSayPolicy(userId);
+      if (policy.muted) {
+        client.send('rejected', { type: 'say', code: 'ACCOUNT_MUTED' });
+        return;
+      }
+      for (const c of this.clients) {
+        if (c.sessionId === client.sessionId) continue;
+        const other = this.state.players.get(c.sessionId)?.userId;
+        if (other !== undefined && policy.blocked.has(other)) continue;
+        c.send('said', payload);
+      }
+    } catch {
+      // fail closed
+    }
   }
 
   private handleTalking(client: Client, msg: unknown): void {

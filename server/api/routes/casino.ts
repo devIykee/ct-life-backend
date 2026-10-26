@@ -8,7 +8,7 @@
  *   POST /v1/casino/crash/bet                      {stakeCents, autoCashout?}
  *   POST /v1/casino/crash/cashout                  {roundId}
  *   POST /v1/casino/coinflip/bet                   {stakeCents, side}
- *   POST /v1/casino/coinflip/challenges            {opponentUserId, stakeCents, side}
+ *   POST /v1/casino/coinflip/challenges            {opponentUserId, side}  (no Cash moves)
  *   GET  /v1/casino/coinflip/challenges
  *   POST /v1/casino/coinflip/challenges/:id/accept | decline | cancel
  *   GET  /v1/casino/rounds?mine&limit&before
@@ -18,6 +18,7 @@
  * Every write needs an Idempotency-Key; a replay returns the first answer
  * and charges once. Writes that stake Cash also pass a tight per-player
  * rate limit. The client never sends an outcome, a multiplier or a price.
+ * A settled big win (10x+, $10+) becomes a Timeline city card (city-cards.ts).
  */
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
@@ -41,6 +42,7 @@ import {
   playSlots,
   selfExclude,
 } from '../../application/casino.js';
+import { cardCasinoWin } from '../../application/city-cards.js';
 
 const Stake = z.number().int().min(1).max(10_000_000);
 const Side = z.enum(['heads', 'tails']);
@@ -52,9 +54,7 @@ const CrashBetBody = z
   .strict();
 const CrashCashoutBody = z.object({ roundId: z.string().uuid() }).strict();
 const CoinflipBody = z.object({ stakeCents: Stake, side: Side }).strict();
-const ChallengeBody = z
-  .object({ opponentUserId: z.string().uuid(), stakeCents: Stake, side: Side })
-  .strict();
+const ChallengeBody = z.object({ opponentUserId: z.string().uuid(), side: Side }).strict();
 const SelfExcludeBody = z.object({ days: z.number().int().min(1).max(3650) }).strict();
 const RoundsQuery = z.object({
   mine: z.enum(['true', '1', '']).optional(),
@@ -105,19 +105,28 @@ export function registerCasinoRoutes(app: FastifyInstance): void {
 
   app.post('/v1/casino/slots/spin', bet, async (req, reply) => {
     const body = parse(SlotsBody, req.body);
-    return reply.status(201).send(await playSlots(req.ctx, req.user!.sub, body.stakeCents));
+    const out = await playSlots(req.ctx, req.user!.sub, body.stakeCents);
+    await cardCasinoWin(req.ctx, req.user!.sub, out.round);
+    return reply.status(201).send(out);
   });
 
   app.post('/v1/casino/crash/bet', bet, async (req, reply) => {
     const body = parse(CrashBetBody, req.body);
-    return reply
-      .status(201)
-      .send(await placeCrashBet(req.ctx, req.user!.sub, body.stakeCents, body.autoCashout ?? null));
+    const out = await placeCrashBet(
+      req.ctx,
+      req.user!.sub,
+      body.stakeCents,
+      body.autoCashout ?? null,
+    );
+    await cardCasinoWin(req.ctx, req.user!.sub, out.round);
+    return reply.status(201).send(out);
   });
 
   app.post('/v1/casino/crash/cashout', bet, async (req, reply) => {
     const body = parse(CrashCashoutBody, req.body);
-    return reply.status(200).send(await cashoutCrash(req.ctx, req.user!.sub, body.roundId));
+    const out = await cashoutCrash(req.ctx, req.user!.sub, body.roundId);
+    await cardCasinoWin(req.ctx, req.user!.sub, out.round);
+    return reply.status(200).send(out);
   });
 
   app.post('/v1/casino/coinflip/bet', bet, async (req, reply) => {
@@ -131,15 +140,7 @@ export function registerCasinoRoutes(app: FastifyInstance): void {
     const body = parse(ChallengeBody, req.body);
     return reply
       .status(201)
-      .send(
-        await createChallenge(
-          req.ctx,
-          req.user!.sub,
-          body.opponentUserId,
-          body.stakeCents,
-          body.side,
-        ),
-      );
+      .send(await createChallenge(req.ctx, req.user!.sub, body.opponentUserId, body.side));
   });
 
   app.get('/v1/casino/coinflip/challenges', read, async (req, reply) =>

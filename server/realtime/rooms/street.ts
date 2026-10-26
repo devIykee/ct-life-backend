@@ -30,8 +30,10 @@ import { z } from 'zod';
 import { StreetState, type PlayerState } from '../../../contract/realtime/states.js';
 import {
   authenticateJoin,
+  applyOutfitMessage,
   loadPlayerState,
   filterSay,
+  loadSayPolicy,
   newMessageId,
   SAY_COOLDOWN_MS,
   EMOTE_COOLDOWN_MS,
@@ -39,6 +41,7 @@ import {
 import {
   DISTRICTS,
   POS_FRESH_MS,
+  OUTFIT_CHANNEL,
   POLICE_CHANNEL,
   POS_HASH,
   VEHICLE_EXIT_CHANNEL,
@@ -55,6 +58,7 @@ import {
   type MoveAnchor,
   type Polygon,
 } from '../movement.js';
+import { BanGuard } from '../ban-guard.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -87,6 +91,7 @@ interface StreetSession {
 }
 
 export class StreetRoom extends Room {
+  private readonly ban = new BanGuard(this);
   declare state: StreetState;
   private polygon: Polygon = [];
   private island: readonly Polygon[] = [];
@@ -96,11 +101,14 @@ export class StreetRoom extends Room {
   private exitGrants = new Map<string, IslandPos>();
   private onExit = (data: unknown): void => this.handleVehicleExit(data);
   private onPolice = (data: unknown): void => this.handlePolice(data);
+  private onOutfit = (data: unknown): void =>
+    applyOutfitMessage({ forEach: (cb) => this.sessions.forEach((x) => cb(x.player)) }, data);
 
   /**
    * @param options - `{ district }`, one of DISTRICTS.
    */
   override async onCreate(options: unknown): Promise<void> {
+    await this.ban.attach();
     const district = String((options as { district?: string })?.district ?? '');
     if (!(DISTRICTS as readonly string[]).includes(district)) {
       throw new Error(`Unknown district: ${district}`);
@@ -124,14 +132,17 @@ export class StreetRoom extends Room {
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
+    await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
   }
 
   /**
    *
    */
   override async onDispose(): Promise<void> {
+    await this.ban.detach();
     await this.presence?.unsubscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.unsubscribe(POLICE_CHANNEL, this.onPolice);
+    await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
   }
 
   /**
@@ -139,10 +150,14 @@ export class StreetRoom extends Room {
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     const userId = await authenticateJoin(options);
+    // No await between the token check and track(): a ban published from here on finds us.
+    this.ban.track(client, userId);
     const player = await this.loadPlayer(userId);
     const last = await this.readPos(userId);
     const now = Date.now();
     const fresh = last !== null && now - last.at <= POS_FRESH_MS;
+    // Last check, no await before the session is stored.
+    await this.ban.confirm(userId);
     this.sessions.set(client.sessionId, {
       userId,
       player,
@@ -160,6 +175,7 @@ export class StreetRoom extends Room {
    *
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     const s = this.sessions.get(client.sessionId);
     this.sessions.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
@@ -268,17 +284,41 @@ export class StreetRoom extends Room {
       return;
     }
     s.lastSayAt = now;
-    this.broadcast(
-      'said',
-      {
-        messageId: newMessageId(),
-        userId: s.userId,
-        sessionId: client.sessionId,
-        text: filterSay(parsed.data.text),
-        at: now,
-      },
-      { except: client },
-    );
+    const payload = {
+      messageId: newMessageId(),
+      userId: s.userId,
+      sessionId: client.sessionId,
+      text: filterSay(parsed.data.text),
+      at: now,
+    };
+    void this.deliverSay(client, s.userId, payload);
+  }
+
+  /**
+   * Fan a `said` out to everyone except the speaker and anyone who blocked them
+   * (or whom they blocked). A muted speaker is told and nothing is sent. If the
+   * policy cannot be read the message is dropped (fail closed).
+   */
+  private async deliverSay(
+    client: Client,
+    userId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const policy = await loadSayPolicy(userId);
+      if (policy.muted) {
+        client.send('rejected', { type: 'say', code: 'ACCOUNT_MUTED' });
+        return;
+      }
+      for (const c of this.clients) {
+        if (c.sessionId === client.sessionId) continue;
+        const other = this.sessions.get(c.sessionId)?.userId;
+        if (other !== undefined && policy.blocked.has(other)) continue;
+        c.send('said', payload);
+      }
+    } catch {
+      // fail closed
+    }
   }
 
   private handleTalking(client: Client, msg: unknown): void {

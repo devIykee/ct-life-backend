@@ -259,3 +259,10 @@ payment assertions. See [character likeness](CHARACTER_LIKENESS.md).
 - `groups` (kind friends | alpha | tribe, cap, rules, slow_mode, hidden_at), `group_members` (role owner | mod | member, muted_until, last_read_at), `group_bans`, `group_invites` (code, optional invitee, max_uses, expiry), `group_messages` (topic chat | calls | wins, text, card), `group_reports`, `venue_booths` (one group per booth, one booth per group).
 
 See [Groups](GROUPS.md).
+## Analytics (migration 098)
+
+- `analytics_events` — one row per server product event (`signup`, `session_start`, `character_created`, `lottery_rolled`, `quest_claimed`, `daily_claimed`, `shift_paid`, `casino_round`, `shop_order`, `tip_sent`; a `CHECK` keeps the list closed). `user_id` (`ON DELETE CASCADE`) is the only identifier; `props` holds numbers, booleans and catalogue ids; `amount_cents` is the Cash involved. Written in the action's transaction; pruned after `ANALYTICS_RETENTION_DAYS`. Not append-only, so retention and erasure can delete.
+- Views: `analytics_daily`, `analytics_funnel_daily`, `analytics_economy_daily`, `analytics_economy_totals_daily` (the economy views read `ledger_entries`).
+- `ledger_entries_created_brin` — BRIN on `ledger_entries(created_at)` for day-range scans.
+
+See [Analytics](ANALYTICS.md).

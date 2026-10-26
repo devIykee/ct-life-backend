@@ -27,6 +27,7 @@ import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import type { Db } from '../shared/db/pool.js';
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import {
   InsufficientCashError,
   NoHomeDoorError,
@@ -486,6 +487,16 @@ export async function placeOrder(
       `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
        VALUES ($1, $2, 'cash', 'shop_order', 'shop_order', $3, $4)`,
       [userId, -totalCents, orderId, ref],
+    );
+    await recordEvent(
+      client,
+      userId,
+      {
+        name: 'shop_order',
+        props: { lines: lines.length, units: lines.reduce((n, l) => n + l.qty, 0) },
+        amountCents: totalCents,
+      },
+      now,
     );
     const order = await orderById(client, orderId, userId);
     if (!order) throw new NotFoundError({ resource: 'order', id: orderId });

@@ -4,6 +4,21 @@
 
 The full content lives in M2 onward. This is the table of contents and the rules that govern the numbers.
 
+## The Cash model: purchasable, non-transferable, no cash-out, no on-chain
+
+- **Purchasable**: Cash is bought with crypto top-ups (USDC, SOL, SKR, ORE) into the buyer's own
+  account.
+- **Non-transferable**: Cash never moves between players. There are no Cash tips
+  (`POST /tips` answers `410 CASH_NOT_TRANSFERABLE`), no Cash stakes between players (heads-up
+  casino challenges are stake-free bragging rights), and no paid-call settlement in Cash (the
+  creator's share is paid on-chain in USDC by the escrow program; the game credits nobody).
+- **No cash-out**: nothing converts Cash to money.
+- **No on-chain**: nothing bought with Cash, or earned by playing, can be minted
+  (`POST /nft/mint` answers `403 NFT_MINT_NOT_ALLOWED` unless the item was acquired on-chain).
+  An on-chain tip is a wallet-to-wallet transfer; the game only records an informational note and
+  never credits Cash for it.
+- Cash is credited to a player only for their OWN top-up, their own play, or a reward.
+
 ## Cash units
 
 - Cash is int64 cents. `$500` = `50000` cents. The field name in every API response ends in `Cents`.
@@ -39,7 +54,6 @@ The full content lives in M2 onward. This is the table of contents and the rules
 | Bail                              | spec 4       | after moderation                         |
 | Cosmetics (Cash items)            | spec 4       | shop purchases                           |
 | Trade fees                        | spec 4       | per trade                                |
-| Tip cap                           | spec 4       | daily cap from config                    |
 | Project salaries (player-founded) | M6           | Cash to roles                            |
 
 ## Tax brackets (weekly, resets Mon 00:00 UTC)

@@ -36,6 +36,12 @@ export class PlayerState extends Schema {
   @type('float32') ix = 0;
   @type('float32') iz = 0;
   @type('float32') irotY = 0;
+  /**
+   * Server-set, never client-set: the outfit other players see on top of the look.
+   * 'rekt_burger_crew' while the player has an open Rekt Burger shift, or has the Rekt Burger
+   * Uniform equipped; undefined (null on the client) otherwise.
+   */
+  @type('string') outfit?: string;
 }
 
 export class NpcState extends Schema {

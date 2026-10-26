@@ -14,6 +14,7 @@ import { toErrorEnvelope, type MappedError } from '../shared/infra/error-envelop
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerCoreRoutes } from './routes/core.js';
 import { registerSocialRoutes } from './routes/social.js';
+import { registerModerationRoutes } from './routes/moderation.js';
 import { registerWorkRoutes } from './routes/work.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerOpsRoutes } from './routes/ops.js';
@@ -35,7 +36,7 @@ import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerShopRoutes } from './routes/shop.js';
-import { REDACT_PATHS } from '../shared/logger/logger.js';
+import { httpLoggerOptions } from '../shared/logger/logger.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerCasinoRoutes } from './routes/casino.js';
 import { registerSeasonRoutes } from './routes/season.js';
@@ -83,12 +84,7 @@ export interface ServerHandle {
 export async function buildServer(): Promise<ServerHandle> {
   const ctx = buildContext();
   const app = Fastify({
-    logger: {
-      level: ctx.config.logLevel,
-      // Bodies are not logged by default; redact them (and any coordinates) anyway.
-      redact: { paths: [...REDACT_PATHS], censor: '[REDACTED]' },
-      // Minimal pino-style config; the shared logger has more.
-    },
+    logger: httpLoggerOptions(ctx.config.logLevel),
     disableRequestLogging: false,
     trustProxy: true,
   });
@@ -152,6 +148,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerAuthRoutes(app);
   registerCoreRoutes(app);
   registerSocialRoutes(app);
+  registerModerationRoutes(app);
   registerWorkRoutes(app);
   registerJobRoutes(app);
   registerOpsRoutes(app, ctx);

@@ -209,9 +209,14 @@ describe('launch', () => {
 
   it('refuses without enough Cash, a taken ticker, bad numbers and an unknown template', async () => {
     const poor = await newUser(LAUNCH_FEE_CENTS + 5_000 - 1);
-    await expect(launchFactoryCoin(ctx, poor, input(), uuidv7())).rejects.toBeInstanceOf(
-      InsufficientCashError,
-    );
+    const short = await launchFactoryCoin(ctx, poor, input(), uuidv7()).catch((e: unknown) => e);
+    expect(short).toBeInstanceOf(InsufficientCashError);
+    // The standard field is shortfallCents (a number); have and need stay for compatibility.
+    expect((short as InsufficientCashError).details).toEqual({
+      have: String(LAUNCH_FEE_CENTS + 5_000 - 1),
+      need: String(LAUNCH_FEE_CENTS + 5_000),
+      shortfallCents: 1,
+    });
     expect(await cashOf(poor)).toBe(LAUNCH_FEE_CENTS + 5_000 - 1);
 
     const u = await newUser(100_000);
@@ -252,7 +257,19 @@ describe('launch', () => {
     await expect(
       launchFactoryCoin(ctx, u, input(), uuidv7(), at(step * DAILY_LAUNCH_CAP)),
     ).rejects.toBeInstanceOf(LaunchLimitReachedError);
+    // retryAfterMs counts to the OLDEST launch in the rolling 24 h (what /factory/me reports as
+    // nextLaunchAt), not from the last launch.
+    const hit = await launchFactoryCoin(
+      ctx,
+      u,
+      input(),
+      uuidv7(),
+      at(step * DAILY_LAUNCH_CAP),
+    ).catch((e: unknown) => e);
+    const retry = (hit as LaunchLimitReachedError).details.retryAfterMs as number;
+    expect(retry).toBe(24 * 3_600_000 - step * DAILY_LAUNCH_CAP);
     const me = await getFactoryMe(ctx, u, at(step * DAILY_LAUNCH_CAP));
+    expect(at(step * DAILY_LAUNCH_CAP + retry).toISOString()).toBe(me.nextLaunchAt);
     expect(me.launchesToday).toBe(DAILY_LAUNCH_CAP);
     expect(me.nextLaunchAt).toBe(at(24 * 3_600_000).toISOString());
     // A day after the first launch a slot is free again.
@@ -425,7 +442,7 @@ describe('rug detection and the Sleuth', () => {
 
     // The Timeline serves it as the Sleuth.
     const feed = await listFeed(ctx, holder, 'global');
-    const post = feed.find((p) => p.meta?.['coinId'] === coin.coinId);
+    const post = feed.find((p) => p.kind === 'sleuth' && p.meta?.['coinId'] === coin.coinId);
     expect(post).toMatchObject({ kind: 'sleuth', alias: 'The Sleuth', userId: SLEUTH_USER_ID });
 
     // Dumping more does not flag, heat or post again.

@@ -38,8 +38,10 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { notifyLiquidated } from './push-delivery.js';
 import { recordQuestEvent } from './quests.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { onPlayerRekt } from './rekt-burger.js';
 import type { AppContext } from './context.js';
+import { cardLiquidation } from './city-cards.js';
 
 export type PerpSide = 'long' | 'short';
 export type PerpStatus = 'open' | 'closed' | 'liquidated';
@@ -206,6 +208,7 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     };
   });
   await recordQuestEvent(ctx, input.userId, 'perp_open', opened.perpId);
+  await recordOnboardingEvent(ctx, input.userId, 'trade_open', `perp:${opened.perpId}`);
   return opened;
 }
 
@@ -302,7 +305,8 @@ export async function closePerp(ctx: AppContext, userId: string, perpId: string)
  * room 'liquidated' message to the user.
  */
 export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<boolean> {
-  let rekt: { userId: string; lossCents: bigint } | null = null;
+  let rekt: { userId: string; lossCents: bigint; side: PerpSide; notionalCents: bigint } | null =
+    null;
   const liquidated = await runInTransaction(async (client) => {
     rekt = null;
     const pr = await client.query<{
@@ -367,14 +371,25 @@ export async function liquidatePerp(ctx: AppContext, perpId: string): Promise<bo
         at: Date.now(),
       }),
     );
-    rekt = { userId: perp.user_id, lossCents };
+    rekt = {
+      userId: perp.user_id,
+      lossCents,
+      side: perp.side,
+      notionalCents: BigInt(perp.margin_cents) * BigInt(perp.leverage),
+    };
     return true;
   });
   // After the commit: the push never holds up, or fails, the liquidation.
-  const r = rekt as { userId: string; lossCents: bigint } | null;
+  const r = rekt as {
+    userId: string;
+    lossCents: bigint;
+    side: PerpSide;
+    notionalCents: bigint;
+  } | null;
   if (liquidated && r) {
     await notifyLiquidated(ctx, r.userId, perpId, r.lossCents);
     await onPlayerRekt(ctx, r.userId);
+    await cardLiquidation(ctx, { side: r.side, notionalCents: r.notionalCents });
   }
   return liquidated;
 }

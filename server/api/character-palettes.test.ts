@@ -42,6 +42,11 @@ beforeAll(async () => {
     await c.query(
       'CREATE TABLE ledger_entries(user_id uuid,reason text,ref_id text,created_at timestamptz)',
     );
+    // Character creation records a product event (migration 098).
+    await c.query(
+      `CREATE TABLE analytics_events(id bigserial PRIMARY KEY, occurred_at timestamptz NOT NULL DEFAULT now(),
+       user_id uuid, name text NOT NULL, props jsonb NOT NULL DEFAULT '{}', amount_cents bigint)`,
+    );
   });
   handle = await buildServer();
   await handle.app.ready();
