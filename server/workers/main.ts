@@ -53,6 +53,7 @@ import { handleShopDelivery } from './shop-delivery.js';
 import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
+import { ACCOUNT_PURGE_QUEUE, handleAccountPurge } from './account-purge.js';
 import { REKT_SWEEP_QUEUE, handleRektSweep } from './rekt-sweep.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
@@ -106,8 +107,13 @@ export async function buildWorkers(likeness?: {
   const redis = createRedis();
   const log = createLogger().child({ mod: 'workers' });
   const conn = redisConnection(redis);
+  let likenessDelete: ((key: string) => Promise<void>) | undefined;
   if (!likeness) {
     const assembled = await buildLikenessRuntime(cfg, buildContext().db);
+    if (assembled.storage) {
+      const store = assembled.storage;
+      likenessDelete = (key) => store.delete(key);
+    }
     if (assembled.worker && assembled.photos)
       likeness = { worker: assembled.worker, photos: assembled.photos };
   }
@@ -130,6 +136,7 @@ export async function buildWorkers(likeness?: {
   const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
   const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
+  const purgeQueue = new Queue(ACCOUNT_PURGE_QUEUE, { connection: conn });
   const rektQueue = new Queue(REKT_SWEEP_QUEUE, { connection: conn });
 
   // Workers.
@@ -220,6 +227,13 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'casino-sweep failed'),
   );
 
+  const purgeWorker = new Worker(
+    ACCOUNT_PURGE_QUEUE,
+    async (job) => handleAccountPurge(job, ctx, likenessDelete),
+    { connection: newClient(redis) },
+  );
+  purgeWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'account-purge failed'),
   const rektWorker = new Worker(REKT_SWEEP_QUEUE, async (job) => handleRektSweep(job, ctx), {
     connection: newClient(redis),
   });
@@ -283,6 +297,10 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // DELETE /v1/me: erase queued files (likeness photos/models, ad creatives).
+  await purgeQueue.upsertJobScheduler(
+    'account-purge',
+    { pattern: '*/5 * * * *' },
   // Rekt Burger: close and pay clock-in shifts that ran to their maximum.
   await rektQueue.upsertJobScheduler(
     'rekt-sweep',
@@ -317,6 +335,8 @@ export async function buildWorkers(likeness?: {
   void pushWorker;
   void eventWorker;
   void casinoWorker;
+  void purgeWorker;
+  void purgeQueue;
   void rektWorker;
   void crierQueue;
   void sundayQueue;
@@ -348,6 +368,7 @@ export async function buildWorkers(likeness?: {
       await pushWorker.close();
       await eventWorker.close();
       await casinoWorker.close();
+      await purgeWorker.close();
       await rektWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
@@ -359,6 +380,7 @@ export async function buildWorkers(likeness?: {
       await pushQueue.close();
       await eventQueue.close();
       await casinoQueue.close();
+      await purgeQueue.close();
       await rektQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();

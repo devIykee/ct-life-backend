@@ -95,6 +95,7 @@ export async function buildLikenessRuntime(config: Config, db: Db) {
       forOwner: (_userId: string) => ({ readiness: UNCONFIGURED_LIKENESS }),
       worker: undefined,
       photos: undefined,
+      storage: undefined,
     };
   const { references, models } = await loadReferences(c.referenceManifest);
   const operator = c.operatorEvaluationEnabled && c.operatorUserIds.length > 0;
@@ -133,6 +134,7 @@ export async function buildLikenessRuntime(config: Config, db: Db) {
   return {
     worker,
     photos,
+    storage,
     forOwner(userId: string) {
       const allowed = ready && (c.endUserAgreementConfirmed || c.operatorUserIds.includes(userId));
       const readiness: LikenessReadiness = {

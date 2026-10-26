@@ -8,6 +8,7 @@
  */
 import {
   CreateBucketCommand,
+  DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
   S3Client,
@@ -27,6 +28,8 @@ export interface S3 {
   presignGet(key: string, ttlSec: number): Promise<string>;
   /** Presigned PUT URL (e.g. for direct browser upload of a creative). */
   presignPut(key: string, contentType: string, ttlSec: number): Promise<string>;
+  /** Delete a key. Deleting a missing key succeeds. */
+  remove(key: string): Promise<void>;
   /** Create the configured bucket if it does not exist. Idempotent. */
   ensureBucket(): Promise<void>;
 }
@@ -70,6 +73,9 @@ export function createS3(overrides: { bucket?: string } = {}): S3 {
     async presignPut(key, contentType, ttlSec) {
       const cmd = new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType });
       return getSignedUrl(client, cmd, { expiresIn: ttlSec });
+    },
+    async remove(key) {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     },
     async ensureBucket() {
       try {
