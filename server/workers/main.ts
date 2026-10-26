@@ -33,6 +33,8 @@
  *
  *   - Timeline NPC callers: a 5-minute tick lets each parody caller post a
  *     call on a house coin when their turn comes (see npc-callers.ts).
+ *   - Analytics retention: a daily job (03:15 UTC) deletes product events
+ *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
  *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
@@ -54,6 +56,8 @@ import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
 import { NPC_CALLERS_QUEUE, handleNpcCallers } from './npc-callers.js';
+import { ACCOUNT_PURGE_QUEUE, handleAccountPurge } from './account-purge.js';
+import { REKT_SWEEP_QUEUE, handleRektSweep } from './rekt-sweep.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -106,8 +110,13 @@ export async function buildWorkers(likeness?: {
   const redis = createRedis();
   const log = createLogger().child({ mod: 'workers' });
   const conn = redisConnection(redis);
+  let likenessDelete: ((key: string) => Promise<void>) | undefined;
   if (!likeness) {
     const assembled = await buildLikenessRuntime(cfg, buildContext().db);
+    if (assembled.storage) {
+      const store = assembled.storage;
+      likenessDelete = (key) => store.delete(key);
+    }
     if (assembled.worker && assembled.photos)
       likeness = { worker: assembled.worker, photos: assembled.photos };
   }
@@ -131,6 +140,8 @@ export async function buildWorkers(likeness?: {
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
   const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
   const callersQueue = new Queue(NPC_CALLERS_QUEUE, { connection: conn });
+  const purgeQueue = new Queue(ACCOUNT_PURGE_QUEUE, { connection: conn });
+  const rektQueue = new Queue(REKT_SWEEP_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -225,6 +236,18 @@ export async function buildWorkers(likeness?: {
   });
   callersWorker.on('failed', (job, err) =>
     log.error({ jobId: job?.id, err: err.message }, 'npc-callers failed'),
+  const purgeWorker = new Worker(
+    ACCOUNT_PURGE_QUEUE,
+    async (job) => handleAccountPurge(job, ctx, likenessDelete),
+    { connection: newClient(redis) },
+  );
+  purgeWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'account-purge failed'),
+  const rektWorker = new Worker(REKT_SWEEP_QUEUE, async (job) => handleRektSweep(job, ctx), {
+    connection: newClient(redis),
+  });
+  rektWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'rekt-sweep failed'),
   );
 
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
@@ -288,6 +311,15 @@ export async function buildWorkers(likeness?: {
     'npc-callers',
     { pattern: '*/5 * * * *' },
     { name: 'tick', data: {} },
+  // DELETE /v1/me: erase queued files (likeness photos/models, ad creatives).
+  await purgeQueue.upsertJobScheduler(
+    'account-purge',
+    { pattern: '*/5 * * * *' },
+  // Rekt Burger: close and pay clock-in shifts that ran to their maximum.
+  await rektQueue.upsertJobScheduler(
+    'rekt-sweep',
+    { pattern: '* * * * *' },
+    { name: 'sweep', data: {} },
   );
 
   // Optional healthz HTTP server.
@@ -318,6 +350,9 @@ export async function buildWorkers(likeness?: {
   void eventWorker;
   void casinoWorker;
   void callersWorker;
+  void purgeWorker;
+  void purgeQueue;
+  void rektWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -328,6 +363,7 @@ export async function buildWorkers(likeness?: {
   void eventQueue;
   void casinoQueue;
   void callersQueue;
+  void rektQueue;
   void log;
   void cfg;
 
@@ -349,6 +385,8 @@ export async function buildWorkers(likeness?: {
       await eventWorker.close();
       await casinoWorker.close();
       await callersWorker.close();
+      await purgeWorker.close();
+      await rektWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -360,6 +398,8 @@ export async function buildWorkers(likeness?: {
       await eventQueue.close();
       await casinoQueue.close();
       await callersQueue.close();
+      await purgeQueue.close();
+      await rektQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

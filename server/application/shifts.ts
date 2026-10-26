@@ -19,6 +19,7 @@ import {
   ConflictError,
 } from '../shared/domain/errors.js';
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -33,6 +34,7 @@ import {
   type PromotionInfo,
 } from './ladders.js';
 import { ensureRewardCatalog } from './rewards.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
@@ -102,6 +104,7 @@ export class ShiftsService {
       endsAt,
       completed: false,
     });
+    await recordOnboardingEvent(this.ctx, userId, 'shift_start', `shift:${shiftId}`);
     return { shiftId, miniGameIds: [lvl.miniGameId], endsAt: new Date(endsAt).toISOString() };
   }
 
@@ -213,6 +216,16 @@ export class ShiftsService {
            ON CONFLICT (user_id, career_id)
            DO UPDATE SET level = EXCLUDED.level, xp = EXCLUDED.xp, updated_at = now()`,
           [userId, shift.careerId, after.level, after.xp],
+        );
+        await recordEvent(
+          client,
+          userId,
+          {
+            name: 'shift_paid',
+            props: { careerId: shift.careerId, bonusCents },
+            amountCents: payCents,
+          },
+          now,
         );
         // B18 fix: Update last_action_at to shift completion time so decay doesn't accumulate during shift
         await client.query(`UPDATE needs SET last_action_at = now() WHERE user_id = $1`, [userId]);

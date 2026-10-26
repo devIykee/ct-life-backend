@@ -3,18 +3,20 @@
  *
  *   GET  /healthz   liveness
  *   GET  /readyz    readiness (Postgres + Redis + Helius)
- *   GET  /metrics   Prometheus text format (basic counters)
+ *   GET  /metrics   Prometheus text format (up, event-loop delay, memory, pg pool)
  *   GET  /docs      Redoc HTML (in non-prod)
  */
 import type { FastifyInstance } from 'fastify';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AppContext } from '../../application/context.js';
+import { renderProcessMetrics, startEventLoopMonitor } from '../../shared/infra/process-metrics.js';
 
 /**
  *
  */
 export function registerOpsRoutes(app: FastifyInstance, ctx: AppContext): void {
+  startEventLoopMonitor();
   app.get('/healthz', async (_req, reply) => {
     return reply.send({ ok: true, ts: Date.now() });
   });
@@ -55,7 +57,8 @@ export function registerOpsRoutes(app: FastifyInstance, ctx: AppContext): void {
       `ct_life_info{app_env="${ctx.config.appEnv}"} 1`,
       '',
     ].join('\n');
-    return reply.header('content-type', 'text/plain; version=0.0.4').send(body);
+    const health = renderProcessMetrics('api', ctx.db.pool);
+    return reply.header('content-type', 'text/plain; version=0.0.4').send(body + health);
   });
 
   // /docs serves the OpenAPI Redoc HTML. The HTML is built by

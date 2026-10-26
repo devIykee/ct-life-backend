@@ -97,6 +97,8 @@ The same pattern is used for the market engine (advance ticks), NPC brains (adva
 - `soak.js` — 1 h at 50% of the measured ceiling.
 - `chaos/*.js` — Helius down, LiveKit down, price feed down, Redis restart, Postgres failover, kill processes.
 
+The tester-scale load test (100-300 players, k6 for REST plus Colyseus street players at the client's real 10 Hz move rate) is `tools/load/run.sh`; [LOAD-TEST.md](LOAD-TEST.md) has the procedure, the results and the Railway sizing.
+
 `docs/CAPACITY.md` records the results, the first bottleneck, the bandwidth per client, the Postgres write ceiling, and the per-1,000-player monthly cost.
 
 ## Anti-flake
