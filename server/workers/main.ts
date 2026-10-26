@@ -53,7 +53,7 @@ import { handleShopDelivery } from './shop-delivery.js';
 import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
-import { ANALYTICS_PRUNE_QUEUE, handleAnalyticsPrune } from './analytics-prune.js';
+import { REKT_SWEEP_QUEUE, handleRektSweep } from './rekt-sweep.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -130,7 +130,7 @@ export async function buildWorkers(likeness?: {
   const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
   const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
-  const analyticsQueue = new Queue(ANALYTICS_PRUNE_QUEUE, { connection: conn });
+  const rektQueue = new Queue(REKT_SWEEP_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -220,13 +220,11 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'casino-sweep failed'),
   );
 
-  const analyticsWorker = new Worker(
-    ANALYTICS_PRUNE_QUEUE,
-    async (job) => handleAnalyticsPrune(job, ctx),
-    { connection: newClient(redis) },
-  );
-  analyticsWorker.on('failed', (job, err) =>
-    log.error({ jobId: job?.id, err: err.message }, 'analytics-prune failed'),
+  const rektWorker = new Worker(REKT_SWEEP_QUEUE, async (job) => handleRektSweep(job, ctx), {
+    connection: newClient(redis),
+  });
+  rektWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'rekt-sweep failed'),
   );
 
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
@@ -285,11 +283,11 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
-  // Analytics retention (ANALYTICS_RETENTION_DAYS).
-  await analyticsQueue.upsertJobScheduler(
-    'analytics-prune',
-    { pattern: '15 3 * * *' },
-    { name: 'prune', data: {} },
+  // Rekt Burger: close and pay clock-in shifts that ran to their maximum.
+  await rektQueue.upsertJobScheduler(
+    'rekt-sweep',
+    { pattern: '* * * * *' },
+    { name: 'sweep', data: {} },
   );
 
   // Optional healthz HTTP server.
@@ -319,7 +317,7 @@ export async function buildWorkers(likeness?: {
   void pushWorker;
   void eventWorker;
   void casinoWorker;
-  void analyticsWorker;
+  void rektWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -329,7 +327,7 @@ export async function buildWorkers(likeness?: {
   void pushQueue;
   void eventQueue;
   void casinoQueue;
-  void analyticsQueue;
+  void rektQueue;
   void log;
   void cfg;
 
@@ -350,7 +348,7 @@ export async function buildWorkers(likeness?: {
       await pushWorker.close();
       await eventWorker.close();
       await casinoWorker.close();
-      await analyticsWorker.close();
+      await rektWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -361,7 +359,7 @@ export async function buildWorkers(likeness?: {
       await pushQueue.close();
       await eventQueue.close();
       await casinoQueue.close();
-      await analyticsQueue.close();
+      await rektQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

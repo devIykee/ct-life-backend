@@ -322,6 +322,39 @@ export async function recordCareerAction(
   }
 }
 
+/**
+ * Give the player's current ladder some action XP inside the caller's transaction, under
+ * the same rules as `recordCareerAction`: the shared daily action cap
+ * (`ladderActionXpDailyCap`), and a repeated `ref` counts once. A player on no ladder gets
+ * nothing (a fallback job never enrols anyone).
+ * @returns The XP actually added (0 when none) and the promotion, if the rank rose.
+ */
+export async function awardActionXpInTx(
+  client: PoolClient,
+  ctx: AppContext,
+  userId: string,
+  amount: number,
+  ref: string,
+  now: Date,
+): Promise<{ added: number; promotion: PromotionInfo | null }> {
+  const none = { added: 0, promotion: null };
+  const cfg = laddersConfig(ctx);
+  const member = await readMembership(client, userId);
+  if (!member) return none;
+  const ladder = cfg.ladders.find((l) => l.id === member.ladder_id);
+  if (!ladder) return none;
+  return awardLadderXp(
+    client,
+    userId,
+    ladder,
+    amount,
+    'action',
+    ref,
+    now,
+    cfg.ladderActionXpDailyCap,
+  );
+}
+
 export interface LadderRankView extends RankDef {
   readonly status: 'achieved' | 'current' | 'next' | 'locked';
 }

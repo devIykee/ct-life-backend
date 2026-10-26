@@ -88,33 +88,49 @@ must keep it that way (original art, original name).
 `GET /jobs/rekt-burger` returns `unlocked`, `reason` (`trencher | broke | liquidated`), a
 `lockedHint` while locked, the employment state, pay, the daily cap and the open shift.
 
-### The shift
+### The shift (simple clock-in)
 
-1. `POST /jobs/rekt-burger/shift/start` (no body). The server records the start time. It
-   returns `minFinishAt`, `expiresAt` and the `rules`. Calling it again while a shift is open
-   returns that shift (`resumed: true`).
-2. The client plays the minigame (tickets appear; the player assembles and serves them).
-3. `POST /jobs/rekt-burger/shift/finish`:
-   `{ "result": { "orders": [{ "i": 0, "startedMs": 3200, "servedMs": 9400, "correct": true }, ...] } }`
-   Times are milliseconds since the shift started. `shiftId` is optional (defaults to the
-   open shift).
+Like The Sims: clock in at the counter, the avatar works in 3D (client animation only), pay builds
+by real server time, clock out pays. The player may close the app.
 
-The request has **no amount**, and unknown fields are rejected. The server pays
-`300 + 60 * min(correct, 20)` cents (so 1,500 at most), then trims to what is left of the
-4,500 cents a UTC day. Ledger reason `job_rekt_burger`, ref `rekt_burger_shift`.
+1. `POST /jobs/rekt-burger/shift/start` (no body). A new shift needs the server's own fresh
+   position (street room, at most 30 s old) within `counter.radiusM` (25 m) of the counter
+   (`counter` in `GET /jobs/rekt-burger`), else `409 POSITION_UNKNOWN` / `409 COUNTER_TOO_FAR`.
+   One open shift per player: calling it again returns that shift with `resumed: true` and needs no
+   position. Returns `{shiftId, startedAt, ratePerMinuteCents, capRemainingCents, maxEndsAt,
+accruedCents, serverNow, resumed, postId}`.
+2. `GET /jobs/rekt-burger/shift/current` restores the shift after a relaunch: `{shift, lastShift}`.
+3. `POST /jobs/rekt-burger/shift/end` (no body) pays and returns `{paidCents, minutes, seconds,
+careerXp, cappedCents, capRemainingCents, uniformGranted, endReason}`.
+4. A shift left running is closed and paid by the server at `maxEndsAt` (per-minute worker, or on
+   the next read). `POST /jobs/rekt-burger/leave` also clocks an open shift out.
 
-### Plausibility (server clock, not the client's)
+Pay is `floor(seconds x ratePerMinuteCents / 60)`, with at most `maxDurationSec` counted, trimmed to
+what is left of the UTC-day cap. Ledger reason `job_rekt_burger`, ref `rekt_burger_shift`. The
+client sends no amount, time or position that is trusted.
 
-A report is rejected as `422 SHIFT_RESULT_IMPLAUSIBLE` (and the shift is **burned**, so tuned
-numbers cannot be retried) unless: at least 3 and at most 40 orders; tickets numbered
-0..n-1 in order; each served no sooner than 1,200 ms after it appeared and no later than
-30,000 ms; serves at least 900 ms apart; nothing served after the shift ended (1,500 ms
-network tolerance); and, from 5 orders, not both serve times and gaps machine-regular
-(standard deviation under 15 ms). Finishing before 45 s is `400 SHIFT_NOT_FINISHED` (the
-shift stays open); after 180 s the shift is void (`409`).
+**Economics (all in `contract/config/careers.json` `rektBurger`).** The per-ticket design paid at
+most 1,500 cents per shift (3 minutes of play) and 4,500 cents a UTC day, so a reasonable day of play
+was about the cap, 4,500 cents. Clock-in keeps the same daily ceiling and spreads it over time:
 
-This stops impossible and lazy bot reports. A bot that fakes human-looking timing within
-those bounds can still earn, which is why the pay is small and capped per day.
+|               | per-ticket (#16)                     | clock-in                                                             |
+| ------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| rate          | up to 1,500 cents per 3-minute shift | 50 cents per minute (`ratePerMinuteCents`)                           |
+| longest shift | 180 s                                | 3,600 s (`maxDurationSec`), 3,000 cents                              |
+| daily cap     | 4,500 cents                          | 4,500 cents (`dailyCapCents`), reached after 90 minutes on the clock |
+
+Sitting on the clock is easier than the minigame was, so the rate is far lower per minute of
+attention: 90 minutes for the same day cap, against 9 minutes before. Change the three constants
+to tune it.
+
+**Career XP and quests.** A shift of at least `minCountedSec` (120 s) earns `xpPerMinute` (1) career
+XP per minute, only for a player already on a career ladder (the job never enrols anyone), through
+the same shared daily action-XP cap as other actions (`ladderActionXpDailyCap`, 120) and once per
+shift. The same minimum applies to the `shift_complete` quest, Season XP through it, and the Rekt
+Burger Uniform; a shorter shift is paid but counts for none of them, so clocking in and out cannot
+farm them. The "blow your port" eligibility (Trencher, broke with debt, liquidated) is unchanged.
+
+The old per-ticket endpoint `POST /jobs/rekt-burger/shift/finish` answers `410 GONE`.
 
 ### Timeline
 
@@ -127,7 +143,7 @@ those bounds can still earn, which is why the pay is small and capped per day.
 
 ### Quests and Season XP
 
-A finished shift counts for `shift_complete` quests, and through claiming them for Season XP.
+A clocked-out shift of at least 120 s counts for `shift_complete` quests, and through claiming them for Season XP.
 
 ## 3. What the client needs
 

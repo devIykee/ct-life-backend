@@ -34,6 +34,7 @@ import {
   type PromotionInfo,
 } from './ladders.js';
 import { ensureRewardCatalog } from './rewards.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 
@@ -103,6 +104,7 @@ export class ShiftsService {
       endsAt,
       completed: false,
     });
+    await recordOnboardingEvent(this.ctx, userId, 'shift_start', `shift:${shiftId}`);
     return { shiftId, miniGameIds: [lvl.miniGameId], endsAt: new Date(endsAt).toISOString() };
   }
 

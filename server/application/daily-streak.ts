@@ -24,6 +24,7 @@ import { recordEvent } from './analytics.js';
 import { FreezeLimitReachedError, InsufficientCashError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ensureCatalog } from './cosmetics.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import type { AppContext } from './context.js';
 
 /** Price of one streak freeze, in Cash cents. */
@@ -241,7 +242,7 @@ export async function claimDaily(
   // Seed the cosmetic catalogue outside the transaction, only when a milestone could pay.
   const before = await ctx.db.withConnection((c) => readStreak(c, userId, false));
   if (STREAK_COSMETICS[planClaim(before, today).day]) await ensureCatalog(ctx);
-  return runInTransaction(async (client) => {
+  const result = await runInTransaction(async (client) => {
     const row = await readStreak(client, userId, true);
     const prior = await client.query<{
       streak_day: number;
@@ -342,6 +343,10 @@ export async function claimDaily(
       reset: plan.reset,
     };
   });
+  // The first chest is an onboarding moment (a starter quest and a first-session beat).
+  if (!result.alreadyClaimed)
+    await recordOnboardingEvent(ctx, userId, 'chest_open', `chest:${today}`, now);
+  return result;
 }
 
 /**

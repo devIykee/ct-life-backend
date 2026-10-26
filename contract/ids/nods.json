@@ -1,8 +1,8 @@
 {
   "_owner": "FE",
-  "_provisional": true,
-  "version": "0.0.1",
-  "_note": "Community nods (the 80 painted props from docs/research/community-eggs-2026-10 and the island plan). PLACEHOLDER, the frontend confirms: nodId is the community-eggs id (lowercase, stable, never renamed); x and z are island metres (+X east, +Z north, origin at the downtown plaza, the same frame as ctl:pos and districts.json) and are provisional grid points inside each nod's district, NOT the real prop positions; the frontend replaces them with the placed positions it exports. radiusM is the collect radius (default 15). setId groups nods into sets; filling a set grants its off-chain cosmetic once. Cosmetics here are rewards only: never sold, never tradable, never NFTs. A nod dropped from the file keeps its past finds but no longer counts toward a set.",
+  "_provisional": false,
+  "version": "1.0.0",
+  "_note": "Community nods (the 80 painted props from docs/research/community-eggs-2026-10 and the island plan). nodId is the community-eggs id (lowercase, stable, never renamed); x and z are the placed props' positions in island metres (+X east, +Z north, origin at the downtown plaza, the same frame as ctl:pos and districts.json), written by the frontend's tools/world/islandgen/nods.py: every nod stands outdoors on land inside its district, where a player walks (a sidewalk's outer edge, a plaza, park or boardwalk, a nook by a venue or statue), at least 16 m from the next. radiusM is the collect radius (default 15). setId groups nods into sets; filling a set grants its off-chain cosmetic once. Cosmetics here are rewards only: never sold, never tradable, never NFTs. A nod dropped from the file keeps its past finds but no longer counts toward a set.",
   "defaultRadiusM": 15,
   "sets": [
     {
@@ -87,8 +87,8 @@
       "setId": "memecoin_row",
       "tier": "A",
       "district": "timeline",
-      "x": -10,
-      "z": -142
+      "x": -162.46,
+      "z": 153.09
     },
     {
       "nodId": "wif",
@@ -96,8 +96,8 @@
       "setId": "memecoin_row",
       "tier": "A",
       "district": "trenches",
-      "x": -360,
-      "z": -270
+      "x": -362.01,
+      "z": -236.48
     },
     {
       "nodId": "popcat",
@@ -105,8 +105,8 @@
       "setId": "memecoin_row",
       "tier": "A",
       "district": "trenches",
-      "x": -330,
-      "z": -270
+      "x": -409.1,
+      "z": -271.6
     },
     {
       "nodId": "mew",
@@ -114,8 +114,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "trenches",
-      "x": -360,
-      "z": -300
+      "x": -404.27,
+      "z": -322.37
     },
     {
       "nodId": "pengu",
@@ -123,8 +123,8 @@
       "setId": "memecoin_row",
       "tier": "A",
       "district": "timeline",
-      "x": 20,
-      "z": -142
+      "x": 26.86,
+      "z": 114.45
     },
     {
       "nodId": "moodeng",
@@ -132,8 +132,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "timeline",
-      "x": -10,
-      "z": -112
+      "x": -87.17,
+      "z": -61.7
     },
     {
       "nodId": "pnut",
@@ -141,8 +141,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "timeline",
-      "x": 20,
-      "z": -112
+      "x": 104.52,
+      "z": -218.38
     },
     {
       "nodId": "fartcoin",
@@ -150,8 +150,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "trenches",
-      "x": -330,
-      "z": -300
+      "x": -283.6,
+      "z": -214.09
     },
     {
       "nodId": "giga",
@@ -159,8 +159,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "timeline",
-      "x": -10,
-      "z": -172
+      "x": 137.56,
+      "z": -13.0
     },
     {
       "nodId": "useless",
@@ -168,8 +168,8 @@
       "setId": "memecoin_row",
       "tier": "C",
       "district": "timeline",
-      "x": 20,
-      "z": -172
+      "x": -35.18,
+      "z": -91.49
     },
     {
       "nodId": "madlads",
@@ -177,8 +177,8 @@
       "setId": "nft_gallery",
       "tier": "A",
       "district": "timeline",
-      "x": -40,
-      "z": -142
+      "x": 151.73,
+      "z": -147.8
     },
     {
       "nodId": "smb",
@@ -186,8 +186,8 @@
       "setId": "nft_gallery",
       "tier": "B",
       "district": "timeline",
-      "x": 50,
-      "z": -142
+      "x": -103.93,
+      "z": -197.8
     },
     {
       "nodId": "claynosaurz",
@@ -195,8 +195,8 @@
       "setId": "nft_gallery",
       "tier": "A",
       "district": "timeline",
-      "x": -40,
-      "z": -112
+      "x": -135.38,
+      "z": -135.85
     },
     {
       "nodId": "degods",
@@ -204,8 +204,8 @@
       "setId": "nft_gallery",
       "tier": "B",
       "district": "timeline",
-      "x": -40,
-      "z": -172
+      "x": 19.69,
+      "z": -137.26
     },
     {
       "nodId": "fff",
@@ -213,8 +213,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "builder_hills",
-      "x": 370,
-      "z": 320
+      "x": 321.55,
+      "z": 307.31
     },
     {
       "nodId": "cets",
@@ -222,8 +222,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "boardwalk",
-      "x": -30,
-      "z": -244
+      "x": 80.74,
+      "z": -216.15
     },
     {
       "nodId": "geckos",
@@ -231,8 +231,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "builder_hills",
-      "x": 400,
-      "z": 320
+      "x": 283.17,
+      "z": 248.41
     },
     {
       "nodId": "phantom",
@@ -240,8 +240,8 @@
       "setId": "builders_row",
       "tier": "A",
       "district": "timeline",
-      "x": 50,
-      "z": -112
+      "x": -31.3,
+      "z": 105.7
     },
     {
       "nodId": "solflare",
@@ -249,8 +249,8 @@
       "setId": "builders_row",
       "tier": "C",
       "district": "breakpoint",
-      "x": -280,
-      "z": 286
+      "x": -199.5,
+      "z": 231.5
     },
     {
       "nodId": "backpack",
@@ -258,8 +258,8 @@
       "setId": "builders_row",
       "tier": "B",
       "district": "trenches",
-      "x": -360,
-      "z": -240
+      "x": -305.18,
+      "z": -206.2
     },
     {
       "nodId": "jupiter",
@@ -267,8 +267,8 @@
       "setId": "defi_district",
       "tier": "A",
       "district": "trenches",
-      "x": -330,
-      "z": -240
+      "x": -417.64,
+      "z": -335.55
     },
     {
       "nodId": "pumpfun",
@@ -276,8 +276,8 @@
       "setId": "defi_district",
       "tier": "A",
       "district": "trenches",
-      "x": -390,
-      "z": -270
+      "x": -387.84,
+      "z": -272.09
     },
     {
       "nodId": "axiom",
@@ -285,8 +285,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "trenches",
-      "x": -300,
-      "z": -270
+      "x": -373.68,
+      "z": -262.58
     },
     {
       "nodId": "gmgn",
@@ -294,8 +294,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "trenches",
-      "x": -390,
-      "z": -300
+      "x": -320.96,
+      "z": -236.53
     },
     {
       "nodId": "orca",
@@ -303,8 +303,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "boardwalk",
-      "x": 0,
-      "z": -244
+      "x": 9.07,
+      "z": -213.55
     },
     {
       "nodId": "meteora",
@@ -312,8 +312,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "boardwalk",
-      "x": -60,
-      "z": -244
+      "x": -14.84,
+      "z": -213.99
     },
     {
       "nodId": "kamino",
@@ -321,8 +321,8 @@
       "setId": "defi_district",
       "tier": "C",
       "district": "boardwalk",
-      "x": 30,
-      "z": -244
+      "x": -38.67,
+      "z": -215.36
     },
     {
       "nodId": "jito",
@@ -330,8 +330,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "trenches",
-      "x": -300,
-      "z": -300
+      "x": -319.28,
+      "z": -217.41
     },
     {
       "nodId": "sanctum",
@@ -339,8 +339,8 @@
       "setId": "defi_district",
       "tier": "C",
       "district": "timeline",
-      "x": 50,
-      "z": -172
+      "x": 54.61,
+      "z": -29.94
     },
     {
       "nodId": "marinade",
@@ -348,8 +348,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "timeline",
-      "x": -10,
-      "z": -82
+      "x": -154.2,
+      "z": -38.5
     },
     {
       "nodId": "collector",
@@ -357,8 +357,8 @@
       "setId": "nft_gallery",
       "tier": "B",
       "district": "timeline",
-      "x": 20,
-      "z": -82
+      "x": -53.99,
+      "z": -144.99
     },
     {
       "nodId": "helius",
@@ -366,8 +366,8 @@
       "setId": "builders_row",
       "tier": "A",
       "district": "builder_hills",
-      "x": 370,
-      "z": 290
+      "x": 352.19,
+      "z": 234.37
     },
     {
       "nodId": "pyth",
@@ -375,8 +375,8 @@
       "setId": "defi_district",
       "tier": "C",
       "district": "timeline",
-      "x": -10,
-      "z": -202
+      "x": 193.45,
+      "z": -68.7
     },
     {
       "nodId": "seeker",
@@ -384,8 +384,8 @@
       "setId": "builders_row",
       "tier": "A",
       "district": "trenches",
-      "x": -390,
-      "z": -240
+      "x": -398.96,
+      "z": -287.39
     },
     {
       "nodId": "skr",
@@ -393,8 +393,8 @@
       "setId": "builders_row",
       "tier": "B",
       "district": "builder_hills",
-      "x": 400,
-      "z": 290
+      "x": 470.04,
+      "z": 280.4
     },
     {
       "nodId": "ore",
@@ -402,8 +402,8 @@
       "setId": "builders_row",
       "tier": "A",
       "district": "airdrop_farm",
-      "x": 630,
-      "z": 40
+      "x": 455.86,
+      "z": 59.59
     },
     {
       "nodId": "helium",
@@ -411,8 +411,8 @@
       "setId": "builders_row",
       "tier": "B",
       "district": "timeline",
-      "x": 20,
-      "z": -202
+      "x": 45.61,
+      "z": 39.06
     },
     {
       "nodId": "grass",
@@ -420,8 +420,8 @@
       "setId": "builders_row",
       "tier": "C",
       "district": "timeline",
-      "x": -40,
-      "z": -82
+      "x": -232.5,
+      "z": 73.5
     },
     {
       "nodId": "staratlas",
@@ -429,8 +429,8 @@
       "setId": "builders_row",
       "tier": "C",
       "district": "timeline",
-      "x": -70,
-      "z": -142
+      "x": 215.13,
+      "z": -4.85
     },
     {
       "nodId": "x402",
@@ -438,8 +438,8 @@
       "setId": "builders_row",
       "tier": "B",
       "district": "builder_hills",
-      "x": 370,
-      "z": 350
+      "x": 523.1,
+      "z": 398.2
     },
     {
       "nodId": "solana",
@@ -447,8 +447,8 @@
       "setId": "builders_row",
       "tier": "A",
       "district": "timeline",
-      "x": -40,
-      "z": -202
+      "x": -20.77,
+      "z": -188.64
     },
     {
       "nodId": "superteam",
@@ -456,8 +456,8 @@
       "setId": "superteam_corner",
       "tier": "A",
       "district": "timeline",
-      "x": 50,
-      "z": -82
+      "x": -77.84,
+      "z": 20.32
     },
     {
       "nodId": "colosseum",
@@ -465,8 +465,8 @@
       "setId": "superteam_corner",
       "tier": "A",
       "district": "breakpoint",
-      "x": -280,
-      "z": 256
+      "x": -313.5,
+      "z": 204.5
     },
     {
       "nodId": "breakpoint",
@@ -474,8 +474,8 @@
       "setId": "event_hall",
       "tier": "B",
       "district": "breakpoint",
-      "x": -310,
-      "z": 286
+      "x": -268.5,
+      "z": 258.5
     },
     {
       "nodId": "stng",
@@ -483,8 +483,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "trenches",
-      "x": -360,
-      "z": -330
+      "x": -422.08,
+      "z": -317.51
     },
     {
       "nodId": "stin",
@@ -492,8 +492,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "timeline",
-      "x": 80,
-      "z": -142
+      "x": 52.3,
+      "z": -188.77
     },
     {
       "nodId": "stbr",
@@ -501,8 +501,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "timeline",
-      "x": 50,
-      "z": -202
+      "x": 113.43,
+      "z": 35.79
     },
     {
       "nodId": "stvn",
@@ -510,8 +510,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "timeline",
-      "x": -70,
-      "z": -112
+      "x": 208.95,
+      "z": -126.85
     },
     {
       "nodId": "sttr",
@@ -519,8 +519,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "trenches",
-      "x": -330,
-      "z": -330
+      "x": -378.3,
+      "z": -244.06
     },
     {
       "nodId": "stuk",
@@ -528,8 +528,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "timeline",
-      "x": -70,
-      "z": -172
+      "x": -83.14,
+      "z": 130.58
     },
     {
       "nodId": "stkr",
@@ -537,8 +537,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "timeline",
-      "x": 80,
-      "z": -112
+      "x": -172.3,
+      "z": -213.19
     },
     {
       "nodId": "ban",
@@ -546,8 +546,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "timeline",
-      "x": 80,
-      "z": -172
+      "x": -205.67,
+      "z": -165.8
     },
     {
       "nodId": "ansem",
@@ -555,8 +555,8 @@
       "setId": "memecoin_row",
       "tier": "C",
       "district": "trenches",
-      "x": -300,
-      "z": -240
+      "x": -340.7,
+      "z": -224.7
     },
     {
       "nodId": "zcat",
@@ -564,8 +564,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "trenches",
-      "x": -360,
-      "z": -210
+      "x": -340.38,
+      "z": -247.11
     },
     {
       "nodId": "troll",
@@ -573,8 +573,8 @@
       "setId": "memecoin_row",
       "tier": "B",
       "district": "trenches",
-      "x": -330,
-      "z": -210
+      "x": -302.81,
+      "z": -226.11
     },
     {
       "nodId": "neet",
@@ -582,8 +582,8 @@
       "setId": "memecoin_row",
       "tier": "C",
       "district": "builder_hills",
-      "x": 340,
-      "z": 320
+      "x": 213.94,
+      "z": 328.56
     },
     {
       "nodId": "catwifhat",
@@ -591,8 +591,8 @@
       "setId": "memecoin_row",
       "tier": "C",
       "district": "trenches",
-      "x": -390,
-      "z": -330
+      "x": -289.44,
+      "z": -197.48
     },
     {
       "nodId": "pippin",
@@ -600,8 +600,8 @@
       "setId": "memecoin_row",
       "tier": "C",
       "district": "timeline",
-      "x": -10,
-      "z": -52
+      "x": 127.45,
+      "z": 88.48
     },
     {
       "nodId": "goat",
@@ -609,8 +609,8 @@
       "setId": "memecoin_row",
       "tier": "C",
       "district": "builder_hills",
-      "x": 400,
-      "z": 350
+      "x": 290.78,
+      "z": 374.13
     },
     {
       "nodId": "birb",
@@ -618,8 +618,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "timeline",
-      "x": 20,
-      "z": -52
+      "x": -235.5,
+      "z": 1.5
     },
     {
       "nodId": "monkedao",
@@ -627,8 +627,8 @@
       "setId": "nft_gallery",
       "tier": "B",
       "district": "timeline",
-      "x": -70,
-      "z": -82
+      "x": -119.79,
+      "z": 71.07
     },
     {
       "nodId": "pythenians",
@@ -636,8 +636,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "timeline",
-      "x": -70,
-      "z": -202
+      "x": 233.39,
+      "z": -178.65
     },
     {
       "nodId": "deadking",
@@ -645,8 +645,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "boardwalk",
-      "x": -30,
-      "z": -214
+      "x": 56.9,
+      "z": -214.56
     },
     {
       "nodId": "frensfactory",
@@ -654,8 +654,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "timeline",
-      "x": 80,
-      "z": -82
+      "x": 98.22,
+      "z": 168.64
     },
     {
       "nodId": "sensei",
@@ -663,8 +663,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "timeline",
-      "x": -40,
-      "z": -52
+      "x": 174.44,
+      "z": -232.79
     },
     {
       "nodId": "perennials",
@@ -672,8 +672,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "timeline",
-      "x": 80,
-      "z": -202
+      "x": 85.5,
+      "z": -102.63
     },
     {
       "nodId": "sagamonkes",
@@ -681,8 +681,8 @@
       "setId": "nft_gallery",
       "tier": "B",
       "district": "builder_hills",
-      "x": 340,
-      "z": 290
+      "x": 450.69,
+      "z": 374.25
     },
     {
       "nodId": "solanons",
@@ -690,8 +690,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "boardwalk",
-      "x": 0,
-      "z": -214
+      "x": 32.99,
+      "z": -213.75
     },
     {
       "nodId": "mindfolk",
@@ -699,8 +699,8 @@
       "setId": "nft_gallery",
       "tier": "C",
       "district": "timeline",
-      "x": 50,
-      "z": -52
+      "x": -232.5,
+      "z": 139.5
     },
     {
       "nodId": "jitocabal",
@@ -708,8 +708,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "trenches",
-      "x": -420,
-      "z": -270
+      "x": -420.28,
+      "z": -297.29
     },
     {
       "nodId": "metadao",
@@ -717,8 +717,8 @@
       "setId": "defi_district",
       "tier": "C",
       "district": "timeline",
-      "x": -100,
-      "z": -142
+      "x": 179.85,
+      "z": 150.03
     },
     {
       "nodId": "bags",
@@ -726,8 +726,8 @@
       "setId": "defi_district",
       "tier": "C",
       "district": "timeline",
-      "x": -100,
-      "z": -112
+      "x": -206.95,
+      "z": -92.01
     },
     {
       "nodId": "bonkfun",
@@ -735,8 +735,8 @@
       "setId": "defi_district",
       "tier": "B",
       "district": "trenches",
-      "x": -300,
-      "z": -330
+      "x": -358.27,
+      "z": -253.28
     },
     {
       "nodId": "hackerhouse",
@@ -744,8 +744,8 @@
       "setId": "event_hall",
       "tier": "B",
       "district": "builder_hills",
-      "x": 340,
-      "z": 350
+      "x": 379.63,
+      "z": 368.42
     },
     {
       "nodId": "mtndao",
@@ -753,8 +753,8 @@
       "setId": "event_hall",
       "tier": "C",
       "district": "timeline",
-      "x": 110,
-      "z": -142
+      "x": -21.15,
+      "z": 17.59
     },
     {
       "nodId": "islanddao",
@@ -762,8 +762,8 @@
       "setId": "event_hall",
       "tier": "C",
       "district": "boardwalk",
-      "x": 30,
-      "z": -214
+      "x": -62.45,
+      "z": -217.53
     },
     {
       "nodId": "magicblock",
@@ -771,8 +771,8 @@
       "setId": "builders_row",
       "tier": "B",
       "district": "builder_hills",
-      "x": 430,
-      "z": 320
+      "x": 195.15,
+      "z": 216.81
     },
     {
       "nodId": "radiants",
@@ -780,8 +780,8 @@
       "setId": "superteam_corner",
       "tier": "C",
       "district": "builder_hills",
-      "x": 370,
-      "z": 260
+      "x": 397.34,
+      "z": 291.63
     },
     {
       "nodId": "metaplex",
@@ -789,8 +789,8 @@
       "setId": "builders_row",
       "tier": "C",
       "district": "timeline",
-      "x": -100,
-      "z": -172
+      "x": 186.79,
+      "z": 48.13
     },
     {
       "nodId": "wormhole",
@@ -798,8 +798,8 @@
       "setId": "builders_row",
       "tier": "C",
       "district": "timeline",
-      "x": 110,
-      "z": -112
+      "x": -40.07,
+      "z": -32.92
     }
   ]
 }
