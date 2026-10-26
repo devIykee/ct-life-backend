@@ -294,10 +294,30 @@ export class PositionUnknownError extends DomainError {
 
 // Economy -----------------------------------------------------------------
 
+function withShortfall(details: Record<string, unknown>): Record<string, unknown> {
+  if ('shortfallCents' in details) return details;
+  const { have, need } = details;
+  if (
+    (typeof have === 'string' || typeof have === 'number') &&
+    (typeof need === 'string' || typeof need === 'number') &&
+    /^-?\d+$/.test(String(have)) &&
+    /^-?\d+$/.test(String(need))
+  ) {
+    const short = BigInt(String(need)) - BigInt(String(have));
+    return { ...details, shortfallCents: Number(short > 0n ? short : 0n) };
+  }
+  return details;
+}
+
 export class InsufficientCashError extends DomainError {
   readonly code = 'INSUFFICIENT_CASH';
+  /**
+   * @param details - Structured details. When `have` and `need` (cents, as numbers or numeric
+   * strings) are present, `shortfallCents` (need minus have, an integer number) is added: the
+   * standard field clients should read. `have` and `need` stay for compatibility.
+   */
   constructor(details: Record<string, unknown> = {}) {
-    super('Cash balance is insufficient.', details);
+    super('Cash balance is insufficient.', withShortfall(details));
     this.httpStatus = 402;
   }
 }

@@ -2550,7 +2550,9 @@ paths:
         '429':
           description: >-
             `LAUNCH_COOLDOWN` (10 minutes between launches) or `LAUNCH_LIMIT_REACHED`
-            (3 per rolling 24 hours); `details.retryAfterMs` says how long to wait
+            (3 per rolling 24 hours); `details.retryAfterMs` says how long to wait. For
+            `LAUNCH_LIMIT_REACHED` it counts to the OLDEST launch in the rolling 24 hours, the same
+            moment `GET /factory/me` reports as `nextLaunchAt` (now + retryAfterMs)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
