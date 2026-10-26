@@ -16,6 +16,8 @@
  */
 import type { Redis } from 'ioredis';
 import type { AppContext } from './context.js';
+import { OUTFIT_CHANNEL } from '../realtime/movement.js';
+import { computeOutfit, outfitStateSql } from '../shared/domain/outfit.js';
 
 /** Redis pub/sub channel carrying every targeted message. */
 export const USER_CHANNEL = 'rt:user';
@@ -88,6 +90,51 @@ export async function publishToCityExcept(
     await ctx.redis.main.publish(USER_CHANNEL, JSON.stringify(msg));
   } catch {
     // Never fail the request.
+  }
+}
+
+/**
+ * Tell every realtime room that a player's outfit changed. Rooms hold the PlayerState, so this
+ * goes over the presence channel they subscribe to. Never fails the request.
+ * @param ctx - The application context.
+ * @param userId - The player.
+ * @param outfit - The new outfit name, or null for none.
+ */
+export async function publishOutfit(
+  ctx: AppContext,
+  userId: string,
+  outfit: string | null,
+): Promise<void> {
+  try {
+    await ctx.redis.main.publish(OUTFIT_CHANNEL, JSON.stringify({ userId, outfit }));
+  } catch {
+    // Viewers catch up on their next join.
+  }
+}
+
+/**
+ * Recompute a player's outfit from the database and publish it. Call after an open shift
+ * starts or ends, or the look changes.
+ * @param ctx - The application context.
+ * @param userId - The player.
+ */
+export async function refreshOutfit(ctx: AppContext, userId: string): Promise<void> {
+  try {
+    const r = await ctx.db.withConnection((c) =>
+      c.query<{ on_shift: boolean; uniform_equipped: boolean }>(
+        `SELECT ${outfitStateSql('u.id', '(SELECT look FROM characters WHERE user_id = u.id)')}
+           FROM users u WHERE u.id = $1`,
+        [userId],
+      ),
+    );
+    const row = r.rows[0];
+    await publishOutfit(
+      ctx,
+      userId,
+      computeOutfit(row?.on_shift === true, row?.uniform_equipped === true),
+    );
+  } catch {
+    // Never fail the action that triggered it.
   }
 }
 

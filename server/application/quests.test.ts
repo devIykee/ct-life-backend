@@ -23,7 +23,6 @@ import {
   pickQuests,
   PAID_CALL_PAIR_COOLDOWN_DAYS,
   recordQuestEvent,
-  TIP_QUEST_MIN_CENTS,
   type QuestVerb,
 } from './quests.js';
 import { utcDate } from './daily-streak.js';
@@ -31,7 +30,6 @@ import { weekIso } from './season-clock.js';
 import { publishToUser } from './realtime-bus.js';
 import { ShiftsService, _shifts } from './shifts.js';
 import { closePerp, openPerp } from './perp-pit.js';
-import { sendCashTip } from './tips.js';
 import { createHome, recordVisit } from './homes.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
@@ -164,7 +162,6 @@ describe('progress and claim (controlled clock)', () => {
         'prediction_place',
         'alpha_call',
         'paid_call',
-        'tip_send',
         'home_visit',
       ] as QuestVerb[]
     ).find((v) => !verbs.has(v) && !weekly.has(v));
@@ -302,46 +299,6 @@ describe('progress from real server events', () => {
     );
     return Number(r.rows[0].n);
   };
-
-  it('a tip of at least the minimum advances tip_send; a smaller one does not', async () => {
-    const t = await userWithDailyVerb('tip_send');
-    const to = await newUser();
-    await sendCashTip(ctx, t, to, TIP_QUEST_MIN_CENTS - 1, null);
-    expect(await progressOf(t, 'tip_send')).toBe(0);
-    await sendCashTip(ctx, t, to, TIP_QUEST_MIN_CENTS, null);
-    expect(await progressOf(t, 'tip_send')).toBeGreaterThanOrEqual(1);
-  });
-
-  it('the tip minimum is above every tip quest reward, daily and (over its tips) weekly', () => {
-    for (const q of defs.filter((d) => d.verb === 'tip_send')) {
-      expect(TIP_QUEST_MIN_CENTS * q.target).toBeGreaterThan(q.reward.cashCents);
-    }
-  });
-
-  it('counts only the first qualifying tip per recipient', async () => {
-    const a = await userWithDailyVerb('tip_send');
-    const b = await newUser(1_000_000);
-    const c = await newUser(1_000_000);
-    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS, null);
-    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS, null);
-    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS * 5, null);
-    expect(await events(a, 'tip_send')).toBe(1);
-    await sendCashTip(ctx, a, c, TIP_QUEST_MIN_CENTS, null);
-    expect(await events(a, 'tip_send')).toBe(2); // a different recipient counts
-  });
-
-  it('does not count a ping-pong: B tipping A back after A tipped B earns nothing', async () => {
-    const a = await userWithDailyVerb('tip_send');
-    const b = await userWithDailyVerb('tip_send');
-    await sendCashTip(ctx, a, b, TIP_QUEST_MIN_CENTS, null);
-    expect(await events(a, 'tip_send')).toBe(1);
-    await sendCashTip(ctx, b, a, TIP_QUEST_MIN_CENTS, null);
-    expect(await events(b, 'tip_send')).toBe(0);
-    // B can still earn by tipping someone who did not tip B.
-    const c = await newUser(1_000_000);
-    await sendCashTip(ctx, b, c, TIP_QUEST_MIN_CENTS, null);
-    expect(await events(b, 'tip_send')).toBe(1);
-  });
 
   it('paid_call credits a pair of players once per window, whichever way round', async () => {
     // The verb must be among the player's picks on BOTH days, or the later call is

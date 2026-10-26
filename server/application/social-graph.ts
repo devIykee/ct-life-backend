@@ -18,6 +18,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { assertCleanText, assertNotMuted } from './moderation.js';
 import type { AppContext } from './context.js';
 import { publishToUser } from './realtime-bus.js';
 
@@ -137,8 +138,10 @@ export async function sendDm(
   if (text.length < 1 || text.length > DM_TEXT_MAX) {
     throw new ValidationFailedError({ reason: 'text length 1..500' });
   }
+  assertCleanText(text, 'dm');
   const messageId = uuidv7();
   const createdAt = await runInTransaction(async (client) => {
+    await assertNotMuted(client, fromUserId);
     // B25: Check if recipient exists
     const recipientCheck = await client.query(`SELECT id FROM users WHERE id = $1`, [toUserId]);
     if (recipientCheck.rowCount === 0) {
@@ -262,8 +265,10 @@ export async function createPost(
   if (text.length < 1 || text.length > POST_TEXT_MAX) {
     throw new ValidationFailedError({ reason: 'text length 1..280' });
   }
+  assertCleanText(text, 'post');
   const postId = uuidv7();
   await runInTransaction(async (client) => {
+    await assertNotMuted(client, userId);
     await client.query(`INSERT INTO feed_posts (post_id, user_id, text) VALUES ($1, $2, $3)`, [
       postId,
       userId,

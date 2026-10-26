@@ -129,6 +129,17 @@ export async function updateCreator(
   if (args.bio !== undefined && args.bio.length > BIO_MAX) {
     throw new ValidationFailedError({ reason: `bio length 0..${BIO_MAX}` });
   }
+  // Image keys must be uploads the caller owns; a key is later erased from
+  // storage when the account is deleted, so a foreign key must never be accepted.
+  for (const key of [args.bannerImageKey, args.avatarImageKey]) {
+    if (typeof key !== 'string') continue;
+    const owned = await ctx.db.withConnection((c) =>
+      c.query('SELECT 1 FROM ad_uploads WHERE user_id = $1 AND image_key = $2', [userId, key]),
+    );
+    if (owned.rowCount === 0) {
+      throw new ValidationFailedError({ reason: 'image_key_not_owned' });
+    }
+  }
   const set: string[] = [];
   const params: unknown[] = [];
   let p = 0;

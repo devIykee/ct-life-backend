@@ -1,6 +1,48 @@
 ## 2026-10-26 - Log privacy: client IPs truncated in request logs
 
 No API change. HTTP request logs now carry only `method`, `path` (no query string) and a truncated client IP (IPv4 /24, IPv6 /48) instead of the full address Fastify logged by default (`trustProxy: true` made it the real client). See `docs/LOGS.md` for what is kept where; the hosting platform's own access-log retention is not controlled by this repo and is still to be checked.
+## 2026-10-26 - Moderation: filter, admin report queue, mute and ban, block-aware chat
+
+Migration 101. From POLICY-CHECK.md (user-generated content rules of both stores).
+
+- **Text filter.** `POST /dms/{userId}`, `POST /feed/posts` and `POST /characters` (alias) now answer `400 CONTENT_NOT_ALLOWED` (`details.field`: `dm`, `post` or `alias`) when a word is a slur or strong profanity (leetspeak, repeated letters and spaced-out letters are caught; the check is per word, so "this hit" is fine). Show "That text contains words that are not allowed." and let the player edit. The list is the one the Rugpull Factory already uses, kept in the repo, no new package. Room `say` is not rejected: offending words arrive as asterisks (`****`) and a message that can only be caught as a whole is sent as `[message hidden]`.
+- **Block-aware room chat.** `say` in street and venue rooms is no longer sent to players who blocked the speaker or were blocked by them. Checked per message, so a block applies at once.
+- **Report limits.** `POST /reports`: 10 an hour per player (burst 5) else `429 RATE_LIMITED` with `Retry-After`; reporting the same target again while your report is open is a silent 204; reporting yourself is `400`.
+- **Admin queue** (admin wallet): `GET /admin/reports?status=open|resolved|all&limit&after` (rows have `preview`, `targetUserId`, `openOnTarget`, paging `next`); `POST /admin/reports/{reportId}/resolve {action: dismiss|remove_content|mute|ban, hours?, note?}`; `POST /admin/users/{userId}/sanction {action: mute|unmute|ban|unban, hours?, reason?}`. The two old stubs `/admin/moderation/queue` and `/admin/bans` (never built) are gone from the spec. Every action is written to `moderation_actions`.
+- **Mute** (1 to 720 hours): `403 ACCOUNT_MUTED` (`details.until`) on DM, feed post and room chat (`rejected {type:'say', code:'ACCOUNT_MUTED'}`); the player can still read. **Ban:** every request is `403 ACCOUNT_BANNED`, sign-in and refresh are refused (403) until unbanned. FE: on `ACCOUNT_BANNED` show a banned screen and clear tokens.
+- **Ban reaches realtime.** A banned player is refused at the door of every room (street, venue, home, city, market, space, video call, vehicles): the join fails with `ACCOUNT_BANNED` even with a still-valid access token (Redis flag first, database as fallback). On ban, live sessions in every room type (street, venue, home, city, market, space, video call, vehicles) are closed with code `4003` and reason `ACCOUNT_BANNED` (FE: show the banned screen, do not auto-reconnect). A ban that lands while a join is still in progress cannot slip through (the join is re-checked just before it completes). A banned player's `say` is dropped like a muted one. Refresh is refused (`403 ACCOUNT_BANNED`), so no new access token can be minted.
+- New error codes: `CONTENT_NOT_ALLOWED` (400), `ACCOUNT_MUTED` (403), `ACCOUNT_BANNED` (403).
+## 2026-10-25 - Real nod positions
+
+- `contract/ids/nods.json` is the frontend's confirmed export (ct-life 0d2713066, version 1.0.0, no longer provisional): the 80 nods now have the placed props' real island positions instead of placeholder grid points. No id, name, set, tier or district changed (checked against the previous file: 0 added, 0 removed, 6 sets identical). `POST /nods/{id}/collect` still checks the server's own fresh position against `x`/`z` within `radiusM` (default 15 m), so collects now work where the props actually stand. Every nod is on island land and at least 16 m from the next.
+## 2026-10-25 - Starter quests and the first session (onboarding)
+
+Stacked on #21 (clock-in) and #22 (`LIVE_PHASE`); merge those first. Migration 097.
+
+- **Starter quests.** `GET /quests` gets a `starter: {quests}` group, listed first (the response is `{starter, daily, weekly}`), and every quest now has `pool: starter|daily|weekly`. A NEW account (created after migration 097) is given them once, at character creation or on its first `GET /quests`, and they are never reseeded; older accounts get none (`starter.quests` is `[]`). `q_starter_shift` First shift (verb `shift_start`, 1000 cents + 20 Season XP, `ctlife://jobs`), `q_starter_trade` First trade (verb `trade_open`, 500 + 20, `ctlife://pulse`), `q_starter_chest` GM (verb `chest_open`, 500 + 20, `ctlife://chest`). The trade quest is only given while markets are live for the deployment (`livePhase` 2 or more); if markets open later it is added to accounts already seeded. They claim like any quest: `POST /quests/{id}/claim`, ledger `quest_reward`, Season XP.
+- **New verbs.** `shift_start` (a Rekt Burger clock-in that opens a shift, or `POST /shifts`), `trade_open` (a market buy, or a perp open), `chest_open` (the daily chest claim, first claim of the day). Each fires from the real server action after it commits.
+- **`GET /me` `flags.firstSession`** = `{state: active|skipped|done, startedAt, completedAt, beats}`, `beats` a subset of `origin, character, home, moved, shift, trade, quest, chest`. A new account starts `active`; an older account reads `{state: 'done', startedAt: null, completedAt: null, beats: []}`.
+- **`POST /me/first-session`** (auth, Idempotency-Key, 20 a minute): exactly one of `{beat}`, `{skip: true}`, `{replay: true}`; the reply is the new object. An unknown beat or any other body is `400 VALIDATION_FAILED`. It becomes `done` when every applicable beat is in (`trade` applies only while markets are live). `skip` sets `skipped`. `replay` sets `active`, clears `moved, shift, trade, quest, chest`, keeps `origin, character, home`, restarts `startedAt`.
+- **Server-set beats.** `origin` on `POST /lottery/roll`, `character` on `POST /characters`, `shift`, `trade` and `chest` from the same events as the starter quests. The client reports `home`, `moved`, `quest`.
+- Migration 097 adds `onboarding_meta` (the epoch: when it ran), `onboarding_state`, `starter_quests` and lets `quest_progress.pool` be `starter`.
+
+## 2026-10-25 - Rekt Burger is a clock-in job (replaces the per-ticket minigame)
+
+Migration 096. Changes what #16 shipped.
+
+- `POST /jobs/rekt-burger/shift/start` now needs the player at the counter: the server's own fresh position (30 s) within `counter.radiusM` of `counter` (both in `GET /jobs/rekt-burger`), else `409 POSITION_UNKNOWN` or the new `409 COUNTER_TOO_FAR` (`details: {radiusM, distanceM}`). Still one open shift per player and idempotent while open (`resumed: true`, no position needed). Reply: `{shiftId, startedAt, ratePerMinuteCents, capRemainingCents, maxEndsAt, accruedCents, serverNow, resumed, postId}`; `minFinishAt`, `expiresAt` and `rules` are gone.
+- New `POST /jobs/rekt-burger/shift/end` (no body) -> `{shiftId, paidCents, durationSec, minutes, careerXp, cappedCents, capRemainingCents, uniformGranted, endReason}` (`durationSec` is the total seconds on the clock, `minutes` is `floor(durationSec / 60)`, not a remainder; `GET /shift/current` `lastShift` has the same two fields). Pay = `floor(seconds x rate / 60)`, at most 3,600 s counted, trimmed to the 4,500 cent UTC-day cap; ledger reason `job_rekt_burger`. `endReason` is `clock_out`, `auto` or `left`. `404` with no open shift; racing ends pay once.
+- New `GET /jobs/rekt-burger/shift/current` -> `{shift, lastShift}` for restore after a relaunch (an expired shift is closed and paid first).
+- The server closes and pays a shift left running at `maxEndsAt` (a per-minute worker, and on the next read), so the player may leave the app. `POST /leave` now clocks an open shift out and pays it (`endedShift`) instead of voiding it.
+- `POST /jobs/rekt-burger/shift/finish` (per-ticket minigame) is removed: it answers `410 GONE` with `details.use`. The error code `SHIFT_RESULT_IMPLAUSIBLE` is removed with it. New codes `GONE` (410), `COUNTER_TOO_FAR` (409).
+- `GET /jobs/rekt-burger` `pay` is now `{ratePerMinuteCents, maxShiftCents, maxShiftSec, dailyCapCents, earnedTodayCents, remainingTodayCents, resetsAt}` (no `baseCents`/`perCorrectOrderCents`) and adds `counter: {x, z, radiusM}`; its `shift` is the new shift object.
+- Economics (config `careers.json` `rektBurger`): 50 cents/minute, longest shift 3,600 s (3,000 cents), daily cap unchanged at 4,500 cents (90 minutes on the clock); the per-ticket design paid up to 1,500 cents per 3-minute shift and the same 4,500 cap.
+- Career XP is time-based (1 per minute), only for a player on a ladder, under the shared daily action cap; a shift under 120 s is paid but earns no XP, quest progress or uniform. Unlock rules (Trencher, broke, liquidated) are unchanged.
+- Migration 096 adds `rekt_burger_shifts.seconds, end_reason, career_xp` and an index for the sweep.
+## 2026-10-25 - GET /config sends `livePhase`
+
+- `GET /config` has a new top-level `livePhase` (integer 1 to 6), from the server env `LIVE_PHASE` (default 1, so nothing changes until it is set; a value outside 1 to 6 or not a number makes the API fail to start). The client reads it (it also accepts `phase` or `meta.livePhase`) to open the apps of every phase up to it and show "Coming soon" for the rest, instead of falling back to its build default. The payload (and so its ETag) changes only when `LIVE_PHASE` does.
+- Ops: set `LIVE_PHASE=6` on the api service to open all apps for private testers.
 
 ## 2026-10-25 - Cash tips burn a 3% fee
 

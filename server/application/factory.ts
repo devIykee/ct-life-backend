@@ -279,12 +279,12 @@ export async function launchFactoryCoin(
       const existing = await coinById(client, prior.rows[0].ref_id, userId);
       if (existing) return { coin: existing, fresh: false };
     }
-    const recent = await client.query<{ n: string; last: Date | null }>(
-      `SELECT COUNT(*)::text AS n, MAX(created_at) AS last FROM factory_coins
-        WHERE creator_id = $1 AND created_at > $2`,
+    const recent = await client.query<{ n: string; first: Date | null; last: Date | null }>(
+      `SELECT COUNT(*)::text AS n, MIN(created_at) AS first, MAX(created_at) AS last
+         FROM factory_coins WHERE creator_id = $1 AND created_at > $2`,
       [userId, new Date(now.getTime() - DAY_MS)],
     );
-    const last = recent.rows[0]!.last;
+    const { first, last } = recent.rows[0]!;
     if (last && now.getTime() - last.getTime() < LAUNCH_COOLDOWN_MS) {
       throw new LaunchCooldownError({
         retryAfterMs: LAUNCH_COOLDOWN_MS - (now.getTime() - last.getTime()),
@@ -293,7 +293,9 @@ export async function launchFactoryCoin(
     if (Number(recent.rows[0]!.n) >= DAILY_LAUNCH_CAP) {
       throw new LaunchLimitReachedError({
         cap: DAILY_LAUNCH_CAP,
-        retryAfterMs: last ? Math.max(0, DAY_MS - (now.getTime() - last.getTime())) : 0,
+        // The same moment GET /factory/me reports as nextLaunchAt: the oldest launch in the
+        // rolling 24 hours falls out of the window then, and a slot opens.
+        retryAfterMs: first ? Math.max(0, first.getTime() + DAY_MS - now.getTime()) : 0,
       });
     }
     const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');

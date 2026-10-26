@@ -14,6 +14,7 @@ import { toErrorEnvelope, type MappedError } from '../shared/infra/error-envelop
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerCoreRoutes } from './routes/core.js';
 import { registerSocialRoutes } from './routes/social.js';
+import { registerModerationRoutes } from './routes/moderation.js';
 import { registerWorkRoutes } from './routes/work.js';
 import { registerJobRoutes } from './routes/jobs.js';
 import { registerOpsRoutes } from './routes/ops.js';
@@ -146,6 +147,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerAuthRoutes(app);
   registerCoreRoutes(app);
   registerSocialRoutes(app);
+  registerModerationRoutes(app);
   registerWorkRoutes(app);
   registerJobRoutes(app);
   registerOpsRoutes(app, ctx);

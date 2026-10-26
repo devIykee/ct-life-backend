@@ -17,6 +17,9 @@ import { HomeState, PlayerState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { HOME_ACCESS_CHANNEL } from '../../application/home-units.js';
+import { BanGuard } from '../ban-guard.js';
+import { OUTFIT_CHANNEL } from '../movement.js';
+import { applyOutfitMessage, loadPlayerState } from '../player.js';
 
 const MAX_GUESTS = 16;
 /** Backstop for a missed access event: re-check everyone this often. */
@@ -53,10 +56,13 @@ function lookToArray(raw: unknown): string[] {
 }
 
 export class HomeRoom extends Room {
+  private readonly ban = new BanGuard(this);
   declare state: HomeState;
 
   private readonly userBySession = new Map<string, string>();
   private recheckTimer: ReturnType<typeof setInterval> | null = null;
+
+  private readonly onOutfit = (data: unknown): void => applyOutfitMessage(this.state.players, data);
 
   /** A guest was removed, or the home was moved out of or evicted: look again. */
   private readonly onAccess = (msg: unknown): void => {
@@ -68,6 +74,7 @@ export class HomeRoom extends Room {
    * @param options - Join options; `homeId` and `ownerId` scope the room.
    */
   override async onCreate(options: Record<string, unknown>): Promise<void> {
+    await this.ban.attach();
     this.state = new HomeState();
     this.state.homeId = String(options.homeId ?? '');
     this.state.ownerId = String(options.ownerId ?? '');
@@ -75,6 +82,7 @@ export class HomeRoom extends Room {
     this.maxClients = MAX_GUESTS;
     this.patchRate = 100; // 10 Hz, same as a venue: guests walk around.
     await this.presence?.subscribe(HOME_ACCESS_CHANNEL, this.onAccess);
+    await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
     this.recheckTimer = setInterval(() => void this.recheck(), RECHECK_MS);
     this.recheckTimer.unref();
   }
@@ -83,9 +91,11 @@ export class HomeRoom extends Room {
    * Stop listening and re-checking.
    */
   override async onDispose(): Promise<void> {
+    await this.ban.detach();
     if (this.recheckTimer) clearInterval(this.recheckTimer);
     this.recheckTimer = null;
     await this.presence?.unsubscribe(HOME_ACCESS_CHANNEL, this.onAccess);
+    await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
   }
 
   /**
@@ -123,11 +133,13 @@ export class HomeRoom extends Room {
       try {
         const claims = await createJwtIssuer().verifyAccess(tokenStr);
         userId = claims.sub;
+        this.ban.track(client, userId); // before any await
       } catch (err) {
         throw new Error('INVALID_TOKEN', { cause: err });
       }
     }
     if (userId === '') return;
+    this.ban.track(client, userId);
 
     // The door's rule applies to the room too: without this, anyone who knew
     // a home id could join past a locked door. A home without a door stays open.
@@ -146,7 +158,9 @@ export class HomeRoom extends Room {
     player.tribeId = profile.tribeId;
     player.minerTier = profile.minerTier;
     player.look = profile.look;
+    player.outfit = (await loadPlayerState(userId)).outfit;
     player.anim = 'loco_idle';
+    await this.ban.confirm(userId);
     this.userBySession.set(client.sessionId, userId);
     this.state.players.set(client.sessionId, player);
     client.send('welcome', {
@@ -162,6 +176,7 @@ export class HomeRoom extends Room {
    * @param client - The leaving client.
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     this.userBySession.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
   }

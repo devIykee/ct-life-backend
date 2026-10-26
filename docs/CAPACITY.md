@@ -59,6 +59,8 @@ TBD. The metric `pg_stat_database_tup_inserted` per database is the upper bound;
 
 ## See also
 
+- `docs/LOAD-TEST.md` — the 100-300 player load test (Oct 2026): bottlenecks found and fixed, Railway sizing for the private test.
+
 - `docs/ARCHITECTURE.md` — deployment topology.
 - `docs/OPERATIONS.md` — kill switches and cost caps.
 - `docs/TESTING.md` — load, spike, soak, chaos.

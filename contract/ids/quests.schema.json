@@ -28,8 +28,12 @@
               "prediction_place",
               "alpha_call",
               "paid_call",
-              "tip_send",
               "home_visit"
+              "tip_send",
+              "home_visit",
+              "shift_start",
+              "trade_open",
+              "chest_open"
             ]
           },
           "target": { "type": "integer", "minimum": 1, "maximum": 100 },
@@ -42,7 +46,7 @@
               "seasonXp": { "type": "integer", "minimum": 0, "maximum": 10000 }
             }
           },
-          "pool": { "enum": ["daily", "weekly"] },
+          "pool": { "enum": ["daily", "weekly", "starter"] },
           "deepLink": { "type": "string", "pattern": "^ctlife://[a-z0-9_/-]+$" }
         }
       }
