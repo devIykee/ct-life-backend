@@ -56,7 +56,7 @@ import {
   type MoveAnchor,
   type Polygon,
 } from '../movement.js';
-import { BAN_CHANNEL } from '../../application/moderation.js';
+import { BanGuard } from '../ban-guard.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -89,6 +89,7 @@ interface StreetSession {
 }
 
 export class StreetRoom extends Room {
+  private readonly ban = new BanGuard(this);
   declare state: StreetState;
   private polygon: Polygon = [];
   private island: readonly Polygon[] = [];
@@ -96,22 +97,6 @@ export class StreetRoom extends Room {
   private sessions = new Map<string, StreetSession>();
   /** userId -> vehicle exit position, from the vehicles room. */
   private exitGrants = new Map<string, IslandPos>();
-  private readonly onBan = (msg: unknown): void => {
-    const id = (msg as { userId?: string } | null)?.userId;
-    if (typeof id === 'string') this.kickUser(id);
-  };
-
-  /**
-   * Disconnect every session of a banned player (published on BAN_CHANNEL).
-   * @param userId - The banned player.
-   */
-  kickUser(userId: string): void {
-    for (const client of [...this.clients]) {
-      if (this.sessions.get(client.sessionId)?.userId === userId)
-        client.leave(4003, 'ACCOUNT_BANNED');
-    }
-  }
-
   private onExit = (data: unknown): void => this.handleVehicleExit(data);
   private onPolice = (data: unknown): void => this.handlePolice(data);
 
@@ -119,6 +104,7 @@ export class StreetRoom extends Room {
    * @param options - `{ district }`, one of DISTRICTS.
    */
   override async onCreate(options: unknown): Promise<void> {
+    await this.ban.attach();
     const district = String((options as { district?: string })?.district ?? '');
     if (!(DISTRICTS as readonly string[]).includes(district)) {
       throw new Error(`Unknown district: ${district}`);
@@ -142,16 +128,15 @@ export class StreetRoom extends Room {
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
-    await this.presence?.subscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**
    *
    */
   override async onDispose(): Promise<void> {
+    await this.ban.detach();
     await this.presence?.unsubscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.unsubscribe(POLICE_CHANNEL, this.onPolice);
-    await this.presence?.unsubscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**
@@ -159,10 +144,14 @@ export class StreetRoom extends Room {
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     const userId = await authenticateJoin(options);
+    // No await between the token check and track(): a ban published from here on finds us.
+    this.ban.track(client, userId);
     const player = await this.loadPlayer(userId);
     const last = await this.readPos(userId);
     const now = Date.now();
     const fresh = last !== null && now - last.at <= POS_FRESH_MS;
+    // Last check, no await before the session is stored.
+    await this.ban.confirm(userId);
     this.sessions.set(client.sessionId, {
       userId,
       player,
@@ -180,6 +169,7 @@ export class StreetRoom extends Room {
    *
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     const s = this.sessions.get(client.sessionId);
     this.sessions.delete(client.sessionId);
     this.state.players.delete(client.sessionId);

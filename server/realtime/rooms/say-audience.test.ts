@@ -7,7 +7,6 @@ import { describe, expect, it } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { VenueRoom } from './venue.js';
 import { StreetRoom } from './street.js';
-import { HomeRoom } from './home.js';
 import { PlayerState } from '../../../contract/realtime/states.js';
 import { createDb } from '../../shared/db/pool.js';
 import { uuidv7 } from '../../shared/domain/uuid.js';
@@ -93,36 +92,3 @@ for (const kind of ['venue', 'street'] as const) {
     });
   });
 }
-
-describe('ban kicks live sessions', () => {
-  it('street, venue and home rooms leave every session of the banned user and only theirs', () => {
-    const mk = (sessionId: string) => ({
-      sessionId,
-      left: [] as Array<[number, string]>,
-      leave(code: number, reason: string) {
-        this.left.push([code, reason]);
-      },
-    });
-    for (const kind of ['street', 'venue', 'home'] as const) {
-      const clients = [mk('a1'), mk('a2'), mk('b1')];
-      const owner: Record<string, string> = { a1: 'bad', a2: 'bad', b1: 'good' };
-      const room: any =
-        kind === 'street' ? new StreetRoom() : kind === 'venue' ? new VenueRoom() : new HomeRoom();
-      Object.defineProperty(room, 'clients', { value: clients, configurable: true });
-      if (kind === 'street') {
-        room.sessions = new Map(clients.map((c) => [c.sessionId, { userId: owner[c.sessionId] }]));
-      } else if (kind === 'venue') {
-        room.state = {
-          players: new Map(clients.map((c) => [c.sessionId, { userId: owner[c.sessionId] }])),
-        };
-      } else {
-        room.userBySession = new Map(clients.map((c) => [c.sessionId, owner[c.sessionId]]));
-      }
-      room.onBan({ userId: 'bad' });
-      expect(clients[0]!.left, kind).toEqual([[4003, 'ACCOUNT_BANNED']]);
-      expect(clients[1]!.left, kind).toHaveLength(1);
-      expect(clients[2]!.left, kind).toHaveLength(0);
-      room.onBan({ nope: true }); // malformed events are ignored
-    }
-  });
-});

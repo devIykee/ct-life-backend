@@ -78,7 +78,8 @@ export async function authenticateJoin(options: unknown): Promise<string> {
  * @throws Error `ACCOUNT_BANNED`.
  */
 export async function assertJoinAllowed(userId: string): Promise<void> {
-  if (userId === '') return;
+  // Only real accounts (UUIDs) can be banned; dev-token ids never touch the database.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) return;
   const [{ buildContext }, { assertNotBanned }] = await Promise.all([
     import('../application/context.js'),
     import('../application/moderation.js'),

@@ -72,7 +72,7 @@ import {
   type MoveAnchor,
   type VenuePlacement,
 } from '../movement.js';
-import { BAN_CHANNEL } from '../../application/moderation.js';
+import { BanGuard } from '../ban-guard.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -133,6 +133,7 @@ interface VenueConfig {
 }
 
 export class VenueRoom extends Room {
+  private readonly ban = new BanGuard(this);
   /**
    *
    */
@@ -164,34 +165,18 @@ export class VenueRoom extends Room {
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
-  private readonly onBan = (msg: unknown): void => {
-    const id = (msg as { userId?: string } | null)?.userId;
-    if (typeof id === 'string') this.kickUser(id);
-  };
-
-  /**
-   * Disconnect every session of a banned player (published on BAN_CHANNEL).
-   * @param userId - The banned player.
-   */
-  kickUser(userId: string): void {
-    for (const client of [...this.clients]) {
-      if (this.state.players.get(client.sessionId)?.userId === userId) {
-        client.leave(4003, 'ACCOUNT_BANNED');
-      }
-    }
-  }
-
   /**
    * Stop listening for bans.
    */
   override async onDispose(): Promise<void> {
-    await this.presence?.unsubscribe(BAN_CHANNEL, this.onBan);
+    await this.ban.detach();
   }
 
   /**
    *
    */
   override async onCreate(_options: unknown): Promise<void> {
+    await this.ban.attach();
     this.maxClients = 50;
     this.patchRate = 100;
     this.spotsCfg = this.loadVenueConfig();
@@ -220,7 +205,6 @@ export class VenueRoom extends Room {
     // 1 Hz NPC tick.
     this.brainClock.set(Date.now());
     this.setSimulationInterval((dt) => this.tickNpcs(dt), 1000);
-    await this.presence?.subscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**
@@ -229,12 +213,15 @@ export class VenueRoom extends Room {
   override async onJoin(client: Client, options: unknown): Promise<void> {
     // Identity and look come from the database, never from join options.
     const userId = await authenticateJoin(options);
+    this.ban.track(client, userId);
     // Police custody: a jailed player may only be in CT Jail. Fails open if the
     // database cannot be reached; the REST gates still hold.
     if (this.state.venueId !== 'ct_jail' && (await isInPoliceCustody(userId))) {
       throw new Error('JAILED');
     }
     const player = await loadPlayerState(userId);
+    // Last check, no await before the player is stored.
+    await this.ban.confirm(userId);
 
     // Place the player on the venue's entrance spot. Joining a second
     // venue (or a street room) while still in another is allowed; rooms
@@ -268,6 +255,7 @@ export class VenueRoom extends Room {
    *
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     const player = this.state.players.get(client.sessionId);
     if (player && player.spotId) {
       this.spotOccupants.delete(player.spotId);

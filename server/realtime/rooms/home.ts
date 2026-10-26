@@ -18,7 +18,7 @@ import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { HOME_ACCESS_CHANNEL } from '../../application/home-units.js';
 import { assertJoinAllowed } from '../player.js';
-import { BAN_CHANNEL } from '../../application/moderation.js';
+import { BanGuard } from '../ban-guard.js';
 
 const MAX_GUESTS = 16;
 /** Backstop for a missed access event: re-check everyone this often. */
@@ -55,27 +55,13 @@ function lookToArray(raw: unknown): string[] {
 }
 
 export class HomeRoom extends Room {
+  private readonly ban = new BanGuard(this);
   declare state: HomeState;
 
   private readonly userBySession = new Map<string, string>();
   private recheckTimer: ReturnType<typeof setInterval> | null = null;
 
   /** A guest was removed, or the home was moved out of or evicted: look again. */
-  private readonly onBan = (msg: unknown): void => {
-    const id = (msg as { userId?: string } | null)?.userId;
-    if (typeof id === 'string') this.kickUser(id);
-  };
-
-  /**
-   * Disconnect every session of a banned player (published on BAN_CHANNEL).
-   * @param userId - The banned player.
-   */
-  kickUser(userId: string): void {
-    for (const client of [...this.clients]) {
-      if (this.userBySession.get(client.sessionId) === userId) client.leave(4003, 'ACCOUNT_BANNED');
-    }
-  }
-
   private readonly onAccess = (msg: unknown): void => {
     if ((msg as { homeId?: string } | null)?.homeId === this.state.homeId) void this.recheck();
   };
@@ -85,6 +71,7 @@ export class HomeRoom extends Room {
    * @param options - Join options; `homeId` and `ownerId` scope the room.
    */
   override async onCreate(options: Record<string, unknown>): Promise<void> {
+    await this.ban.attach();
     this.state = new HomeState();
     this.state.homeId = String(options.homeId ?? '');
     this.state.ownerId = String(options.ownerId ?? '');
@@ -92,7 +79,6 @@ export class HomeRoom extends Room {
     this.maxClients = MAX_GUESTS;
     this.patchRate = 100; // 10 Hz, same as a venue: guests walk around.
     await this.presence?.subscribe(HOME_ACCESS_CHANNEL, this.onAccess);
-    await this.presence?.subscribe(BAN_CHANNEL, this.onBan);
     this.recheckTimer = setInterval(() => void this.recheck(), RECHECK_MS);
     this.recheckTimer.unref();
   }
@@ -101,10 +87,10 @@ export class HomeRoom extends Room {
    * Stop listening and re-checking.
    */
   override async onDispose(): Promise<void> {
+    await this.ban.detach();
     if (this.recheckTimer) clearInterval(this.recheckTimer);
     this.recheckTimer = null;
     await this.presence?.unsubscribe(HOME_ACCESS_CHANNEL, this.onAccess);
-    await this.presence?.unsubscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**
@@ -148,6 +134,7 @@ export class HomeRoom extends Room {
       await assertJoinAllowed(userId);
     }
     if (userId === '') return;
+    this.ban.track(client, userId);
 
     // The door's rule applies to the room too: without this, anyone who knew
     // a home id could join past a locked door. A home without a door stays open.
@@ -167,6 +154,7 @@ export class HomeRoom extends Room {
     player.minerTier = profile.minerTier;
     player.look = profile.look;
     player.anim = 'loco_idle';
+    await this.ban.confirm(userId);
     this.userBySession.set(client.sessionId, userId);
     this.state.players.set(client.sessionId, player);
     client.send('welcome', {
@@ -182,6 +170,7 @@ export class HomeRoom extends Room {
    * @param client - The leaving client.
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     this.userBySession.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
   }

@@ -63,6 +63,7 @@ import {
   type ParkingBay,
   type Polygon,
 } from '../movement.js';
+import { BanGuard } from '../ban-guard.js';
 
 export const INTEREST_ADD_M = 250;
 export const INTEREST_DROP_M = 300;
@@ -173,6 +174,7 @@ interface VehicleMeta {
 }
 
 export class VehiclesRoom extends Room {
+  private readonly ban = new BanGuard(this);
   declare state: VehiclesState;
   private island: readonly Polygon[] = [];
   private sessions = new Map<string, VehicleSession>();
@@ -186,6 +188,7 @@ export class VehiclesRoom extends Room {
    *
    */
   override async onCreate(_options: unknown): Promise<void> {
+    await this.ban.attach();
     const geo = getIslandGeometry();
     if (geo.island.length === 0) throw new Error('Island outline not set');
     this.island = geo.island;
@@ -205,6 +208,8 @@ export class VehiclesRoom extends Room {
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     const userId = await authenticateJoin(options);
+    this.ban.track(client, userId);
+    await this.ban.confirm(userId);
     const view = new StateView();
     client.view = view;
     this.sessions.set(client.sessionId, {
@@ -222,6 +227,7 @@ export class VehiclesRoom extends Room {
    *
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     const s = this.sessions.get(client.sessionId);
     this.sessions.delete(client.sessionId);
     if (s?.driving) this.release(s, Date.now());
@@ -706,5 +712,10 @@ export class VehiclesRoom extends Room {
     void Promise.resolve(this.presence?.hset(POS_HASH, userId, encodePos(p))).catch(
       () => undefined,
     );
+  }
+
+  /** Stop listening for bans. */
+  override async onDispose(): Promise<void> {
+    await this.ban.detach();
   }
 }

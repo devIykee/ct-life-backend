@@ -23,6 +23,7 @@ import {
 } from '../../application/realtime-bus.js';
 import { createRedis } from '../../shared/redis/client.js';
 import { assertJoinAllowed } from '../player.js';
+import { BanGuard } from '../ban-guard.js';
 
 const PATCH_HZ = 1;
 const MAX_PLAYERS = 1_000;
@@ -31,6 +32,7 @@ const MAX_PLAYERS = 1_000;
 const MOOD_REFRESH_MS = 15_000;
 
 export class CityRoom extends Room {
+  private readonly ban = new BanGuard(this);
   static maxClients = MAX_PLAYERS;
   static patchRate = PATCH_HZ * 1000;
   declare state: CityState;
@@ -45,6 +47,7 @@ export class CityRoom extends Room {
    *
    */
   override async onCreate(_options: unknown): Promise<void> {
+    await this.ban.attach();
     this.state = new CityState();
     this.state.online = 0;
     this.state.mood = 0;
@@ -75,6 +78,7 @@ export class CityRoom extends Room {
         const claims = await jwtIssuer.verifyAccess(tokenStr);
         const userId = claims.sub ?? '';
         await assertJoinAllowed(userId);
+        this.ban.track(client, userId);
         if (userId !== '') {
           this.userIdBySession.set(client.sessionId, userId);
           const set = this.sessionsByUser.get(userId) ?? new Set<string>();
@@ -122,6 +126,7 @@ export class CityRoom extends Room {
    * @param client - The leaving client.
    */
   override onLeave(client: Client): void {
+    this.ban.untrack(client);
     const userId = this.userIdBySession.get(client.sessionId);
     this.userIdBySession.delete(client.sessionId);
     if (userId !== undefined) {
@@ -134,6 +139,7 @@ export class CityRoom extends Room {
 
   /** Close the bus subscription with the room. */
   override async onDispose(): Promise<void> {
+    await this.ban.detach();
     await this.busSub?.quit();
   }
 
