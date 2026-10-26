@@ -40,19 +40,20 @@ export async function rollDistrictRollover(
   // Pull the day's activity per tribe per district. The tribe_id
   // is the poster's character.tribe_id.
   const activity = await ctx.db.withConnection(async (c) => {
+    // Player posts and check-ins only (server-written career posts and NPC
+    // authors do not count). feed_posts.district_slug is set from the
+    // server's position hash when a player posts (migration 102).
     return c.query<ActivityRow>(
-      `SELECT d.district_id,
-              COALESCE(ch.tribe_id, 'anon') AS tribe_id,
-              COALESCE(COUNT(p.post_id), 0)::int AS post_count
-       FROM districts d
-       LEFT JOIN characters ch ON true
-       LEFT JOIN feed_posts p
-         ON p.user_id = ch.user_id
-            AND p.district_slug = d.slug
-            AND p.created_at >= $1::timestamptz
-            AND p.created_at < $2::timestamptz
-       GROUP BY d.district_id, ch.tribe_id`,
-      [`${dayDate}T00:00:00Z`, `${dayDate}T23:59:59.999Z`],
+      `SELECT d.district_id, ch.tribe_id, COUNT(*)::int AS post_count
+         FROM feed_posts p
+         JOIN districts d ON d.slug = p.district_slug
+         JOIN characters ch ON ch.user_id = p.user_id
+        WHERE p.district_slug IS NOT NULL
+          AND (p.kind IS NULL OR p.kind IN ('player', 'checkin'))
+          AND p.created_at >= $1::timestamptz
+          AND p.created_at < $1::timestamptz + interval '1 day'
+        GROUP BY d.district_id, ch.tribe_id`,
+      [`${dayDate}T00:00:00Z`],
     );
   });
   // Districts + their default holders + base scores.
