@@ -246,9 +246,18 @@ describe('The Rug Room over HTTP', () => {
     const seen = await call(thief, 'GET', `/v1/casino/rounds/${round.roundId}`);
     expect(seen.status).toBe(404);
     const second = await call(u, 'POST', '/v1/casino/crash/bet', { stakeCents: 200 });
+    // The crash point is random: about 6% of rounds bust at 1.00x and short
+    // ones are over within a second, so the round may already be settled as
+    // a loss here. Then the next bet is allowed and there is nothing to cash out.
+    const first = await call(u, 'GET', `/v1/casino/rounds/${round.roundId}`);
+    if ((first.body.round as { status: string }).status === 'settled') {
+      expect((first.body.round as { payoutCents: number }).payoutCents).toBe(0);
+      return;
+    }
     expect(second.status).toBe(409);
     expect(errCode(second.body)).toBe('ROUND_IN_PROGRESS');
     const out = await call(u, 'POST', '/v1/casino/crash/cashout', { roundId: round.roundId });
+    if (out.status === 409 && errCode(out.body) === 'ROUND_SETTLED') return; // crashed meanwhile
     expect(out.status, JSON.stringify(out.body)).toBe(200);
     expect((out.body.round as { status: string }).status).toBe('settled');
     const again = await call(u, 'POST', '/v1/casino/crash/cashout', { roundId: round.roundId });

@@ -3037,27 +3037,53 @@ paths:
     get:
       tags: [social]
       operationId: getFeed
-      summary: In-game Timeline feed.
+      summary: The Timeline (For you, Following, City). See docs/TIMELINE.md.
       x-phase: 3
+      description: >-
+        `foryou`: people, NPC callers and the Sleuth, with city event cards mixed in at most 1 in
+        every 4 rows; when nobody has posted, the last 5 city cards and `quiet: true`. `following`:
+        posts by the people and NPC callers the reader follows (no city cards). `city`: only city
+        event cards (`launch`, `rug`, `liquidation`, `casino_win`), filtered by `type`. Authors the
+        reader blocked are left out. The older `scope=global|following` maps to `foryou` and
+        `following`.
       parameters:
+        - name: tab
+          in: query
+          required: false
+          schema: { type: string, enum: [foryou, following, city], default: foryou }
         - name: scope
           in: query
           required: false
+          deprecated: true
           schema: { type: string, enum: [global, following] }
-        - $ref: '#/components/parameters/Cursor'
+        - name: type
+          in: query
+          required: false
+          description: City tab filter.
+          schema: { type: string, enum: [all, launch, rug, liquidation, casino_win] }
+        - name: before
+          in: query
+          required: false
+          description: The previous page's `nextBefore`.
+          schema: { type: string, format: date-time }
       responses:
         '200':
-          description: Feed posts
+          description: One page of the tab.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/FeedPost' }
+              schema: { $ref: '#/components/schemas/TimelinePage' }
+
+  /feed/posts:
     post:
       tags: [social]
       operationId: postFeedPosts
-      summary: Post to the in-game feed. (Not X; never awards real money for posting.)
+      summary: Post to the Timeline. (Not X; posting never earns anything.)
       x-phase: 3
+      description: >-
+        The server builds the action card: a coin card when the text names a real coin's `$TICKER`,
+        otherwise a place card when `withPlace` is true and the server's position puts the author
+        within 60 m of a venue door. The district the post counts for (tribe district rollover)
+        also comes from the server's position. Never from the client.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -3068,10 +3094,39 @@ paths:
               type: object
               required: [text]
               properties:
-                text: { type: string, maxLength: 280 }
+                text: { type: string, minLength: 1, maxLength: 280 }
+                withPlace: { type: boolean, description: 'Attach where you are (opt-in).' }
       responses:
-        '200':
+        '201':
           description: Posted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeedPost' }
+
+  /feed/checkins:
+    post:
+      tags: [social]
+      operationId: postFeedCheckins
+      summary: Opt-in check-in ("is at Terminal Café").
+      x-phase: 3
+      description: >-
+        Only when the server's position puts the caller within 60 m of that venue's door
+        (`VALIDATION_FAILED`, `reason: not_at_venue` otherwise; `unknown venue` for a bad id), at
+        most once per 15 minutes (`RATE_LIMITED`). Nothing is ever posted automatically.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [venueId]
+              properties:
+                venueId: { type: string, example: terminal_cafe }
+      responses:
+        '201':
+          description: The check-in post.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FeedPost' }
@@ -7206,28 +7261,101 @@ components:
         at: { type: string, format: date-time }
     FeedPost:
       type: object
-      required: [postId, userId, alias, text, at]
+      required:
+        [postId, userId, alias, text, createdAt, kind, isNpc, card, secondaryCard, verdict, social]
       properties:
-        postId: { type: string }
+        postId: { type: string, format: uuid }
         userId: { type: string, format: uuid }
-        alias: { type: string }
+        alias: { type: string, description: 'Character alias, or the NPC display name.' }
         text: { type: string, maxLength: 280 }
-        at: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
         kind:
           type: string
-          enum: [player, sleuth, career]
+          enum: [player, sleuth, career, caller, checkin, launch, rug, liquidation, casino_win]
           description: >-
-            `sleuth` is an NPC exposé on a rugged Factory coin (author "The Sleuth"). `career` is
-            a server-written post about the author's own job (their alias, fixed text), e.g. "Back
-            to the trenches" or "Glow-up" for Rekt Burger.
-        meta:
+            `player` a normal post; `sleuth` an NPC exposé; `career` a server-written post about
+            the author's own job; `caller` an NPC caller's call on a house coin (meta `persona`,
+            `call: {entryMicros, targetX, stopPct}`); `checkin` an opt-in "is at <venue>";
+            `launch`, `rug`, `liquidation`, `casino_win` city event cards (author "CT City").
+            Clients should read unknown kinds as `player`.
+        isNpc: { type: boolean, description: 'The city, the Sleuth or an NPC caller (NPC badge).' }
+        district:
+          type: string
+          nullable: true
+          description: The tribe district (districts.slug) the post counts for.
+        meta: { type: object, nullable: true, additionalProperties: true }
+        card:
+          nullable: true
+          description: The one action card (coin beats place).
+          oneOf:
+            - { $ref: '#/components/schemas/CoinCard' }
+            - { $ref: '#/components/schemas/VenueCard' }
+            - { $ref: '#/components/schemas/ProfileCard' }
+        secondaryCard:
+          nullable: true
+          description: Sleuth posts and rug cards, the place pill next to the coin.
+          allOf: [{ $ref: '#/components/schemas/VenueCard' }]
+        verdict:
           type: object
           nullable: true
-          description: >-
-            Sleuth posts: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat,
-            deepLink}`; `deepLink` is `venue:launchpad_tower`. Career posts: `{event:
-            back_to_trenches|glow_up, jobId: rekt-burger, deepLink: venue:the_trenches}`.
-          additionalProperties: true
+          description: A coin card whose coin the Sleuth exposed; the box under the post.
+          properties:
+            postId: { type: string, format: uuid }
+            text: { type: string }
+            sellSharePct: { type: integer, nullable: true }
+        social:
+          type: object
+          nullable: true
+          description: Launch cards. Faces only for people the reader follows (at most 3).
+          properties:
+            holders: { type: integer }
+            followed:
+              type: array
+              items:
+                type: object
+                properties:
+                  userId: { type: string, format: uuid }
+                  alias: { type: string }
+    TimelinePage:
+      type: object
+      required: [posts, nextBefore, quiet]
+      properties:
+        posts: { type: array, items: { $ref: '#/components/schemas/FeedPost' } }
+        nextBefore: { type: string, format: date-time, nullable: true }
+        quiet: { type: boolean, description: 'For you had no posts; these are recent city cards.' }
+    CoinCard:
+      type: object
+      required:
+        [type, coinId, ticker, name, stage, mcapCents, change5mBps, holders, rugged, dead, deepLink]
+      properties:
+        type: { type: string, enum: [coin] }
+        coinId: { type: string, format: uuid }
+        ticker: { type: string }
+        name: { type: string }
+        stage: { type: string }
+        mcapCents: { type: string, description: 'Live at read time.' }
+        change5mBps: { type: integer }
+        holders: { type: integer }
+        rugged:
+          { type: boolean, description: 'Creator dump flagged, or the coin died: show RUGGED.' }
+        dead: { type: boolean }
+        deepLink: { type: string, example: 'ctlife://coin/018f...' }
+    VenueCard:
+      type: object
+      required: [type, venueId, name, deepLink]
+      properties:
+        type: { type: string, enum: [venue] }
+        venueId: { type: string, description: 'venues.json id, or rug_room for the casino.' }
+        name: { type: string }
+        deepLink: { type: string, example: 'ctlife://venue/terminal_cafe' }
+    ProfileCard:
+      type: object
+      required: [type, userId, alias, deepLink]
+      properties:
+        type: { type: string, enum: [profile] }
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        deepLink: { type: string, example: 'ctlife://profile/018f...' }
     Business:
       type: object
       required:

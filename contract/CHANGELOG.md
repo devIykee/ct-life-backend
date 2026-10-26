@@ -1,3 +1,14 @@
+## 2026-10-26 - Timeline: tabs, action cards, city event cards, NPC callers, check-ins
+
+Migration 102. Full client contract in `docs/TIMELINE.md`.
+
+- `GET /feed` now takes `tab=foryou|following|city`, `type` (City filter: `launch`, `rug`, `liquidation`, `casino_win`) and `before` (cursor), and answers `{posts, nextBefore, quiet}` instead of a bare array. `scope=global|following` still works. For you mixes city cards in at most 1 in every 4 rows; `quiet: true` means nobody posted and the posts are recent city cards. Blocked authors are left out (they were not before).
+- `FeedPost` gains `kind` values `caller`, `checkin`, `launch`, `rug`, `liquidation`, `casino_win`, and `isNpc`, `district`, `card` (one action card: `CoinCard` live at read time, `VenueCard`, `ProfileCard`), `secondaryCard`, `verdict` (the Sleuth's box under a coin card) and `social` (launch cards: holders and followed buyers). The timestamp field is `createdAt` (the contract said `at`; the server always sent `createdAt`).
+- `POST /feed/posts` (the contract said `POST /feed`) answers 201, takes optional `withPlace`, and builds the card server-side (a real coin's `$TICKER`, or the venue the server places you at).
+- New `POST /feed/checkins {venueId}`: opt-in, verified against the server's position (60 m from the door), once per 15 minutes.
+- New deep links for the client router: `ctlife://coin/<coinId>`, `ctlife://venue/<venueId>`, `ctlife://profile/<userId>`.
+- Server: city cards are written after launches, rugs and house-coin deaths, perp liquidations (one per 10 minutes) and 10x+ casino wins (one per 2 minutes); four NPC callers post calls on house coins; the daily district rollover works again (it read a column that did not exist).
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.

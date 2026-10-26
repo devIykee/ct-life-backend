@@ -31,6 +31,9 @@
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
+ *   - Timeline NPC callers: a 5-minute tick lets each parody caller post a
+ *     call on a house coin when their turn comes (see npc-callers.ts).
+ *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
  * configured `PORT_WORKERS` if non-zero.
@@ -50,6 +53,7 @@ import { handleShopDelivery } from './shop-delivery.js';
 import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
+import { NPC_CALLERS_QUEUE, handleNpcCallers } from './npc-callers.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -126,6 +130,7 @@ export async function buildWorkers(likeness?: {
   const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
   const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
+  const callersQueue = new Queue(NPC_CALLERS_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -215,6 +220,13 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'casino-sweep failed'),
   );
 
+  const callersWorker = new Worker(NPC_CALLERS_QUEUE, async (job) => handleNpcCallers(job, ctx), {
+    connection: newClient(redis),
+  });
+  callersWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'npc-callers failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
   const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
@@ -271,6 +283,13 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // Timeline NPC callers (each posts every 45-120 min; the job checks every 5).
+  await callersQueue.upsertJobScheduler(
+    'npc-callers',
+    { pattern: '*/5 * * * *' },
+    { name: 'tick', data: {} },
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -298,6 +317,7 @@ export async function buildWorkers(likeness?: {
   void pushWorker;
   void eventWorker;
   void casinoWorker;
+  void callersWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -307,6 +327,7 @@ export async function buildWorkers(likeness?: {
   void pushQueue;
   void eventQueue;
   void casinoQueue;
+  void callersQueue;
   void log;
   void cfg;
 
@@ -327,6 +348,7 @@ export async function buildWorkers(likeness?: {
       await pushWorker.close();
       await eventWorker.close();
       await casinoWorker.close();
+      await callersWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -337,6 +359,7 @@ export async function buildWorkers(likeness?: {
       await pushQueue.close();
       await eventQueue.close();
       await casinoQueue.close();
+      await callersQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

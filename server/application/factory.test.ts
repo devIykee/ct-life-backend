@@ -425,7 +425,7 @@ describe('rug detection and the Sleuth', () => {
 
     // The Timeline serves it as the Sleuth.
     const feed = await listFeed(ctx, holder, 'global');
-    const post = feed.find((p) => p.meta?.['coinId'] === coin.coinId);
+    const post = feed.find((p) => p.kind === 'sleuth' && p.meta?.['coinId'] === coin.coinId);
     expect(post).toMatchObject({ kind: 'sleuth', alias: 'The Sleuth', userId: SLEUTH_USER_ID });
 
     // Dumping more does not flag, heat or post again.
