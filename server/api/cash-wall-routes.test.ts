@@ -25,6 +25,13 @@ beforeAll(async () => {
   process.env.LOG_LEVEL = 'warn';
   process.env.ENABLE_DEV_AUTH = 'true';
   _resetConfigForTests();
+
+  // Clear cosmetic_items to ensure fresh UUIDs (old ones may not match RFC 4122)
+  await db.withConnection(async (c) => {
+    await c.query('DELETE FROM cosmetic_inventory');
+    await c.query('DELETE FROM cosmetic_items');
+  });
+
   const handle = await buildServer();
   app = handle.app;
   await app.ready();

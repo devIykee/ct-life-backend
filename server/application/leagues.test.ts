@@ -29,18 +29,18 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
  * Handles foreign keys properly: delete children first, then parents.
  */
 async function resetLeagueTables(): Promise<void> {
+  // Clean ALL season memberships for test seasons first (2026-W pattern)
+  // This prevents cross-test pollution and ensures leagues start empty
+  await pool.query(`DELETE FROM season_memberships WHERE season_iso ~ '^2026-W[0-9]{2}$'`);
+
+  // Clean ALL test-created rollover log entries (anything matching 2026-W pattern from tests)
+  await pool.query(`DELETE FROM season_rollover_log WHERE season_iso ~ '^2026-W[0-9]{2}$'`);
+
   // Delete only test user data (identified by wallet pattern)
-  await pool.query(
-    `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`,
-  );
   await pool.query(
     `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'leagueUser-%')`,
   );
   await pool.query(`DELETE FROM users WHERE wallet LIKE 'leagueUser-%'`);
-
-  // Clean ALL test-created rollover log entries (anything matching 2026-W pattern from tests)
-  // This prevents cross-test pollution in the 8-week rollover test
-  await pool.query(`DELETE FROM season_rollover_log WHERE season_iso ~ '^2026-W[0-9]{2}$'`);
 }
 
 async function freshUsers(n: number): Promise<string[]> {
