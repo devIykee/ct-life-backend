@@ -1052,23 +1052,21 @@
     "glowUpNetWorthCents": 100000,
     "postCooldownHours": 24,
     "pay": {
-      "baseCents": 300,
-      "perCorrectOrderCents": 60,
-      "maxCorrectOrdersPaid": 20,
+      "ratePerMinuteCents": 50,
       "dailyCapCents": 4500
     },
     "shift": {
-      "minDurationSec": 45,
-      "maxDurationSec": 180,
-      "minOrders": 3,
-      "maxOrders": 40,
-      "minServeMs": 1200,
-      "minGapMs": 900,
-      "maxServeMs": 30000,
-      "toleranceMs": 1500,
-      "minServeJitterMs": 15
+      "maxDurationSec": 3600,
+      "minCountedSec": 120,
+      "xpPerMinute": 1
     },
-    "uniformCosmeticId": "reward_rekt_burger_uniform"
+    "uniformCosmeticId": "reward_rekt_burger_uniform",
+    "counter": {
+      "x": -301.8,
+      "z": -306.7,
+      "radiusM": 25,
+      "source": "island centre of the rekt_burger building in tools/world/islandgen/layout.py (ct-life); radius covers the storefront, counter and walk-in. FE: replace with the counter prop position if you want it tighter."
+    }
   },
   "cosmetics": [
     {

@@ -38,6 +38,7 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { notifyLiquidated } from './push-delivery.js';
 import { recordQuestEvent } from './quests.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { onPlayerRekt } from './rekt-burger.js';
 import type { AppContext } from './context.js';
 
@@ -206,6 +207,7 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     };
   });
   await recordQuestEvent(ctx, input.userId, 'perp_open', opened.perpId);
+  await recordOnboardingEvent(ctx, input.userId, 'trade_open', `perp:${opened.perpId}`);
   return opened;
 }
 

@@ -546,11 +546,19 @@ export class JobDailyCapError extends DomainError {
   }
 }
 
-export class ShiftResultImplausibleError extends DomainError {
-  readonly code = 'SHIFT_RESULT_IMPLAUSIBLE';
+export class GoneError extends DomainError {
+  readonly code = 'GONE';
   constructor(details: Record<string, unknown> = {}) {
-    super('The shift result does not look like a real shift.', details);
-    this.httpStatus = 422;
+    super('This endpoint was removed; see details.use for its replacement.', details);
+    this.httpStatus = 410;
+  }
+}
+
+export class CounterTooFarError extends DomainError {
+  readonly code = 'COUNTER_TOO_FAR';
+  constructor(details: Record<string, unknown> = {}) {
+    super("The server's last position for you is too far from the Rekt Burger counter.", details);
+    this.httpStatus = 409;
   }
 }
 
