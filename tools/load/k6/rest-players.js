@@ -17,7 +17,7 @@
  * Each virtual user is one player. The first iteration signs in like a new
  * install: POST /v1/auth/dev, the lottery roll, a character, then the app
  * boot reads (/v1/me, /v1/config). Every later iteration is one loop of a
- * session: quests, daily streak (claims once a day), the casino (state and
+ * session: quests, the Timeline, daily streak (claims once a day), the casino (state and
  * up to three slot spins, inside the per-player 2/s limit), the shop
  * (catalog, owned items, sometimes an order) and claiming any finished
  * quest, with think time between screens.
@@ -42,6 +42,7 @@ const ENDPOINTS = [
   'GET /v1/me',
   'GET /v1/config',
   'GET /v1/quests',
+  'GET /v1/feed',
   'POST /v1/quests/:id/claim',
   'GET /v1/daily/status',
   'POST /v1/daily/claim',
@@ -202,6 +203,10 @@ export default function () {
 
   // Quests screen.
   const quests = get('/v1/quests', 'GET /v1/quests');
+  think(2, 5);
+
+  // The Timeline (For you; `tab` is ignored by servers before the tabs).
+  get('/v1/feed?tab=foryou', 'GET /v1/feed');
   think(2, 5);
 
   // Daily streak, once per UTC day.
