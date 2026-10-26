@@ -31,6 +31,9 @@
  *   - Market sim: ticks every live coin and launches house coins on
  *     market.json `launchIntervalSec` (see market-sim.ts).
  *
+ *   - Analytics retention: a daily job (03:15 UTC) deletes product events
+ *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
+ *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
  * configured `PORT_WORKERS` if non-zero.

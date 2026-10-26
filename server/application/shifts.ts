@@ -19,6 +19,7 @@ import {
   ConflictError,
 } from '../shared/domain/errors.js';
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -215,6 +216,16 @@ export class ShiftsService {
            ON CONFLICT (user_id, career_id)
            DO UPDATE SET level = EXCLUDED.level, xp = EXCLUDED.xp, updated_at = now()`,
           [userId, shift.careerId, after.level, after.xp],
+        );
+        await recordEvent(
+          client,
+          userId,
+          {
+            name: 'shift_paid',
+            props: { careerId: shift.careerId, bonusCents },
+            amountCents: payCents,
+          },
+          now,
         );
         // B18 fix: Update last_action_at to shift completion time so decay doesn't accumulate during shift
         await client.query(`UPDATE needs SET last_action_at = now() WHERE user_id = $1`, [userId]);

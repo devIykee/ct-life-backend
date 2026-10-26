@@ -204,6 +204,24 @@ describe('gates', () => {
     await expect(playSlots(ctx, v, 1_000, at(1000))).resolves.toBeDefined();
   });
 
+  it('concurrent spins never pass the stake cap (the player lock serializes them at READ COMMITTED)', async () => {
+    const u = await newUser();
+    await seedLedger(u, 'casino_stake', -2_000);
+    await seedLedger(u, 'casino_win', 2_000); // room left under the 3,000 stake cap: 1,000
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () => playSlots(ctx, u, 500, at(1000))),
+    );
+    const ok = results.filter((r) => r.status === 'fulfilled').length;
+    expect(ok).toBe(2);
+    for (const r of results) {
+      if (r.status === 'rejected') expect(r.reason).toBeInstanceOf(StakeCapReachedError);
+    }
+    const staked = (await ledger(u))
+      .filter((r) => r.reason === 'casino_stake')
+      .reduce((n, r) => n - r.delta, 0);
+    expect(staked).toBe(3_000);
+  });
+
   it('enforces the daily net-loss cap', async () => {
     const u = await newUser();
     // 2,000 lost so far: a 600 stake could take the net loss past 2,500, the stake cap is not hit
