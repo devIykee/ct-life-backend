@@ -10,6 +10,7 @@
     "tools/econ-sim/**/*.ts",
     "tools/fuzz/**/*.ts",
     "tools/load/**/*.ts",
+    "tools/factory/**/*.ts",
     "server/**/*.ts",
     "packages/**/*.ts",
     "programs/ct_escrow/programs/**/*.ts",

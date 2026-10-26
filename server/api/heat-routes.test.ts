@@ -159,12 +159,12 @@ it('jail blocks launching, buying, new perps and casino bets (403 JAILED) until 
   const me = await callAs(u, 'GET', '/v1/heat/me');
   expect(me.body.jail).toMatchObject({ venueId: 'ct_jail', bailCents: 3_500 });
 
-  const launch = await callAs(u, 'POST', '/v1/factory/coins', {
+  // Real launches (the Cash Factory is retired): jail is checked before anything else.
+  const launch = await callAs(u, 'POST', '/v1/factory/launch/prepare', {
     name: 'Jail Frog',
-    ticker: `ZJ${Math.floor(Math.random() * 9000 + 1000)}`,
-    templateId: 'rf_frog',
-    liquidityCents: 5000,
-    devAllocationBps: 0,
+    ticker: 'ZJAIL',
+    imageBase64: 'AA==',
+    riskAccepted: true,
   });
   const buy = await callAs(u, 'POST', '/v1/market/trades', {
     coinId: uuidv7(),
@@ -195,12 +195,12 @@ it('jail blocks launching, buying, new perps and casino bets (403 JAILED) until 
   const paid = await callAs(u, 'POST', '/v1/heat/bail');
   expect(paid.status, JSON.stringify(paid.body)).toBe(200);
   expect(paid.body).toMatchObject({ released: true, bailCents: 3_500, cashCents: 46_500 });
-  const after = await callAs(u, 'POST', '/v1/factory/coins', {
+  const after = await callAs(u, 'POST', '/v1/factory/launch/prepare', {
     name: 'Free Frog',
-    ticker: `ZK${Math.floor(Math.random() * 9000 + 1000)}`,
-    templateId: 'rf_frog',
-    liquidityCents: 5000,
-    devAllocationBps: 0,
+    ticker: 'ZFREE',
+    imageBase64: 'AA==',
+    riskAccepted: true,
   });
-  expect(after.status, JSON.stringify(after.body)).toBe(201);
+  // Out of jail: no longer 403 (here 503, launches are not configured in tests).
+  expect(after.status, JSON.stringify(after.body)).not.toBe(403);
 });

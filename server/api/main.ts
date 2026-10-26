@@ -41,6 +41,7 @@ import { registerEventRoutes } from './routes/events.js';
 import { registerCasinoRoutes } from './routes/casino.js';
 import { registerSeasonRoutes } from './routes/season.js';
 import { registerFactoryRoutes } from './routes/factory.js';
+import { registerFactoryRealRoutes } from './routes/factory-real.js';
 import { registerHeatRoutes } from './routes/heat.js';
 import { closeShopQueue } from '../application/shop-queue.js';
 import { registerDailyClueRoutes } from './routes/daily-clue.js';
@@ -173,6 +174,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerEventRoutes(app);
   registerCasinoRoutes(app);
   registerFactoryRoutes(app);
+  registerFactoryRealRoutes(app);
   registerHeatRoutes(app);
   registerDailyClueRoutes(app);
   registerSeasonPassRoutes(app);

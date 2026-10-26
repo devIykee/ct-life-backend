@@ -27,6 +27,7 @@ import {
   NotFoundError,
   TickerTakenError,
   ValidationFailedError,
+  FactoryCashRetiredError,
 } from '../shared/domain/errors.js';
 import {
   DAILY_LAUNCH_CAP,
@@ -39,11 +40,9 @@ import {
   type LaunchInput,
 } from './factory.js';
 import { cleanCoinText, isBlockedText } from './factory-filter.js';
-import { SLEUTH_USER_ID, sleuthPostText } from './factory-rug.js';
-import { decayHeat, getHeat, HEAT_HALF_LIFE_MS } from './player-heat.js';
-import { sampleHiddenArc } from './hidden-arc.js';
+import { sleuthPostText } from './factory-rug.js';
+import { decayHeat, HEAT_HALF_LIFE_MS } from './player-heat.js';
 import { executeTrade } from './terminal-cafe.js';
-import { listFeed } from './social-graph.js';
 import { listMarketCoins } from './world-pulse.js';
 import { publishWorldEvent } from './realtime-bus.js';
 
@@ -54,7 +53,6 @@ _resetContextForTests();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ctx = buildContext();
 const RUN = Math.random().toString(36).slice(2, 7);
-const MIX = { rug: 25, slow_bleed: 40, sideways: 20, moon: 15 };
 
 afterAll(async () => {
   await pool.end();
@@ -109,12 +107,6 @@ function input(over: Partial<LaunchInput> = {}): LaunchInput {
     devAllocationBps: 5_000,
     ...over,
   };
-}
-
-/** A seed whose server-side arc is the wanted outcome. */
-function seedFor(outcome: 'rug' | 'moon' | 'sideways'): number {
-  for (let s = 1; s < 10_000; s++) if (sampleHiddenArc(s, MIX).outcome === outcome) return s;
-  throw new Error('no seed');
 }
 
 async function launch(userId: string, over: Partial<LaunchInput> = {}, seed?: number) {
@@ -325,26 +317,14 @@ describe('name and ticker filter', () => {
   });
 });
 
-describe('trading a player coin', () => {
-  it('lets another player buy and sell it with Cash and logs the trades', async () => {
+describe('trading a player coin (Cash Factory retired)', () => {
+  it('refuses new Cash buys with 410 but lets an old position be sold', async () => {
     const creator = await newUser(100_000);
-    const buyer = await newUser(10_000);
     const coin = await launch(creator);
-    const b = await buy(buyer, coin.coinId, 2_000);
-    expect(await cashOf(buyer)).toBe(10_000 - 2_000);
-    expect(BigInt(b.units)).toBeGreaterThan(0n);
-    const s = await sellAll(buyer, coin.coinId);
-    expect(BigInt(s.newUnits)).toBe(0n);
-    const trades = await pool.query(
-      `SELECT side FROM factory_trades WHERE coin_id = $1 AND user_id = $2 ORDER BY id`,
-      [coin.coinId, buyer],
-    );
-    expect(trades.rows.map((r) => r.side)).toEqual(['buy', 'sell']);
-    const detail = await getFactoryCoin(ctx, buyer, coin.coinId);
-    expect(detail.isMine).toBe(false);
-    expect(detail.creatorFeesCents).toBeNull(); // only the creator sees earnings
-    expect(Array.isArray(detail.candles1m)).toBe(true);
-    expect((await getFactoryCoin(ctx, creator, coin.coinId)).creatorFeesCents).toBe('0');
+    const other = await newUser(100_000);
+    await expect(buy(other, coin.coinId, 1_000)).rejects.toBeInstanceOf(FactoryCashRetiredError);
+    // The creator's launch position (an old Cash position) can still be sold.
+    await expect(sellAll(creator, coin.coinId)).resolves.toBeDefined();
   });
 
   it('404s a house coin and an unknown id on the factory detail', async () => {

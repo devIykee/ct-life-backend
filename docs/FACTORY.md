@@ -1,3 +1,6 @@
+> **2026-10-26: retired.** The Cash Factory below is replaced by real token launches on Meteora DBC; see
+> [FACTORY-REAL.md](FACTORY-REAL.md). Launching and buying Cash player coins answer 410.
+
 # Rugpull Factory
 
 A parody coin-launch sandbox at the Launchpad Tower. **Game Cash only.** Every coin is a row in

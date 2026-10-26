@@ -1,3 +1,12 @@
+## 2026-10-26 - Rugpull Factory launches real tokens (Meteora DBC); the Cash Factory is retired
+
+Migration 104. Client contract and setup in `docs/FACTORY-REAL.md`.
+
+- New `POST /factory/launch/prepare` (18+, risk warning accepted, moderated name/ticker/description, re-encoded image; returns a legacy DBC create-pool transaction with the priority fee included and the mint already signed), `POST /factory/launch/confirm` (verifies on chain, registers the token, broadcasts `evt_coin_launch` with `params.real = "1"`), `POST /factory/launch/submit` (fallback: the wallet only signs, the server co-signs the same launch last), `GET /factory/launch/{launchId}`, `GET /factory/tokens`, `GET /factory/tokens/{mint}`, `GET /factory/tokens/{mint}/trades`, public `GET /factory/metadata/{id}`, and the server-to-server `POST /webhooks/helius/factory`.
+- `GET /factory/config` now describes real launches (`enabled`, `cluster`, on-chain partner config, `riskWarning`, `ageGate`, limits).
+- Retired: `POST /factory/coins` and buying a Cash player coin answer `410 FACTORY_CASH_RETIRED`; selling an old Cash position still works.
+- Creator-wallet sells of a launched mint add heat and, for 30%+ of their holding, one exposé post (penalties only).
+- New error codes: `FACTORY_CASH_RETIRED` (410), `FACTORY_UNAVAILABLE` (503), `LAUNCH_EXPIRED` (409), `LAUNCH_TX_MISMATCH` (422), `LAUNCH_NOT_CONFIRMED` (409), `RISK_NOT_ACCEPTED` (400).
 ## 2026-10-26 - Group chats and alpha groups
 
 Migration 103. Full client contract in `docs/GROUPS.md`.

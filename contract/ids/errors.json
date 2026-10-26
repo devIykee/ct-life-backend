@@ -19,13 +19,21 @@
       "httpStatus": 401,
       "message": "Ed25519 signature did not verify."
     },
-    { "code": "TOKEN_EXPIRED", "httpStatus": 401, "message": "Access token expired; refresh." },
+    {
+      "code": "TOKEN_EXPIRED",
+      "httpStatus": 401,
+      "message": "Access token expired; refresh."
+    },
     {
       "code": "SGT_ALREADY_LINKED",
       "httpStatus": 409,
       "message": "This Seeker Genesis Token is already linked to another account."
     },
-    { "code": "ALIAS_TAKEN", "httpStatus": 409, "message": "Alias is taken." },
+    {
+      "code": "ALIAS_TAKEN",
+      "httpStatus": 409,
+      "message": "Alias is taken."
+    },
     {
       "code": "ALREADY_ROLLED",
       "httpStatus": 409,
@@ -41,20 +49,36 @@
       "httpStatus": 400,
       "message": "Request body or params failed validation."
     },
-    { "code": "NOT_FOUND", "httpStatus": 404, "message": "Resource not found." },
+    {
+      "code": "NOT_FOUND",
+      "httpStatus": 404,
+      "message": "Resource not found."
+    },
     {
       "code": "FORBIDDEN",
       "httpStatus": 403,
       "message": "Caller is not allowed to perform this action."
     },
-    { "code": "BLOCKED", "httpStatus": 403, "message": "You are blocked by this user." },
+    {
+      "code": "BLOCKED",
+      "httpStatus": 403,
+      "message": "You are blocked by this user."
+    },
     {
       "code": "RATE_LIMITED",
       "httpStatus": 429,
       "message": "Rate limit exceeded; try again later."
     },
-    { "code": "INSUFFICIENT_CASH", "httpStatus": 402, "message": "Cash balance is insufficient." },
-    { "code": "NOTHING_TO_REPAY", "httpStatus": 409, "message": "There is no debt to repay." },
+    {
+      "code": "INSUFFICIENT_CASH",
+      "httpStatus": 402,
+      "message": "Cash balance is insufficient."
+    },
+    {
+      "code": "NOTHING_TO_REPAY",
+      "httpStatus": 409,
+      "message": "There is no debt to repay."
+    },
     {
       "code": "LEVERAGE_NOT_ALLOWED",
       "httpStatus": 400,
@@ -75,8 +99,16 @@
       "httpStatus": 503,
       "message": "All venue instances are at capacity; try again shortly."
     },
-    { "code": "SPOT_TAKEN", "httpStatus": 409, "message": "Spot is taken." },
-    { "code": "NOT_SPACE_HOST", "httpStatus": 403, "message": "Only the space host can do this." },
+    {
+      "code": "SPOT_TAKEN",
+      "httpStatus": 409,
+      "message": "Spot is taken."
+    },
+    {
+      "code": "NOT_SPACE_HOST",
+      "httpStatus": 403,
+      "message": "Only the space host can do this."
+    },
     {
       "code": "TOPUP_CAP_REACHED",
       "httpStatus": 429,
@@ -368,6 +400,34 @@
       "message": "Realtime: this vehicle belongs to someone else; send vehicle_enter with steal: true."
     },
     {
+      "code": "FACTORY_CASH_RETIRED",
+      "httpStatus": 410,
+      "message": "The Cash Factory is retired. Launch a real token instead."
+    },
+    {
+      "code": "FACTORY_UNAVAILABLE",
+      "httpStatus": 503,
+      "message": "Real token launches are not configured on this server."
+    },
+    {
+      "code": "LAUNCH_EXPIRED",
+      "httpStatus": 409,
+      "message": "This launch expired (its blockhash is too old). Prepare a new one."
+    },
+    {
+      "code": "LAUNCH_TX_MISMATCH",
+      "httpStatus": 422,
+      "message": "The signed transaction is not the launch that was prepared."
+    },
+    {
+      "code": "LAUNCH_NOT_CONFIRMED",
+      "httpStatus": 409,
+      "message": "The launch transaction is not confirmed on chain (yet)."
+    },
+    {
+      "code": "RISK_NOT_ACCEPTED",
+      "httpStatus": 400,
+      "message": "Accept the risk warning before launching a real token."
       "code": "CASH_NOT_TRANSFERABLE",
       "httpStatus": 410,
       "message": "Cash never moves between players. This feature was removed; see details.reason."
