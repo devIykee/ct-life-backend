@@ -45,6 +45,23 @@ export async function assertAccountActive(redis: RedisLayer, userId: string): Pr
   }
 }
 
+/**
+ * Keys another player's row still points at. Never queued for deletion, so a
+ * key planted in (or left in) one account cannot make us erase someone else's file.
+ */
+const KEYS_OF_OTHERS = `
+  SELECT image_key FROM ad_uploads WHERE user_id <> $1
+  UNION SELECT avatar_image_key FROM creator_profiles WHERE user_id <> $1 AND avatar_image_key IS NOT NULL
+  UNION SELECT banner_image_key FROM creator_profiles WHERE user_id <> $1 AND banner_image_key IS NOT NULL
+  UNION SELECT object_key FROM likeness_uploads WHERE user_id <> $1
+  UNION SELECT object_key FROM likeness_upload_sessions WHERE user_id <> $1
+  UNION SELECT reference_key FROM likeness_jobs WHERE user_id <> $1 AND reference_key IS NOT NULL
+  UNION SELECT asset_key FROM likeness_jobs WHERE user_id <> $1 AND asset_key IS NOT NULL`;
+
+/**
+ * Queue keys for erasure. `sql` must select only keys proven to belong to the
+ * user (rows with their user_id); anything another account references is dropped.
+ */
 async function queueKeys(
   client: PoolClient,
   store: 'likeness' | 'ads',
@@ -53,7 +70,8 @@ async function queueKeys(
 ): Promise<void> {
   await client.query(
     `INSERT INTO storage_cleanup (store, object_key)
-     SELECT DISTINCT $2::text, k FROM (${sql}) AS t(k) WHERE k IS NOT NULL
+     SELECT DISTINCT $2::text, k FROM (${sql}) AS t(k)
+      WHERE k IS NOT NULL AND k NOT IN (${KEYS_OF_OTHERS})
      ON CONFLICT DO NOTHING`,
     [userId, store],
   );
@@ -104,16 +122,14 @@ export async function deleteAccount(ctx: AppContext, userId: string): Promise<vo
          AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
       userId,
     );
+    // Creator images count only when the key is one of THIS user's own uploads
+    // and no booking still shows it (profile keys are otherwise user-supplied).
     await queueKeys(
       client,
       'ads',
-      'SELECT avatar_image_key FROM creator_profiles WHERE user_id = $1',
-      userId,
-    );
-    await queueKeys(
-      client,
-      'ads',
-      'SELECT banner_image_key FROM creator_profiles WHERE user_id = $1',
+      `SELECT u.image_key FROM ad_uploads u JOIN creator_profiles c ON c.user_id = u.user_id
+        WHERE u.user_id = $1 AND u.image_key IN (c.avatar_image_key, c.banner_image_key)
+          AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
       userId,
     );
 

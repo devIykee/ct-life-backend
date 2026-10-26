@@ -255,4 +255,49 @@ describe('DELETE /v1/me', () => {
     });
     expect(me.statusCode).toBe(200);
   });
+
+  it("cannot be used to erase someone else's file: foreign avatar keys are refused and never queued", async () => {
+    const a = await devAuth();
+    const b = await devAuth();
+    const victimKey = `ads/${uuidv7()}.png`;
+    await db.withConnection(async (c) => {
+      await c.query(
+        `INSERT INTO ad_uploads (upload_id, user_id, image_key, mime_type, size_bytes, sha256)
+         VALUES ($1, $2, $3, 'image/png', 10, repeat('c', 64))`,
+        [uuidv7(), b.sub, victimKey],
+      );
+    });
+    const authed = (u: U, method: 'POST' | 'PATCH', url: string, payload: unknown) =>
+      app.inject({
+        method,
+        url,
+        headers: { authorization: `Bearer ${u.accessToken}`, 'idempotency-key': uuidv7() },
+        payload: payload as Record<string, unknown>,
+      });
+    expect(
+      (await authed(a, 'POST', '/v1/creator', { handle: `a${Date.now().toString(36)}x` }))
+        .statusCode,
+    ).toBe(201);
+    // Fix side 1: the PATCH is refused.
+    const patch = await authed(a, 'PATCH', '/v1/creator', { avatarImageKey: victimKey });
+    expect(patch.statusCode).toBe(400);
+    // Even if a legacy row already holds the foreign key, deletion must not queue it.
+    await db.withConnection((c) =>
+      c.query('UPDATE creator_profiles SET avatar_image_key = $2 WHERE user_id = $1', [
+        a.sub,
+        victimKey,
+      ]),
+    );
+    expect((await del(a, { confirm: 'DELETE' })).statusCode).toBe(204);
+    const queued = await q('SELECT 1 FROM storage_cleanup WHERE object_key = $1', [victimKey]);
+    expect(queued).toHaveLength(0);
+    // B can still own and set it.
+    expect(
+      (await authed(b, 'POST', '/v1/creator', { handle: `b${Date.now().toString(36)}x` }))
+        .statusCode,
+    ).toBe(201);
+    expect(
+      (await authed(b, 'PATCH', '/v1/creator', { avatarImageKey: victimKey })).statusCode,
+    ).toBe(200);
+  });
 });
