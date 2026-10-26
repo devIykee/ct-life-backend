@@ -24,9 +24,9 @@ import { addHeat } from './player-heat.js';
 import { publishWorldEvent } from './realtime-bus.js';
 import { cardCoinRug } from './city-cards.js';
 
-/** The Sleuth's author id (seeded by migration 089). */
+/** The Police author's id (npc `sleuth`) (seeded by migration 089). */
 export const SLEUTH_USER_ID = '00000000-0000-4000-8000-0000000051e7';
-export const SLEUTH_ALIAS = 'The Sleuth';
+export const SLEUTH_ALIAS = 'Police';
 
 /** Price multiple (basis points of the launch price) that counts as mooning. */
 export const MOON_MULTIPLE_BPS = 30_000;
@@ -114,21 +114,21 @@ const TEMPLATES: ReadonlyArray<
   (v: { alias: string; ticker: string; pct: number; buyers: number; heat: number }) => string
 > = [
   (v) =>
-    `Followed the money on $${v.ticker}. ${v.alias} seeded it, let ${v.buyers} wallet${v.buyers === 1 ? '' : 's'} ape in, then walked off with ${v.pct}% of the float. Heat on ${v.alias}: ${v.heat}.`,
+    `Police report on $${v.ticker}. ${v.alias} launched it, let ${v.buyers} wallet${v.buyers === 1 ? '' : 's'} buy in, then walked off with ${v.pct}% of the float. Wanted level for ${v.alias}: ${v.heat}.`,
   (v) =>
-    `Case file: $${v.ticker}. The dev, ${v.alias}, sold ${v.pct}% of the supply straight into the people who just bought. I do not call it a rug. The ledger does. Heat: ${v.heat}.`,
+    `Case file: $${v.ticker}. The dev, ${v.alias}, sold ${v.pct}% of the supply straight into the people who just bought. We do not call it a rug. The ledger does. Wanted level: ${v.heat}.`,
   (v) =>
-    `Receipts for $${v.ticker} holders: ${v.alias} dumped ${v.pct}% right after ${v.buyers} of you bought in. Pattern noted, name logged, heat now ${v.heat}.`,
+    `Notice to $${v.ticker} holders: ${v.alias} dumped ${v.pct}% right after ${v.buyers} of you bought in. Pattern noted, name logged, wanted level now ${v.heat}.`,
   (v) =>
-    `$${v.ticker} did not die of natural causes. ${v.alias} cashed out ${v.pct}% while the chart was still green. I keep a list of devs like this. They run hot at ${v.heat}.`,
+    `$${v.ticker} did not die of natural causes. ${v.alias} cashed out ${v.pct}% while the chart was still green. The department keeps a list of devs like this. Wanted level: ${v.heat}.`,
   (v) =>
-    `Quiet day at the desk until ${v.alias} unloaded ${v.pct}% of $${v.ticker} on ${v.buyers} fresh buyer${v.buyers === 1 ? '' : 's'}. Filing it. Heat on the dev: ${v.heat}.`,
+    `Quiet day at the station until ${v.alias} unloaded ${v.pct}% of $${v.ticker} on ${v.buyers} fresh buyer${v.buyers === 1 ? '' : 's'}. Filing it. Wanted level for the dev: ${v.heat}.`,
   (v) =>
-    `Public service note. $${v.ticker} dev ${v.alias} exited ${v.pct}% of the coin the minute liquidity showed up. Check who you ape for. Their heat reads ${v.heat}.`,
+    `Public safety note. $${v.ticker} dev ${v.alias} exited ${v.pct}% of the coin the minute liquidity showed up. Check who you buy from. Their wanted level reads ${v.heat}.`,
 ];
 
 /**
- * Sleuth exposé text. Pure; the variant is picked from the coin id so a coin
+ * Police exposé text. Pure; the variant is picked from the coin id so a coin
  * always reads the same but different coins read differently.
  * @param seed - Usually the coin id.
  * @param v - The facts.

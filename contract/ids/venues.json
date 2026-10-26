@@ -5,59 +5,77 @@
   "venues": [
     {
       "id": "timeline_square",
-      "name": "Timeline Square",
+      "name": "Times Square",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "spaces_studio",
-      "name": "Spaces Studio",
+      "name": "X Spaces Studio",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "stage"
     },
     {
       "id": "terminal_cafe",
-      "name": "Terminal Café",
+      "name": "Starbucks",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "trade"
     },
-    { "id": "perp_pit", "name": "Perp Pit", "maxClients": 50, "patchHz": 10, "kind": "leverage" },
+    {
+      "id": "perp_pit",
+      "name": "Hyperliquid",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "leverage"
+    },
     {
       "id": "rekt_clinic",
-      "name": "Rekt Clinic",
+      "name": "Hospital",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "shrine"
     },
     {
       "id": "ore_refinery",
-      "name": "ORE Refinery",
+      "name": "ORE Mine",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "stake"
     },
     {
       "id": "prediction_pit",
-      "name": "Prediction Pit",
+      "name": "Polymarket",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "launchpad_tower",
-      "name": "Launchpad Tower",
+      "name": "Pump.fun Tower",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
-    { "id": "audit_row", "name": "Audit Row", "maxClients": 50, "patchHz": 10, "kind": "social" },
-    { "id": "vc_row", "name": "VC Row", "maxClients": 50, "patchHz": 10, "kind": "social" },
+    {
+      "id": "audit_row",
+      "name": "Audit Row",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "vc_row",
+      "name": "VC Row",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
     {
       "id": "ratio_arena",
-      "name": "Ratio Arena",
+      "name": "Debate Arena",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
@@ -78,35 +96,35 @@
     },
     {
       "id": "cabal_lounge",
-      "name": "Cabal Lounge",
+      "name": "VIP Lounge",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "discord_heights",
-      "name": "Discord Heights",
+      "name": "Discord HQ",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "club_liquidity",
-      "name": "Club Liquidity",
+      "name": "Nightclub",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "conference_hall",
-      "name": "Conference Hall",
+      "name": "Convention Centre",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "ct_jail",
-      "name": "CT Jail",
+      "name": "Jail",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
@@ -127,14 +145,14 @@
     },
     {
       "id": "sybil_barn",
-      "name": "Sybil Barn",
+      "name": "Barn",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
     },
     {
       "id": "the_trenches",
-      "name": "The Trenches",
+      "name": "Downtown",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"

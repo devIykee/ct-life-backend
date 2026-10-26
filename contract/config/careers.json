@@ -611,7 +611,7 @@
     },
     {
       "id": "rug_sleuth",
-      "name": "Rug Sleuth",
+      "name": "Fraud Investigator",
       "active": false,
       "phase": 4,
       "skillGates": {
@@ -1039,7 +1039,7 @@
   ],
   "rektBurger": {
     "id": "rekt-burger",
-    "name": "Rekt Burger",
+    "name": "McDonald's",
     "venueId": "the_trenches",
     "propId": "rekt_burger_counter",
     "preUnlockTribeIds": ["trencher"],
@@ -1145,7 +1145,7 @@
     },
     {
       "cosmeticId": "reward_rekt_burger_uniform",
-      "name": "Rekt Burger Uniform",
+      "name": "McDonald's Uniform",
       "slot": "top"
     }
   ]

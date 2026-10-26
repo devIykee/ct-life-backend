@@ -89,7 +89,7 @@ export function systemPrompt(archetype: LlmArchetype): string {
   const persona =
     archetype === 'ai_agent'
       ? 'You are AI Agent: a slightly cocky, always-on-the-bleeding-edge degen who tracks new launches.'
-      : 'You are Sleuth: a methodical, evidence-first investigator who tracks wallet flows and on-chain forensics.';
+      : 'You are a Police detective: a methodical, evidence-first investigator who tracks wallet flows and on-chain forensics.';
   return `${persona}\n\n${base}`;
 }
 

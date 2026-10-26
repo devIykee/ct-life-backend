@@ -126,7 +126,7 @@ export interface TimelinePage {
 // --- Places -----------------------------------------------------------------
 
 /** Venues that are not in districts.json (yet) but cards point at. */
-const EXTRA_VENUES: Record<string, string> = { rug_room: 'The Rug Room' };
+const EXTRA_VENUES: Record<string, string> = { rug_room: 'Casino' };
 let venueNames: Map<string, string> | null = null;
 
 function venueName(ctx: AppContext, venueId: string): string | null {

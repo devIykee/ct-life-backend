@@ -169,7 +169,7 @@ describe('tabs', () => {
     const city = since((await listTimeline(ctx, me, { tab: 'city', before })).posts, w);
     expect(city.map((p) => p.kind)).toEqual(['launch', 'launch', 'launch', 'launch']);
     expect(city[0]!.isNpc).toBe(true);
-    expect(city[0]!.alias).toBe('CT City');
+    expect(city[0]!.alias).toBe('City News');
     expect(
       since((await listTimeline(ctx, me, { tab: 'city', type: 'rug', before })).posts, w),
     ).toHaveLength(0);
@@ -252,7 +252,7 @@ describe('player posts and action cards', () => {
     expect(withPlace.card).toEqual({
       type: 'venue',
       venueId: 'perp_pit',
-      name: 'Perp Pit',
+      name: 'Hyperliquid',
       deepLink: 'ctlife://venue/perp_pit',
     });
   });
@@ -275,7 +275,7 @@ describe('opt-in check-ins', () => {
     await setPos(me, door[0], door[1] + 2);
     const p = await checkIn(ctx, me, 'terminal_cafe');
     expect(p.kind).toBe('checkin');
-    expect(p.text).toBe('is at Terminal Café');
+    expect(p.text).toBe('is at Starbucks');
     expect(p.card).toMatchObject({ type: 'venue', venueId: 'terminal_cafe' });
     await expect(checkIn(ctx, me, 'terminal_cafe')).rejects.toBeInstanceOf(RateLimitedError);
   });
@@ -350,7 +350,7 @@ describe('city cards', () => {
     });
     const city = since(page.posts, at);
     expect(city).toHaveLength(1);
-    expect(city[0]!.text).toBe('$120k of longs liquidated in the Perp Pit');
+    expect(city[0]!.text).toBe('$120k of longs liquidated on Hyperliquid');
     expect(city[0]!.meta).toMatchObject({ count: 2, longCents: '12000000' });
     expect(city[0]!.card).toMatchObject({ type: 'venue', venueId: 'perp_pit' });
   });
@@ -371,7 +371,7 @@ describe('city cards', () => {
       before: plus(at, 60).toISOString(),
     });
     const city = since(page.posts, at);
-    expect(city.map((p) => p.text)).toEqual([`lucky_${tag} hit 40x on crash in the Rug Room`]);
+    expect(city.map((p) => p.text)).toEqual([`lucky_${tag} hit 40x on crash in the Casino`]);
     expect(city[0]!.card).toMatchObject({ type: 'venue', venueId: 'rug_room' });
   });
 
@@ -399,7 +399,7 @@ describe('NPC callers', () => {
     const call = following.posts[0]!;
     expect(call.kind).toBe('caller');
     expect(call.isNpc).toBe(true);
-    expect(call.alias).toBe('Candle Carla');
+    expect(call.alias).toBe('Chart Caller');
     expect(call.card?.type).toBe('coin');
     expect(call.meta).toMatchObject({
       persona: 'candle_carla',
