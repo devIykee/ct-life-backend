@@ -745,6 +745,7 @@ paths:
               example:
                 version: '1.0.0-rc1'
                 minClientVersion: '1.0.0-rc1'
+                livePhase: 1
                 degraded: []
                 venues: { 'timeline_square': { 'name': 'Timeline Square', 'maxClients': 50 } }
         '304': { description: Not modified; ETag matches. }
@@ -2155,18 +2156,79 @@ paths:
                     },
                 }
 
+  /me/first-session:
+    post:
+      tags: [player]
+      operationId: postMeFirstSession
+      summary: Report a first-session beat, skip it, or replay it.
+      description: >-
+        Exactly one of `{beat}`, `{skip: true}`, `{replay: true}`; anything else (an unknown beat,
+        extra fields, two actions) is `400 VALIDATION_FAILED`. The reply is the new `FirstSession`
+        (the same object as `GET /me` `flags.firstSession`). `beat` adds a beat (idempotent); the
+        session becomes `done` when every applicable beat is in, where `trade` is applicable only
+        while markets are live (`livePhase` 2 or more in `GET /config`); a `skipped` session only
+        records the beat. `skip` sets `skipped`. `replay` sets `active`, clears the beats from
+        `moved` on (`moved, shift, trade, quest, chest`), keeps `origin, character, home`, sets
+        `startedAt` to now and `completedAt` to null; the starter quests are not reseeded. The server
+        sets `origin` itself (on `POST /lottery/roll`), `character` (on character creation) and
+        `shift`, `trade`, `chest` (from the same events as the starter quests); the client reports
+        `home`, `moved` and `quest`. An account from before the release has no first session
+        (it reads `done`), and `beat` and `skip` change nothing for it. Rate limited to 20 a minute.
+      x-phase: 1
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [beat]
+                  properties:
+                    beat:
+                      {
+                        type: string,
+                        enum: [origin, character, home, moved, shift, trade, quest, chest],
+                      }
+                - type: object
+                  additionalProperties: false
+                  required: [skip]
+                  properties:
+                    skip: { type: boolean, enum: [true] }
+                - type: object
+                  additionalProperties: false
+                  required: [replay]
+                  properties:
+                    replay: { type: boolean, enum: [true] }
+      responses:
+        '200':
+          description: The first session after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FirstSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /quests:
     get:
       tags: [work]
       operationId: getQuests
-      summary: Today's 3 daily quests and this week's chain of 5, with progress.
+      summary: The starter quests, today's 3 daily quests and this week's chain of 5, with progress.
       description: >-
         The pick is deterministic per player and period (daily: user and UTC date; weekly: user
         and ISO week) from `contract/ids/quests.json`. Progress is advanced only by server
         events (a shift paid, a perp opened or closed, a prediction placed, an alpha call, a
         paid call accepted, a Cash tip of at least $10, a visit to someone else's home); the
         client never reports progress. Each change is also pushed live as the realtime
-        `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward.
+        `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward. `starter` (listed
+        first) holds the one-off starter quests (`pool: starter`) a NEW account is given once, never
+        reseeded: First shift (`shift_start`: a Rekt Burger clock-in or `POST /shifts`), First trade
+        (`trade_open`: a market buy or a perp open; only given while markets are live, `livePhase`
+        2 or more) and GM (`chest_open`: the daily chest claim). Accounts from before the onboarding
+        release get an empty `starter`. Claim them like any quest (`quest_reward` ledger, Season XP).
       x-phase: 5
       responses:
         '200':
@@ -6441,7 +6503,28 @@ components:
             The current lease: the newest active or overdue home, else the newest evicted one;
             null for a player with no home (street).
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
-        flags: { type: 'object', additionalProperties: true }
+        flags:
+          type: object
+          additionalProperties: true
+          properties:
+            firstSession: { $ref: '#/components/schemas/FirstSession' }
+    FirstSession:
+      type: object
+      required: [state, startedAt, completedAt, beats]
+      properties:
+        state:
+          type: string
+          enum: [active, skipped, done]
+          description: >-
+            A new account starts `active`. An account from before the onboarding release reads
+            `done` (with null times and no beats). `skipped` after `{skip: true}`.
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        beats:
+          type: array
+          description: The beats reached, in this order of the set.
+          items:
+            { type: string, enum: [origin, character, home, moved, shift, trade, quest, chest] }
     Character:
       type: object
       required: [alias, look, tribeId, traitIds, dreamId]
@@ -6849,10 +6932,19 @@ components:
         cooldownSec: { type: integer }
     ConfigResponse:
       type: object
-      required: [version, minClientVersion, degraded]
+      required: [version, minClientVersion, livePhase, degraded]
       properties:
         version: { type: string }
         minClientVersion: { type: string }
+        livePhase:
+          type: integer
+          minimum: 1
+          maximum: 6
+          description: >-
+            The release phase this deployment has opened. The client opens every app of a phase up
+            to this number and shows "Coming soon" for the rest, instead of using its build default.
+            Set by the server env `LIVE_PHASE` (1 to 6, default 1; any other value stops the API from
+            starting).
         flags:
           type: object
           description: Remote switches the client reads without a release.
@@ -7512,9 +7604,10 @@ components:
         seasonXp: { type: integer }
     Quest:
       type: object
-      required: [id, title, verb, target, progress, completed, claimed, reward]
+      required: [id, pool, title, verb, target, progress, completed, claimed, reward]
       properties:
         id: { type: string }
+        pool: { type: string, enum: [starter, daily, weekly] }
         title: { type: string }
         description: { type: string, nullable: true }
         verb:
@@ -7529,6 +7622,9 @@ components:
               paid_call,
               tip_send,
               home_visit,
+              shift_start,
+              trade_open,
+              chest_open,
             ]
         target: { type: integer }
         progress: { type: integer }
@@ -7540,8 +7636,13 @@ components:
           { type: integer, description: 'Weekly chain position, 1 to 5. Absent for daily quests.' }
     QuestsResponse:
       type: object
-      required: [daily, weekly]
+      required: [starter, daily, weekly]
       properties:
+        starter:
+          type: object
+          required: [quests]
+          properties:
+            quests: { type: array, items: { $ref: '#/components/schemas/Quest' } }
         daily:
           type: object
           required: [date, resetsAt, quests]

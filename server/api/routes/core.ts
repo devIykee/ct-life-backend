@@ -14,7 +14,21 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { NotFoundError, ValidationFailedError } from '../../shared/domain/errors.js';
+import {
+  NotFoundError,
+  RateLimitedError,
+  ValidationFailedError,
+} from '../../shared/domain/errors.js';
+import { perUserTokenBucket } from '../../shared/infra/rate-limit.js';
+import {
+  addBeat,
+  BEATS,
+  getFirstSession,
+  onCharacterCreated,
+  onOriginRolled,
+  replayFirstSession,
+  skipFirstSession,
+} from '../../application/onboarding.js';
 import { LotteryService } from '../../application/lottery.js';
 import { CharacterService, updateLook } from '../../application/character.js';
 import { NeedsService } from '../../application/needs.js';
@@ -72,6 +86,15 @@ const LookPatchBody = z
   .partial()
   .refine((b) => Object.keys(b).length > 0, { message: 'at least one look field' });
 
+/** First-session calls allowed per player per minute. */
+const FIRST_SESSION_PER_MIN = 20;
+// Exactly one of: a beat, skip, or replay. Unknown beats and extra fields are 400.
+const FirstSessionBody = z.union([
+  z.strictObject({ beat: z.enum(BEATS) }),
+  z.strictObject({ skip: z.literal(true) }),
+  z.strictObject({ replay: z.literal(true) }),
+]);
+
 const NeedsActionBody = z.object({
   actionId: z.enum(['eat', 'sleep', 'shower', 'touch_grass', 'party']),
 });
@@ -89,6 +112,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const payload = {
       version: '1.0.0-rc1',
       minClientVersion: '1.0.0',
+      // The release phase this deployment has opened (env LIVE_PHASE, 1 to 6, default 1).
+      livePhase: req.ctx.config.livePhase,
       // Kill-switch list. Only `ore_reader` is wired: it is listed when
       // GET /v1/ore/board cannot serve a live board (ORE_READER_ENABLED off).
       degraded: oreReaderAvailable(req.ctx) ? [] : ['ore_reader'],
@@ -169,7 +194,34 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       if (!body.data.ageConfirmed) throw new ValidationFailedError({ reason: 'age_unconfirmed' });
       const svc = new CharacterService(req.ctx.configCache);
       const created = await svc.create(req.user!.sub, body.data);
+      await onCharacterCreated(req.ctx, req.user!.sub);
       return reply.status(201).send(created);
+    },
+  );
+
+  // POST /v1/me/first-session: {beat} | {skip: true} | {replay: true}
+  app.post(
+    '/v1/me/first-session',
+    { preHandler: [requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const body = FirstSessionBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const userId = req.user!.sub;
+      const decision = await perUserTokenBucket(
+        req.ctx.redis.main,
+        `rl:first-session:${userId}`,
+        FIRST_SESSION_PER_MIN,
+        FIRST_SESSION_PER_MIN / 60,
+        1,
+      );
+      if (!decision.allowed) {
+        reply.header('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
+        throw new RateLimitedError(decision.retryAfterMs, { limit: FIRST_SESSION_PER_MIN });
+      }
+      const b = body.data;
+      if ('beat' in b) return reply.send(await addBeat(req.ctx, userId, b.beat));
+      if ('skip' in b) return reply.send(await skipFirstSession(req.ctx, userId));
+      return reply.send(await replayFirstSession(req.ctx, userId));
     },
   );
 
@@ -191,6 +243,7 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const svc = new LotteryService(req.ctx);
       const result = await svc.roll(req.user!.sub, req.user!.wal);
+      await onOriginRolled(req.ctx, req.user!.sub);
       return reply.send(result);
     },
   );
@@ -339,6 +392,8 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       home,
       minerTier: uRow.miner_tier || 'none',
       flags: {
+        // The first-session onboarding: new accounts start `active`, older ones read `done`.
+        firstSession: await getFirstSession(req.ctx, userId),
         lotteryRolled: uRow.lottery_rolled_at !== null,
         hasCharacter: chRow !== undefined,
         // Optional per the contract: omitted when the dream's metric has no
