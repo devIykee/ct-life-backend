@@ -1,3 +1,7 @@
+## 2026-10-26 - Log privacy: client IPs truncated in request logs
+
+No API change. HTTP request logs now carry only `method`, `path` (no query string) and a truncated client IP (IPv4 /24, IPv6 /48) instead of the full address Fastify logged by default (`trustProxy: true` made it the real client). See `docs/LOGS.md` for what is kept where; the hosting platform's own access-log retention is not controlled by this repo and is still to be checked.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
