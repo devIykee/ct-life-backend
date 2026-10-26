@@ -18,6 +18,7 @@
  * Every write needs an Idempotency-Key; a replay returns the first answer
  * and charges once. Writes that stake Cash also pass a tight per-player
  * rate limit. The client never sends an outcome, a multiplier or a price.
+ * A settled big win (10x+, $10+) becomes a Timeline city card (city-cards.ts).
  */
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
@@ -41,6 +42,7 @@ import {
   playSlots,
   selfExclude,
 } from '../../application/casino.js';
+import { cardCasinoWin } from '../../application/city-cards.js';
 
 const Stake = z.number().int().min(1).max(10_000_000);
 const Side = z.enum(['heads', 'tails']);
@@ -103,19 +105,28 @@ export function registerCasinoRoutes(app: FastifyInstance): void {
 
   app.post('/v1/casino/slots/spin', bet, async (req, reply) => {
     const body = parse(SlotsBody, req.body);
-    return reply.status(201).send(await playSlots(req.ctx, req.user!.sub, body.stakeCents));
+    const out = await playSlots(req.ctx, req.user!.sub, body.stakeCents);
+    await cardCasinoWin(req.ctx, req.user!.sub, out.round);
+    return reply.status(201).send(out);
   });
 
   app.post('/v1/casino/crash/bet', bet, async (req, reply) => {
     const body = parse(CrashBetBody, req.body);
-    return reply
-      .status(201)
-      .send(await placeCrashBet(req.ctx, req.user!.sub, body.stakeCents, body.autoCashout ?? null));
+    const out = await placeCrashBet(
+      req.ctx,
+      req.user!.sub,
+      body.stakeCents,
+      body.autoCashout ?? null,
+    );
+    await cardCasinoWin(req.ctx, req.user!.sub, out.round);
+    return reply.status(201).send(out);
   });
 
   app.post('/v1/casino/crash/cashout', bet, async (req, reply) => {
     const body = parse(CrashCashoutBody, req.body);
-    return reply.status(200).send(await cashoutCrash(req.ctx, req.user!.sub, body.roundId));
+    const out = await cashoutCrash(req.ctx, req.user!.sub, body.roundId);
+    await cardCasinoWin(req.ctx, req.user!.sub, out.round);
+    return reply.status(200).send(out);
   });
 
   app.post('/v1/casino/coinflip/bet', bet, async (req, reply) => {

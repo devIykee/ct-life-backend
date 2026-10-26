@@ -30,6 +30,7 @@ import { ammQuote } from './amm.js';
 import { sampleHiddenArc, type HiddenArc } from './hidden-arc.js';
 import type { AppContext } from './context.js';
 import { publishWorldEvent } from './realtime-bus.js';
+import { cardCoinLaunch } from './city-cards.js';
 
 const COIN_SUPPLY = 1_000_000_000n; // 1B base units
 const BASE_PRICE_MICROS = 1_000n; // 0.001 USDC per base unit at launch
@@ -104,6 +105,11 @@ export async function launchCoin(ctx: AppContext, input: LaunchInput): Promise<L
   await publishWorldEvent(ctx, 'evt_coin_launch', {
     coinId,
     ticker: input.ticker.toUpperCase(),
+  });
+  await cardCoinLaunch(ctx, {
+    coinId,
+    ticker: input.ticker.toUpperCase(),
+    launcherUserId: input.userId,
   });
   return {
     coinId,

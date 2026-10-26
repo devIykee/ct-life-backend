@@ -4,8 +4,7 @@
  *   GET  /v1/dms                  - thread index (one row per peer)
  *   GET  /v1/dms/:userId?before=
  *   POST /v1/dms/:userId
- *   GET  /v1/feed?scope=global|following
- *   POST /v1/feed/posts
+ *   GET  /v1/feed, POST /v1/feed/posts  (timeline.ts)
  *   POST /v1/follows/:userId
  *   DELETE /v1/follows/:userId
  *
@@ -21,6 +20,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { assertCleanText, assertNotMuted } from './moderation.js';
 import type { AppContext } from './context.js';
 import { publishToUser } from './realtime-bus.js';
+import { createPlayerPost, listTimeline, type TimelinePost } from './timeline.js';
 
 export interface DmRow {
   readonly messageId: string;
@@ -40,7 +40,6 @@ export interface DmThread {
 }
 
 const DM_TEXT_MAX = 500;
-const POST_TEXT_MAX = 280;
 const FEED_PAGE = 50;
 
 /**
@@ -180,77 +179,22 @@ export async function sendDm(
   return { messageId, fromUserId, toUserId, text, at, createdAt: at };
 }
 
-export interface FeedPost {
-  readonly postId: string;
-  readonly userId: string;
-  readonly alias: string;
-  readonly text: string;
-  readonly createdAt: string;
-  /**
-   * 'player' for a normal post, 'sleuth' for an NPC exposé, 'career' for a server-written
-   * post about the player's own career (author = the player; text is server-templated).
-   */
-  readonly kind?: 'player' | 'sleuth' | 'career';
-  /**
-   * Sleuth posts: `{coinId, ticker, launcherUserId, launcherAlias, sellSharePct, heat, deepLink}`.
-   * Career posts: `{event: 'back_to_trenches' | 'glow_up', jobId, deepLink}`.
-   */
-  readonly meta?: Record<string, unknown> | null;
-}
+/** A Timeline post (see timeline.ts for the fields). */
+export type FeedPost = TimelinePost;
 
 /**
- * List the feed. Scope:
- *   'global'    — newest FEED_PAGE posts
- *   'following' — posts from users the requester follows
+ * The feed as the older API saw it: 'global' is the For-you tab, 'following'
+ * the Following tab. Kept for callers that predate the tabs.
  */
 export async function listFeed(
   ctx: AppContext,
   userId: string,
   scope: 'global' | 'following',
 ): Promise<FeedPost[]> {
-  const params: unknown[] = [];
-  let join = '';
-  let where = '';
-  if (scope === 'following') {
-    params.push(userId);
-    join = `JOIN follows f ON f.followee_user_id = p.user_id AND f.follower_user_id = $${params.length}`;
-    where = '';
-  } else {
-    where = '';
-  }
-  params.push(FEED_PAGE);
-  const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{
-      post_id: string;
-      user_id: string;
-      alias: string;
-      text: string;
-      created_at: Date;
-      kind: string | null;
-      meta: Record<string, unknown> | null;
-    }>(
-      `SELECT p.post_id, p.user_id,
-              CASE WHEN p.kind = 'sleuth' THEN 'The Sleuth' ELSE COALESCE(ch.alias, u.wallet) END AS alias,
-              p.text, p.created_at, p.kind, p.meta
-       FROM feed_posts p
-       JOIN users u ON u.id = p.user_id
-       LEFT JOIN characters ch ON ch.user_id = p.user_id
-       ${join}
-       ${where}
-       ORDER BY p.created_at DESC
-       LIMIT $${params.length}`,
-      params,
-    );
+  const page = await listTimeline(ctx, userId, {
+    tab: scope === 'following' ? 'following' : 'foryou',
   });
-  return r.rows.map((row) => ({
-    postId: row.post_id,
-    userId: row.user_id,
-    alias: row.alias,
-    text: row.text,
-    createdAt: row.created_at.toISOString(),
-    kind: row.kind === 'sleuth' ? 'sleuth' : row.kind === 'career' ? 'career' : 'player',
-    meta: row.kind === 'sleuth' || row.kind === 'career' ? row.meta : null,
-  }));
+  return page.posts;
 }
 
 /**

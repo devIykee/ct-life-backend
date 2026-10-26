@@ -44,6 +44,7 @@ import {
 import { sampleHiddenArc } from './hidden-arc.js';
 import { getHeat, type HeatLevel } from './player-heat.js';
 import { publishWorldEvent } from './realtime-bus.js';
+import { cardCoinLaunch } from './city-cards.js';
 import { getCoin, type CoinDetail } from './terminal-cafe.js';
 
 /** Art ids the client maps to coin art. [Inference: placeholder set; FE can extend by PR.] */
@@ -381,6 +382,12 @@ export async function launchFactoryCoin(
       playerLaunched: '1',
       templateId: done.coin.templateId,
       creatorAlias: done.coin.creator.alias,
+    });
+    await cardCoinLaunch(ctx, {
+      coinId: done.coin.coinId,
+      ticker: done.coin.ticker,
+      launcherUserId: userId,
+      launcherAlias: done.coin.creator.alias,
     });
   }
   return done;

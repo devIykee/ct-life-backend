@@ -15,6 +15,7 @@ import type { Logger } from 'pino';
 import { launchCoin } from '../application/launchpad.js';
 import { MarketEngine, type MarketConfig } from '../application/market-engine.js';
 import { publishWorldEvent } from '../application/realtime-bus.js';
+import { cardCoinRug } from '../application/city-cards.js';
 import type { AppContext } from '../application/context.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 
@@ -96,6 +97,7 @@ export async function startMarketSim(ctx: AppContext, log: Logger): Promise<() =
     onDead: async (coin) => {
       log.info({ coinId: coin.coinId, ticker: coin.ticker }, 'coin died');
       await publishWorldEvent(ctx, 'evt_rug', { coinId: coin.coinId, ticker: coin.ticker });
+      await cardCoinRug(ctx, { coinId: coin.coinId, ticker: coin.ticker, reason: 'dead' });
     },
   });
   for (const id of await liveCoinIds(ctx)) await engine.track(id);

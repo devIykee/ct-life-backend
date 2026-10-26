@@ -12,8 +12,9 @@
  *
  *   score(tribe, district, day) =
  *     base_score_per_day
- *     + count of feed_posts in that district by members of that
- *       tribe (joined through characters.tribe_id) on that day.
+ *     + posts and check-ins in that district by members of that tribe
+ *       (joined through characters.tribe_id) on that day, at most
+ *       MAX_POSTS_PER_PLAYER_PER_DAY per player.
  *
  * Districts with zero activity roll over to their
  * `default_holder_tribe_id` (the tribe whose `homeTurf` matches
@@ -22,10 +23,43 @@
 import type { AppContext } from '../application/context.js';
 import { rollDailyDistrict } from '../application/tribes.js';
 
-interface ActivityRow {
+export interface ActivityRow {
   district_id: string;
   tribe_id: string;
   post_count: number;
+}
+
+/** Most posts one player can add to a district's score per day. */
+export const MAX_POSTS_PER_PLAYER_PER_DAY = 3;
+
+/**
+ * The day's activity per district and tribe: player posts and check-ins (not
+ * server-written career posts or NPC authors), each player counting at most
+ * MAX_POSTS_PER_PLAYER_PER_DAY times per district, so one spammer cannot carry
+ * a tribe. feed_posts.district_slug is set from the server's position hash
+ * when a player posts (migration 102).
+ * @param ctx - The app context.
+ * @param dayDate - The UTC day, YYYY-MM-DD.
+ * @returns One row per district and tribe with activity.
+ */
+export async function districtActivity(ctx: AppContext, dayDate: string): Promise<ActivityRow[]> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<ActivityRow>(
+      `SELECT d.district_id, ch.tribe_id, SUM(LEAST(per_user.n, $2))::int AS post_count
+         FROM (SELECT p.user_id, p.district_slug, COUNT(*) AS n
+                 FROM feed_posts p
+                WHERE p.district_slug IS NOT NULL
+                  AND (p.kind IS NULL OR p.kind IN ('player', 'checkin'))
+                  AND p.created_at >= $1::timestamptz
+                  AND p.created_at < $1::timestamptz + interval '1 day'
+                GROUP BY p.user_id, p.district_slug) per_user
+         JOIN districts d ON d.slug = per_user.district_slug
+         JOIN characters ch ON ch.user_id = per_user.user_id
+        GROUP BY d.district_id, ch.tribe_id`,
+      [`${dayDate}T00:00:00Z`, MAX_POSTS_PER_PLAYER_PER_DAY],
+    ),
+  );
+  return r.rows;
 }
 
 /**
@@ -37,24 +71,7 @@ export async function rollDistrictRollover(
   dayDate: string,
   now: Date = new Date(),
 ): Promise<{ changed: number }> {
-  // Pull the day's activity per tribe per district. The tribe_id
-  // is the poster's character.tribe_id.
-  const activity = await ctx.db.withConnection(async (c) => {
-    return c.query<ActivityRow>(
-      `SELECT d.district_id,
-              COALESCE(ch.tribe_id, 'anon') AS tribe_id,
-              COALESCE(COUNT(p.post_id), 0)::int AS post_count
-       FROM districts d
-       LEFT JOIN characters ch ON true
-       LEFT JOIN feed_posts p
-         ON p.user_id = ch.user_id
-            AND p.district_slug = d.slug
-            AND p.created_at >= $1::timestamptz
-            AND p.created_at < $2::timestamptz
-       GROUP BY d.district_id, ch.tribe_id`,
-      [`${dayDate}T00:00:00Z`, `${dayDate}T23:59:59.999Z`],
-    );
-  });
+  const activity = { rows: await districtActivity(ctx, dayDate) };
   // Districts + their default holders + base scores.
   const districts = await ctx.db.withConnection(async (c) => {
     return c.query<{
