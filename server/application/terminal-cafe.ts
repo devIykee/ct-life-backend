@@ -37,6 +37,7 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ammQuote } from './amm.js';
 import type { AppContext } from './context.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { checkCreatorRug, recordFactoryTrade } from './factory-rug.js';
 
 export type Stage = 'new' | 'final' | 'graduated' | 'dead';
@@ -510,6 +511,10 @@ export async function executeTrade(ctx: AppContext, input: TradeInput): Promise<
     // After the trade has committed: a creator dumping on holders is flagged,
     // heated and exposed. A failure here must not undo or fail the trade.
     await checkCreatorRug(ctx, input.coinId, input.userId).catch(() => null);
+  }
+  // A market buy is the first-trade moment for onboarding (a sell is not).
+  if (input.side === 'buy') {
+    await recordOnboardingEvent(ctx, input.userId, 'trade_open', `trade:${uuidv7()}`);
   }
   return result;
 }

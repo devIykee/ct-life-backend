@@ -45,7 +45,8 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { nextUtcMidnight } from './daily-streak.js';
 import { decodePos, POS_FRESH_MS, POS_HASH } from '../realtime/movement.js';
 import { awardActionXpInTx, publishPromotion, type PromotionInfo } from './ladders.js';
-import { publishToUser, refreshOutfit } from './realtime-bus.js';
+import { publishToUser } from './realtime-bus.js';
+import { recordOnboardingEvent } from './onboarding.js';
 import { recordQuestEvent } from './quests.js';
 import { creditCash, ensureRewardCatalog, grantCosmetic } from './rewards.js';
 import type { AppContext } from './context.js';
@@ -734,8 +735,8 @@ export async function startShift(
     };
   });
   if (out.unlock.newly) await announceUnlock(ctx, userId, out.unlock.reason, now);
-  // A new shift puts the player in the crew outfit for everyone who can see them.
-  if (!out.resumed) await refreshOutfit(ctx, userId);
+  if (!out.resumed)
+    await recordOnboardingEvent(ctx, userId, 'shift_start', `rb:${out.view.shiftId}`, now);
   return { ...out.view, resumed: out.resumed, postId: out.postId };
 }
 

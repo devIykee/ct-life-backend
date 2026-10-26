@@ -326,41 +326,42 @@ ct-life-backend/
 
 ### Optional and tuning
 
-| Variable                          | Purpose                                                                       |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `NODE_ENV`                        | `development` or `production`; follows `APP_ENV`                              |
-| `LOG_LEVEL`                       | Log level (`info` default)                                                    |
-| `JWT_PUBLIC_KEY`                  | JWT verification key (PEM), pairs with `JWT_PRIVATE_KEY`                      |
-| `HELIUS_API_KEY`                  | Helius API key                                                                |
-| `HELIUS_RPC_URL_DEVNET`           | Helius devnet RPC URL                                                         |
-| `HELIUS_RPC_URL_MAINNET`          | Helius mainnet RPC URL                                                        |
-| `SOLANA_RPC_URL_DEVNET`           | Solana devnet RPC URL                                                         |
-| `SOLANA_RPC_URL_MAINNET`          | Solana mainnet RPC URL                                                        |
-| `TREASURY_PUBKEY_DEVNET`          | Devnet treasury wallet address                                                |
-| `SETTLE_AUTHORITY_KEYPAIR_DEVNET` | Devnet escrow settle-authority keypair                                        |
-| `ADMIN_KEYPAIR_DEVNET`            | Devnet escrow admin keypair                                                   |
-| `LIVEKIT_URL`                     | LiveKit server URL                                                            |
-| `LIVEKIT_WEBHOOK_SECRET`          | LiveKit webhook secret                                                        |
-| `S3_ENDPOINT`                     | S3/MinIO endpoint                                                             |
-| `S3_ACCESS_KEY`                   | S3 access key                                                                 |
-| `S3_SECRET_KEY`                   | S3 secret key                                                                 |
-| `ADMIN_WALLETS`                   | Comma-separated wallets allowed on admin routes                               |
-| `WIRE_V3_KINDS`                   | `true` once the client sends the v3 vehicle kinds (default `false`)           |
-| `CASINO_DAILY_STAKE_CAP_CENTS`    | Rug Room daily stake cap per player, cents (default 50000)                    |
-| `CASINO_DAILY_LOSS_CAP_CENTS`     | Rug Room daily net-loss cap per player, cents (default 25000)                 |
-| `EVENT_IRL_BONUS_CENTS`           | One-time Cash bonus for an IRL event check-in, cents (default 10000)          |
-| `TIP_FEE_BPS`                     | Fee burned on every Cash tip, basis points (default 300 = 3%, 0 turns it off) |
-| `LLM_MODEL`                       | LLM model id for the AI NPCs                                                  |
-| `X_CLIENT_ID`                     | X (Twitter) OAuth client id                                                   |
-| `X_CLIENT_SECRET`                 | X OAuth client secret                                                         |
-| `X_REDIRECT_URI`                  | X OAuth redirect URI                                                          |
-| `X_AUTHORIZE_URL`                 | X OAuth authorize URL                                                         |
-| `X_TOKEN_URL`                     | X OAuth token URL                                                             |
-| `X_ME_URL`                        | X API "me" URL                                                                |
-| `PORT_WORKERS`                    | Workers healthz port (`0` = no HTTP listener)                                 |
-| `TEST_DATABASE_URL`               | Postgres used by tests                                                        |
-| `TEST_SCHEMA`                     | Schema name used by tests                                                     |
-| `RUN_MAINNET_TESTS`               | `1` runs the read-only mainnet tests (off by default)                         |
+| Variable                          | Purpose                                                                                                                                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `NODE_ENV`                        | `development` or `production`; follows `APP_ENV`                                                                                                                                                 |
+| `LOG_LEVEL`                       | Log level (`info` default)                                                                                                                                                                       |
+| `JWT_PUBLIC_KEY`                  | JWT verification key (PEM), pairs with `JWT_PRIVATE_KEY`                                                                                                                                         |
+| `HELIUS_API_KEY`                  | Helius API key                                                                                                                                                                                   |
+| `HELIUS_RPC_URL_DEVNET`           | Helius devnet RPC URL                                                                                                                                                                            |
+| `HELIUS_RPC_URL_MAINNET`          | Helius mainnet RPC URL                                                                                                                                                                           |
+| `SOLANA_RPC_URL_DEVNET`           | Solana devnet RPC URL                                                                                                                                                                            |
+| `SOLANA_RPC_URL_MAINNET`          | Solana mainnet RPC URL                                                                                                                                                                           |
+| `TREASURY_PUBKEY_DEVNET`          | Devnet treasury wallet address                                                                                                                                                                   |
+| `SETTLE_AUTHORITY_KEYPAIR_DEVNET` | Devnet escrow settle-authority keypair                                                                                                                                                           |
+| `ADMIN_KEYPAIR_DEVNET`            | Devnet escrow admin keypair                                                                                                                                                                      |
+| `LIVEKIT_URL`                     | LiveKit server URL                                                                                                                                                                               |
+| `LIVEKIT_WEBHOOK_SECRET`          | LiveKit webhook secret                                                                                                                                                                           |
+| `S3_ENDPOINT`                     | S3/MinIO endpoint                                                                                                                                                                                |
+| `S3_ACCESS_KEY`                   | S3 access key                                                                                                                                                                                    |
+| `S3_SECRET_KEY`                   | S3 secret key                                                                                                                                                                                    |
+| `ADMIN_WALLETS`                   | Comma-separated wallets allowed on admin routes                                                                                                                                                  |
+| `WIRE_V3_KINDS`                   | `true` once the client sends the v3 vehicle kinds (default `false`)                                                                                                                              |
+| `CASINO_DAILY_STAKE_CAP_CENTS`    | Rug Room daily stake cap per player, cents (default 50000)                                                                                                                                       |
+| `CASINO_DAILY_LOSS_CAP_CENTS`     | Rug Room daily net-loss cap per player, cents (default 25000)                                                                                                                                    |
+| `EVENT_IRL_BONUS_CENTS`           | One-time Cash bonus for an IRL event check-in, cents (default 10000)                                                                                                                             |
+| `TIP_FEE_BPS`                     | Fee burned on every Cash tip, basis points (default 300 = 3%, 0 turns it off)                                                                                                                    |
+| `LIVE_PHASE`                      | Release phase the deployment has opened, 1 to 6 (default 1). Sent as `livePhase` in `GET /config`; the client opens the apps of every phase up to it. Set 6 to open all apps for private testers |
+| `LLM_MODEL`                       | LLM model id for the AI NPCs                                                                                                                                                                     |
+| `X_CLIENT_ID`                     | X (Twitter) OAuth client id                                                                                                                                                                      |
+| `X_CLIENT_SECRET`                 | X OAuth client secret                                                                                                                                                                            |
+| `X_REDIRECT_URI`                  | X OAuth redirect URI                                                                                                                                                                             |
+| `X_AUTHORIZE_URL`                 | X OAuth authorize URL                                                                                                                                                                            |
+| `X_TOKEN_URL`                     | X OAuth token URL                                                                                                                                                                                |
+| `X_ME_URL`                        | X API "me" URL                                                                                                                                                                                   |
+| `PORT_WORKERS`                    | Workers healthz port (`0` = no HTTP listener)                                                                                                                                                    |
+| `TEST_DATABASE_URL`               | Postgres used by tests                                                                                                                                                                           |
+| `TEST_SCHEMA`                     | Schema name used by tests                                                                                                                                                                        |
+| `RUN_MAINNET_TESTS`               | `1` runs the read-only mainnet tests (off by default)                                                                                                                                            |
 
 ## Testing
 

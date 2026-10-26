@@ -1,8 +1,16 @@
-## 2026-10-26 - PlayerState.outfit (Rekt Burger crew outfit)
+## 2026-10-25 - Real nod positions
 
-Stacked on the Rekt Burger clock-in (#21).
+- `contract/ids/nods.json` is the frontend's confirmed export (ct-life 0d2713066, version 1.0.0, no longer provisional): the 80 nods now have the placed props' real island positions instead of placeholder grid points. No id, name, set, tier or district changed (checked against the previous file: 0 added, 0 removed, 6 sets identical). `POST /nods/{id}/collect` still checks the server's own fresh position against `x`/`z` within `radiusM` (default 15 m), so collects now work where the props actually stand. Every nod is on island land and at least 16 m from the next.
+## 2026-10-25 - Starter quests and the first session (onboarding)
 
-- Realtime `PlayerState` (street, venue and home rooms) gets `outfit: string` as its last field (absent, null on the client, when none). It is `rekt_burger_crew` while the player has an open Rekt Burger shift, or owns `reward_rekt_burger_uniform` and has it in the `topId` field of their look (the key in any other field, or in `topId` without owning it, shows nothing), so every viewer sees the on-shift uniform. Server-authoritative: it is read from the database on join and pushed to the rooms when it changes (clock in, clock out, the server's auto-close at the maximum, leaving the job, `PATCH /characters/me/look` equipping or removing the uniform). No client message carries or sets it. `PATCH /characters/me/look` (and character creation) now refuse a catalogue or cosmetic key as `skinTone` (`400 VALIDATION_FAILED`, `reason: look_item_in_non_item_field`). No migration.
+Stacked on #21 (clock-in) and #22 (`LIVE_PHASE`); merge those first. Migration 097.
+
+- **Starter quests.** `GET /quests` gets a `starter: {quests}` group, listed first (the response is `{starter, daily, weekly}`), and every quest now has `pool: starter|daily|weekly`. A NEW account (created after migration 097) is given them once, at character creation or on its first `GET /quests`, and they are never reseeded; older accounts get none (`starter.quests` is `[]`). `q_starter_shift` First shift (verb `shift_start`, 1000 cents + 20 Season XP, `ctlife://jobs`), `q_starter_trade` First trade (verb `trade_open`, 500 + 20, `ctlife://pulse`), `q_starter_chest` GM (verb `chest_open`, 500 + 20, `ctlife://chest`). The trade quest is only given while markets are live for the deployment (`livePhase` 2 or more); if markets open later it is added to accounts already seeded. They claim like any quest: `POST /quests/{id}/claim`, ledger `quest_reward`, Season XP.
+- **New verbs.** `shift_start` (a Rekt Burger clock-in that opens a shift, or `POST /shifts`), `trade_open` (a market buy, or a perp open), `chest_open` (the daily chest claim, first claim of the day). Each fires from the real server action after it commits.
+- **`GET /me` `flags.firstSession`** = `{state: active|skipped|done, startedAt, completedAt, beats}`, `beats` a subset of `origin, character, home, moved, shift, trade, quest, chest`. A new account starts `active`; an older account reads `{state: 'done', startedAt: null, completedAt: null, beats: []}`.
+- **`POST /me/first-session`** (auth, Idempotency-Key, 20 a minute): exactly one of `{beat}`, `{skip: true}`, `{replay: true}`; the reply is the new object. An unknown beat or any other body is `400 VALIDATION_FAILED`. It becomes `done` when every applicable beat is in (`trade` applies only while markets are live). `skip` sets `skipped`. `replay` sets `active`, clears `moved, shift, trade, quest, chest`, keeps `origin, character, home`, restarts `startedAt`.
+- **Server-set beats.** `origin` on `POST /lottery/roll`, `character` on `POST /characters`, `shift`, `trade` and `chest` from the same events as the starter quests. The client reports `home`, `moved`, `quest`.
+- Migration 097 adds `onboarding_meta` (the epoch: when it ran), `onboarding_state`, `starter_quests` and lets `quest_progress.pool` be `starter`.
 
 ## 2026-10-25 - Rekt Burger is a clock-in job (replaces the per-ticket minigame)
 
@@ -17,6 +25,10 @@ Migration 096. Changes what #16 shipped.
 - Economics (config `careers.json` `rektBurger`): 50 cents/minute, longest shift 3,600 s (3,000 cents), daily cap unchanged at 4,500 cents (90 minutes on the clock); the per-ticket design paid up to 1,500 cents per 3-minute shift and the same 4,500 cap.
 - Career XP is time-based (1 per minute), only for a player on a ladder, under the shared daily action cap; a shift under 120 s is paid but earns no XP, quest progress or uniform. Unlock rules (Trencher, broke, liquidated) are unchanged.
 - Migration 096 adds `rekt_burger_shifts.seconds, end_reason, career_xp` and an index for the sweep.
+## 2026-10-25 - GET /config sends `livePhase`
+
+- `GET /config` has a new top-level `livePhase` (integer 1 to 6), from the server env `LIVE_PHASE` (default 1, so nothing changes until it is set; a value outside 1 to 6 or not a number makes the API fail to start). The client reads it (it also accepts `phase` or `meta.livePhase`) to open the apps of every phase up to it and show "Coming soon" for the rest, instead of falling back to its build default. The payload (and so its ETag) changes only when `LIVE_PHASE` does.
+- Ops: set `LIVE_PHASE=6` on the api service to open all apps for private testers.
 
 ## 2026-10-25 - Cash tips burn a 3% fee
 

@@ -241,7 +241,7 @@ describe('self-exclusion', () => {
       () => playSlots(ctx, u, 500, at(1000)),
       () => playCoinflip(ctx, u, 500, 'tails', at(1000)),
       () => placeCrashBet(ctx, u, 500, null, at(1000)),
-      () => createChallenge(ctx, u, uuidv7(), 500, 'heads', at(1000)),
+      () => createChallenge(ctx, u, uuidv7(), 'heads', at(1000)),
     ];
     for (const c of calls) await expect(c()).rejects.toBeInstanceOf(SelfExcludedError);
     expect(await cash(u)).toBe(100_000);
@@ -535,136 +535,113 @@ describe('crash', () => {
   });
 });
 
-describe('head-to-head coinflip', () => {
-  it('escrows the stake, settles on accept, pays pot minus 5% and writes a round for each player', async () => {
+describe('head-to-head coinflip: bragging rights, no Cash moves', () => {
+  const snapshot = async (...ids: string[]) =>
+    Promise.all(ids.map(async (i) => [await cash(i), (await ledger(i)).length] as const));
+
+  it('creates and settles a challenge without moving any Cash or writing a ledger or round row', async () => {
     const a = await newUser({ cash: 10_000 });
     const b = await newUser({ cash: 10_000 });
-    const created = await createChallenge(ctx, a, b, 1_000, 'heads', T0);
-    expect(created.challenge).toMatchObject({
-      role: 'challenger',
-      status: 'open',
-      stakeCents: 1_000,
-      seed: null,
-    });
+    const before = await snapshot(a, b);
+    const created = await createChallenge(ctx, a, b, 'heads', T0);
+    expect(created.challenge).toMatchObject({ role: 'challenger', status: 'open', seed: null });
+    expect(created.challenge).not.toHaveProperty('stakeCents');
     expect(created.challenge.expiresAt).toBe(at(120_000).toISOString());
     expect(created.disclaimer).toBe('Play money. No cash value. 18+');
-    expect(await cash(a)).toBe(9_000);
-    expect(await ledger(a)).toEqual([{ reason: 'casino_stake', delta: -1_000 }]);
+    expect(await snapshot(a, b)).toEqual(before);
 
     const id = created.challenge.challengeId;
     const accepted = await acceptChallenge(ctx, b, id, at(30_000));
     const c = accepted.challenge;
     expect(c.status).toBe('settled');
-    expect(c.potCents).toBe(2_000);
-    expect(c.houseCutCents).toBe(100);
-    expect(c.payoutCents).toBe(1_900);
     expect(hashSeed(c.seed!)).toBe(c.seedHash);
     const result = drawStream(c.seed!, `coinflip_h2h:${id}`)() < 0.5 ? 'heads' : 'tails';
     expect(c.result).toBe(result);
-    const winner = result === 'heads' ? a : b;
-    const loser = winner === a ? b : a;
-    expect(c.winnerId).toBe(winner);
-
-    expect(await cash(winner)).toBe(10_000 - 1_000 + 1_900);
-    expect(await cash(loser)).toBe(10_000 - 1_000);
-    // the 100 cent house cut is the only Cash that left the two players
-    expect((await cash(a)) + (await cash(b))).toBe(20_000 - 100);
-    expect(await ledger(winner)).toEqual([
-      { reason: 'casino_stake', delta: -1_000 },
-      { reason: 'casino_win', delta: 1_900 },
-    ]);
-    expect(await ledger(loser)).toEqual([{ reason: 'casino_stake', delta: -1_000 }]);
-
-    const rounds = await pool.query<{ user_id: string; payout_cents: string; seed_hash: string }>(
-      `SELECT user_id, payout_cents, seed_hash FROM casino_rounds WHERE challenge_id = $1`,
+    expect(c.winnerId).toBe(result === 'heads' ? a : b);
+    for (const k of ['stakeCents', 'potCents', 'houseCutCents', 'payoutCents']) {
+      expect(c).not.toHaveProperty(k);
+    }
+    expect(accepted).not.toHaveProperty('round');
+    expect(await snapshot(a, b)).toEqual(before);
+    const rows = await pool.query(`SELECT 1 FROM casino_rounds WHERE challenge_id = $1`, [id]);
+    expect(rows.rowCount).toBe(0);
+    const stored = await pool.query(
+      `SELECT stake_cents, pot_cents, payout_cents FROM casino_challenges WHERE challenge_id = $1`,
       [id],
     );
-    expect(rounds.rows).toHaveLength(2);
-    expect(rounds.rows.find((r) => r.user_id === winner)!.payout_cents).toBe('1900');
-    expect(rounds.rows.find((r) => r.user_id === loser)!.payout_cents).toBe('0');
-    expect(rounds.rows.every((r) => r.seed_hash === c.seedHash)).toBe(true);
-    expect(accepted.round.game).toBe('coinflip_h2h');
+    expect(stored.rows[0]).toEqual({ stake_cents: '0', pot_cents: null, payout_cents: null });
   });
 
-  it('expires after 2 minutes: accept is refused CHALLENGE_EXPIRED and the stake comes back', async () => {
+  it('works for a player with no Cash at all (nothing is staked)', async () => {
+    const a = await newUser({ cash: 0 });
+    const b = await newUser({ cash: 0 });
+    const { challenge } = await createChallenge(ctx, a, b, 'tails', T0);
+    expect((await acceptChallenge(ctx, b, challenge.challengeId, at(1000))).challenge.status).toBe(
+      'settled',
+    );
+  });
+
+  it('expires after 2 minutes: accept is refused CHALLENGE_EXPIRED, with no Cash involved', async () => {
     const a = await newUser({ cash: 5_000 });
     const b = await newUser({ cash: 5_000 });
-    const { challenge } = await createChallenge(ctx, a, b, 800, 'tails', T0);
-    expect(await cash(a)).toBe(4_200);
+    const before = await snapshot(a, b);
+    const { challenge } = await createChallenge(ctx, a, b, 'tails', T0);
     await expect(
       acceptChallenge(ctx, b, challenge.challengeId, at(120_001)),
     ).rejects.toBeInstanceOf(ChallengeExpiredError);
-    expect(await cash(a)).toBe(5_000);
-    expect(await cash(b)).toBe(5_000);
-    expect(await ledger(a)).toEqual([
-      { reason: 'casino_stake', delta: -800 },
-      { reason: 'casino_refund', delta: 800 },
-    ]);
-    expect(await ledger(b)).toEqual([]);
-    // and it stays expired
+    expect(await snapshot(a, b)).toEqual(before);
     await expect(
       acceptChallenge(ctx, b, challenge.challengeId, at(121_000)),
     ).rejects.toBeInstanceOf(ChallengeExpiredError);
-    expect(await cash(a)).toBe(5_000);
   });
 
-  it('the sweep refunds an unanswered challenge exactly once', async () => {
-    const a = await newUser({ cash: 5_000 });
-    const b = await newUser({ cash: 5_000 });
-    const { challenge } = await createChallenge(ctx, a, b, 700, 'heads', T0);
+  it('the sweep and a listing expire an unanswered challenge once', async () => {
+    const a = await newUser();
+    const b = await newUser();
+    const { challenge } = await createChallenge(ctx, a, b, 'heads', T0);
     expect((await sweepCasino(ctx, at(60_000), a)).challenges).toBe(0);
-    expect(await cash(a)).toBe(4_300);
     expect((await sweepCasino(ctx, at(121_000), a)).challenges).toBe(1);
     expect((await sweepCasino(ctx, at(122_000), a)).challenges).toBe(0);
-    expect(await cash(a)).toBe(5_000);
-    expect((await ledger(a)).filter((r) => r.reason === 'casino_refund')).toHaveLength(1);
     const list = await listChallenges(ctx, a, at(130_000));
     expect(list.challenges[0]).toMatchObject({
       challengeId: challenge.challengeId,
       status: 'expired',
     });
+    const c = await createChallenge(ctx, a, b, 'heads', at(200_000));
+    expect((await listChallenges(ctx, a, at(400_000))).challenges[0]!.status).toBe('expired');
+    expect(c.challenge.status).toBe('open');
   });
 
-  it('listing challenges also refunds the ones that ran out', async () => {
-    const a = await newUser({ cash: 5_000 });
-    const b = await newUser({ cash: 5_000 });
-    await createChallenge(ctx, a, b, 700, 'heads', T0);
-    const list = await listChallenges(ctx, a, at(200_000));
-    expect(list.challenges[0]!.status).toBe('expired');
-    expect(await cash(a)).toBe(5_000);
-  });
-
-  it('cancel and decline refund the challenger; only the right side may use each', async () => {
-    const a = await newUser({ cash: 5_000 });
-    const b = await newUser({ cash: 5_000 });
-    const c1 = (await createChallenge(ctx, a, b, 500, 'heads', T0)).challenge;
+  it('cancel and decline close it; only the right side may use each', async () => {
+    const a = await newUser();
+    const b = await newUser();
+    const c1 = (await createChallenge(ctx, a, b, 'heads', T0)).challenge;
     await expect(closeChallenge(ctx, b, c1.challengeId, 'cancel', at(1))).rejects.toBeInstanceOf(
       ForbiddenError,
     );
     await expect(closeChallenge(ctx, a, c1.challengeId, 'decline', at(1))).rejects.toBeInstanceOf(
       ForbiddenError,
     );
-    const cancelled = await closeChallenge(ctx, a, c1.challengeId, 'cancel', at(2));
-    expect(cancelled.challenge.status).toBe('cancelled');
-    expect(await cash(a)).toBe(5_000);
+    expect((await closeChallenge(ctx, a, c1.challengeId, 'cancel', at(2))).challenge.status).toBe(
+      'cancelled',
+    );
     await expect(closeChallenge(ctx, a, c1.challengeId, 'cancel', at(3))).rejects.toBeInstanceOf(
       ChallengeNotOpenError,
     );
     await expect(acceptChallenge(ctx, b, c1.challengeId, at(4))).rejects.toBeInstanceOf(
       ChallengeNotOpenError,
     );
-
-    const c2 = (await createChallenge(ctx, a, b, 500, 'heads', T0)).challenge;
-    const declined = await closeChallenge(ctx, b, c2.challengeId, 'decline', at(2));
-    expect(declined.challenge.status).toBe('declined');
-    expect(await cash(a)).toBe(5_000);
+    const c2 = (await createChallenge(ctx, a, b, 'heads', T0)).challenge;
+    expect((await closeChallenge(ctx, b, c2.challengeId, 'decline', at(2))).challenge.status).toBe(
+      'declined',
+    );
   });
 
-  it('a stranger gets 404, the challenger cannot accept their own challenge, and nothing is settled twice', async () => {
-    const a = await newUser({ cash: 5_000 });
-    const b = await newUser({ cash: 5_000 });
-    const stranger = await newUser({ cash: 5_000 });
-    const id = (await createChallenge(ctx, a, b, 500, 'heads', T0)).challenge.challengeId;
+  it('a stranger gets 404, the challenger cannot accept their own challenge, and it settles once', async () => {
+    const a = await newUser();
+    const b = await newUser();
+    const stranger = await newUser();
+    const id = (await createChallenge(ctx, a, b, 'heads', T0)).challenge.challengeId;
     await expect(acceptChallenge(ctx, stranger, id, at(1))).rejects.toBeInstanceOf(NotFoundError);
     await expect(closeChallenge(ctx, stranger, id, 'cancel', at(1))).rejects.toBeInstanceOf(
       NotFoundError,
@@ -676,43 +653,129 @@ describe('head-to-head coinflip', () => {
       acceptChallenge(ctx, b, id, at(2)),
     ]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    expect((await ledger(b)).filter((r) => r.reason === 'casino_stake')).toHaveLength(1);
-    expect(
-      (await ledger(a)).concat(await ledger(b)).filter((r) => r.reason === 'casino_win'),
-    ).toHaveLength(1);
   });
 
-  it('applies the gates to the challenger and, on accept, to the opponent', async () => {
+  describe('a legacy staked challenge (made before Cash became non-transferable)', () => {
+    /** An open challenge whose creator's stake was already debited, as the old code left it. */
+    async function legacy(stake: number, expiresInMs = 120_000) {
+      const a = await newUser({ cash: 10_000 });
+      const b = await newUser({ cash: 10_000 });
+      const id = uuidv7();
+      await pool.query(`UPDATE balances SET cash_cents = cash_cents - $2 WHERE user_id = $1`, [
+        a,
+        stake,
+      ]);
+      await pool.query(
+        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref, created_at)
+         VALUES ($1, $2, 'cash', 'casino_stake', 'casino_challenge', $3, $4, $5)`,
+        [a, -stake, id, `casino-stake:${a}:${id}`, T0],
+      );
+      await pool.query(
+        `INSERT INTO casino_challenges (challenge_id, challenger_id, opponent_id, stake_cents,
+           challenger_side, seed, seed_hash, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, 'heads', 's', 'h', $5, $6)`,
+        [id, a, b, stake, T0, at(expiresInMs)],
+      );
+      return { a, b, id };
+    }
+
+    it('accepting it is refused and refunds the creator exactly once; no second refund', async () => {
+      const { a, b, id } = await legacy(1_000);
+      expect(await cash(a)).toBe(9_000);
+      await expect(acceptChallenge(ctx, b, id, at(1_000))).rejects.toBeInstanceOf(
+        ChallengeNotOpenError,
+      );
+      expect(await cash(a)).toBe(10_000);
+      expect(await ledger(a)).toEqual([
+        { reason: 'casino_stake', delta: -1_000 },
+        { reason: 'casino_refund', delta: 1_000 },
+      ]);
+      expect(await cash(b)).toBe(10_000);
+      expect(await ledger(b)).toEqual([]);
+      // Again, and the other ways out: nothing is refunded twice.
+      await expect(acceptChallenge(ctx, b, id, at(2_000))).rejects.toBeInstanceOf(
+        ChallengeNotOpenError,
+      );
+      await expect(closeChallenge(ctx, a, id, 'cancel', at(3_000))).rejects.toBeInstanceOf(
+        ChallengeNotOpenError,
+      );
+      await sweepCasino(ctx, at(500_000));
+      expect(await cash(a)).toBe(10_000);
+      const row = await pool.query(`SELECT status FROM casino_challenges WHERE challenge_id = $1`, [
+        id,
+      ]);
+      expect(row.rows[0].status).toBe('cancelled');
+    });
+
+    it('two racing accepts refund once', async () => {
+      const { a, b, id } = await legacy(700);
+      await Promise.allSettled([
+        acceptChallenge(ctx, b, id, at(1)),
+        acceptChallenge(ctx, b, id, at(1)),
+      ]);
+      expect(await cash(a)).toBe(10_000);
+      expect((await ledger(a)).filter((r) => r.reason === 'casino_refund')).toHaveLength(1);
+    });
+
+    it('the creator cancelling, or the sweep expiring it, also returns the stake once', async () => {
+      const c1 = await legacy(500);
+      await closeChallenge(ctx, c1.a, c1.id, 'cancel', at(1_000));
+      expect(await cash(c1.a)).toBe(10_000);
+      const c2 = await legacy(600, 1_000);
+      await sweepCasino(ctx, at(5_000), c2.a);
+      await sweepCasino(ctx, at(6_000), c2.a);
+      expect(await cash(c2.a)).toBe(10_000);
+      expect((await ledger(c2.a)).filter((r) => r.reason === 'casino_refund')).toHaveLength(1);
+    });
+
+    it('the sweep refunds a staked challenge even before it expires', async () => {
+      const { a, id } = await legacy(800);
+      expect((await sweepCasino(ctx, at(10_000), a)).challenges).toBe(1);
+      expect(await cash(a)).toBe(10_000);
+      const row = await pool.query(`SELECT status FROM casino_challenges WHERE challenge_id = $1`, [
+        id,
+      ]);
+      expect(row.rows[0].status).toBe('cancelled');
+      expect((await sweepCasino(ctx, at(20_000), a)).challenges).toBe(0);
+    });
+
+    it('new stake-free challenges still work next to it', async () => {
+      const { b, id } = await legacy(1_000);
+      await expect(acceptChallenge(ctx, b, id, at(1_000))).rejects.toBeDefined();
+      const a2 = await newUser();
+      const fresh = await createChallenge(ctx, a2, b, 'tails', at(5_000));
+      expect(
+        (await acceptChallenge(ctx, b, fresh.challenge.challengeId, at(6_000))).challenge.status,
+      ).toBe('settled');
+    });
+  });
+
+  it('keeps the 18+ and self-exclusion gates (but no stake caps)', async () => {
     const a = await newUser();
     const minor = await newUser({ adult: false });
-    const poor = await newUser({ cash: 100 });
-    await expect(createChallenge(ctx, a, a, 500, 'heads', T0)).rejects.toBeInstanceOf(
+    await expect(createChallenge(ctx, a, a, 'heads', T0)).rejects.toBeInstanceOf(
       ValidationFailedError,
     );
-    await expect(createChallenge(ctx, a, uuidv7(), 500, 'heads', T0)).rejects.toBeInstanceOf(
+    await expect(createChallenge(ctx, a, uuidv7(), 'heads', T0)).rejects.toBeInstanceOf(
       NotFoundError,
     );
-    await expect(createChallenge(ctx, minor, a, 500, 'heads', T0)).rejects.toBeInstanceOf(
+    await expect(createChallenge(ctx, minor, a, 'heads', T0)).rejects.toBeInstanceOf(
       AgeRequiredError,
     );
-    // the opponent is a minor: accept is refused and the challenger can cancel for a refund
-    const c1 = (await createChallenge(ctx, a, minor, 500, 'heads', T0)).challenge;
+    const c1 = (await createChallenge(ctx, a, minor, 'heads', T0)).challenge;
     await expect(acceptChallenge(ctx, minor, c1.challengeId, at(1))).rejects.toBeInstanceOf(
       AgeRequiredError,
     );
-    // an opponent who cannot cover the stake
-    const c2 = (await createChallenge(ctx, a, poor, 500, 'heads', T0)).challenge;
-    await expect(acceptChallenge(ctx, poor, c2.challengeId, at(1))).rejects.toBeInstanceOf(
-      InsufficientCashError,
-    );
-    expect(await cash(poor)).toBe(100);
-    // a self-excluded opponent
     const ex = await newUser();
-    const c3 = (await createChallenge(ctx, a, ex, 500, 'heads', T0)).challenge;
+    const c3 = (await createChallenge(ctx, a, ex, 'heads', T0)).challenge;
     await selfExclude(ctx, ex, 1, at(1));
     await expect(acceptChallenge(ctx, ex, c3.challengeId, at(2))).rejects.toBeInstanceOf(
       SelfExcludedError,
     );
+    // Daily stake caps do not apply to a challenge that stakes nothing.
+    const capped = await newUser();
+    await seedLedger(capped, 'casino_stake', -3_000);
+    await expect(createChallenge(ctx, capped, a, 'heads', at(1))).resolves.toBeDefined();
   });
 
   it('refuses a challenge between players who blocked each other', async () => {
@@ -722,15 +785,14 @@ describe('head-to-head coinflip', () => {
       b,
       a,
     ]);
-    await expect(createChallenge(ctx, a, b, 500, 'heads', T0)).rejects.toBeInstanceOf(BlockedError);
+    await expect(createChallenge(ctx, a, b, 'heads', T0)).rejects.toBeInstanceOf(BlockedError);
   });
 
   it('caps open challenges per player', async () => {
-    const a = await newUser({ cash: 100_000 });
+    const a = await newUser();
     const b = await newUser();
-    // the daily stake cap is 3,000: five 100-cent challenges fit, the sixth is the open-challenge cap
-    for (let i = 0; i < 5; i++) await createChallenge(ctx, a, b, 100, 'heads', at(i));
-    await expect(createChallenge(ctx, a, b, 100, 'heads', at(10))).rejects.toBeInstanceOf(
+    for (let i = 0; i < 5; i++) await createChallenge(ctx, a, b, 'heads', at(i));
+    await expect(createChallenge(ctx, a, b, 'heads', at(10))).rejects.toBeInstanceOf(
       ValidationFailedError,
     );
   });

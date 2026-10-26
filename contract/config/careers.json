@@ -818,8 +818,7 @@
       "jobIds": ["kol_engagement", "shill_runner", "kol_manager"],
       "actionXp": {
         "alpha_call": 15,
-        "paid_call": 12,
-        "tip_send": 3
+        "paid_call": 12
       },
       "ranks": [
         {
