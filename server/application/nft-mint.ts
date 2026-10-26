@@ -1,6 +1,10 @@
 /**
  * Cosmetic NFT mint service (M5 #66).
  *
+ * Cash is purchasable but NON-transferable and has no cash-out, so nothing bought with
+ * Cash (or earned by playing) can be minted: `POST /nft/mint` answers 403
+ * NFT_MINT_NOT_ALLOWED unless the item was acquired on-chain (inventory source 'mint').
+ *
  * Endpoints:
  *
  *   POST /v1/nft/mint        — mint a Core asset for an item the
@@ -28,7 +32,11 @@
  *     in M5; the production code wires the real signer.
  */
 import { createHash } from 'node:crypto';
-import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import {
+  NftMintNotAllowedError,
+  NotFoundError,
+  ValidationFailedError,
+} from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
 
@@ -79,7 +87,32 @@ function syntheticSignature(userId: string, itemId: string, network: NftNetwork)
 }
 
 /**
- * Mint a Core asset for an item the user owns. The M5 dev
+ * How an owned cosmetic was acquired (`cosmetic_inventory.source`), which decides whether it
+ * may ever become an NFT.
+ *   shop   bought with Cash
+ *   grant  earned in the game (events, quests, streaks, season tiers, jackpots)
+ *   mint   acquired on-chain (an ORE or collection path)
+ */
+export type InventorySource = 'shop' | 'grant' | 'mint';
+
+/**
+ * The Cash wall. Cash is purchasable but never converts to anything tradable, so an item
+ * bought with Cash, or earned by playing with Cash, can never be minted as an NFT. Only an
+ * item that was itself acquired on-chain may be. A future on-chain swap must go through
+ * this guard.
+ * @throws NftMintNotAllowedError for a `shop` or `grant` item.
+ */
+export function assertMintable(source: InventorySource, itemId: string): void {
+  if (source !== 'mint') {
+    throw new NftMintNotAllowedError({
+      itemId,
+      reason: source === 'shop' ? 'bought_with_cash' : 'earned_in_game',
+    });
+  }
+}
+
+/**
+ * Mint a Core asset for an item the user owns, if it was acquired on-chain. The M5 dev
  * path records the nft_mints row directly; the production
  * code (M6+) will swap in the unsigned-v0 transaction flow
  * and the Helius webhook confirmation.
@@ -99,8 +132,8 @@ export async function mint(
   // is the source of truth: the mint flow is for items the
   // user already owns, not items they want to acquire.)
   const owned = await ctx.db.withConnection(async (c) => {
-    const r = await c.query<{ inventory_id: string }>(
-      `SELECT inventory_id FROM cosmetic_inventory WHERE user_id = $1 AND item_id = $2`,
+    const r = await c.query<{ inventory_id: string; source: InventorySource }>(
+      `SELECT inventory_id, source FROM cosmetic_inventory WHERE user_id = $1 AND item_id = $2`,
       [userId, args.itemId],
     );
     return r.rows[0];
@@ -108,6 +141,7 @@ export async function mint(
   if (!owned) {
     throw new NotFoundError({ reason: 'user does not own this cosmetic', itemId: args.itemId });
   }
+  assertMintable(owned.source, args.itemId);
   const mintAddress = deterministicAddress(userId, args.itemId);
   // Idempotency on mint_address: re-mint returns the existing row.
   const existing = await ctx.db.withConnection(async (c) => {

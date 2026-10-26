@@ -10,6 +10,12 @@ import { buildServer } from './main.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { createDb } from '../shared/db/pool.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
+import {
+  crashPointX100,
+  crashTimeMs,
+  drawStream,
+  readCasinoConfigFile,
+} from '../application/casino-math.js';
 
 const FAKE_PKCS8 = `-----BEGIN PRIVATE KEY-----
 MC4CAQAwBQYDK2VwBCIEIH4+zq3wXKb5xY9jQ8j6P4mY8Z3b1z9S6n2Y1z9R6n2
@@ -129,6 +135,24 @@ async function casinoLedger(u: AuthedUser): Promise<string[]> {
   });
 }
 
+async function openManualCrash(u: AuthedUser) {
+  await makeAdult(u);
+  const bet = await call(u, 'POST', '/v1/casino/crash/bet', { stakeCents: 200 });
+  expect(bet.status).toBe(201);
+  return bet;
+}
+
+/** The test reads the server's secret crash point from the database; a client never can. */
+async function crashLeavesTime(bet: { body: Record<string, unknown> }): Promise<boolean> {
+  const roundId = (bet.body.round as { roundId: string }).roundId;
+  const r = await db.withConnection((c) =>
+    c.query<{ seed: string }>(`SELECT seed FROM casino_rounds WHERE round_id = $1`, [roundId]),
+  );
+  const cfg = readCasinoConfigFile();
+  const crash = crashPointX100(drawStream(r.rows[0]!.seed, `crash:${roundId}`)(), cfg);
+  return crashTimeMs(crash, cfg) > 2_000; // seconds of room for the calls below
+}
+
 describe('The Rug Room over HTTP', () => {
   it('needs a token', async () => {
     const r = await app.inject({ method: 'GET', url: '/v1/casino/state' });
@@ -230,12 +254,17 @@ describe('The Rug Room over HTTP', () => {
   });
 
   it('crash: manual round, cashout by its owner only, and a second cashout is ROUND_SETTLED', async () => {
-    const u = await devAuth();
     const thief = await devAuth();
-    await makeAdult(u);
     await makeAdult(thief);
-    const bet = await call(u, 'POST', '/v1/casino/crash/bet', { stakeCents: 200 });
-    expect(bet.status).toBe(201);
+    // About 6% of rounds are an instant bust (nothing to cash out of, and the next bet is
+    // allowed at once): draw players until the server's crash point leaves time to act.
+    let u = await devAuth();
+    let bet = await openManualCrash(u);
+    for (let i = 0; i < 30 && !(await crashLeavesTime(bet)); i++) {
+      u = await devAuth();
+      bet = await openManualCrash(u);
+    }
+    expect(await crashLeavesTime(bet)).toBe(true);
     const round = bet.body.round as { roundId: string; status: string; seed: unknown };
     expect(round.status).toBe('open');
     expect(round.seed).toBeNull();
@@ -263,10 +292,17 @@ describe('The Rug Room over HTTP', () => {
     for (const u of [a, b, c]) await makeAdult(u, 10_000);
     const made = await call(a, 'POST', '/v1/casino/coinflip/challenges', {
       opponentUserId: b.sub,
-      stakeCents: 1_000,
       side: 'heads',
     });
     expect(made.status, JSON.stringify(made.body)).toBe(201);
+    // No stake: a client that still sends one is told so (400), and no Cash moves.
+    const staked = await call(a, 'POST', '/v1/casino/coinflip/challenges', {
+      opponentUserId: b.sub,
+      stakeCents: 1_000,
+      side: 'heads',
+    });
+    expect(staked.status).toBe(400);
+    expect(errCode(staked.body)).toBe('VALIDATION_FAILED');
     const id = (made.body.challenge as { challengeId: string }).challengeId;
     expect((await call(c, 'GET', '/v1/casino/coinflip/challenges')).body.challenges).toEqual([]);
     expect((await call(b, 'GET', '/v1/casino/coinflip/challenges')).body.challenges).toHaveLength(
@@ -278,6 +314,8 @@ describe('The Rug Room over HTTP', () => {
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(ok.body.disclaimer).toBe(DISCLAIMER);
     expect((ok.body.challenge as { status: string }).status).toBe('settled');
+    expect(await casinoLedger(a)).toEqual([]);
+    expect(await casinoLedger(b)).toEqual([]);
     const dup = await call(b, 'POST', `/v1/casino/coinflip/challenges/${id}/accept`);
     expect(dup.status).toBe(409);
     expect(errCode(dup.body)).toBe('CHALLENGE_NOT_OPEN');

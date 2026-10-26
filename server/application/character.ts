@@ -7,6 +7,7 @@
  * which the service maps to AliasTakenError.
  */
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent } from './analytics.js';
 import {
   AliasTakenError,
   ForbiddenError,
@@ -23,6 +24,7 @@ import {
 } from '../shared/domain/character-palettes.js';
 import type { AppContext } from './context.js';
 import { ensureCatalog } from './cosmetics.js';
+import { refreshOutfit } from './realtime-bus.js';
 
 interface TribesConfig {
   tribes: Array<{ id: string }>;
@@ -138,6 +140,12 @@ export class CharacterService {
     // is 'tan'), so only emptiness is rejected. The previous
     // /^skin_tone[1-6]$/ rule was not in the contract and refused every
     // tone the creator sends.
+    if (slotById.has(input.look.skinTone)) {
+      throw new ValidationFailedError({
+        reason: 'look_item_in_non_item_field',
+        field: 'skinTone',
+      });
+    }
     if (typeof input.look.skinTone !== 'string' || input.look.skinTone.trim() === '') {
       throw new ValidationFailedError({
         reason: 'invalid_skin_tone',
@@ -257,6 +265,10 @@ export class CharacterService {
          ON CONFLICT (user_id) DO NOTHING`,
         [userId],
       );
+      await recordEvent(client, userId, {
+        name: 'character_created',
+        props: { tribeId: input.tribeId, likeness: Boolean(input.likenessJobId) },
+      });
       return {
         alias: input.alias,
         look: input.look,
@@ -324,7 +336,7 @@ export async function updateLook(
     throw e;
   });
   await equipCatalogReady;
-  return runInTransaction(
+  const out = await runInTransaction(
     async (client) => {
       const r = await client.query<{
         alias: string;
@@ -361,6 +373,20 @@ export async function updateLook(
       }
       if (typeof next.skinTone !== 'string' || next.skinTone.trim() === '') {
         throw new ValidationFailedError({ reason: 'invalid_skin_tone' });
+      }
+      if (changed.includes('skinTone')) {
+        // skinTone is a free string, not an item slot: a catalogue or cosmetic key there is a
+        // crafted look (it must never be read as an equipped item), so it is refused.
+        const known =
+          slotById.has(next.skinTone) ||
+          (await client.query(`SELECT 1 FROM cosmetic_items WHERE item_key = $1`, [next.skinTone]))
+            .rowCount !== 0;
+        if (known) {
+          throw new ValidationFailedError({
+            reason: 'look_item_in_non_item_field',
+            field: 'skinTone',
+          });
+        }
       }
 
       const overlays = new Set<keyof CharacterLook>();
@@ -426,4 +452,7 @@ export async function updateLook(
     {},
     ctx.db,
   );
+  // Equipping (or taking off) the Rekt Burger Uniform changes what other players see.
+  await refreshOutfit(ctx, userId);
+  return out;
 }

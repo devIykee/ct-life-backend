@@ -21,6 +21,7 @@ import {
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { runInTransaction } from '../shared/db/uow.js';
+import { recordEvent, type SignInMethod } from './analytics.js';
 import type { AppContext, NonceRecord } from './context.js';
 import { NONCE_TTL_MS } from './context.js';
 
@@ -141,7 +142,7 @@ export class AuthService {
     } catch {
       throw new ValidationFailedError({ reason: 'invalid_wallet' });
     }
-    const user = await this.upsertUser(wallet, false);
+    const user = await this.upsertUser(wallet, false, null, 'dev');
     const tokens = await this.mintTokens(user);
     // B14 fix: Check if user has a character
     const hasCharacter = await this.checkHasCharacter(user.id);
@@ -203,13 +204,14 @@ export class AuthService {
     }
     const sgtMint = sgtMints[0] ?? null;
     const isSeeker = sgtMint !== null;
-    return this.upsertUser(wallet, isSeeker, sgtMint);
+    return this.upsertUser(wallet, isSeeker, sgtMint, 'siws');
   }
 
   private async upsertUser(
     wallet: string,
     isSeeker: boolean,
-    sgtMint: string | null = null,
+    sgtMint: string | null,
+    method: SignInMethod,
   ): Promise<UserRow> {
     return runInTransaction(async (client) => {
       // Try to fetch the existing user.
@@ -238,6 +240,7 @@ export class AuthService {
         } else if (row.is_seeker !== isSeeker) {
           await client.query('UPDATE users SET is_seeker = $1 WHERE id = $2', [isSeeker, row.id]);
         }
+        await recordEvent(client, row.id, { name: 'session_start', props: { method } });
         return { id: row.id, wallet: row.wallet, isSeeker: row.is_seeker || isSeeker };
       }
       // New user.
@@ -260,6 +263,8 @@ export class AuthService {
         }
         throw e;
       }
+      await recordEvent(client, id, { name: 'signup', props: { method, seeker: isSeeker } });
+      await recordEvent(client, id, { name: 'session_start', props: { method } });
       return { id, wallet, isSeeker };
     });
   }

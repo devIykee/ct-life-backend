@@ -157,4 +157,20 @@ export default [
       'jsdoc/require-jsdoc': 'off',
     },
   },
+  {
+    // Load-test drivers reuse the realtime movement rules (district
+    // polygons, land test) so the bots walk exactly where the server allows.
+    files: ['tools/load/**/*.ts'],
+    rules: {
+      'no-restricted-imports': 'off',
+    },
+  },
+  {
+    // k6 scripts run in the k6 runtime (https://grafana.com/docs/k6/latest/), not Node.
+    files: ['tools/load/k6/**/*.js'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { __ENV: 'readonly', __VU: 'readonly', __ITER: 'readonly' },
+    },
+  },
 ];
