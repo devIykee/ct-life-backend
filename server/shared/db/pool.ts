@@ -36,16 +36,15 @@ export function createDb(overrides: Partial<PoolConfig> = {}): Db {
     isTest && process.env.TEST_DATABASE_URL ? process.env.TEST_DATABASE_URL : cfg.databaseUrl;
   const pool = new Pool({
     connectionString,
-    max: 20,
+    max: cfg.dbPoolMax,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
+    // Sent as startup parameters, so every connection has the limits from
+    // its first query with no extra round trips (the old on('connect') SETs
+    // raced the borrower's first query; pg 8.x warns about that).
+    statement_timeout: STATEMENT_TIMEOUT_MS,
+    lock_timeout: LOCK_TIMEOUT_MS,
     ...overrides,
-  });
-  // Apply timeouts on every new connection. pg.Pool calls this on
-  // connect, so a freshly borrowed client has the limits set.
-  pool.on('connect', (client) => {
-    void client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`).catch(() => undefined);
-    void client.query(`SET lock_timeout = ${LOCK_TIMEOUT_MS}`).catch(() => undefined);
   });
 
   cached = {

@@ -44,6 +44,7 @@ The M1 milestone produces `contract/realtime/*.ts` with `@colyseus/schema` class
 - `spotId: string` — set while seated or at a terminal.
 - `talking: boolean` — mirrors LiveKit speaking state.
 - `ix, iz, irotY: float32` - island pose, server-filled. Same as x/z/rotY in street rooms; the converted position in venue rooms placed on CT Island; 0 in venues that are not placed.
+- `outfit: string` (optional, appended last) - server-set, never client-set: `rekt_burger_crew` while the player has an open Rekt Burger shift, or has the Rekt Burger Uniform OWNED and equipped in its slot (`topId`; the key in any other look field counts for nothing); absent (null on the client) otherwise. Set on join from the database and updated live in street, venue and home rooms when the api publishes a change (shift start, clock-out, auto-close, leaving the job, equipping or removing the uniform). No client message can change it.
 
 `NpcState` (M1):
 

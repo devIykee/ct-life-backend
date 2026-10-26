@@ -99,7 +99,13 @@ async function call(
   return { status: r.statusCode, body: r.json() };
 }
 
-import { encodePos, POS_HASH } from '../realtime/movement.js';
+import {
+  encodePos,
+  getIslandGeometry,
+  onLand,
+  POS_HASH,
+  setIslandGeometry,
+} from '../realtime/movement.js';
 import { nodsFile } from '../application/nods.js';
 
 /** A fixed moment inside season s1_airdrop_season (2026-10-19 .. 2026-12-14). */
@@ -312,6 +318,61 @@ describe('Season tracks', () => {
       tracks: { free: { status: string }[] };
     };
     expect(bView.tracks.free[0]!.status).toBe('locked');
+  });
+});
+
+describe('the placed nod positions (FE export, nods.json 1.0.0)', () => {
+  // Real positions from the frontend's island plan, pinned here so a placeholder file or a
+  // moved prop is caught: a collect is checked against these within 15 m of the server position.
+  const real = [
+    { nodId: 'bonk', x: -162.46, z: 153.09 },
+    { nodId: 'wif', x: -362.01, z: -236.48 },
+    { nodId: 'popcat', x: -409.1, z: -271.6 },
+  ];
+
+  it('the file holds the real positions for those nods', () => {
+    for (const r of real) {
+      const n = nods.find((x) => x.nodId === r.nodId)!;
+      expect({ x: n.x, z: n.z }, r.nodId).toEqual({ x: r.x, z: r.z });
+    }
+  });
+
+  it('accepts a collect within 15 m of each real position and refuses 20 m away', async () => {
+    for (const r of real) {
+      const n = nods.find((x) => x.nodId === r.nodId)!;
+      const near = await devAuth();
+      await standAt(near, n.x, n.z + 14.5);
+      const ok = await call(near, 'POST', `/v1/nods/${n.nodId}/collect`, {
+        proof: { nodId: n.nodId, x: n.x, z: n.z + 14.5 },
+      });
+      expect(ok.status, `${r.nodId} at 14.5 m`).toBe(200);
+      expect(ok.body).toMatchObject({ nodId: n.nodId, alreadyCollected: false });
+
+      const far = await devAuth();
+      await standAt(far, n.x + 20, n.z);
+      const no = await call(far, 'POST', `/v1/nods/${n.nodId}/collect`, {
+        proof: { nodId: n.nodId, x: n.x + 20, z: n.z },
+      });
+      expect(no.status, `${r.nodId} at 20 m`).toBe(409);
+      expect(errCode(no.body)).toBe('NOD_TOO_FAR');
+    }
+  });
+
+  it('the file is the confirmed export: 80 nods, unique ids, spread out, on the island', () => {
+    const file = nodsFile() as unknown as { _provisional?: boolean; version?: string };
+    expect(nods).toHaveLength(80);
+    expect(new Set(nods.map((n) => n.nodId)).size).toBe(80);
+    expect(file._provisional).toBe(false);
+    expect(file.version).toBe('1.0.0');
+    for (const a of nods) {
+      for (const b of nods) {
+        if (a !== b)
+          expect(Math.hypot(a.x - b.x, a.z - b.z), `${a.nodId}/${b.nodId}`).toBeGreaterThan(15);
+      }
+    }
+    setIslandGeometry(null);
+    const geo = getIslandGeometry();
+    for (const n of nods) expect(onLand(geo.island, n.x, n.z), n.nodId).toBe(true);
   });
 });
 

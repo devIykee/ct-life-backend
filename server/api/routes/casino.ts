@@ -8,7 +8,7 @@
  *   POST /v1/casino/crash/bet                      {stakeCents, autoCashout?}
  *   POST /v1/casino/crash/cashout                  {roundId}
  *   POST /v1/casino/coinflip/bet                   {stakeCents, side}
- *   POST /v1/casino/coinflip/challenges            {opponentUserId, stakeCents, side}
+ *   POST /v1/casino/coinflip/challenges            {opponentUserId, side}  (no Cash moves)
  *   GET  /v1/casino/coinflip/challenges
  *   POST /v1/casino/coinflip/challenges/:id/accept | decline | cancel
  *   GET  /v1/casino/rounds?mine&limit&before
@@ -52,9 +52,7 @@ const CrashBetBody = z
   .strict();
 const CrashCashoutBody = z.object({ roundId: z.string().uuid() }).strict();
 const CoinflipBody = z.object({ stakeCents: Stake, side: Side }).strict();
-const ChallengeBody = z
-  .object({ opponentUserId: z.string().uuid(), stakeCents: Stake, side: Side })
-  .strict();
+const ChallengeBody = z.object({ opponentUserId: z.string().uuid(), side: Side }).strict();
 const SelfExcludeBody = z.object({ days: z.number().int().min(1).max(3650) }).strict();
 const RoundsQuery = z.object({
   mine: z.enum(['true', '1', '']).optional(),
@@ -131,15 +129,7 @@ export function registerCasinoRoutes(app: FastifyInstance): void {
     const body = parse(ChallengeBody, req.body);
     return reply
       .status(201)
-      .send(
-        await createChallenge(
-          req.ctx,
-          req.user!.sub,
-          body.opponentUserId,
-          body.stakeCents,
-          body.side,
-        ),
-      );
+      .send(await createChallenge(req.ctx, req.user!.sub, body.opponentUserId, body.side));
   });
 
   app.get('/v1/casino/coinflip/challenges', read, async (req, reply) =>

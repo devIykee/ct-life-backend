@@ -30,6 +30,7 @@ import { z } from 'zod';
 import { StreetState, type PlayerState } from '../../../contract/realtime/states.js';
 import {
   authenticateJoin,
+  applyOutfitMessage,
   loadPlayerState,
   filterSay,
   newMessageId,
@@ -39,6 +40,7 @@ import {
 import {
   DISTRICTS,
   POS_FRESH_MS,
+  OUTFIT_CHANNEL,
   POLICE_CHANNEL,
   POS_HASH,
   VEHICLE_EXIT_CHANNEL,
@@ -96,6 +98,8 @@ export class StreetRoom extends Room {
   private exitGrants = new Map<string, IslandPos>();
   private onExit = (data: unknown): void => this.handleVehicleExit(data);
   private onPolice = (data: unknown): void => this.handlePolice(data);
+  private onOutfit = (data: unknown): void =>
+    applyOutfitMessage({ forEach: (cb) => this.sessions.forEach((x) => cb(x.player)) }, data);
 
   /**
    * @param options - `{ district }`, one of DISTRICTS.
@@ -124,6 +128,7 @@ export class StreetRoom extends Room {
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
+    await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
   }
 
   /**
@@ -132,6 +137,7 @@ export class StreetRoom extends Room {
   override async onDispose(): Promise<void> {
     await this.presence?.unsubscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.unsubscribe(POLICE_CHANNEL, this.onPolice);
+    await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
   }
 
   /**

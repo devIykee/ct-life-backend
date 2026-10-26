@@ -146,10 +146,20 @@ describe('paid-calls lifecycle', () => {
     expect(Number(escrow.rows[0]?.total_cents)).toBe(3000);
   });
 
-  it('happy path: submitted -> accept -> end writes tip + fee ledger rows', async () => {
+  it('happy path: submitted -> accept -> end settles the escrow and moves NO Cash', async () => {
     const ctx = makeCtx();
     const { startPaidCall, submitFundingSignature, acceptPaidCall, endPaidCall } =
       await import('./paid-calls.js');
+    const cashOf = async (id: string): Promise<number> =>
+      Number(
+        (
+          await pool.query(
+            `SELECT COALESCE(SUM(cash_cents),0) AS c FROM balances WHERE user_id = $1`,
+            [id],
+          )
+        ).rows[0].c,
+      );
+    const before = [await cashOf(payer), await cashOf(payee)];
     const out = await startPaidCall(ctx, payer, {
       payeeUserId: payee,
       pricePerMinuteCents: 100,
@@ -161,22 +171,15 @@ describe('paid-calls lifecycle', () => {
     const final = await endPaidCall(ctx, out.call.callId, payer, 300);
     expect(final.status).toBe('settled');
     expect(Number(final.settledCents)).toBe(500);
-    expect(Number(final.creatorAmount)).toBe(475);
-    // Tip ledger row for payee
-    const tipRow = await pool.query<{ delta_cents: string; reason: string; user_id: string }>(
-      `SELECT delta_cents, reason, user_id FROM ledger_entries
-       WHERE ref_type = 'paid_call' AND ref_id = $1 AND reason = 'tip'`,
+    expect(Number(final.creatorAmount)).toBe(475); // paid on-chain in USDC by the escrow program
+    // Cash is purchasable but never transferable: the creator's share is on-chain value, not
+    // Cash, so neither balance moves and no ledger row is written for the call.
+    expect([await cashOf(payer), await cashOf(payee)]).toEqual(before);
+    const rows = await pool.query(
+      `SELECT 1 FROM ledger_entries WHERE ref_type = 'paid_call' AND ref_id = $1`,
       [out.call.callId],
     );
-    expect(tipRow.rows[0]?.user_id).toBe(payee);
-    expect(Number(tipRow.rows[0]?.delta_cents)).toBe(475);
-    // Fee ledger row
-    const feeRow = await pool.query<{ delta_cents: string; reason: string }>(
-      `SELECT delta_cents, reason FROM ledger_entries
-       WHERE ref_type = 'paid_call' AND ref_id = $1 AND reason = 'fee'`,
-      [out.call.callId],
-    );
-    expect(Number(feeRow.rows[0]?.delta_cents)).toBe(-25);
+    expect(rows.rowCount).toBe(0);
   });
 
   it('decline marks escrow refunded', async () => {

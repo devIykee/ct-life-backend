@@ -400,25 +400,8 @@ export async function endPaidCall(
        WHERE call_id = $2::uuid`,
       [r.gross, callId],
     );
-    if (r.net > 0) {
-      await client.query(
-        `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
-        [row.payee_user_id, r.net],
-      );
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'tip', 'paid_call', $3, $4)`,
-        [row.payee_user_id, r.net, callId, `paid-call-creator:${callId}`],
-      );
-    }
-    if (r.fee > 0) {
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'fee', 'paid_call', $3, $4)`,
-        [row.payer_user_id, -r.fee, callId, `paid-call-fee:${callId}`],
-      );
-    }
+    // No Cash is credited or debited here. The creator's share is paid ON-CHAIN by the escrow
+    // program (settle) to their wallet, in USDC; Cash never moves between players.
     await client.query(
       `UPDATE voice_rooms SET status = 'ended', ended_at = now()
        WHERE room_id = $1`,
