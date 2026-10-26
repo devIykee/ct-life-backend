@@ -183,6 +183,16 @@ export interface Config {
     readonly feeBps: number;
   };
 
+  readonly dbPoolMax: number;
+
+  /** Server-side product analytics (analytics_events; docs/ANALYTICS.md). */
+  readonly analytics: {
+    /** Write product events. Off stops the writes; the actions still run. */
+    readonly enabled: boolean;
+    /** Days an event is kept before the workers delete it. */
+    readonly retentionDays: number;
+  };
+
   readonly features: {
     readonly llmEnabled: boolean;
     readonly pushEnabled: boolean;
@@ -467,6 +477,12 @@ export function loadConfig(): Config {
 
     tips: {
       feeBps: asBoundedInt('TIP_FEE_BPS', 300, 0, 2000),
+    },
+
+    dbPoolMax: asBoundedInt('DB_POOL_MAX', 20, 1, 200),
+    analytics: {
+      enabled: asBool('ANALYTICS_ENABLED', true),
+      retentionDays: asBoundedInt('ANALYTICS_RETENTION_DAYS', 180, 1, 3650),
     },
 
     factory: {
