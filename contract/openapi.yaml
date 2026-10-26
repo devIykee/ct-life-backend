@@ -806,6 +806,42 @@ paths:
                 flags: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+    delete:
+      tags: [player]
+      operationId: deleteMe
+      summary: Delete the account (App Store and Play account deletion).
+      description: |
+        Erases the caller's personal data and ends every session. Body must be
+        `{"confirm": "DELETE"}`; anything else is `400 VALIDATION_FAILED`
+        (`details.reason: confirm_required`) and nothing is touched.
+
+        Erased: wallet link (the same wallet can sign up again as a new account),
+        .skr name, SGT, character (alias and look), X link, push devices and
+        preferences, follows and blocks, creator profile, likeness photos and
+        models (files are removed by a background job within minutes), unused ad
+        creatives. Overwritten with `[deleted]`: DMs the player wrote and feed
+        posts. Kept under the now-anonymous id: ledger, payments, casino, market
+        and factory history, reports. Cash is not refunded. See docs/PRIVACY.md.
+
+        After a 204 the access token is rejected at once (`401 SIGNATURE_INVALID`)
+        and `/auth/refresh` refuses the refresh token. The client must drop its
+        tokens and return to sign-in. Deleting is irreversible.
+      x-phase: 6
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              additionalProperties: false
+              properties:
+                confirm: { type: string, enum: [DELETE] }
+      responses:
+        '204': { description: Account deleted }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /characters:
     post:
       tags: [player]

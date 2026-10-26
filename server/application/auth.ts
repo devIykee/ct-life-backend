@@ -267,7 +267,7 @@ export class AuthService {
   private async findUser(userId: string): Promise<UserRow | null> {
     return this.ctx.db.withConnection(async (c) => {
       const r = await c.query<{ id: string; wallet: string; is_seeker: boolean }>(
-        'SELECT id, wallet, is_seeker FROM users WHERE id = $1',
+        'SELECT id, wallet, is_seeker FROM users WHERE id = $1 AND deleted_at IS NULL',
         [userId],
       );
       const row = r.rows[0];

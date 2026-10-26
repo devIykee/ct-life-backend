@@ -50,6 +50,7 @@ import { handleShopDelivery } from './shop-delivery.js';
 import { handlePush, PUSH_QUEUE } from './push.js';
 import { EVENT_ANNOUNCE_QUEUE, handleEventAnnounce } from './event-announce.js';
 import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
+import { ACCOUNT_PURGE_QUEUE, handleAccountPurge } from './account-purge.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -102,8 +103,13 @@ export async function buildWorkers(likeness?: {
   const redis = createRedis();
   const log = createLogger().child({ mod: 'workers' });
   const conn = redisConnection(redis);
+  let likenessDelete: ((key: string) => Promise<void>) | undefined;
   if (!likeness) {
     const assembled = await buildLikenessRuntime(cfg, buildContext().db);
+    if (assembled.storage) {
+      const store = assembled.storage;
+      likenessDelete = (key) => store.delete(key);
+    }
     if (assembled.worker && assembled.photos)
       likeness = { worker: assembled.worker, photos: assembled.photos };
   }
@@ -126,6 +132,7 @@ export async function buildWorkers(likeness?: {
   const pushQueue = new Queue(PUSH_QUEUE, { connection: conn });
   const eventQueue = new Queue(EVENT_ANNOUNCE_QUEUE, { connection: conn });
   const casinoQueue = new Queue(CASINO_SWEEP_QUEUE, { connection: conn });
+  const purgeQueue = new Queue(ACCOUNT_PURGE_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -215,6 +222,15 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'casino-sweep failed'),
   );
 
+  const purgeWorker = new Worker(
+    ACCOUNT_PURGE_QUEUE,
+    async (job) => handleAccountPurge(job, ctx, likenessDelete),
+    { connection: newClient(redis) },
+  );
+  purgeWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'account-purge failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
   const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
@@ -271,6 +287,13 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // DELETE /v1/me: erase queued files (likeness photos/models, ad creatives).
+  await purgeQueue.upsertJobScheduler(
+    'account-purge',
+    { pattern: '*/5 * * * *' },
+    { name: 'sweep', data: {} },
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -298,6 +321,8 @@ export async function buildWorkers(likeness?: {
   void pushWorker;
   void eventWorker;
   void casinoWorker;
+  void purgeWorker;
+  void purgeQueue;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -327,6 +352,7 @@ export async function buildWorkers(likeness?: {
       await pushWorker.close();
       await eventWorker.close();
       await casinoWorker.close();
+      await purgeWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -337,6 +363,7 @@ export async function buildWorkers(likeness?: {
       await pushQueue.close();
       await eventQueue.close();
       await casinoQueue.close();
+      await purgeQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

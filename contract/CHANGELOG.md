@@ -1,3 +1,14 @@
+## 2026-10-26 - Account deletion: DELETE /v1/me
+
+Migration 100. Store requirement (App Store 5.1.1(v), Play account deletion).
+
+- New `DELETE /v1/me` with body `{"confirm": "DELETE"}` (204). Any other body is `400 VALIDATION_FAILED` with `details.reason: confirm_required`. Send an `Idempotency-Key` like every mutation.
+- The `users` row is anonymised in place (wallet becomes `deleted:<id>`), so the same wallet can register again as a brand new account. Wallet link, `.skr` name, SGT, character, X link, push devices and prefs, follows, blocks, creator profile and likeness photos and models are erased; DMs the player wrote and feed posts become `[deleted]`. Ledger, payments, casino, market and factory history stay under the anonymous id. Cash is not refunded. Full list in `docs/PRIVACY.md`.
+- Sessions end at once: the access token is rejected (`401 SIGNATURE_INVALID`, `details.reason: account_deleted`) and `/auth/refresh` refuses the refresh token. FE: after the 204 clear tokens and go to sign-in; treat a 401 right after a delete as success.
+- Files (likeness photos and models, ad creatives, creator images) are queued in `storage_cleanup` in the same transaction and erased by the `account-purge` worker every 5 minutes; a failing store retries.
+- Realtime: the character is gone, so the player can no longer join street, venue or home rooms.
+- FE deletion flow: Settings > Delete account > explain what is erased and that it is permanent and Cash is lost > require typing DELETE > `DELETE /v1/me`.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.

@@ -12,6 +12,7 @@ import { createHash } from 'node:crypto';
 import { getDreamProgress } from '../../application/world-pulse.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import { DELETE_CONFIRMATION, deleteAccount } from '../../application/account-deletion.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { NotFoundError, ValidationFailedError } from '../../shared/domain/errors.js';
@@ -157,6 +158,16 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const userId = req.user!.sub;
     const me = await loadMe(req, userId);
     return reply.send(me);
+  });
+
+  // DELETE /v1/me - erase the account (App Store / Play deletion requirement).
+  app.delete('/v1/me', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
+    const body = z.object({ confirm: z.literal(DELETE_CONFIRMATION) }).safeParse(req.body);
+    if (!body.success) {
+      throw new ValidationFailedError({ reason: 'confirm_required', issues: body.error.issues });
+    }
+    await deleteAccount(req.ctx, req.user!.sub);
+    return reply.status(204).send();
   });
 
   // POST /v1/characters

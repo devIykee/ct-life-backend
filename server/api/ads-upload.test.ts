@@ -27,6 +27,7 @@ const s3: S3 = {
   async presignPut(key) {
     return `https://s3.test/${key}`;
   },
+  async remove() {},
   async ensureBucket() {},
 };
 
