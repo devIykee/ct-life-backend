@@ -95,6 +95,13 @@ the mint's signature no longer matches and the launch fails.
 - [Unverified] devnet proper (the public faucet refused airdrops all day), mainnet, a Seeker wallet,
   and that Helius raw deliveries match the RPC JSON shape exactly.
 
+- `tools/factory/devnet-run.ts` drives the same flow **through the HTTP API** (dev sign-in,
+  prepare → sign → send → confirm, the submit fallback, a creator buy + dump replayed to the webhook
+  → heat) and writes a report with explorer links. Rehearsed on the local cluster (heat 0 → 48,
+  token rugged); the devnet run waits on devnet SOL (faucet rate-limited, see
+  `ct-life-evidence/factory-r5/DEVNET-RUN.md`). Lane C's Seeker kit (byte-preservation EditMode test
+  and a device probe): `ct-life-evidence/factory-r5/mwa-spike/lane-c/`.
+
 ## Rug detection (penalties only)
 
 The Helius raw webhook delivers every transaction touching a creator wallet or one of our pools.
