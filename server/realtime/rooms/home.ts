@@ -17,7 +17,6 @@ import { HomeState, PlayerState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { HOME_ACCESS_CHANNEL } from '../../application/home-units.js';
-import { assertJoinAllowed } from '../player.js';
 import { BanGuard } from '../ban-guard.js';
 
 const MAX_GUESTS = 16;
@@ -128,10 +127,10 @@ export class HomeRoom extends Room {
       try {
         const claims = await createJwtIssuer().verifyAccess(tokenStr);
         userId = claims.sub;
+        this.ban.track(client, userId); // before any await
       } catch (err) {
         throw new Error('INVALID_TOKEN', { cause: err });
       }
-      await assertJoinAllowed(userId);
     }
     if (userId === '') return;
     this.ban.track(client, userId);

@@ -22,7 +22,6 @@ import {
   type UserMessage,
 } from '../../application/realtime-bus.js';
 import { createRedis } from '../../shared/redis/client.js';
-import { assertJoinAllowed } from '../player.js';
 import { BanGuard } from '../ban-guard.js';
 
 const PATCH_HZ = 1;
@@ -77,8 +76,10 @@ export class CityRoom extends Room {
         const jwtIssuer = createJwtIssuer();
         const claims = await jwtIssuer.verifyAccess(tokenStr);
         const userId = claims.sub ?? '';
-        await assertJoinAllowed(userId);
+        // Track before any await so a ban published from here on finds this session.
         this.ban.track(client, userId);
+        // Last await: nothing below suspends before the session is registered.
+        await this.ban.confirm(userId);
         if (userId !== '') {
           this.userIdBySession.set(client.sessionId, userId);
           const set = this.sessionsByUser.get(userId) ?? new Set<string>();
