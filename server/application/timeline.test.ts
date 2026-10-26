@@ -26,7 +26,11 @@ import {
 import { cardCasinoWin, cardCoinLaunch, cardLiquidation, shortCash } from './city-cards.js';
 import { CALLERS, runNpcCallers } from './npc-callers.js';
 import { follow } from './social-graph.js';
-import { rollDistrictRollover } from '../workers/district-rollover.js';
+import {
+  districtActivity,
+  MAX_POSTS_PER_PLAYER_PER_DAY,
+  rollDistrictRollover,
+} from '../workers/district-rollover.js';
 import { ensureDistricts } from './tribes.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
@@ -40,7 +44,7 @@ afterAll(async () => {
   await pool.end();
 });
 
-async function newPlayer(alias?: string): Promise<string> {
+async function newPlayer(alias?: string, tribe = 'trencher'): Promise<string> {
   const id = uuidv7();
   await pool.query(`INSERT INTO users (id, wallet, lottery_rolled_at) VALUES ($1, $2, now())`, [
     id,
@@ -48,8 +52,8 @@ async function newPlayer(alias?: string): Promise<string> {
   ]);
   await pool.query(
     `INSERT INTO characters (id, user_id, alias, look, tribe_id, trait_ids, dream_id, age_confirmed_at, home_id)
-     VALUES ($1, $2, $3, '{}', 'trencher', '{a,b}', 'make_10k', now(), 'studio')`,
-    [uuidv7(), id, alias ?? `tl_${id.slice(-10)}`],
+     VALUES ($1, $2, $3, '{}', $4, '{a,b}', 'make_10k', now(), 'studio')`,
+    [uuidv7(), id, alias ?? `tl_${id.slice(-10)}`, tribe],
   );
   return id;
 }
@@ -245,6 +249,23 @@ describe('opt-in check-ins', () => {
     expect(p.card).toMatchObject({ type: 'venue', venueId: 'terminal_cafe' });
     await expect(checkIn(ctx, me, 'terminal_cafe')).rejects.toBeInstanceOf(RateLimitedError);
   });
+
+  it('concurrent check-ins cannot slip past the cooldown', async () => {
+    const me = await newPlayer();
+    const door = getIslandGeometry().venues!.terminal_cafe!.door;
+    await setPos(me, door[0], door[1]);
+    const results = await Promise.allSettled(
+      Array.from({ length: 6 }, () => checkIn(ctx, me, 'terminal_cafe')),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    for (const r of results) {
+      if (r.status === 'rejected') expect(r.reason).toBeInstanceOf(RateLimitedError);
+    }
+    const n = await pool.query(`SELECT count(*)::int AS n FROM feed_posts WHERE user_id = $1`, [
+      me,
+    ]);
+    expect(n.rows[0].n).toBe(1);
+  });
 });
 
 describe('city cards', () => {
@@ -360,6 +381,29 @@ describe('NPC callers', () => {
 });
 
 describe('district rollover', () => {
+  it('one player posting 100 times does not outweigh 5 players posting once', async () => {
+    await ensureDistricts(ctx);
+    const day = windowStart();
+    const spammer = await newPlayer(undefined, 'perp_degen');
+    const crowd = await Promise.all(
+      Array.from({ length: 5 }, () => newPlayer(undefined, 'trencher')),
+    );
+    const ins = (u: string, i: number): Promise<unknown> =>
+      pool.query(
+        `INSERT INTO feed_posts (post_id, user_id, text, created_at, kind, district_slug)
+         VALUES ($1, $2, 'gm', $3, 'player', 'the_trenches')`,
+        [uuidv7(), u, plus(day, 60 + i)],
+      );
+    for (let i = 0; i < 100; i++) await ins(spammer, i);
+    for (const [i, u] of crowd.entries()) await ins(u, i);
+    const rows = await districtActivity(ctx, day.toISOString().slice(0, 10));
+    const of = (tribe: string): number =>
+      rows.find((r) => r.district_id === 'the_trenches' && r.tribe_id === tribe)?.post_count ?? 0;
+    expect(of('perp_degen')).toBe(MAX_POSTS_PER_PLAYER_PER_DAY);
+    expect(of('trencher')).toBe(5);
+    expect(of('trencher')).toBeGreaterThan(of('perp_degen'));
+  });
+
   it('counts player posts by their district without failing', async () => {
     await ensureDistricts(ctx);
     const u = await newPlayer();

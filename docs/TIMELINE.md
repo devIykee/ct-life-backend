@@ -54,13 +54,15 @@ The Sleuth's older `meta.deepLink: "venue:launchpad_tower"` maps to `ctlife://ve
 201 with the `FeedPost`. The server builds the card: a coin card when the text names a real coin's
 `$TICKER`; otherwise, only if `withPlace` is true, a place card for the venue whose door is within
 60 m of the author (from the server's position hash). No position or no venue: no card, the post
-still goes out. Posting never earns anything.
+still goes out. Posting never earns anything. Rate limit: a burst of 3 posts, then one every 20 s
+per player (`429 RATE_LIMITED`), separate from the general write limit.
 
 ### `POST /v1/feed/checkins {venueId}`
 
 Opt-in "is at <venue>" (kind `checkin`, a venue card). Only within 60 m of that venue's door per
 the server's position (`400 VALIDATION_FAILED`, `details.reason: "not_at_venue"`; a bad id is
-`"unknown venue"`), at most once per 15 minutes (`429 RATE_LIMITED`). Nothing posts by itself.
+`"unknown venue"`), at most once per 15 minutes (`429 RATE_LIMITED`; enforced atomically, so
+concurrent requests cannot slip through). Nothing posts by itself.
 
 ## City event cards
 
@@ -94,7 +96,8 @@ exist, so the daily rollover failed every day. Migration 102 adds the column. Pl
 check-ins fill it from the server's position: a turf venue the player is at (Perp Pit, Prediction
 Pit, Spaces Studio, Cabal Lounge), else the island district's turf (trenches = `the_trenches`,
 dubai_marina = `marina_villa`, airdrop_farm, builder_hills). The query no longer cross-joins every
-character with every district.
+character with every district, and each player counts at most 3 posts per district per day, so one
+spammer cannot carry a tribe (5 players posting once beat 1 player posting 100 times).
 
 ## Speed
 

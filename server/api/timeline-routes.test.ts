@@ -115,4 +115,19 @@ describe('Timeline over HTTP', () => {
     expect(c.statusCode).toBe(400);
     expect(c.json().error.details.reason).toBe('not_at_venue');
   });
+
+  it('posting has its own per-player limit (a burst of 3)', async () => {
+    const u = await devAuth();
+    const codes: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const r = await app.inject({
+        method: 'POST',
+        url: '/v1/feed/posts',
+        headers: { authorization: `Bearer ${u.token}`, 'idempotency-key': uuidv7() },
+        payload: { text: `spam ${i}` },
+      });
+      codes.push(r.statusCode);
+    }
+    expect(codes).toEqual([201, 201, 201, 429, 429]);
+  });
 });

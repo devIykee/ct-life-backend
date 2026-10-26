@@ -10,12 +10,12 @@
  *   POST /v1/follows/:userId
  *   DELETE /v1/follows/:userId
  */
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { requireUuidParam } from '../middleware/uuid-param.js';
-import { ValidationFailedError } from '../../shared/domain/errors.js';
+import { RateLimitedError, ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   follow,
   isFollowing,
@@ -26,6 +26,21 @@ import {
 } from '../../application/social-graph.js';
 import { checkIn, CITY_KINDS, createPlayerPost, listTimeline } from '../../application/timeline.js';
 import { withRateLimit } from '../middleware/rate-limit.js';
+import { perUserTokenBucket } from '../../shared/infra/rate-limit.js';
+
+/** Timeline posts: a burst of 3, then one every 20 s, per player (separate from the write bucket). */
+function feedPostLimit(): preHandlerHookHandler {
+  return async (req) => {
+    const d = await perUserTokenBucket(
+      req.ctx.redis.main,
+      `rl:feedpost:${req.user?.sub ?? 'anon'}`,
+      3,
+      1 / 20,
+      1,
+    );
+    if (!d.allowed) throw new RateLimitedError(d.retryAfterMs, { limit: 3 });
+  };
+}
 
 const DmBody = z.object({ text: z.string().min(1).max(500) });
 const DmListQuery = z.object({
@@ -105,7 +120,7 @@ export function registerSocialGraphRoutes(app: FastifyInstance): void {
   // POST /v1/feed/posts {text, withPlace?}
   app.post(
     '/v1/feed/posts',
-    { preHandler: [requireAuth, withIdempotency(), withRateLimit()] },
+    { preHandler: [requireAuth, withIdempotency(), withRateLimit(), feedPostLimit()] },
     async (req, reply) => {
       const body = PostBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });

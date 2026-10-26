@@ -279,6 +279,15 @@ export async function checkIn(
   if (!pos || !door || Math.hypot(door[0] - pos.x, door[1] - pos.z) > PLACE_RADIUS_M) {
     throw new ValidationFailedError({ reason: 'not_at_venue', venueId });
   }
+  // Atomic cooldown: one Redis key per player, set only if absent, so
+  // concurrent requests cannot both pass. The database check below covers a
+  // Redis flush (the key is gone but the last check-in is recent).
+  const key = `tl:checkin:${userId}`;
+  const slot = await ctx.redis.main.set(key, '1', 'PX', CHECKIN_COOLDOWN_MS, 'NX');
+  if (slot !== 'OK') {
+    const ttl = await ctx.redis.main.pttl(key);
+    throw new RateLimitedError(Math.max(1, ttl), { limit: 1 });
+  }
   const recent = await ctx.db.withConnection((c) =>
     c.query<{ created_at: Date }>(
       `SELECT created_at FROM feed_posts WHERE user_id = $1 AND kind = 'checkin'
@@ -291,20 +300,25 @@ export async function checkIn(
     throw new RateLimitedError(CHECKIN_COOLDOWN_MS - (now.getTime() - last), { limit: 1 });
   }
   const postId = uuidv7();
-  await ctx.db.withConnection((c) =>
-    c.query(
-      `INSERT INTO feed_posts (post_id, user_id, text, created_at, kind, meta, district_slug)
-       VALUES ($1, $2, $3, $4, 'checkin', $5, $6)`,
-      [
-        postId,
-        userId,
-        `is at ${name}`,
-        now,
-        JSON.stringify({ card: { type: 'venue', venueId } }),
-        turfAt(pos.x, pos.z),
-      ],
-    ),
-  );
+  try {
+    await ctx.db.withConnection((c) =>
+      c.query(
+        `INSERT INTO feed_posts (post_id, user_id, text, created_at, kind, meta, district_slug)
+         VALUES ($1, $2, $3, $4, 'checkin', $5, $6)`,
+        [
+          postId,
+          userId,
+          `is at ${name}`,
+          now,
+          JSON.stringify({ card: { type: 'venue', venueId } }),
+          turfAt(pos.x, pos.z),
+        ],
+      ),
+    );
+  } catch (e) {
+    await ctx.redis.main.del(key);
+    throw e;
+  }
   return (await postsByIds(ctx, userId, [postId]))[0]!;
 }
 
