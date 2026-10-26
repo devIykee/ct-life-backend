@@ -217,7 +217,11 @@ describe('attendee board', () => {
       'self',
       'tribeId',
     ]);
-    expect(JSON.stringify(board)).not.toMatch(/lat|lng|user_?id/i);
+    // The opaque handle is random base64url text and can contain "lat" by chance, so look at
+    // the keys and every other value, not the handle.
+    expect(JSON.stringify(board).replace(/"handle":"[^"]*"/g, '"handle":"-"')).not.toMatch(
+      /lat|lng|user_?id/i,
+    );
 
     // The blocked user sees the viewer's side excluded too.
     const other = await listAttendees(ctx, blockedByViewer, BP, 50, null);

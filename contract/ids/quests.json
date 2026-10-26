@@ -148,19 +148,6 @@
       "deepLink": "ctlife://calls"
     },
     {
-      "id": "q_daily_tip_1",
-      "title": "Tip a creator",
-      "description": "Send a tip of at least $10 to someone new",
-      "verb": "tip_send",
-      "target": 1,
-      "reward": {
-        "cashCents": 300,
-        "seasonXp": 10
-      },
-      "pool": "daily",
-      "deepLink": "ctlife://timeline"
-    },
-    {
       "id": "q_daily_visit_1",
       "title": "Pop round",
       "description": "Visit a neighbour's home",
@@ -250,19 +237,6 @@
       },
       "pool": "weekly",
       "deepLink": "ctlife://calls"
-    },
-    {
-      "id": "q_weekly_tip_3",
-      "title": "Generous",
-      "description": "Send 3 tips of at least $10, each to a different person",
-      "verb": "tip_send",
-      "target": 3,
-      "reward": {
-        "cashCents": 2500,
-        "seasonXp": 100
-      },
-      "pool": "weekly",
-      "deepLink": "ctlife://timeline"
     },
     {
       "id": "q_weekly_visit_3",

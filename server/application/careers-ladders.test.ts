@@ -370,23 +370,23 @@ describe('social actions cannot be looped', () => {
   const ladderXp = async (u: string) =>
     (await getLadders(ctx, u, NOW)).ladders.find((l) => l.id === 'caller')!.xp;
 
-  it('a valid tip earns ladder XP; the same pair again inside the window earns none', async () => {
+  it('a valid paid call earns ladder XP; the same pair again inside the window earns none', async () => {
     const u = await newUser();
     await joinLadder(ctx, u, 'caller', NOW);
-    const rule = { key: 'tip:friend', cooldownDays: 7 };
-    await recordQuestEvent(ctx, u, 'tip_send', 't1', NOW, rule);
-    expect(await ladderXp(u)).toBe(3);
-    // Alt-account ping-pong: new tip id, same counterpart, still in the window.
-    await recordQuestEvent(ctx, u, 'tip_send', 't2', new Date(NOW.getTime() + 3_600_000), rule);
-    await recordQuestEvent(ctx, u, 'tip_send', 't3', new Date(NOW.getTime() + 86_400_000), rule);
-    expect(await ladderXp(u)).toBe(3);
+    const rule = { key: 'pair:friend', cooldownDays: 7 };
+    await recordQuestEvent(ctx, u, 'paid_call', 't1', NOW, rule);
+    expect(await ladderXp(u)).toBe(12);
+    // Alt-account ping-pong: new call id, same counterpart, still in the window.
+    await recordQuestEvent(ctx, u, 'paid_call', 't2', new Date(NOW.getTime() + 3_600_000), rule);
+    await recordQuestEvent(ctx, u, 'paid_call', 't3', new Date(NOW.getTime() + 86_400_000), rule);
+    expect(await ladderXp(u)).toBe(12);
     // A different counterpart is a valid event.
-    await recordQuestEvent(ctx, u, 'tip_send', 't4', NOW, { key: 'tip:other', cooldownDays: 7 });
-    expect(await ladderXp(u)).toBe(6);
+    await recordQuestEvent(ctx, u, 'paid_call', 't4', NOW, { key: 'pair:other', cooldownDays: 7 });
+    expect(await ladderXp(u)).toBe(24);
     // After the window the first counterpart counts again.
     const later = new Date(NOW.getTime() + 8 * 86_400_000);
-    await recordQuestEvent(ctx, u, 'tip_send', 't5', later, rule);
-    expect(await ladderXp(u)).toBe(9);
+    await recordQuestEvent(ctx, u, 'paid_call', 't5', later, rule);
+    expect(await ladderXp(u)).toBe(36);
   });
 
   it('a replayed event ref earns none, with or without a counterpart rule', async () => {

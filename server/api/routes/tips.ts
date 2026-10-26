@@ -1,7 +1,7 @@
 /**
  * Tips routes (M4 #53).
  *
- *   POST /v1/tips
+ *   POST /v1/tips            (410 CASH_NOT_TRANSFERABLE: Cash tips were removed)
  *   POST /v1/tips/onchain
  *   GET  /v1/tips?toUserId=&limit=
  */
@@ -11,12 +11,6 @@ import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import { listTipsTo, recordOnchainTip, sendCashTip } from '../../application/tips.js';
-
-const CashBody = z.object({
-  toUserId: z.string().uuid(),
-  amountCents: z.number().int().min(1).max(1_000_000),
-  message: z.string().max(200).optional(),
-});
 
 const OnchainBody = z.object({
   toUserId: z.string().uuid(),
@@ -35,18 +29,8 @@ const ListQuery = z.object({
  *
  */
 export function registerTipRoutes(app: FastifyInstance): void {
-  app.post('/v1/tips', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
-    const body = CashBody.safeParse(req.body);
-    if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-    const out = await sendCashTip(
-      req.ctx,
-      req.user!.sub,
-      body.data.toUserId,
-      body.data.amountCents,
-      body.data.message ?? null,
-    );
-    return reply.status(201).send(out);
-  });
+  // Cash tips were removed: Cash never moves between players.
+  app.post('/v1/tips', { preHandler: [requireAuth] }, async () => sendCashTip());
 
   app.post(
     '/v1/tips/onchain',

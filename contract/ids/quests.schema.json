@@ -28,6 +28,7 @@
               "prediction_place",
               "alpha_call",
               "paid_call",
+              "home_visit"
               "tip_send",
               "home_visit",
               "shift_start",

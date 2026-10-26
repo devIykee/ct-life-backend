@@ -169,8 +169,6 @@ async function reconcileSettled(
     // Convert base-unit cents to in-game cents (cents == base
     // units for USDC at 6 decimals, so the conversion is the
     // identity here).
-    const feeCents = Number(ev.fee);
-    const netCents = Number(ev.creatorAmount);
     const grossCents = Number(ev.refund) + Number(ev.creatorAmount) + Number(ev.fee);
     await client.query(
       `UPDATE paid_call_escrow
@@ -178,25 +176,8 @@ async function reconcileSettled(
        WHERE escrow_id = $2::uuid`,
       [grossCents, row.escrow_id],
     );
-    if (netCents > 0) {
-      await client.query(
-        `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
-         ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
-        [row.payee_user_id, netCents],
-      );
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'tip', 'paid_call', $3, $4)`,
-        [row.payee_user_id, netCents, row.escrow_id, `paid-call-creator:${signature.slice(0, 16)}`],
-      );
-    }
-    if (feeCents > 0) {
-      await client.query(
-        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'fee', 'paid_call', $3, $4)`,
-        [row.payer_user_id, -feeCents, row.escrow_id, `paid-call-fee:${signature.slice(0, 16)}`],
-      );
-    }
+    // The on-chain settle already paid the creator in USDC. Nothing is credited to anyone's
+    // Cash, and no Cash fee is taken: Cash never moves between players.
     void configPda; // imported for documentation
   });
   // Best-effort: end the LiveKit room.

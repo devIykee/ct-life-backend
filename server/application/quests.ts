@@ -63,17 +63,6 @@ export interface QuestDef {
 
 export const DAILY_COUNT = 3;
 export const WEEKLY_COUNT = 5;
-/**
- * A Cash tip counts toward `tip_send` from this amount, which is above every tip quest's
- * Cash reward (daily 300) and, over a weekly quest's 3 tips, above its reward (2500). A tip
- * moves Cash to the recipient rather than burning it, so this alone does not make farming
- * with an alt unprofitable; the counterpart rules below are what cap it.
- */
-export const TIP_QUEST_MIN_CENTS = 1000;
-/** A recipient counts for `tip_send` once per this many days. */
-export const TIP_RECIPIENT_COOLDOWN_DAYS = 7;
-/** A tip does not count when the recipient tipped the sender within this many days. */
-export const TIP_PINGPONG_DAYS = 7;
 /** A home counts for `home_visit` once per this many days. */
 export const HOME_VISIT_COOLDOWN_DAYS = 7;
 /** A pair of players counts for `paid_call` once per this many days. */

@@ -152,12 +152,6 @@ export interface Config {
     readonly dailyNetLossCapCents: number;
   };
 
-  /** Cash tips. */
-  readonly tips: {
-    /** Fee burned on every Cash tip, in basis points of the amount (300 = 3%). */
-    readonly feeBps: number;
-  };
-
   readonly features: {
     readonly llmEnabled: boolean;
     readonly pushEnabled: boolean;
@@ -438,10 +432,6 @@ export function loadConfig(): Config {
     casino: {
       dailyStakeCapCents: asInt('CASINO_DAILY_STAKE_CAP_CENTS', 50_000),
       dailyNetLossCapCents: asInt('CASINO_DAILY_LOSS_CAP_CENTS', 25_000),
-    },
-
-    tips: {
-      feeBps: asBoundedInt('TIP_FEE_BPS', 300, 0, 2000),
     },
 
     features: {
