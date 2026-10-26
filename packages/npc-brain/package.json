@@ -10,7 +10,7 @@
     "./rng": "./src/rng.ts"
   },
   "scripts": {
-    "test": "vitest run --reporter=basic"
+    "test": "vitest run --reporter=basic --passWithNoTests"
   },
   "devDependencies": {
     "vitest": "^2.1.8"

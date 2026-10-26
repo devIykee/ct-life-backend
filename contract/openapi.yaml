@@ -3521,10 +3521,10 @@ paths:
       tags: [social]
       operationId: postFeedPosts
       summary: Post to the in-game feed. (Not X; never awards real money for posting.)
+      x-phase: 3
       description: |
         `400 CONTENT_NOT_ALLOWED` (`details.field: post`) for a slur or strong profanity; `403 ACCOUNT_MUTED` while muted.
-      x-phase: 3
-      description: >-
+
         The server builds the action card: a coin card when the text names a real coin's `$TICKER`,
         otherwise a place card when `withPlace` is true and the server's position puts the author
         within 60 m of a venue door. The district the post counts for (tribe district rollover)

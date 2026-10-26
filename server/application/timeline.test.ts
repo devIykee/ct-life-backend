@@ -40,6 +40,36 @@ _resetContextForTests();
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const ctx = buildContext();
 
+beforeEach(async () => {
+  // Clean up timeline test data to prevent cross-test pollution
+  await pool.query(
+    `DELETE FROM positions WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'tl-%')`,
+  );
+  await pool.query(
+    `DELETE FROM feed_posts WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'tl-%')`,
+  );
+  await pool.query(
+    `DELETE FROM characters WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'tl-%')`,
+  );
+  await pool.query(`DELETE FROM users WHERE wallet LIKE 'tl-%'`);
+  // Clean up ALL test coins to prevent NPC callers from picking stale coins
+  // (NPC callers use ORDER BY random() so any leftover house coin can be picked)
+  // Delete from all tables that reference coins with ON DELETE RESTRICT
+  await pool.query(
+    `DELETE FROM perps WHERE coin_id IN (SELECT coin_id FROM coins WHERE NOT player_launched)`,
+  );
+  await pool.query(
+    `DELETE FROM tombstones WHERE coin_id IN (SELECT coin_id FROM coins WHERE NOT player_launched)`,
+  );
+  await pool.query(
+    `DELETE FROM alpha_calls WHERE coin_id IN (SELECT coin_id FROM coins WHERE NOT player_launched)`,
+  );
+  await pool.query(
+    `DELETE FROM positions WHERE coin_id IN (SELECT coin_id FROM coins WHERE NOT player_launched)`,
+  );
+  await pool.query(`DELETE FROM coins WHERE NOT player_launched`);
+});
+
 afterAll(async () => {
   await pool.end();
 });

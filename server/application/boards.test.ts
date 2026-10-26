@@ -37,6 +37,10 @@ async function resetBoardTestData(): Promise<void> {
   await pool.query(
     `DELETE FROM season_memberships WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
+  // Also clean up current season memberships for ALL users (boards.test calls
+  // runSeasonRollover which assigns ALL users with balances to leagues).
+  const season = currentSeasonIso();
+  await pool.query(`DELETE FROM season_memberships WHERE season_iso = $1`, [season]);
   await pool.query(
     `DELETE FROM balances WHERE user_id IN (SELECT id FROM users WHERE wallet LIKE 'boardsUser-%')`,
   );
