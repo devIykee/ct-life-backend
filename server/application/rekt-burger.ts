@@ -234,9 +234,9 @@ export async function onPlayerRekt(
 
 const POST_TEXT = {
   back_to_trenches:
-    'back to the trenches. flipping burgers at Rekt Burger until the bag is back. gm anyway.',
+    "back to the trenches. flipping burgers at McDonald's until the bag is back. gm anyway.",
   glow_up: (cents: number): string =>
-    `glow-up complete. hung up the Rekt Burger apron with net worth back above $${Math.floor(cents / 100).toLocaleString('en-US')}. see you at the perp pit.`,
+    `glow-up complete. hung up the McDonald's apron with net worth back above $${Math.floor(cents / 100).toLocaleString('en-US')}. see you on Hyperliquid.`,
 } as const;
 
 /**
@@ -347,7 +347,7 @@ export interface ShiftEndResult {
   /** What the daily cap withheld from this shift. */
   readonly cappedCents: number;
   readonly capRemainingCents: number;
-  /** First counted shift only: the Rekt Burger Uniform cosmetic. */
+  /** First counted shift only: the McDonald's Uniform cosmetic. */
   readonly uniformGranted: boolean;
   readonly endReason: EndReason;
 }

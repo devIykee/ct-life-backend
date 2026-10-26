@@ -513,7 +513,7 @@ describe('Timeline posts', () => {
     expect(p).toHaveLength(1);
     expect(p[0]).toMatchObject({ kind: 'career', meta: { event: 'back_to_trenches' } });
     expect(p[0]!.text).toMatch(/back to the trenches/i);
-    expect(p[0]!.text).toMatch(/Rekt Burger/);
+    expect(p[0]!.text).toMatch(/McDonald/);
     expect(p[0]!.text.length).toBeLessThanOrEqual(280);
     // Followers see it in their feed as a career post (the global page is shared, so
     // read it through a follow).
@@ -548,7 +548,7 @@ describe('Timeline posts', () => {
     const events = (await posts(u)).map((x) => x.meta.event);
     expect(events).toEqual(['back_to_trenches', 'back_to_trenches', 'glow_up']);
     expect((await posts(u)).at(-1)!.text).toMatch(/glow-up/i);
-    expect((await posts(u)).at(-1)!.text).not.toMatch(/mcdonald/i);
+    expect((await posts(u)).at(-1)!.text).toMatch(/McDonald/);
   });
 
   it('does not repost within the cooldown, and a leave with no job is harmless', async () => {

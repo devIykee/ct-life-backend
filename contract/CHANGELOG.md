@@ -1,3 +1,14 @@
+## 2026-10-26 - Approved display names (migration 105)
+
+The user approved real, relatable names for everything players see (ct-life-evidence/names/NAMES.md; the client table is `contract/ids/names.json`). Ids, slugs, codes and routes do not change; only display text the server writes or stores.
+
+- **Authors** (migration 105 UPDATEs the rows migration 102 seeded): `city` "CT City" -> "City News"; `sleuth` "The Sleuth" -> "Police" (`SLEUTH_ALIAS` too); callers "Candle Carla" -> "Chart Caller", "Rugwatch Ray" -> "Rug Watcher", "Moonboy Milo" -> "Moon Boy", "Auntie Ape" -> "Ape Auntie". Cosmetics `reward_rekt_burger_uniform` -> "McDonald's Uniform", `reward_s1_airdrop_tee` -> "S1 Season Tee". Old posts that mention a renamed place are rewritten the same way.
+- **Generated text:** city cards "liquidated in the Perp Pit" -> "liquidated on Hyperliquid", "in the Rug Room" -> "in the Casino"; venue card name "The Rug Room" -> "Casino"; career posts "Rekt Burger" -> "McDonald's" (and "see you on Hyperliquid"); busted post "CT Jail" -> "Jail"; the six rug exposes are now written as the Police ("Police report on ...", "wanted level" instead of "heat"); `npc_lines.json` "Sleuth ..." -> "Police ...", "Ratio Arena" -> "Debate Arena"; NPC persona "You are Sleuth" -> "You are a Police detective"; tribes "Cabal Lounge" -> "VIP Lounge".
+- **Error messages:** "The Rug Room is 18+" -> "The Casino is 18+"; "CT Jail" -> "Jail" (JAILED, NOT_JAILED); the position message "Rekt Burger counter" -> "McDonald's counter".
+- **Config display names:** careers "Rug Sleuth" -> "Fraud Investigator", "Rekt Burger" -> "McDonald's", uniform -> "McDonald's Uniform"; season "Airdrop Season" -> "Season 1", "S1 Airdrop Season Tee" -> "S1 Season Tee"; gig "Doot the Feed" -> "Like Posts"; casino note "The Rug Room" -> "Casino"; ledger labels "Duo Shop order/refund" -> "Amazon order/refund"; archetypes "Sleuth" -> "Police", "Town Crier" -> "News Reader".
+- **Venue names** in `venues.json` now equal the client's `venue.*` names: Times Square, X Spaces Studio, Starbucks, Hyperliquid, Hospital, ORE Mine, Polymarket, Pump.fun Tower, Debate Arena, VIP Lounge, Discord HQ, Nightclub, Convention Centre, Jail, Barn, Downtown (venue ids unchanged).
+- **Trait text the client matches on:** `traits.json` effect "Sleuth NPC pays you for tips" -> "The police pay for your tips" (client already shows this wording; both sides change together).
+
 ## 2026-10-26 - Rugpull Factory launches real tokens (Meteora DBC); the Cash Factory is retired
 
 Migration 104. Client contract and setup in `docs/FACTORY-REAL.md`.

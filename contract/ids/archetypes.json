@@ -5,7 +5,7 @@
   "archetypes": [
     {
       "id": "town_crier",
-      "name": "Town Crier",
+      "name": "News Reader",
       "venueId": "timeline_square",
       "phase": 1,
       "lines": "npc_lines.town_crier"
@@ -96,7 +96,7 @@
     },
     {
       "id": "sleuth",
-      "name": "Sleuth",
+      "name": "Police",
       "venueId": "audit_row",
       "phase": 2,
       "lines": "npc_lines.sleuth"

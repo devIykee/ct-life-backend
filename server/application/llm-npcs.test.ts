@@ -111,7 +111,7 @@ describe('llm chat', () => {
     expect(a).toMatch(/NEVER/);
     expect(a).toMatch(/PII|personal information/);
     const s = systemPrompt('sleuth');
-    expect(s).toMatch(/Sleuth/);
+    expect(s).toMatch(/Police/);
   });
 
   it('chatWithLlmNpc happy path returns the stub reply', async () => {

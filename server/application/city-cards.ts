@@ -7,9 +7,9 @@
  *   launch       "smoothbrain launched $FROG"            one per coin
  *   rug          "RUGGED: $FROG by smoothbrain"          one per coin
  *                "$FROG went to zero" (house coin died)
- *   liquidation  "$120k of longs liquidated in the Perp Pit"
+ *   liquidation  "$120k of longs liquidated on Hyperliquid"
  *                one card per 10-minute window, totals updated in place
- *   casino_win   "lucky_ape hit 40x on crash in the Rug Room"
+ *   casino_win   "lucky_ape hit 40x on crash in the Casino"
  *                10x or more and $10+ paid, at most one per 2 minutes
  *
  * Write-side limits keep a burst from flooding the City tab (launches and
@@ -174,7 +174,7 @@ export async function cardLiquidation(
       const side = lc > 0n && sc > 0n ? 'positions' : lc > 0n ? 'longs' : 'shorts';
       await db.query(`UPDATE feed_posts SET text = $2 WHERE event_key = $1`, [
         `liq:${bucket}`,
-        `${shortCash(lc + sc)} of ${side} liquidated in the Perp Pit`,
+        `${shortCash(lc + sc)} of ${side} liquidated on Hyperliquid`,
       ]);
     });
   });
@@ -206,7 +206,7 @@ export async function cardCasinoWin(
       insertSystemPost(db, {
         userId: CITY_USER_ID,
         kind: 'casino_win',
-        text: `${alias} hit ${mult}x on ${round.game} in the Rug Room`,
+        text: `${alias} hit ${mult}x on ${round.game} in the Casino`,
         meta: {
           winnerUserId: userId,
           winnerAlias: alias,

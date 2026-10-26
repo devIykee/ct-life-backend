@@ -4,7 +4,7 @@
   "town_crier": [
     "JUST IN: $4.2M in longs liquidated in the past 60 minutes.",
     "JUST IN: {coin} did {x}x in {minutes} minutes.",
-    "JUST IN: {coin} rugged. Sleuth is on the case.",
+    "JUST IN: {coin} rugged. Police are on the case.",
     "JUST IN: motherlode hit, {amount} ORE.",
     "JUST IN: exploit on Audit Row.",
     "JUST IN: a new {coin} launched. You love to see it.",
@@ -17,7 +17,7 @@
     "JUST IN: {alias} just got REKT.",
     "JUST IN: {coin} graduated. Real money, real losses.",
     "JUST IN: the air is thin up here. Stay humble.",
-    "JUST IN: Sleuth just dropped a thread on {coin}.",
+    "JUST IN: Police just dropped a thread on {coin}.",
     "JUST IN: {alias} bought the dip. Or the top.",
     "JUST IN: a {tribe} just opened a Space.",
     "JUST IN: {coin} is now the most-watched coin.",
@@ -26,12 +26,12 @@
     "JUST IN: {coin} holders increased by {holdersDelta}.",
     "JUST IN: someone bridged {amount} SOL into CT Life.",
     "JUST IN: {alias} is in the lead by {gap}.",
-    "JUST IN: Sleuth is taking requests in the Ratio Arena.",
+    "JUST IN: Police are taking requests in the Debate Arena.",
     "JUST IN: a {tribe} just unstaked {ore} ORE.",
     "JUST IN: {coin} down 50%. Buyer is now a holder.",
     "JUST IN: {alias} posted {count} threads today.",
     "JUST IN: {coin} dev just sold {pct}% of supply.",
-    "JUST IN: new high score on Sleuth's leaderboard."
+    "JUST IN: new high score on the Police leaderboard."
   ],
   "giveaway_guy": [
     "Like, RT, drop your wallets, join my TG.",
@@ -119,7 +119,7 @@
     "Max long, max pain",
     "WAGMI",
     "I'm going to make it",
-    "Sleuth said it's bullish",
+    "Police said it's bullish",
     "Dev is doxxed. We are early.",
     "Adding leverage. Removing doubt.",
     "Perp Degen, not sorry",

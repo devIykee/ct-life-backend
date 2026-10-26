@@ -221,12 +221,12 @@ export async function ensureDistricts(ctx: AppContext): Promise<void> {
     {
       slug: 'marina_villa',
       name: 'Dubai Marina',
-      lore: 'Net-worth-gated penthouse district. The Cabal Lounge sits at the top.',
+      lore: 'Net-worth-gated penthouse district. The VIP Lounge sits at the top.',
       baseScorePerDay: 100,
     },
     {
       slug: 'cabal_lounge',
-      name: 'Cabal Lounge',
+      name: 'VIP Lounge',
       lore: 'Invite-only room above the marina. The alpha flows here.',
       baseScorePerDay: 50,
     },
