@@ -52,6 +52,7 @@ import { VenueState, NpcState, type PlayerState } from '../../../contract/realti
 import { z } from 'zod';
 import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
 import {
+  applyOutfitMessage,
   authenticateJoin,
   loadPlayerState,
   filterSay,
@@ -61,6 +62,7 @@ import {
   EMOTE_COOLDOWN_MS,
 } from '../player.js';
 import {
+  OUTFIT_CHANNEL,
   POS_HASH,
   encodePos,
   getIslandGeometry,
@@ -165,6 +167,15 @@ export class VenueRoom extends Room {
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
+  private onOutfit = (data: unknown): void => applyOutfitMessage(this.state.players, data);
+
+  /**
+   * Stop listening for outfit changes.
+   */
+  override async onDispose(): Promise<void> {
+    await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
+  }
+
   /**
    * Stop listening for bans.
    */
@@ -200,6 +211,8 @@ export class VenueRoom extends Room {
     this.onMessage('say', (client, msg) => this.handleSay(client, msg));
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     this.onMessage('npc_tap', (client, msg) => this.handleNpcTap(client, msg));
+    // The api tells every room when a player's outfit changes (shift start/end, uniform equip).
+    await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
     // Spawn NPC brains per venue archetype.
     this.spawnNpcBrains();
     // 1 Hz NPC tick.

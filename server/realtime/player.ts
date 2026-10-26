@@ -5,6 +5,7 @@
  */
 import { type JWTPayload } from 'jose';
 import { PlayerState } from '../../contract/realtime/states.js';
+import { computeOutfit, outfitStateSql } from '../shared/domain/outfit.js';
 import { createJwtIssuer } from '../shared/auth/jwt.js';
 import { loadConfig } from '../shared/config/config.js';
 import { maskProfanity } from '../application/factory-filter.js';
@@ -104,7 +105,8 @@ export async function loadPlayerState(userId: string): Promise<PlayerState> {
   const ctx = buildContext();
   const result = await ctx.db.withConnection(async (c) => {
     return c.query(
-      `SELECT c.alias, u.skr_name, u.is_seeker, u.miner_tier, c.tribe_id, c.look
+      `SELECT c.alias, u.skr_name, u.is_seeker, u.miner_tier, c.tribe_id, c.look,
+              ${outfitStateSql('c.user_id', 'c.look')}
        FROM characters c
        JOIN users u ON u.id = c.user_id
        WHERE c.user_id = $1
@@ -121,7 +123,28 @@ export async function loadPlayerState(userId: string): Promise<PlayerState> {
   player.tribeId = row?.tribe_id || '';
   player.minerTier = row?.miner_tier || 'none';
   player.look = row ? lookToArray(row.look) : [...LOOK_FALLBACK];
+  player.outfit =
+    computeOutfit(row?.on_shift === true, row?.uniform_equipped === true) ?? undefined;
   return player;
+}
+
+/**
+ * Apply an outfit message from the api to every matching player in a room's state. Ignores
+ * malformed messages.
+ * @param players - The room's players.
+ * @param data - `{userId, outfit}` as published on OUTFIT_CHANNEL.
+ */
+export function applyOutfitMessage(
+  players: { forEach(cb: (p: PlayerState) => void): void },
+  data: unknown,
+): void {
+  const d = data as { userId?: unknown; outfit?: unknown } | null;
+  if (!d || typeof d.userId !== 'string') return;
+  if (d.outfit !== null && typeof d.outfit !== 'string') return;
+  const outfit = d.outfit === null || d.outfit === '' ? undefined : d.outfit;
+  players.forEach((p) => {
+    if (p.userId === d.userId) p.outfit = outfit;
+  });
 }
 
 export const SAY_MAX_LENGTH = 140;

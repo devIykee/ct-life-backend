@@ -182,7 +182,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect(r.statusCode).toBe(401);
   });
 
-  it('tips endpoint: alice tipping bob is allowed', async () => {
+  it('tips endpoint: Cash tips are gone (410) and move nothing', async () => {
     const beforeA = await readCashCents(alice.sub);
     const beforeB = await readCashCents(bob.sub);
     const r = await app.inject({
@@ -191,32 +191,10 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
       headers: authHeaders(alice, `tip-${uuidv7()}`),
       payload: { toUserId: bob.sub, amountCents: 100, message: 'hi' },
     });
-    expect([201, 200]).toContain(r.statusCode);
-    const afterA = await readCashCents(alice.sub);
-    const afterB = await readCashCents(bob.sub);
-    expect(afterA).toBe(beforeA - 100);
-    expect(afterB).toBe(beforeB + 97); // 3% fee (3 cents) is burned
-  });
-
-  it('tips endpoint: alice cannot trick the server into debiting bob (no actor param)', async () => {
-    // The server derives `from` from the JWT. There is no `fromUserId` field;
-    // the route handler uses req.user!.sub. So even if a malicious client
-    // tries to set `fromUserId`, the server ignores it. This is a positive
-    // assertion that the tip endpoint never exposes an actor override.
-    const beforeA = await readCashCents(alice.sub);
-    const r = await app.inject({
-      method: 'POST',
-      url: '/v1/tips',
-      headers: authHeaders(alice, `tip-${uuidv7()}`),
-      payload: { toUserId: bob.sub, amountCents: 50, message: 'noop', fromUserId: bob.sub },
-    });
-    // If the route returns 400 because fromUserId is not in the schema,
-    // good. If it ignores the extra field, the tip still debits alice.
-    expect(r.statusCode === 201 || r.statusCode === 400).toBe(true);
-    const afterA = await readCashCents(alice.sub);
-    // alice is the actor regardless. If 201, alice paid 50. If 400, no
-    // mutation happened.
-    expect(afterA === beforeA || afterA === beforeA - 50).toBe(true);
+    expect(r.statusCode).toBe(410);
+    expect(r.json().error.code).toBe('CASH_NOT_TRANSFERABLE');
+    expect(await readCashCents(alice.sub)).toBe(beforeA);
+    expect(await readCashCents(bob.sub)).toBe(beforeB);
   });
 
   it('blocks endpoint: alice blocking bob succeeds', async () => {
@@ -564,27 +542,16 @@ describe('authz: cross-user isolation', () => {
     const beforeAlice = await readCashCents(alice.sub);
     const beforeBob = await readCashCents(bob.sub);
 
-    // Try a tip with alice's auth but an extra `fromUserId` field
-    // that tries to claim bob paid. The schema ignores the extra
-    // field; the server derives `from` from the JWT and debits
-    // alice (not bob). The assertion: alice's cash goes DOWN by
-    // exactly amountCents; bob's cash goes UP by exactly that
-    // same amount minus the burned fee; the extra `fromUserId` field is harmless.
+    // Cash cannot be moved between players at all: a tip with alice's auth is refused
+    // and neither balance changes, whatever fields the body carries.
     const r = await app.inject({
       method: 'POST',
       url: '/v1/tips',
       headers: authHeaders(alice, `iso-${uuidv7()}`),
-      payload: {
-        toUserId: bob.sub,
-        amountCents: 7,
-        message: 'isolate',
-        fromUserId: bob.sub,
-      },
+      payload: { toUserId: bob.sub, amountCents: 7, message: 'isolate', fromUserId: bob.sub },
     });
-    expect(r.statusCode).toBe(201);
-    const afterAlice = await readCashCents(alice.sub);
-    const afterBob = await readCashCents(bob.sub);
-    expect(afterAlice).toBe(beforeAlice - 7);
-    expect(afterBob).toBe(beforeBob + 6); // ceil(3% of 7) = 1 cent burned
+    expect(r.statusCode).toBe(410);
+    expect(await readCashCents(alice.sub)).toBe(beforeAlice);
+    expect(await readCashCents(bob.sub)).toBe(beforeBob);
   });
 });

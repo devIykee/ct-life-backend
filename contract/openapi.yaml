@@ -745,6 +745,7 @@ paths:
               example:
                 version: '1.0.0-rc1'
                 minClientVersion: '1.0.0-rc1'
+                livePhase: 1
                 degraded: []
                 venues: { 'timeline_square': { 'name': 'Timeline Square', 'maxClients': 50 } }
         '304': { description: Not modified; ETag matches. }
@@ -806,6 +807,42 @@ paths:
                 flags: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
 
+    delete:
+      tags: [player]
+      operationId: deleteMe
+      summary: Delete the account (App Store and Play account deletion).
+      description: |
+        Erases the caller's personal data and ends every session. Body must be
+        `{"confirm": "DELETE"}`; anything else is `400 VALIDATION_FAILED`
+        (`details.reason: confirm_required`) and nothing is touched.
+
+        Erased: wallet link (the same wallet can sign up again as a new account),
+        .skr name, SGT, character (alias and look), X link, push devices and
+        preferences, follows and blocks, creator profile, likeness photos and
+        models (files are removed by a background job within minutes), unused ad
+        creatives. Overwritten with `[deleted]`: DMs the player wrote and feed
+        posts. Kept under the now-anonymous id: ledger, payments, casino, market
+        and factory history, reports. Cash is not refunded. See docs/PRIVACY.md.
+
+        After a 204 the access token is rejected at once (`401 SIGNATURE_INVALID`)
+        and `/auth/refresh` refuses the refresh token. The client must drop its
+        tokens and return to sign-in. Deleting is irreversible.
+      x-phase: 6
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirm]
+              additionalProperties: false
+              properties:
+                confirm: { type: string, enum: [DELETE] }
+      responses:
+        '204': { description: Account deleted }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
   /characters:
     post:
       tags: [player]
@@ -1688,12 +1725,18 @@ paths:
     post:
       tags: [work]
       operationId: postJobsRektBurgerShiftStart
-      summary: 'Start a Rekt Burger shift (idempotent while one is open).'
+      summary: 'Clock in at the Rekt Burger counter (idempotent while a shift is open).'
       description: >-
-        Takes no body. The server holds the shift and its clock. The first shift after being out
-        starts the employment and writes a "Back to the trenches" Timeline post (at most one per
-        24 hours). `403 JOB_LOCKED` when not unlocked; `409 JOB_DAILY_CAP` when today's pay cap is
-        already reached. Rate limited per player.
+        Takes no body. The shift is a simple clock-in: the avatar works in 3D (client-side only)
+        and pay builds by SERVER time, `ratePerMinuteCents` while the clock runs, up to the daily
+        cap and `maxEndsAt`. The player may close the app. A new shift needs the server's own
+        FRESH position for the player (street room, at most 30 s old) within `counter.radiusM` of
+        the counter (`GET /jobs/rekt-burger` gives the counter), else `409 POSITION_UNKNOWN` or
+        `409 COUNTER_TOO_FAR` (`details.distanceM`). Calling it again while a shift is open returns
+        that shift with `resumed: true` and needs no position (so a relaunch can resume). The
+        first shift after being out starts the employment and writes a "Back to the trenches"
+        Timeline post (at most one per 24 hours). `403 JOB_LOCKED` when not unlocked; `409
+        JOB_DAILY_CAP` when today's pay cap is already reached. Rate limited per player.
       x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -1702,7 +1745,7 @@ paths:
           description: The open shift
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/RektBurgerShift' }
+              schema: { $ref: '#/components/schemas/RektBurgerStart' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: Not unlocked (`JOB_LOCKED`)
@@ -1715,94 +1758,103 @@ paths:
                   message: 'This job is not unlocked for you.'
                   details: { jobId: rekt-burger, cashCents: 500000, debtCents: 0 }
         '409':
-          description: Daily pay cap reached (`JOB_DAILY_CAP`)
+          description: Daily pay cap reached (`JOB_DAILY_CAP`), no fresh position (`POSITION_UNKNOWN`) or too far from the counter (`COUNTER_TOO_FAR`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-              example:
-                error:
-                  code: JOB_DAILY_CAP
-                  message: "You have earned today's maximum pay from this job."
-                  details: { dailyCapCents: 4500, resetsAt: '2026-10-25T00:00:00.000Z' }
+              examples:
+                cap:
+                  value:
+                    error:
+                      code: JOB_DAILY_CAP
+                      message: "You have earned today's maximum pay from this job."
+                      details: { dailyCapCents: 4500, resetsAt: '2026-10-25T00:00:00.000Z' }
+                far:
+                  value:
+                    error:
+                      code: COUNTER_TOO_FAR
+                      message: "The server's last position for you is too far from the Rekt Burger counter."
+                      details: { radiusM: 25, distanceM: 140 }
+                unknown:
+                  value:
+                    error:
+                      code: POSITION_UNKNOWN
+                      message: 'The server has no recent street position for the player.'
+                      details: { reason: no fresh position }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/shift/end:
+    post:
+      tags: [work]
+      operationId: postJobsRektBurgerShiftEnd
+      summary: Clock out; the server pays by the time on its clock.
+      description: >-
+        Takes no body (any field is ignored; there is no amount to send). Pay is
+        `floor(seconds x ratePerMinuteCents / 60)` of the time since the shift started, capped at
+        `maxShiftSec` and trimmed to what is left of the UTC-day cap (`cappedCents` is what the cap
+        withheld). Ledger reason `job_rekt_burger`. A shift left running is closed and paid by the
+        server at `maxEndsAt` (a per-minute worker, or on the next read), so the player does not have
+        to come back; `endReason` is `clock_out`, `auto` or `left`. `careerXp` is time-based
+        (`xpPerMinute`), only for a player on a career ladder, behind the shared daily action cap, and
+        only for a shift of at least `minCountedSec` (so is the `shift_complete` quest, Season XP
+        through it, and the Rekt Burger Uniform on the first such shift). Two ends racing pay once.
+        `404` when there is no open shift (never started, or already ended). Needs no position.
+      x-phase: 5
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Paid
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurgerEnd' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /jobs/rekt-burger/shift/current:
+    get:
+      tags: [work]
+      operationId: getJobsRektBurgerShiftCurrent
+      summary: My open shift (to restore after a relaunch) and my last paid shift.
+      description: >-
+        `shift` is the open shift with `accruedCents` (what clocking out at `serverNow` would pay,
+        after the daily cap) or null. If the open shift ran to its maximum it is closed and paid first,
+        so `shift` is null and `lastShift` shows what was paid (`endReason: auto`). Use `serverNow`
+        for the on-screen timer, not the device clock.
+      x-phase: 5
+      responses:
+        '200':
+          description: Current shift
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RektBurgerCurrent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
   /jobs/rekt-burger/shift/finish:
     post:
       tags: [work]
       operationId: postJobsRektBurgerShiftFinish
-      summary: Finish the shift with the minigame's order timings; the server validates and pays.
+      deprecated: true
+      summary: Removed. The per-ticket minigame was replaced by the clock-in shift.
       description: >-
-        The body carries only what the player did: for each ticket its index, when it appeared,
-        when it was served (ms since the shift started) and whether it was right. There is no
-        amount field and unknown fields are `400`. The server checks the report against its own
-        clock for the shift: at least `minDurationSec` elapsed (else `400 SHIFT_NOT_FINISHED`, the
-        shift stays open), at most `maxDurationSec` (else `409`, shift void), order count within
-        bounds, tickets numbered 0..n-1, each served after it appeared and in
-        `minServeMs..maxServeMs`, serves at least `minGapMs` apart, none after the shift ended,
-        and timings not machine-regular. A report that fails answers `422
-        SHIFT_RESULT_IMPLAUSIBLE` and burns the shift. Pay is `baseCents + perCorrectOrderCents *
-        correct` (correct capped at `maxCorrectOrdersPaid`), then trimmed to the UTC-day cap;
-        ledger reason `job_rekt_burger`. The first finish grants the Rekt Burger Uniform.
-        Completion counts for the `shift_complete` quests (and so Season XP).
+        Always answers `410 GONE` with `details.use` naming `POST /jobs/rekt-burger/shift/end`.
       x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [result]
-              additionalProperties: false
-              properties:
-                shiftId:
-                  type: string
-                  format: uuid
-                  description: Optional; defaults to your open shift. Must be yours (else 404).
-                result:
-                  type: object
-                  required: [orders]
-                  additionalProperties: false
-                  properties:
-                    orders:
-                      type: array
-                      maxItems: 200
-                      items: { $ref: '#/components/schemas/RektBurgerOrder' }
-            example:
-              result:
-                orders:
-                  - { i: 0, startedMs: 3200, servedMs: 9400, correct: true }
-                  - { i: 1, startedMs: 8100, servedMs: 15800, correct: false }
       responses:
-        '200':
-          description: Paid
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/RektBurgerFinish' }
-        '400':
-          description: Body invalid, or finished too early (`SHIFT_NOT_FINISHED`)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409':
-          description: Already finished or void (`CONFLICT`)
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '422':
-          description: The report is not humanly possible (`SHIFT_RESULT_IMPLAUSIBLE`)
+        '410':
+          description: Gone
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
               example:
                 error:
-                  code: SHIFT_RESULT_IMPLAUSIBLE
-                  message: 'The shift result does not look like a real shift.'
-                  details: { shiftId: '0198...', reason: too_fast }
-        '429': { $ref: '#/components/responses/RateLimited' }
+                  code: GONE
+                  message: 'This endpoint was removed; see details.use for its replacement.'
+                  details: { use: '/jobs/rekt-burger/shift/end' }
 
   /jobs/rekt-burger/leave:
     post:
@@ -1810,7 +1862,7 @@ paths:
       operationId: postJobsRektBurgerLeave
       summary: 'Hang up the apron. Writes a "Glow-up" post if your net worth recovered.'
       description: >-
-        Takes no body. A shift still open is voided. If the stint began with net worth (Cash minus
+        Takes no body. A shift still open is clocked out and paid first (`endedShift`). If the stint began with net worth (Cash minus
         debt) below `glowUpNetWorthCents`, has at least one paid shift and ends at or above it,
         a "Glow-up" Timeline post is written (at most one per 24 hours). Harmless when you have
         no job.
@@ -1824,13 +1876,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [employed, wasEmployed, glowUp, postId, netWorthCents]
+                required: [employed, wasEmployed, glowUp, postId, netWorthCents, endedShift]
                 properties:
                   employed: { type: boolean, enum: [false] }
                   wasEmployed: { type: boolean }
                   glowUp: { type: boolean }
                   postId: { type: string, nullable: true }
                   netWorthCents: { type: integer }
+                  endedShift:
+                    allOf: [{ $ref: '#/components/schemas/RektBurgerEnd' }]
+                    nullable: true
+                    description: The open shift this paid on the way out, if there was one.
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { $ref: '#/components/responses/RateLimited' }
 
@@ -2136,18 +2192,79 @@ paths:
                     },
                 }
 
+  /me/first-session:
+    post:
+      tags: [player]
+      operationId: postMeFirstSession
+      summary: Report a first-session beat, skip it, or replay it.
+      description: >-
+        Exactly one of `{beat}`, `{skip: true}`, `{replay: true}`; anything else (an unknown beat,
+        extra fields, two actions) is `400 VALIDATION_FAILED`. The reply is the new `FirstSession`
+        (the same object as `GET /me` `flags.firstSession`). `beat` adds a beat (idempotent); the
+        session becomes `done` when every applicable beat is in, where `trade` is applicable only
+        while markets are live (`livePhase` 2 or more in `GET /config`); a `skipped` session only
+        records the beat. `skip` sets `skipped`. `replay` sets `active`, clears the beats from
+        `moved` on (`moved, shift, trade, quest, chest`), keeps `origin, character, home`, sets
+        `startedAt` to now and `completedAt` to null; the starter quests are not reseeded. The server
+        sets `origin` itself (on `POST /lottery/roll`), `character` (on character creation) and
+        `shift`, `trade`, `chest` (from the same events as the starter quests); the client reports
+        `home`, `moved` and `quest`. An account from before the release has no first session
+        (it reads `done`), and `beat` and `skip` change nothing for it. Rate limited to 20 a minute.
+      x-phase: 1
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  additionalProperties: false
+                  required: [beat]
+                  properties:
+                    beat:
+                      {
+                        type: string,
+                        enum: [origin, character, home, moved, shift, trade, quest, chest],
+                      }
+                - type: object
+                  additionalProperties: false
+                  required: [skip]
+                  properties:
+                    skip: { type: boolean, enum: [true] }
+                - type: object
+                  additionalProperties: false
+                  required: [replay]
+                  properties:
+                    replay: { type: boolean, enum: [true] }
+      responses:
+        '200':
+          description: The first session after the change
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FirstSession' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /quests:
     get:
       tags: [work]
       operationId: getQuests
-      summary: Today's 3 daily quests and this week's chain of 5, with progress.
+      summary: The starter quests, today's 3 daily quests and this week's chain of 5, with progress.
       description: >-
         The pick is deterministic per player and period (daily: user and UTC date; weekly: user
         and ISO week) from `contract/ids/quests.json`. Progress is advanced only by server
         events (a shift paid, a perp opened or closed, a prediction placed, an alpha call, a
-        paid call accepted, a Cash tip of at least $10, a visit to someone else's home); the
+        paid call accepted, a visit to someone else's home); the
         client never reports progress. Each change is also pushed live as the realtime
-        `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward.
+        `quest_progress`. Weekly quests have `step` 1 to 5, in rising reward. `starter` (listed
+        first) holds the one-off starter quests (`pool: starter`) a NEW account is given once, never
+        reseeded: First shift (`shift_start`: a Rekt Burger clock-in or `POST /shifts`), First trade
+        (`trade_open`: a market buy or a perp open; only given while markets are live, `livePhase`
+        2 or more) and GM (`chest_open`: the daily chest claim). Accounts from before the onboarding
+        release get an empty `starter`. Claim them like any quest (`quest_reward` ledger, Season XP).
       x-phase: 5
       responses:
         '200':
@@ -2469,7 +2586,9 @@ paths:
         '429':
           description: >-
             `LAUNCH_COOLDOWN` (10 minutes between launches) or `LAUNCH_LIMIT_REACHED`
-            (3 per rolling 24 hours); `details.retryAfterMs` says how long to wait
+            (3 per rolling 24 hours); `details.retryAfterMs` says how long to wait. For
+            `LAUNCH_LIMIT_REACHED` it counts to the OLDEST launch in the rolling 24 hours, the same
+            moment `GET /factory/me` reports as `nextLaunchAt` (now + retryAfterMs)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -3220,15 +3339,36 @@ paths:
     post:
       tags: [social]
       operationId: postTips
-      summary: Send a Cash tip to another player (3% of it is burned).
+      deprecated: true
+      summary: Removed. Cash never moves between players.
       description: |
-        The sender pays `amountCents` in full. A fee of `ceil(3% of amount)` cents (at least 1;
-        the rate is `TIP_FEE_BPS`, default 300) is BURNED: nobody is credited it. The recipient
-        gets `receivedCents = amountCents - feeCents`. The fee has its own sender-side ledger row
-        (`tip_fee_burn`) next to `tip_out`, so it is auditable. A tip whose fee would take all of it
-        (1 cent) is refused with `VALIDATION_FAILED`. The tip sheet should show "3% fee, they get
-        $X" from these numbers (compute it as `amount - ceil(amount * 0.03)`, or send and read
-        the reply). Quests count the tip by the amount sent. Idempotent by `Idempotency-Key`.
+        Always answers `410 CASH_NOT_TRANSFERABLE`, whatever the body. Cash is purchasable, non-
+        transferable, has no cash-out and never goes on-chain, so there are no Cash tips (and no
+        tip fee). Remove the Cash tip sheet from the client. To thank a player, send an on-chain
+        transfer from your wallet and record it with `POST /tips/onchain` (informational only).
+      x-phase: 3
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '410':
+          description: Gone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: CASH_NOT_TRANSFERABLE
+                  message: 'Cash never moves between players. This feature was removed; see details.reason.'
+                  details: { reason: cash_tips_removed }
+
+  /tips/onchain:
+    post:
+      tags: [social]
+      operationId: postTipsOnchain
+      summary: Record a note about an on-chain wallet-to-wallet transfer.
+      description: |
+        The value moves wallet to wallet, outside the game, in USDC or SOL. This only records a
+        note (`status: pending`); nothing verifies it and it **never credits or moves any Cash**,
+        for the sender or the recipient. Idempotent per `signature`.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3238,26 +3378,34 @@ paths:
           application/json:
             schema:
               type: object
-              required: [toUserId, amountCents]
+              required: [toUserId, signature, amountLamports]
               properties:
                 toUserId: { type: string, format: uuid }
-                amountCents: { type: integer, minimum: 2, maximum: 1000000 }
+                signature: { type: string, description: 'Solana transaction signature.' }
+                amountLamports: { type: string, pattern: '^[0-9]+$' }
+                mint: { type: [string, 'null'] }
                 message: { type: string, maxLength: 200 }
       responses:
         '201':
-          description: Tipped
+          description: Recorded
           content:
             application/json:
               schema: { $ref: '#/components/schemas/CashTip' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /tips/onchain:
+  /nft/mint:
     post:
-      tags: [social]
-      operationId: postTipsOnchain
-      summary: Record an on-chain wallet-to-wallet tip.
-      x-phase: 3
+      tags: [shop]
+      operationId: postNftMint
+      summary: Mint a cosmetic as an NFT (only for items acquired on-chain).
+      description: |
+        Cash is purchasable but never converts to anything tradable. An item bought with Cash
+        (inventory source `shop`) or earned in the game (`grant`) can never be minted: `403
+        NFT_MINT_NOT_ALLOWED` (`details.reason` is `bought_with_cash` or `earned_in_game`). Only an
+        item that was itself acquired on-chain (source `mint`) may be. The client does not call this
+        today.
+      x-phase: 5
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
@@ -3266,12 +3414,25 @@ paths:
           application/json:
             schema:
               type: object
-              required: [toUserId, signature]
+              required: [itemId]
               properties:
-                toUserId: { type: string, format: uuid }
-                signature: { type: string, description: 'Solana transaction signature.' }
+                itemId: { type: string, format: uuid }
+                network: { type: string, enum: [devnet, mainnet] }
       responses:
-        '204': { description: Recorded }
+        '201': { description: Minted }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The item cannot be minted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: NFT_MINT_NOT_ALLOWED
+                  message: 'This item cannot be minted as an NFT: it was not acquired on-chain.'
+                  details: { itemId: '0192...', reason: bought_with_cash }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /bank/repay:
     post:
@@ -5827,12 +5988,14 @@ paths:
     post:
       tags: [casino]
       operationId: postCasinoCoinflipChallenges
-      summary: Challenge a player to a head-to-head coinflip.
+      summary: Challenge a player to a head-to-head coinflip for bragging rights (no Cash).
       description: >-
-        The challenger's stake is escrowed now (ledger `casino_stake`). The challenged player has
-        120 seconds to accept; after that the stake is refunded (`casino_refund`). The winner is
-        paid the pot minus a 5% house cut. The coin comes from a seed committed in `seedHash` at
-        creation. At most 5 open challenges per player. Same gates as any stake.
+        No Cash moves: Cash never goes between players, so a challenge has no stake, no escrow, no
+        ledger row and no payout; the winner just gets the win. The challenged player has 120
+        seconds to accept; then it expires. The coin comes from a seed committed in `seedHash` at
+        creation and revealed when it settles. At most 5 open challenges per player. 18+ and
+        self-exclusion apply; the daily stake caps do not (nothing is staked). A body with a
+        `stakeCents` field is `400 VALIDATION_FAILED`.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -5843,10 +6006,9 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [opponentUserId, stakeCents, side]
+              required: [opponentUserId, side]
               properties:
                 opponentUserId: { type: string, format: uuid }
-                stakeCents: { type: integer, minimum: 100, maximum: 10000 }
                 side: { type: string, enum: [heads, tails], description: The challenger's side. }
       responses:
         '201':
@@ -5856,20 +6018,6 @@ paths:
               schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402':
-          description: Not enough Cash
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-              example:
-                {
-                  error:
-                    {
-                      code: INSUFFICIENT_CASH,
-                      message: 'Cash balance is insufficient.',
-                      details: { have: '50', need: '500' },
-                    },
-                }
         '403': { $ref: '#/components/responses/CasinoRefused' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/RateLimited' }
@@ -5879,7 +6027,7 @@ paths:
       summary: My challenges, incoming and outgoing.
       description: >-
         Newest first, last 50. Only challenges the caller takes part in are listed. Expired ones
-        are refunded before the list is built. The client polls this while in the Rug Room to see
+        are closed before the list is built. The client polls this while in the Rug Room to see
         incoming challenges.
       x-phase: 4
       responses:
@@ -5904,9 +6052,9 @@ paths:
       operationId: postCasinoCoinflipChallengesIdAccept
       summary: Accept a challenge (the challenged player only).
       description: >-
-        Debits the opponent's stake, flips the coin from the committed seed, pays the winner the
-        pot minus 5% (ledger `casino_win`) and writes a `casino_rounds` row for each player. A
-        challenge older than 120 seconds is refunded and answers `410 CHALLENGE_EXPIRED`. Someone
+        Flips the coin from the committed seed and records the winner. No Cash moves and no
+        `casino_rounds` row is written. A challenge older than 120 seconds is closed and answers
+        `410 CHALLENGE_EXPIRED`. Someone
         who is not a participant gets `404`; the challenger gets `403`. The opponent must pass the
         same gates as for any stake.
       x-phase: 4
@@ -5918,32 +6066,12 @@ paths:
         - $ref: '#/components/parameters/IdempotencyKey'
       responses:
         '200':
-          description: The settled challenge and the caller's round
+          description: The settled challenge (no Cash moved)
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/CasinoChallengeResult'
-                  - type: object
-                    required: [round]
-                    properties:
-                      round: { $ref: '#/components/schemas/CasinoRound' }
+              schema: { $ref: '#/components/schemas/CasinoChallengeResult' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '402':
-          description: Not enough Cash
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-              example:
-                {
-                  error:
-                    {
-                      code: INSUFFICIENT_CASH,
-                      message: 'Cash balance is insufficient.',
-                      details: { have: '50', need: '500' },
-                    },
-                }
         '403': { $ref: '#/components/responses/CasinoRefused' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
@@ -5962,7 +6090,7 @@ paths:
                     },
                 }
         '410':
-          description: The challenge expired and the stake was refunded
+          description: The challenge expired
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -5971,7 +6099,7 @@ paths:
                   error:
                     {
                       code: CHALLENGE_EXPIRED,
-                      message: 'This challenge expired; the stake was refunded.',
+                      message: 'This challenge expired.',
                       details: { challengeId: '0192e1f0-0000-7000-8000-000000000000' },
                     },
                 }
@@ -5982,7 +6110,7 @@ paths:
       tags: [casino]
       operationId: postCasinoCoinflipChallengesIdDecline
       summary: Decline a challenge (the challenged player only).
-      description: Refunds the challenger's escrowed stake (ledger `casino_refund`).
+      description: Closes the challenge. Nothing moves.
       x-phase: 4
       parameters:
         - name: id
@@ -6010,7 +6138,7 @@ paths:
       tags: [casino]
       operationId: postCasinoCoinflipChallengesIdCancel
       summary: Cancel my open challenge (the challenger only).
-      description: Refunds the escrowed stake (ledger `casino_refund`).
+      description: Closes the challenge. Nothing moves.
       x-phase: 4
       parameters:
         - name: id
@@ -6111,7 +6239,7 @@ paths:
       description: >-
         New stakes are refused with `SELF_EXCLUDED` until the returned date. It can be extended
         by calling again with more days but never shortened or lifted early. An open crash round
-        can still be cashed out and a pending challenge refunded. `days` is 1 to 365.
+        can still be cashed out and a pending challenge closed. `days` is 1 to 365.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -6559,7 +6687,28 @@ components:
             The current lease: the newest active or overdue home, else the newest evicted one;
             null for a player with no home (street).
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
-        flags: { type: 'object', additionalProperties: true }
+        flags:
+          type: object
+          additionalProperties: true
+          properties:
+            firstSession: { $ref: '#/components/schemas/FirstSession' }
+    FirstSession:
+      type: object
+      required: [state, startedAt, completedAt, beats]
+      properties:
+        state:
+          type: string
+          enum: [active, skipped, done]
+          description: >-
+            A new account starts `active`. An account from before the onboarding release reads
+            `done` (with null times and no beats). `skipped` after `{skip: true}`.
+        startedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        beats:
+          type: array
+          description: The beats reached, in this order of the set.
+          items:
+            { type: string, enum: [origin, character, home, moved, shift, trade, quest, chest] }
     Character:
       type: object
       required: [alias, look, tribeId, traitIds, dreamId]
@@ -6787,62 +6936,100 @@ components:
         xp: { type: integer }
         joinedAt: { type: string, format: date-time }
         nextSwitchAt: { type: string, format: date-time }
-    RektBurgerOrder:
-      type: object
-      required: [i, startedMs, servedMs, correct]
-      additionalProperties: false
-      properties:
-        i: { type: integer, minimum: 0, description: 'Ticket number, 0..n-1 in serving order.' }
-        startedMs:
-          {
-            type: integer,
-            minimum: 0,
-            description: 'When the ticket appeared, ms since the shift started.',
-          }
-        servedMs:
-          {
-            type: integer,
-            minimum: 0,
-            description: 'When it was served, ms since the shift started.',
-          }
-        correct: { type: boolean }
     RektBurgerShift:
       type: object
-      required: [shiftId, startedAt, minFinishAt, expiresAt, rules, resumed, postId]
+      required:
+        [
+          shiftId,
+          startedAt,
+          ratePerMinuteCents,
+          capRemainingCents,
+          maxEndsAt,
+          accruedCents,
+          serverNow,
+        ]
       properties:
         shiftId: { type: string, format: uuid }
         startedAt: { type: string, format: date-time }
-        minFinishAt: { type: string, format: date-time }
-        expiresAt: { type: string, format: date-time }
-        rules:
-          type: object
-          properties:
-            minOrders: { type: integer }
-            maxOrders: { type: integer }
-            minServeMs: { type: integer }
-            minGapMs: { type: integer }
-            maxServeMs: { type: integer }
-            maxCorrectOrdersPaid: { type: integer }
-        resumed: { type: boolean, description: 'An already-open shift was returned.' }
-        postId:
+        ratePerMinuteCents: { type: integer }
+        capRemainingCents: { type: integer, description: "What is left of today's cap." }
+        maxEndsAt:
           {
             type: string,
-            nullable: true,
-            description: 'The "Back to the trenches" post, when this start wrote one.',
+            format: date-time,
+            description: The server closes and pays the shift here.,
           }
-    RektBurgerFinish:
+        accruedCents:
+          { type: integer, description: 'What clocking out at serverNow pays, after the cap.' }
+        serverNow: { type: string, format: date-time }
+    RektBurgerStart:
+      allOf:
+        - $ref: '#/components/schemas/RektBurgerShift'
+        - type: object
+          required: [resumed, postId]
+          properties:
+            resumed: { type: boolean, description: 'An already-open shift was returned.' }
+            postId:
+              type: [string, 'null']
+              description: 'The "Back to the trenches" post, when this start wrote one.'
+    RektBurgerEnd:
       type: object
       required:
-        [shiftId, orders, correct, payCents, cappedCents, remainingTodayCents, uniformGranted]
+        [
+          shiftId,
+          paidCents,
+          durationSec,
+          minutes,
+          careerXp,
+          cappedCents,
+          capRemainingCents,
+          uniformGranted,
+          endReason,
+        ]
       properties:
         shiftId: { type: string, format: uuid }
-        orders: { type: integer }
-        correct: { type: integer }
-        payCents: { type: integer, description: 'Paid, after the shift and daily caps.' }
+        paidCents: { type: integer, description: 'Paid, after the daily cap.' }
+        durationSec:
+          {
+            type: integer,
+            description: Total time on the clock in seconds (at most the maximum shift).,
+          }
+        minutes:
+          {
+            type: integer,
+            description: 'floor(durationSec / 60). Not a remainder: 65 s is minutes 1, durationSec 65.',
+          }
+        careerXp:
+          {
+            type: integer,
+            description: Career XP added (time-based; 0 off a ladder,
+            under the minimum or past the daily cap).,
+          }
         cappedCents: { type: integer, description: 'Withheld by the daily cap.' }
-        remainingTodayCents: { type: integer }
+        capRemainingCents: { type: integer }
         uniformGranted:
-          { type: boolean, description: 'First finish only: the Rekt Burger Uniform cosmetic.' }
+          {
+            type: boolean,
+            description: 'First counted shift only: the Rekt Burger Uniform cosmetic.',
+          }
+        endReason: { type: string, enum: [clock_out, auto, left] }
+    RektBurgerLastShift:
+      type: object
+      required: [shiftId, endedAt, paidCents, durationSec, minutes, careerXp, endReason]
+      properties:
+        shiftId: { type: string, format: uuid }
+        endedAt: { type: string, format: date-time }
+        paidCents: { type: integer }
+        durationSec: { type: integer, description: Total time on the clock in seconds. }
+        minutes: { type: integer, description: 'floor(durationSec / 60).' }
+        careerXp: { type: integer }
+        endReason: { type: [string, 'null'], enum: [clock_out, auto, left, null] }
+    RektBurgerCurrent:
+      type: object
+      required: [shift, lastShift]
+      properties:
+        shift: { allOf: [{ $ref: '#/components/schemas/RektBurgerShift' }], nullable: true }
+        lastShift: { allOf: [{ $ref: '#/components/schemas/RektBurgerLastShift' }], nullable: true }
     RektBurger:
       type: object
       required:
@@ -6859,6 +7046,7 @@ components:
           netWorthCents,
           glowUpNetWorthCents,
           pay,
+          counter,
           shift,
           uniformCosmeticId,
           hasUniform,
@@ -6885,13 +7073,21 @@ components:
         pay:
           type: object
           properties:
-            baseCents: { type: integer }
-            perCorrectOrderCents: { type: integer }
-            maxShiftCents: { type: integer }
+            ratePerMinuteCents: { type: integer }
+            maxShiftCents:
+              { type: integer, description: The most one shift pays before the daily cap. }
+            maxShiftSec: { type: integer }
             dailyCapCents: { type: integer }
             earnedTodayCents: { type: integer }
             remainingTodayCents: { type: integer }
             resetsAt: { type: string, format: date-time }
+        counter:
+          type: object
+          description: Where to stand (island metres) to clock in.
+          properties:
+            x: { type: number }
+            z: { type: number }
+            radiusM: { type: number }
         shift: { allOf: [{ $ref: '#/components/schemas/RektBurgerShift' }], nullable: true }
         uniformCosmeticId: { type: string }
         hasUniform: { type: boolean }
@@ -6920,10 +7116,19 @@ components:
         cooldownSec: { type: integer }
     ConfigResponse:
       type: object
-      required: [version, minClientVersion, degraded]
+      required: [version, minClientVersion, livePhase, degraded]
       properties:
         version: { type: string }
         minClientVersion: { type: string }
+        livePhase:
+          type: integer
+          minimum: 1
+          maximum: 6
+          description: >-
+            The release phase this deployment has opened. The client opens every app of a phase up
+            to this number and shows "Coming soon" for the rest, instead of using its build default.
+            Set by the server env `LIVE_PHASE` (1 to 6, default 1; any other value stops the API from
+            starting).
         flags:
           type: object
           description: Remote switches the client reads without a release.
@@ -7583,9 +7788,10 @@ components:
         seasonXp: { type: integer }
     Quest:
       type: object
-      required: [id, title, verb, target, progress, completed, claimed, reward]
+      required: [id, pool, title, verb, target, progress, completed, claimed, reward]
       properties:
         id: { type: string }
+        pool: { type: string, enum: [starter, daily, weekly] }
         title: { type: string }
         description: { type: string, nullable: true }
         verb:
@@ -7600,6 +7806,9 @@ components:
               paid_call,
               tip_send,
               home_visit,
+              shift_start,
+              trade_open,
+              chest_open,
             ]
         target: { type: integer }
         progress: { type: integer }
@@ -7611,8 +7820,13 @@ components:
           { type: integer, description: 'Weekly chain position, 1 to 5. Absent for daily quests.' }
     QuestsResponse:
       type: object
-      required: [daily, weekly]
+      required: [starter, daily, weekly]
       properties:
+        starter:
+          type: object
+          required: [quests]
+          properties:
+            quests: { type: array, items: { $ref: '#/components/schemas/Quest' } }
         daily:
           type: object
           required: [date, resetsAt, quests]
@@ -7716,16 +7930,12 @@ components:
           challengerAlias,
           opponentId,
           opponentAlias,
-          stakeCents,
           challengerSide,
           status,
           seedHash,
           seed,
           result,
           winnerId,
-          potCents,
-          houseCutCents,
-          payoutCents,
           createdAt,
           expiresAt,
           settledAt,
@@ -7737,16 +7947,12 @@ components:
         challengerAlias: { type: string, nullable: true }
         opponentId: { type: string, format: uuid }
         opponentAlias: { type: string, nullable: true }
-        stakeCents: { type: integer, description: Each player's stake. }
         challengerSide: { type: string, enum: [heads, tails] }
         status: { type: string, enum: [open, settled, expired, cancelled, declined] }
         seedHash: { type: string }
         seed: { type: string, nullable: true, description: Revealed once settled. }
         result: { type: string, enum: [heads, tails], nullable: true }
         winnerId: { type: string, format: uuid, nullable: true }
-        potCents: { type: integer, nullable: true }
-        houseCutCents: { type: integer, nullable: true, description: 5% of the pot, floored. }
-        payoutCents: { type: integer, nullable: true, description: Pot minus the house cut. }
         createdAt: { type: string, format: date-time }
         expiresAt: { type: string, format: date-time, description: 120 seconds after creation. }
         settledAt: { type: string, format: date-time, nullable: true }
@@ -7818,24 +8024,23 @@ components:
                     challengeTtlSeconds: { type: integer }
     CashTip:
       type: object
-      required:
-        [tipId, fromUserId, toUserId, kind, amountCents, feeCents, receivedCents, status, createdAt]
+      description: >-
+        A tip row. New rows are on-chain notes (`kind: onchain`, `status: pending`, the Cash fields
+        null). `kind: cash` rows exist only as history from before Cash became non-transferable.
+      required: [tipId, fromUserId, toUserId, kind, status, createdAt]
       properties:
         tipId: { type: string, format: uuid }
         fromUserId: { type: string, format: uuid }
         toUserId: { type: string, format: uuid }
-        kind: { type: string, enum: [cash] }
-        amountCents: { type: integer, description: What the sender paid. }
-        feeCents:
-          {
-            type: integer,
-            description: The burned part (ceil 3%,
-            at least 1; 0 for tips sent before the fee).,
-          }
-        receivedCents:
-          { type: integer, description: What the recipient got, amountCents minus feeCents. }
+        kind: { type: string, enum: [cash, onchain] }
+        amountCents: { type: [integer, 'null'], description: Old Cash tips only. }
+        feeCents: { type: [integer, 'null'], description: Old Cash tips only. }
+        receivedCents: { type: [integer, 'null'], description: Old Cash tips only. }
+        amountLamports: { type: [string, 'null'] }
+        mint: { type: [string, 'null'] }
+        signature: { type: [string, 'null'] }
         message: { type: [string, 'null'] }
-        status: { type: string, enum: [confirmed] }
+        status: { type: string, enum: [pending, confirmed, failed] }
         createdAt: { type: string, format: date-time }
     ShopOrder:
       type: object

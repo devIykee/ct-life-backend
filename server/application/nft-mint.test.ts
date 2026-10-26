@@ -52,9 +52,11 @@ beforeEach(async () => {
     [`nft-test-${userId}`],
   );
   itemId = r.rows[0]!.item_id;
+  // Acquired on-chain (source mint): the only kind of item that may be minted. A Cash-bought
+  // (shop) or earned (grant) item is refused; see server/api/cash-wall-routes.test.ts.
   await pool.query(
     `INSERT INTO cosmetic_inventory (inventory_id, user_id, item_id, source)
-     VALUES ($1, $2, $3, 'shop')`,
+     VALUES ($1, $2, $3, 'mint')`,
     [uuidv7(), userId, itemId],
   );
 });

@@ -141,8 +141,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       try {
         const input = VerifyInputSchema.parse(req.body);
         const user = await auth(req).verifyAndAuthenticate(input);
-        const hasCharacter = await checkHasCharacter(req, user.id);
-        return reply.send(authResponse(user, hasCharacter));
+        // The service already looked the character up; no second query.
+        return reply.send(authResponse(user, user.hasCharacter));
       } finally {
         const sem = (req as unknown as { __sem?: GlobalLoginSemaphore }).__sem;
         if (sem) await sem.release();
@@ -202,8 +202,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const body = DevAuthBody.safeParse(req.body);
     if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
     const user = await auth(req).devAuthenticate(body.data.wallet);
-    const hasCharacter = await checkHasCharacter(req, user.id);
-    return reply.send(authResponse(user, hasCharacter));
+    return reply.send(authResponse(user, user.hasCharacter));
   });
 
   // GET /v1/auth/jwks

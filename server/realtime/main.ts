@@ -23,6 +23,41 @@ import { HomeRoom } from './rooms/home.js';
 import { StreetRoom } from './rooms/street.js';
 import { VehiclesRoom } from './rooms/vehicles.js';
 import { createRedis } from '../shared/redis/client.js';
+import { buildContext } from '../application/context.js';
+import { renderProcessMetrics, startEventLoopMonitor } from '../shared/infra/process-metrics.js';
+
+/**
+ * Answer /healthz, /readyz and /metrics in front of Colyseus.
+ *
+ * Colyseus registers its own `request` listener for matchmaking. A second
+ * listener that also answered the health paths made Colyseus write to an
+ * already-sent response (ERR_HTTP_HEADERS_SENT on every probe), so the
+ * Colyseus listeners are moved behind one dispatcher that answers the ops
+ * paths itself and hands every other request to Colyseus untouched.
+ * @param httpServer - The server Colyseus listens on (after listen()).
+ * @param pool - The realtime process's Postgres pool, for the pool gauges.
+ */
+function answerOpsPaths(
+  httpServer: ReturnType<typeof createServer>,
+  pool: () => import('pg').Pool,
+): void {
+  startEventLoopMonitor();
+  const colyseus = httpServer.listeners('request') as ((...a: unknown[]) => void)[];
+  httpServer.removeAllListeners('request');
+  httpServer.on('request', (req, res) => {
+    if (req.url === '/healthz' || req.url === '/readyz') {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, ts: Date.now() }));
+      return;
+    }
+    if (req.url === '/metrics') {
+      res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' });
+      res.end(renderProcessMetrics('realtime', pool()));
+      return;
+    }
+    for (const l of colyseus) l.call(httpServer, req, res);
+  });
+}
 
 export interface RealtimeHandle {
   app: Server;
@@ -38,15 +73,6 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   const redis = createRedis();
   const port = Number(process.env.PORT_REALTIME ?? cfg.port);
   const httpServer = createServer();
-  // Health endpoint for the container HEALTHCHECK and the platform probe.
-  // Only the health paths are answered here; every other request is left
-  // untouched so Colyseus keeps serving its own matchmaking routes and the
-  // WebSocket upgrade.
-  httpServer.on('request', (req, res) => {
-    if (req.url !== '/healthz' && req.url !== '/readyz') return;
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, ts: Date.now() }));
-  });
   const gameServer = new Server({
     transport: new WebSocketTransport({ server: httpServer }),
     driver: new RedisDriver(redis.main),
@@ -70,6 +96,7 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
     filterBy: () => true,
   });
   await gameServer.listen(port);
+  answerOpsPaths(httpServer, () => buildContext().db.pool);
   return {
     app: gameServer,
     start: async () => `ws://0.0.0.0:${port}`,

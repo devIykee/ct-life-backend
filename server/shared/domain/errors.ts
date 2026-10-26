@@ -271,7 +271,7 @@ export class RoundInProgressError extends DomainError {
 export class ChallengeExpiredError extends DomainError {
   readonly code = 'CHALLENGE_EXPIRED';
   constructor(details: Record<string, unknown> = {}) {
-    super('This challenge expired; the stake was refunded.', details);
+    super('This challenge expired.', details);
     this.httpStatus = 410;
   }
 }
@@ -294,10 +294,30 @@ export class PositionUnknownError extends DomainError {
 
 // Economy -----------------------------------------------------------------
 
+function withShortfall(details: Record<string, unknown>): Record<string, unknown> {
+  if ('shortfallCents' in details) return details;
+  const { have, need } = details;
+  if (
+    (typeof have === 'string' || typeof have === 'number') &&
+    (typeof need === 'string' || typeof need === 'number') &&
+    /^-?\d+$/.test(String(have)) &&
+    /^-?\d+$/.test(String(need))
+  ) {
+    const short = BigInt(String(need)) - BigInt(String(have));
+    return { ...details, shortfallCents: Number(short > 0n ? short : 0n) };
+  }
+  return details;
+}
+
 export class InsufficientCashError extends DomainError {
   readonly code = 'INSUFFICIENT_CASH';
+  /**
+   * @param details - Structured details. When `have` and `need` (cents, as numbers or numeric
+   * strings) are present, `shortfallCents` (need minus have, an integer number) is added: the
+   * standard field clients should read. `have` and `need` stay for compatibility.
+   */
   constructor(details: Record<string, unknown> = {}) {
-    super('Cash balance is insufficient.', details);
+    super('Cash balance is insufficient.', withShortfall(details));
     this.httpStatus = 402;
   }
 }
@@ -572,11 +592,40 @@ export class JobDailyCapError extends DomainError {
   }
 }
 
-export class ShiftResultImplausibleError extends DomainError {
-  readonly code = 'SHIFT_RESULT_IMPLAUSIBLE';
+export class GoneError extends DomainError {
+  readonly code = 'GONE';
   constructor(details: Record<string, unknown> = {}) {
-    super('The shift result does not look like a real shift.', details);
-    this.httpStatus = 422;
+    super('This endpoint was removed; see details.use for its replacement.', details);
+    this.httpStatus = 410;
+  }
+}
+
+export class CounterTooFarError extends DomainError {
+  readonly code = 'COUNTER_TOO_FAR';
+  constructor(details: Record<string, unknown> = {}) {
+    super("The server's last position for you is too far from the Rekt Burger counter.", details);
+    this.httpStatus = 409;
+  }
+}
+
+// Cash is purchasable but not transferable ------------------------------------
+
+export class CashNotTransferableError extends DomainError {
+  readonly code = 'CASH_NOT_TRANSFERABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super(
+      'Cash never moves between players. This feature was removed; see details.reason.',
+      details,
+    );
+    this.httpStatus = 410;
+  }
+}
+
+export class NftMintNotAllowedError extends DomainError {
+  readonly code = 'NFT_MINT_NOT_ALLOWED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This item cannot be minted as an NFT: it was not acquired on-chain.', details);
+    this.httpStatus = 403;
   }
 }
 

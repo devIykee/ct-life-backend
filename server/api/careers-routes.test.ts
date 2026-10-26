@@ -6,6 +6,9 @@ import { buildServer } from './main.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { createDb } from '../shared/db/pool.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
+import { buildContext } from '../application/context.js';
+import { encodePos, POS_HASH } from '../realtime/movement.js';
+import { readFileSync } from 'node:fs';
 
 const FAKE_PKCS8 = `-----BEGIN PRIVATE KEY-----
 MC4CAQAwBQYDK2VwBCIEIH4+zq3wXKb5xY9jQ8j6P4mY8Z3b1z9S6n2Y1z9R6n2
@@ -101,17 +104,20 @@ async function call(
 const errCode = (b: Record<string, unknown>): string => (b.error as { code: string }).code;
 const BASE = new Date('2026-11-05T12:00:00Z');
 
-function orders(
-  n: number,
-): Array<{ i: number; startedMs: number; servedMs: number; correct: boolean }> {
-  const out = [];
-  let served = 4000;
-  for (let i = 0; i < n; i++) {
-    const serve = 3000 + ((i * 937) % 3000);
-    served += 5000 + ((i * 611) % 4000);
-    out.push({ i, startedMs: served - serve, servedMs: served, correct: true });
-  }
-  return out;
+/** Put the player at the Rekt Burger counter, as the street room would (server-side position). */
+async function standAtCounter(u: AuthedUser, dx = 0): Promise<void> {
+  const cfg = JSON.parse(readFileSync('contract/config/careers.json', 'utf8')) as {
+    rektBurger: { counter: { x: number; z: number } };
+  };
+  await buildContext().redis.main.hset(
+    POS_HASH,
+    u.sub,
+    encodePos({
+      x: cfg.rektBurger.counter.x + dx,
+      z: cfg.rektBurger.counter.z,
+      at: Date.now(),
+    }),
+  );
 }
 
 async function broke(u: AuthedUser): Promise<void> {
@@ -140,6 +146,8 @@ describe('auth', () => {
       ['POST', '/v1/careers/builder/join'],
       ['GET', '/v1/jobs/rekt-burger'],
       ['POST', '/v1/jobs/rekt-burger/shift/start'],
+      ['POST', '/v1/jobs/rekt-burger/shift/end'],
+      ['GET', '/v1/jobs/rekt-burger/shift/current'],
       ['POST', '/v1/jobs/rekt-burger/shift/finish'],
       ['POST', '/v1/jobs/rekt-burger/leave'],
     ] as const) {
@@ -230,92 +238,89 @@ describe('Rekt Burger over HTTP', () => {
     expect(open.body).toMatchObject({ unlocked: true, reason: 'broke', netWorthCents: -72000 });
   });
 
-  it('runs a shift end to end: server-side pay, replay safe, no client amount, no IDOR', async () => {
+  it('clocks in at the counter, restores, clocks out and is paid by server time; replay safe, no IDOR', async () => {
     const a = await devAuth();
     const b = await devAuth();
     await broke(a);
     await broke(b);
     vi.setSystemTime(BASE);
+
+    // Not at the counter: refused, nothing opens.
+    const lost = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/start', {});
+    expect(lost.status).toBe(409);
+    expect(errCode(lost.body)).toBe('POSITION_UNKNOWN');
+    await standAtCounter(a, 200);
+    const far = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/start', {});
+    expect(far.status).toBe(409);
+    expect(errCode(far.body)).toBe('COUNTER_TOO_FAR');
+
+    await standAtCounter(a);
     const s = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/start', {});
-    expect(s.status).toBe(200);
+    expect(s.status, JSON.stringify(s.body)).toBe(200);
+    expect(s.body).toMatchObject({
+      startedAt: BASE.toISOString(),
+      ratePerMinuteCents: 50,
+      capRemainingCents: 4500,
+      maxEndsAt: new Date(BASE.getTime() + 3600_000).toISOString(),
+      resumed: false,
+    });
     const shiftId = s.body.shiftId as string;
-    await call(b, 'POST', '/v1/jobs/rekt-burger/shift/start', {});
 
-    // Too early.
-    vi.setSystemTime(new Date(BASE.getTime() + 10_000));
-    const early = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/finish', {
-      result: { orders: orders(8) },
-    });
-    expect(early.status).toBe(400);
-    expect(errCode(early.body)).toBe('SHIFT_NOT_FINISHED');
+    // Restore after a relaunch.
+    vi.setSystemTime(new Date(BASE.getTime() + 300_000));
+    const cur = await call(a, 'GET', '/v1/jobs/rekt-burger/shift/current');
+    expect(cur.body).toMatchObject({ shift: { shiftId, accruedCents: 250 }, lastShift: null });
 
-    vi.setSystemTime(new Date(BASE.getTime() + 60_000));
-    // A client-sent amount is not accepted at all.
-    const cheat = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/finish', {
-      result: { orders: orders(8), payCents: 999_999 },
-    });
-    expect(cheat.status).toBe(400);
-    const cheat2 = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/finish', {
-      payCents: 999_999,
-      result: { orders: orders(8) },
-    });
-    expect(cheat2.status).toBe(400);
-    expect(await cashOf(a)).toBe(0);
-
-    // Another player's shift id is a 404, and pays nothing.
-    const idor = await call(b, 'POST', '/v1/jobs/rekt-burger/shift/finish', {
-      shiftId,
-      result: { orders: orders(8) },
-    });
-    // b has their own open shift, but not this id: a's shift is invisible.
+    // Another player has no shift to end, and cannot reach a's.
+    const idor = await call(b, 'POST', '/v1/jobs/rekt-burger/shift/end', {});
     expect(idor.status).toBe(404);
 
+    // A client-sent amount is not accepted: the body is ignored, pay is the server's.
     const key = uuidv7();
     const done = await call(
       a,
       'POST',
-      '/v1/jobs/rekt-burger/shift/finish',
-      { shiftId, result: { orders: orders(8) } },
+      '/v1/jobs/rekt-burger/shift/end',
+      { paidCents: 999_999 },
       key,
     );
     expect(done.status, JSON.stringify(done.body)).toBe(200);
-    expect(done.body).toMatchObject({ shiftId, orders: 8, correct: 8, payCents: 300 + 8 * 60 });
+    expect(done.body).toMatchObject({
+      shiftId,
+      paidCents: 250,
+      durationSec: 300,
+      minutes: 5,
+      careerXp: 0,
+      capRemainingCents: 4250,
+    });
     const replay = await call(
       a,
       'POST',
-      '/v1/jobs/rekt-burger/shift/finish',
-      { shiftId, result: { orders: orders(8) } },
+      '/v1/jobs/rekt-burger/shift/end',
+      { paidCents: 999_999 },
       key,
     );
     expect(replay.body).toEqual(done.body);
-    expect(await cashOf(a)).toBe(300 + 8 * 60);
-    const second = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/finish', {
-      shiftId,
-      result: { orders: orders(8) },
-    });
-    expect(second.status).toBe(409);
-    expect(await cashOf(a)).toBe(300 + 8 * 60);
+    expect(await cashOf(a)).toBe(250);
+    const second = await call(a, 'POST', '/v1/jobs/rekt-burger/shift/end', {});
+    expect(second.status).toBe(404);
+    expect(await cashOf(a)).toBe(250);
     expect(await cashOf(b)).toBe(0);
+    const after = await call(a, 'GET', '/v1/jobs/rekt-burger/shift/current');
+    expect(after.body).toMatchObject({ shift: null, lastShift: { shiftId, paidCents: 250 } });
   });
 
-  it('answers 422 SHIFT_RESULT_IMPLAUSIBLE for an impossible report', async () => {
+  it('the per-ticket endpoint is gone (410) and says what replaced it', async () => {
     const u = await devAuth();
     await broke(u);
-    vi.setSystemTime(new Date(BASE.getTime()));
-    await call(u, 'POST', '/v1/jobs/rekt-burger/shift/start', {});
-    vi.setSystemTime(new Date(BASE.getTime() + 60_000));
-    const fast = Array.from({ length: 40 }, (_, i) => ({
-      i,
-      startedMs: i * 100,
-      servedMs: i * 100 + 50,
-      correct: true,
-    }));
     const r = await call(u, 'POST', '/v1/jobs/rekt-burger/shift/finish', {
-      result: { orders: fast },
+      result: { orders: [] },
     });
-    expect(r.status).toBe(422);
-    expect(errCode(r.body)).toBe('SHIFT_RESULT_IMPLAUSIBLE');
-    expect(await cashOf(u)).toBe(0);
+    expect(r.status).toBe(410);
+    expect(errCode(r.body)).toBe('GONE');
+    expect((r.body.error as { details: { use: string } }).details.use).toBe(
+      '/v1/jobs/rekt-burger/shift/end',
+    );
   });
 
   it('rate limits shift starts per player', async () => {

@@ -2,8 +2,47 @@
   "_owner": "BE",
   "_provisional": true,
   "version": "0.1.0",
-  "_note": "Quest definitions. Each player gets a deterministic pick of 3 daily quests (seeded by user and UTC date) and a chain of 5 weekly quests (seeded by user and ISO week), preferring distinct verbs. verb is a server event: shift_complete, perp_open, perp_close, prediction_place, alpha_call, paid_call (a funded call the payee accepted, counted for both sides, once per pair of players per 7 days), tip_send (Cash tip of at least 1000 cents, counted once per recipient per 7 days, never to someone who tipped the sender in the last 7 days), home_visit (someone else's home, once per home per 7 days, and not when the owner visited the visitor's home in the last 7 days). Progress comes only from server events, never from the client. reward.cashCents pays as ledger reason quest_reward; reward.seasonXp is recorded in season_xp. deepLink is the screen the client opens. The FE may reword titles; ids are stable. To add a quest, add it here: no code change.",
+  "_note": "Quest definitions. Each player gets a deterministic pick of 3 daily quests (seeded by user and UTC date) and a chain of 5 weekly quests (seeded by user and ISO week), preferring distinct verbs. verb is a server event: shift_complete, perp_open, perp_close, prediction_place, alpha_call, paid_call (a funded call the payee accepted, counted for both sides, once per pair of players per 7 days), tip_send (Cash tip of at least 1000 cents, counted once per recipient per 7 days, never to someone who tipped the sender in the last 7 days), home_visit (someone else's home, once per home per 7 days, and not when the owner visited the visitor's home in the last 7 days). Progress comes only from server events, never from the client. reward.cashCents pays as ledger reason quest_reward; reward.seasonXp is recorded in season_xp. deepLink is the screen the client opens. The FE may reword titles; ids are stable. To add a quest, add it here: no code change. STARTER quests (pool 'starter') are not picked by date: each new account is given them once at first onboarding contact (never reseeded; accounts created before the onboarding migration get none). verb shift_start is a clock-in (Rekt Burger shift start or POST /shifts), trade_open a market buy or a perp open, chest_open the daily chest claim. q_starter_trade is only given while markets are live for the deployment (LIVE_PHASE >= 2).",
   "quests": [
+    {
+      "id": "q_starter_shift",
+      "title": "First shift",
+      "description": "Clock in for your first shift",
+      "verb": "shift_start",
+      "target": 1,
+      "reward": {
+        "cashCents": 1000,
+        "seasonXp": 20
+      },
+      "pool": "starter",
+      "deepLink": "ctlife://jobs"
+    },
+    {
+      "id": "q_starter_trade",
+      "title": "First trade",
+      "description": "Open your first trade",
+      "verb": "trade_open",
+      "target": 1,
+      "reward": {
+        "cashCents": 500,
+        "seasonXp": 20
+      },
+      "pool": "starter",
+      "deepLink": "ctlife://pulse"
+    },
+    {
+      "id": "q_starter_chest",
+      "title": "GM",
+      "description": "Open your first daily chest",
+      "verb": "chest_open",
+      "target": 1,
+      "reward": {
+        "cashCents": 500,
+        "seasonXp": 20
+      },
+      "pool": "starter",
+      "deepLink": "ctlife://chest"
+    },
     {
       "id": "q_daily_shift_1",
       "title": "Clock in",
@@ -109,19 +148,6 @@
       "deepLink": "ctlife://calls"
     },
     {
-      "id": "q_daily_tip_1",
-      "title": "Tip a creator",
-      "description": "Send a tip of at least $10 to someone new",
-      "verb": "tip_send",
-      "target": 1,
-      "reward": {
-        "cashCents": 300,
-        "seasonXp": 10
-      },
-      "pool": "daily",
-      "deepLink": "ctlife://timeline"
-    },
-    {
       "id": "q_daily_visit_1",
       "title": "Pop round",
       "description": "Visit a neighbour's home",
@@ -211,19 +237,6 @@
       },
       "pool": "weekly",
       "deepLink": "ctlife://calls"
-    },
-    {
-      "id": "q_weekly_tip_3",
-      "title": "Generous",
-      "description": "Send 3 tips of at least $10, each to a different person",
-      "verb": "tip_send",
-      "target": 3,
-      "reward": {
-        "cashCents": 2500,
-        "seasonXp": 100
-      },
-      "pool": "weekly",
-      "deepLink": "ctlife://timeline"
     },
     {
       "id": "q_weekly_visit_3",

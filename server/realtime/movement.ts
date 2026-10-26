@@ -316,6 +316,8 @@ export const POS_HASH = 'ctl:pos';
 export const VEHICLE_EXIT_CHANNEL = 'ctl:vehicle_exit';
 /** Presence channel the police referee (worker) publishes pursuit events on. */
 export const POLICE_CHANNEL = 'ctl:police';
+/** Presence channel the api publishes `{userId, outfit}` on when a player's outfit changes. */
+export const OUTFIT_CHANNEL = 'ctl:outfit';
 /** How old a stored position can be and still anchor a join. */
 export const POS_FRESH_MS = 30_000;
 

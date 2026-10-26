@@ -14,6 +14,7 @@ import {
   SignatureInvalidError,
   TokenExpiredError,
 } from '../../shared/domain/errors.js';
+import { assertAccountActive } from '../../application/account-deletion.js';
 import type { AccessClaims } from '../../shared/auth/jwt.js';
 
 declare module 'fastify' {
@@ -37,11 +38,13 @@ export async function requireAuth(
   const token = header.slice(7).trim();
   try {
     const claims = await req.ctx.jwt.verifyAccess(token);
+    await assertAccountActive(req.ctx.redis, claims.sub);
     req.user = claims;
     await assertNotBannedLive(req.ctx.redis, claims.sub);
     return claims;
   } catch (e) {
     if (e instanceof AccountBannedError) throw e;
+    if (e instanceof SignatureInvalidError) throw e;
     const err = e as { code?: string; name?: string; message?: string };
     if (err.name === 'JWTExpired' || err.code === 'ERR_JWT_EXPIRED') {
       throw new TokenExpiredError({});

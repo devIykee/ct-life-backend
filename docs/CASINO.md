@@ -19,7 +19,7 @@ A Cash-only, play-money casino, 18+. Code: `server/application/casino.ts` (servi
 | No gambling ads, no real-money links | Product rule for the client (plan P2). The backend has no such surface.                                                                                                                                                              |
 
 Caps are counted from the ledger for the UTC day, so they include stakes held in escrow
-(head-to-head) and exclude refunded stakes. Casino actions of one player are serialized by a lock
+and exclude refunded stakes. Casino actions of one player are serialized by a lock
 on their `casino_players` row, so two parallel bets cannot slip past a cap.
 
 ## Anti-grinding: the rich list
@@ -79,13 +79,14 @@ The displayed multiplier is `e^(0.07 t)` for `t` seconds since the round started
 ### Coinflip
 
 - **Against the house**: call heads or tails; a win pays 1.9x (RTP 95%).
-- **Head-to-head**: `POST /coinflip/challenges` to a named player. The challenger's stake is
-  escrowed at once. The opponent has 120 seconds to accept: both stakes make the pot, the house
-  keeps 5% (floored), the winner gets the rest (`casino_win`). Nobody accepting within 120 s, a
-  decline or a cancel refunds the stake (`casino_refund`); the per-minute worker also refunds
-  unanswered challenges. The 5% cut is Cash destroyed (a sink); no ledger row is written for it.
-  Each player's RTP is 95%. Accepting passes the same gates as any stake (18+, exclusion, caps,
-  Cash). Only the two players can see or act on a challenge (others get 404).
+- **Head-to-head (bragging rights, no Cash)**: `POST /coinflip/challenges` to a named player,
+  with a side and nothing else. Cash never moves between players, so there is no stake, no
+  escrow, no pot, no house cut, no `casino_*` ledger row and no `casino_rounds` row. The
+  opponent has 120 seconds to accept; the coin comes from the committed seed and the winner is
+  recorded on the challenge. 18+ and self-exclusion still apply (the stake caps do not, nothing
+  is staked). Only the two players can see or act on a challenge (others get 404). Migration 099
+  cancelled every challenge that still held an escrowed stake and returned it (ledger
+  `casino_refund`); old settled challenges keep their stake columns as history.
 
 ## Fairness: commit and reveal
 
@@ -126,7 +127,6 @@ partial index on `ledger_entries (user_id)` for the casino reasons (used by the 
 | Slots                                    | 95.05% | 94.74%                            |
 | Crash, auto-cashout 1.5x / 2x / 5x / 10x | 95.00% | 95.07% / 94.94% / 94.84% / 94.95% |
 | Coinflip vs house                        | 95.00% | 95.02%                            |
-| Head-to-head (per player)                | 95.00% | exact by construction             |
 
 ## Not built yet
 

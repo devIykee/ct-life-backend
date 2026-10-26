@@ -104,6 +104,12 @@ export interface Config {
   readonly flags: {
     readonly wireV3Kinds: boolean;
   };
+  /**
+   * The release phase the deployment has opened (1 to 6). `GET /config` sends it as the
+   * top-level `livePhase`; the client opens the apps of every phase up to it and shows
+   * "Coming soon" for the rest.
+   */
+  readonly livePhase: number;
 
   readonly helius: {
     readonly apiKey: string;
@@ -144,12 +150,6 @@ export interface Config {
   readonly casino: {
     readonly dailyStakeCapCents: number;
     readonly dailyNetLossCapCents: number;
-  };
-
-  /** Cash tips. */
-  readonly tips: {
-    /** Fee burned on every Cash tip, in basis points of the amount (300 = 3%). */
-    readonly feeBps: number;
   };
 
   readonly features: {
@@ -202,7 +202,12 @@ function asInt(name: string, fallback: number): number {
 }
 
 function asBoundedInt(name: string, fallback: number, min: number, max: number): number {
-  const n = asInt(name, fallback);
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  // Strict: "3.5", "1e1" and "6abc" are mistakes, not 3, 1 and 6.
+  if (!/^-?\d+$/.test(raw.trim()))
+    throw new ConfigError(name, `expected an integer ${min}..${max}`);
+  const n = Number(raw.trim());
   if (n < min || n > max) throw new ConfigError(name, `expected an integer ${min}..${max}`);
   return n;
 }
@@ -383,6 +388,9 @@ export function loadConfig(): Config {
       wireV3Kinds: optionalEnv('WIRE_V3_KINDS', 'false').toLowerCase() === 'true',
     },
 
+    // LIVE_PHASE 1 to 6, default 1 (nothing changes until it is set). Anything else fails the load.
+    livePhase: asBoundedInt('LIVE_PHASE', 1, 1, 6),
+
     helius: {
       apiKey: requireEnv('HELIUS_API_KEY', 'Helius API key'),
       rpcUrlDevnet: requireEnv('HELIUS_RPC_URL_DEVNET', 'Helius devnet RPC URL'),
@@ -424,10 +432,6 @@ export function loadConfig(): Config {
     casino: {
       dailyStakeCapCents: asInt('CASINO_DAILY_STAKE_CAP_CENTS', 50_000),
       dailyNetLossCapCents: asInt('CASINO_DAILY_LOSS_CAP_CENTS', 25_000),
-    },
-
-    tips: {
-      feeBps: asBoundedInt('TIP_FEE_BPS', 300, 0, 2000),
     },
 
     features: {
