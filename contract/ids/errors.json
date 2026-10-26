@@ -428,6 +428,8 @@
       "code": "RISK_NOT_ACCEPTED",
       "httpStatus": 400,
       "message": "Accept the risk warning before launching a real token."
+    },
+    {
       "code": "CASH_NOT_TRANSFERABLE",
       "httpStatus": 410,
       "message": "Cash never moves between players. This feature was removed; see details.reason."

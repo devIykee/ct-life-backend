@@ -27,6 +27,7 @@ import type { AppContext } from './context.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import { ValidationFailedError, RateLimitedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { assertCleanText, assertNotMuted } from './moderation.js';
 import {
   decodePos,
   getIslandGeometry,
@@ -234,6 +235,7 @@ export async function createPlayerPost(
   if (text.length < 1 || text.length > POST_TEXT_MAX) {
     throw new ValidationFailedError({ reason: 'text length 1..280' });
   }
+  assertCleanText(text, 'post');
   const pos = await serverPosition(ctx, userId, now);
   const district = pos ? turfAt(pos.x, pos.z) : null;
   let card: Record<string, unknown> | null = null;
@@ -253,6 +255,7 @@ export async function createPlayerPost(
   }
   const postId = uuidv7();
   await runInTransaction(async (client) => {
+    await assertNotMuted(client, userId, now);
     await client.query(
       `INSERT INTO feed_posts (post_id, user_id, text, created_at, kind, meta, district_slug)
        VALUES ($1, $2, $3, $4, 'player', $5, $6)`,
@@ -487,14 +490,23 @@ function coinIdOf(kind: PostKind, meta: Record<string, unknown> | null): string 
   return null;
 }
 
+/**
+ * The `coins`/`positions` tables key on a UUID coin_id. Real tokens (factory-real)
+ * reference their on-chain mint (base58) as the post's coinId, so those ids must
+ * never reach a `::uuid` cast — Postgres would abort the whole timeline read.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function hydrate(ctx: AppContext, userId: string, rows: Row[]): Promise<TimelinePost[]> {
   if (rows.length === 0) return [];
   const coinIds = [
     ...new Set(rows.map((r) => coinIdOf(normKind(r.kind), r.meta)).filter((x) => x !== null)),
   ] as string[];
+  // Only UUID coin ids can match the uuid-keyed coins/positions tables.
+  const uuidCoinIds = coinIds.filter((x) => UUID_RE.test(x));
   const launchCoins = [
     ...new Set(rows.filter((r) => r.kind === 'launch').map((r) => coinIdOf('launch', r.meta))),
-  ].filter((x): x is string => x !== null);
+  ].filter((x): x is string => x !== null && UUID_RE.test(x));
   const [coins, verdicts, followed] = coinIds.length
     ? await ctx.db.withConnection(async (c) => [
         await c.query<{
@@ -511,7 +523,7 @@ async function hydrate(ctx: AppContext, userId: string, rows: Row[]): Promise<Ti
                   (fc.rug_flagged_at IS NOT NULL) AS rugged
              FROM coins c LEFT JOIN factory_coins fc ON fc.coin_id = c.coin_id
             WHERE c.coin_id = ANY($1::uuid[])`,
-          [coinIds],
+          [uuidCoinIds],
         ),
         await c.query<{ coin_id: string; post_id: string; text: string; pct: string | null }>(
           `SELECT meta ->> 'coinId' AS coin_id, post_id, text, meta ->> 'sellSharePct' AS pct

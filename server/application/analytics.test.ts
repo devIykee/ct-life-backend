@@ -22,7 +22,6 @@ import {
 } from './analytics.js';
 import { AuthService } from './auth.js';
 import { claimDaily } from './daily-streak.js';
-import { sendCashTip, tipFeeCents } from './tips.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 _resetConfigForTests();
@@ -160,20 +159,6 @@ describe('instrumented actions', () => {
         amount_cents: String(a.claimed.rewards.cashCents),
       },
     ]);
-  });
-
-  it('a Cash tip records tip_sent on the sender only, with the burned fee', async () => {
-    const from = await newUser(10_000);
-    const to = await newUser();
-    await sendCashTip(ctx, from, to, 1_000, 'gm');
-    const ev = await eventsOf(from);
-    expect(ev.length).toBe(1);
-    expect(ev[0]!.name).toBe('tip_sent');
-    expect(ev[0]!.amount_cents).toBe('1000');
-    expect(ev[0]!.props.feeCents).toBe(tipFeeCents(1_000, ctx.config.tips.feeBps));
-    expect(await eventsOf(to)).toEqual([]);
-    // The message text is never recorded.
-    expect(JSON.stringify(ev)).not.toContain('gm');
   });
 });
 

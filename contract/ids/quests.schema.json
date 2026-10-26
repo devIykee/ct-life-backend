@@ -28,9 +28,8 @@
               "prediction_place",
               "alpha_call",
               "paid_call",
-              "home_visit"
-              "tip_send",
               "home_visit",
+              "tip_send",
               "shift_start",
               "trade_open",
               "chest_open"

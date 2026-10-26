@@ -236,6 +236,8 @@ export async function buildWorkers(likeness?: {
   });
   callersWorker.on('failed', (job, err) =>
     log.error({ jobId: job?.id, err: err.message }, 'npc-callers failed'),
+  );
+
   const purgeWorker = new Worker(
     ACCOUNT_PURGE_QUEUE,
     async (job) => handleAccountPurge(job, ctx, likenessDelete),
@@ -243,6 +245,8 @@ export async function buildWorkers(likeness?: {
   );
   purgeWorker.on('failed', (job, err) =>
     log.error({ jobId: job?.id, err: err.message }, 'account-purge failed'),
+  );
+
   const rektWorker = new Worker(REKT_SWEEP_QUEUE, async (job) => handleRektSweep(job, ctx), {
     connection: newClient(redis),
   });
@@ -311,10 +315,13 @@ export async function buildWorkers(likeness?: {
     'npc-callers',
     { pattern: '*/5 * * * *' },
     { name: 'tick', data: {} },
+  );
   // DELETE /v1/me: erase queued files (likeness photos/models, ad creatives).
   await purgeQueue.upsertJobScheduler(
     'account-purge',
     { pattern: '*/5 * * * *' },
+    { name: 'sweep', data: {} },
+  );
   // Rekt Burger: close and pay clock-in shifts that ran to their maximum.
   await rektQueue.upsertJobScheduler(
     'rekt-sweep',

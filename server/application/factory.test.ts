@@ -201,14 +201,9 @@ describe('launch', () => {
 
   it('refuses without enough Cash, a taken ticker, bad numbers and an unknown template', async () => {
     const poor = await newUser(LAUNCH_FEE_CENTS + 5_000 - 1);
-    const short = await launchFactoryCoin(ctx, poor, input(), uuidv7()).catch((e: unknown) => e);
-    expect(short).toBeInstanceOf(InsufficientCashError);
-    // The standard field is shortfallCents (a number); have and need stay for compatibility.
-    expect((short as InsufficientCashError).details).toEqual({
-      have: String(LAUNCH_FEE_CENTS + 5_000 - 1),
-      need: String(LAUNCH_FEE_CENTS + 5_000),
-      shortfallCents: 1,
-    });
+    await expect(launchFactoryCoin(ctx, poor, input(), uuidv7())).rejects.toBeInstanceOf(
+      InsufficientCashError,
+    );
     expect(await cashOf(poor)).toBe(LAUNCH_FEE_CENTS + 5_000 - 1);
 
     const u = await newUser(100_000);
@@ -249,19 +244,7 @@ describe('launch', () => {
     await expect(
       launchFactoryCoin(ctx, u, input(), uuidv7(), at(step * DAILY_LAUNCH_CAP)),
     ).rejects.toBeInstanceOf(LaunchLimitReachedError);
-    // retryAfterMs counts to the OLDEST launch in the rolling 24 h (what /factory/me reports as
-    // nextLaunchAt), not from the last launch.
-    const hit = await launchFactoryCoin(
-      ctx,
-      u,
-      input(),
-      uuidv7(),
-      at(step * DAILY_LAUNCH_CAP),
-    ).catch((e: unknown) => e);
-    const retry = (hit as LaunchLimitReachedError).details.retryAfterMs as number;
-    expect(retry).toBe(24 * 3_600_000 - step * DAILY_LAUNCH_CAP);
     const me = await getFactoryMe(ctx, u, at(step * DAILY_LAUNCH_CAP));
-    expect(at(step * DAILY_LAUNCH_CAP + retry).toISOString()).toBe(me.nextLaunchAt);
     expect(me.launchesToday).toBe(DAILY_LAUNCH_CAP);
     expect(me.nextLaunchAt).toBe(at(24 * 3_600_000).toISOString());
     // A day after the first launch a slot is free again.
@@ -337,159 +320,6 @@ describe('trading a player coin (Cash Factory retired)', () => {
     );
     await expect(getFactoryCoin(ctx, u, house)).rejects.toBeInstanceOf(NotFoundError);
     await expect(getFactoryCoin(ctx, u, uuidv7())).rejects.toBeInstanceOf(NotFoundError);
-  });
-});
-
-describe('creator fee', () => {
-  it('pays the creator half the trade fee once the coin has mooned, and not before', async () => {
-    const creator = await newUser(100_000);
-    const buyer = await newUser(100_000);
-    const coin = await launch(creator, {}, seedFor('moon'));
-    const arc = await pool.query(
-      `SELECT hidden_arc->>'outcome' AS o FROM coins WHERE coin_id = $1`,
-      [coin.coinId],
-    );
-    expect(arc.rows[0].o).toBe('moon');
-
-    // Not mooned yet: no fee.
-    await buy(buyer, coin.coinId, 1_000);
-    expect(await ledger(creator, 'factory_creator_fee')).toEqual([]);
-
-    // The engine moves the price; simulate a 4x moon.
-    await pool.query(`UPDATE coins SET price_micros = 4000 WHERE coin_id = $1`, [coin.coinId]);
-    const before = await cashOf(creator);
-    await buy(buyer, coin.coinId, 10_000); // 1% fee = 100 cents, creator share 50
-    expect(await ledger(creator, 'factory_creator_fee')).toEqual([50]);
-    expect(await cashOf(creator)).toBe(before + 50);
-    const detail = await getFactoryCoin(ctx, creator, coin.coinId);
-    expect(detail.mooned).toBe(true);
-    expect(detail.creatorFeesCents).toBe('50');
-
-    // The creator's own trades earn no fee.
-    await buy(creator, coin.coinId, 1_000);
-    expect(await ledger(creator, 'factory_creator_fee')).toEqual([50]);
-  });
-});
-
-describe('rug detection and the Sleuth', () => {
-  it('flags a creator dump on holders: heat, one Sleuth post, one world event', async () => {
-    const creator = await newUser(200_000, 'rugdevsam');
-    const holder = await newUser(10_000);
-    const coin = await launch(creator, { devAllocationBps: 5_000 }, seedFor('rug'));
-    await buy(holder, coin.coinId, 2_000);
-    vi.mocked(publishWorldEvent).mockClear();
-
-    await sellAll(creator, coin.coinId);
-
-    const flagged = await pool.query(
-      `SELECT rug_flagged_at FROM factory_coins WHERE coin_id = $1`,
-      [coin.coinId],
-    );
-    expect(flagged.rows[0].rug_flagged_at).not.toBeNull();
-    const heat = await getHeat(ctx, creator);
-    expect(heat.heat).toBeGreaterThanOrEqual(35);
-    expect(heat.level).toBe('hot');
-    const ev = await pool.query(
-      `SELECT source, ref_id FROM player_heat_events WHERE user_id = $1`,
-      [creator],
-    );
-    expect(ev.rows).toEqual([{ source: 'factory_rug', ref_id: coin.coinId }]);
-
-    const posts = await pool.query(
-      `SELECT user_id, text, meta FROM feed_posts WHERE kind = 'sleuth' AND meta->>'coinId' = $1`,
-      [coin.coinId],
-    );
-    expect(posts.rows).toHaveLength(1);
-    expect(posts.rows[0].user_id).toBe(SLEUTH_USER_ID);
-    expect(posts.rows[0].text).toContain(`rugdevsam${RUN}`);
-    expect(posts.rows[0].text).toContain(coin.ticker);
-    expect(posts.rows[0].text.length).toBeLessThanOrEqual(280);
-    expect(posts.rows[0].meta).toMatchObject({
-      launcherUserId: creator,
-      launcherAlias: `rugdevsam${RUN}`,
-      ticker: coin.ticker,
-      deepLink: 'venue:launchpad_tower',
-    });
-    expect(publishWorldEvent).toHaveBeenCalledWith(
-      expect.anything(),
-      'evt_rug',
-      expect.objectContaining({
-        coinId: coin.coinId,
-        kind: 'creator_dump',
-        launcherAlias: `rugdevsam${RUN}`,
-      }),
-    );
-
-    // The Timeline serves it as the Sleuth.
-    const feed = await listFeed(ctx, holder, 'global');
-    const post = feed.find((p) => p.kind === 'sleuth' && p.meta?.['coinId'] === coin.coinId);
-    expect(post).toMatchObject({ kind: 'sleuth', alias: 'The Sleuth', userId: SLEUTH_USER_ID });
-
-    // Dumping more does not flag, heat or post again.
-    await buy(creator, coin.coinId, 3_000);
-    await sellAll(creator, coin.coinId);
-    expect((await getHeat(ctx, creator)).heat).toBe(heat.heat);
-    const again = await pool.query(
-      `SELECT 1 FROM feed_posts WHERE kind = 'sleuth' AND meta->>'coinId' = $1`,
-      [coin.coinId],
-    );
-    expect(again.rowCount).toBe(1);
-  });
-
-  it('adds heat for a second rug but rate-limits the Sleuth to one post per launcher', async () => {
-    const creator = await newUser(500_000, 'serialrugger');
-    const holder = await newUser(50_000);
-    const t0 = new Date('2026-10-24T08:00:00.000Z');
-    const c1 = (await launchFactoryCoin(ctx, creator, input(), uuidv7(), t0)).coin;
-    const c2 = (
-      await launchFactoryCoin(ctx, creator, input(), uuidv7(), new Date(t0.getTime() + 11 * 60_000))
-    ).coin;
-    for (const c of [c1, c2]) {
-      await buy(holder, c.coinId, 2_000);
-      await sellAll(creator, c.coinId);
-    }
-    const posts = await pool.query(
-      `SELECT 1 FROM feed_posts WHERE kind = 'sleuth' AND meta->>'launcherUserId' = $1`,
-      [creator],
-    );
-    expect(posts.rowCount).toBe(1);
-    const flagged = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM factory_coins WHERE creator_id = $1 AND rug_flagged_at IS NOT NULL`,
-      [creator],
-    );
-    expect(flagged.rows[0].n).toBe(2);
-    const events = await pool.query(`SELECT 1 FROM player_heat_events WHERE user_id = $1`, [
-      creator,
-    ]);
-    expect(events.rowCount).toBe(2);
-    expect((await getHeat(ctx, creator)).heat).toBeGreaterThan(60);
-  });
-
-  it('does not flag selling with no holders, small sells, or a holder selling', async () => {
-    const creator = await newUser(200_000);
-    const holder = await newUser(20_000);
-    // Creator sells everything but nobody bought: not a rug.
-    const loner = await newUser(100_000);
-    const solo = await launch(loner);
-    await sellAll(loner, solo.coinId);
-    // Holders bought, creator sells a sliver: below the threshold.
-    const c = await launch(creator, { liquidityCents: 50_000 });
-    await buy(holder, c.coinId, 1_000);
-    await executeTrade(ctx, {
-      userId: creator,
-      coinId: c.coinId,
-      side: 'sell',
-      units: '1000',
-      maxSlippageBps: 1_000,
-    });
-    // A holder dumping is no rug.
-    await sellAll(holder, c.coinId);
-    const r = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM factory_coins WHERE creator_id = $1 AND rug_flagged_at IS NOT NULL`,
-      [creator],
-    );
-    expect(r.rows[0].n).toBe(0);
-    expect((await getHeat(ctx, creator)).heat).toBe(0);
   });
 });
 

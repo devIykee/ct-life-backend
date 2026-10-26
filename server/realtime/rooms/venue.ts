@@ -170,16 +170,10 @@ export class VenueRoom extends Room {
   private onOutfit = (data: unknown): void => applyOutfitMessage(this.state.players, data);
 
   /**
-   * Stop listening for outfit changes.
+   * Stop listening for outfit changes and bans.
    */
   override async onDispose(): Promise<void> {
     await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
-  }
-
-  /**
-   * Stop listening for bans.
-   */
-  override async onDispose(): Promise<void> {
     await this.ban.detach();
   }
 
