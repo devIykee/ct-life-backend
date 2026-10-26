@@ -12,6 +12,7 @@ import { Room, Client } from 'colyseus';
 import { SpaceState, SpeakerState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
+import { assertJoinAllowed } from '../player.js';
 
 export class SpaceRoom extends Room {
   // Typed local state to keep TypeScript happy without the generic.
@@ -44,6 +45,7 @@ export class SpaceRoom extends Room {
       } catch (err) {
         throw new Error('INVALID_TOKEN', { cause: err });
       }
+      await assertJoinAllowed(userId);
     }
     if (!userId) return;
     if (this.state.speakers.has(userId)) return;

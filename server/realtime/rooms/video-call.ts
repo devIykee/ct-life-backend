@@ -10,6 +10,7 @@ import { Room, Client } from 'colyseus';
 import { VideoCallState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
+import { assertJoinAllowed } from '../player.js';
 
 export class VideoCallRoom extends Room {
   // Typed local state to keep TypeScript happy without the generic.
@@ -45,6 +46,7 @@ export class VideoCallRoom extends Room {
       } catch (err) {
         throw new Error('INVALID_TOKEN', { cause: err });
       }
+      await assertJoinAllowed(userId);
     }
     if (!userId) return;
     if (!this.state.participantUserIds.includes(userId)) {

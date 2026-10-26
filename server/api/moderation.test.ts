@@ -10,7 +10,10 @@ import { buildServer } from './main.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { createDb } from '../shared/db/pool.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
-import { loadSayPolicy } from '../realtime/player.js';
+import { authenticateJoin, loadSayPolicy } from '../realtime/player.js';
+import { createRedis } from '../shared/redis/client.js';
+import { BAN_CHANNEL, bannedFlagKey } from '../application/moderation.js';
+import { buildContext } from '../application/context.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -38,6 +41,7 @@ afterAll(async () => {
 interface U {
   sub: string;
   token: string;
+  refresh: string;
   wallet: string;
 }
 async function devAuth(kp = Keypair.generate()): Promise<U> {
@@ -49,8 +53,8 @@ async function devAuth(kp = Keypair.generate()): Promise<U> {
     payload: { wallet },
   });
   expect(r.statusCode, r.body).toBe(200);
-  const b = r.json() as { id: string; accessToken: string };
-  return { sub: b.id, token: b.accessToken, wallet };
+  const b = r.json() as { id: string; accessToken: string; refreshToken: string };
+  return { sub: b.id, token: b.accessToken, refresh: b.refreshToken, wallet };
 }
 async function call(u: U, method: 'GET' | 'POST', url: string, payload?: unknown) {
   const r = await app.inject({
@@ -307,5 +311,49 @@ describe('room say audience', () => {
     expect(p.blocked.has(c.sub)).toBe(false);
     // b hears nothing from a, and a nothing from b.
     expect((await loadSayPolicy(b.sub)).blocked.has(a.sub)).toBe(true);
+  });
+});
+
+describe('ban reaches realtime and sessions', () => {
+  it('refuses a banned player at the door (flag, and the database when the flag is gone), kicks live sessions, drops their say, blocks refresh', async () => {
+    const admin = await devAuth(adminKey);
+    const u = await devAuth();
+    expect(await authenticateJoin({ token: u.token })).toBe(u.sub);
+
+    // Listen for the kick the way a room does.
+    const sub = createRedis().main.duplicate();
+    const kicked: string[] = [];
+    await sub.subscribe(BAN_CHANNEL);
+    sub.on('message', (_ch, msg) => kicked.push((JSON.parse(msg) as { userId: string }).userId));
+
+    expect(
+      (await call(admin, 'POST', `/v1/admin/users/${u.sub}/sanction`, { action: 'ban' })).status,
+    ).toBe(204);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(kicked).toContain(u.sub);
+
+    // Join: refused with the still-valid access token.
+    await expect(authenticateJoin({ token: u.token })).rejects.toThrow('ACCOUNT_BANNED');
+    // Redis flag lost (flush or expiry): the database still refuses.
+    await buildContext().redis.main.del(bannedFlagKey(u.sub));
+    await expect(authenticateJoin({ token: u.token })).rejects.toThrow('ACCOUNT_BANNED');
+
+    // Say: a banned player counts as silenced.
+    expect((await loadSayPolicy(u.sub)).muted).toBe(true);
+
+    // Refresh cannot mint a new access token.
+    const refresh = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/refresh',
+      headers: { 'idempotency-key': uuidv7() },
+      payload: { refreshToken: u.refresh },
+    });
+    expect(refresh.statusCode).toBe(403);
+    expect((refresh.json() as { error: { code: string } }).error.code).toBe('ACCOUNT_BANNED');
+
+    // Unban: the door opens again.
+    await call(admin, 'POST', `/v1/admin/users/${u.sub}/sanction`, { action: 'unban' });
+    expect(await authenticateJoin({ token: u.token })).toBe(u.sub);
+    await sub.quit();
   });
 });

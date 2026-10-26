@@ -22,6 +22,7 @@ import {
   type UserMessage,
 } from '../../application/realtime-bus.js';
 import { createRedis } from '../../shared/redis/client.js';
+import { assertJoinAllowed } from '../player.js';
 
 const PATCH_HZ = 1;
 const MAX_PLAYERS = 1_000;
@@ -73,6 +74,7 @@ export class CityRoom extends Room {
         const jwtIssuer = createJwtIssuer();
         const claims = await jwtIssuer.verifyAccess(tokenStr);
         const userId = claims.sub ?? '';
+        await assertJoinAllowed(userId);
         if (userId !== '') {
           this.userIdBySession.set(client.sessionId, userId);
           const set = this.sessionsByUser.get(userId) ?? new Set<string>();
@@ -80,6 +82,7 @@ export class CityRoom extends Room {
           this.sessionsByUser.set(userId, set);
         }
       } catch (err) {
+        if ((err as Error).message === 'ACCOUNT_BANNED') throw err;
         throw new Error('INVALID_TOKEN', { cause: err });
       }
     }

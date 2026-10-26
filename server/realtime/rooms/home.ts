@@ -17,6 +17,8 @@ import { HomeState, PlayerState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { HOME_ACCESS_CHANNEL } from '../../application/home-units.js';
+import { assertJoinAllowed } from '../player.js';
+import { BAN_CHANNEL } from '../../application/moderation.js';
 
 const MAX_GUESTS = 16;
 /** Backstop for a missed access event: re-check everyone this often. */
@@ -59,6 +61,21 @@ export class HomeRoom extends Room {
   private recheckTimer: ReturnType<typeof setInterval> | null = null;
 
   /** A guest was removed, or the home was moved out of or evicted: look again. */
+  private readonly onBan = (msg: unknown): void => {
+    const id = (msg as { userId?: string } | null)?.userId;
+    if (typeof id === 'string') this.kickUser(id);
+  };
+
+  /**
+   * Disconnect every session of a banned player (published on BAN_CHANNEL).
+   * @param userId - The banned player.
+   */
+  kickUser(userId: string): void {
+    for (const client of [...this.clients]) {
+      if (this.userBySession.get(client.sessionId) === userId) client.leave(4003, 'ACCOUNT_BANNED');
+    }
+  }
+
   private readonly onAccess = (msg: unknown): void => {
     if ((msg as { homeId?: string } | null)?.homeId === this.state.homeId) void this.recheck();
   };
@@ -75,6 +92,7 @@ export class HomeRoom extends Room {
     this.maxClients = MAX_GUESTS;
     this.patchRate = 100; // 10 Hz, same as a venue: guests walk around.
     await this.presence?.subscribe(HOME_ACCESS_CHANNEL, this.onAccess);
+    await this.presence?.subscribe(BAN_CHANNEL, this.onBan);
     this.recheckTimer = setInterval(() => void this.recheck(), RECHECK_MS);
     this.recheckTimer.unref();
   }
@@ -86,6 +104,7 @@ export class HomeRoom extends Room {
     if (this.recheckTimer) clearInterval(this.recheckTimer);
     this.recheckTimer = null;
     await this.presence?.unsubscribe(HOME_ACCESS_CHANNEL, this.onAccess);
+    await this.presence?.unsubscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**
@@ -126,6 +145,7 @@ export class HomeRoom extends Room {
       } catch (err) {
         throw new Error('INVALID_TOKEN', { cause: err });
       }
+      await assertJoinAllowed(userId);
     }
     if (userId === '') return;
 

@@ -11,6 +11,7 @@ import { MarketState, CoinState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { listMarketCoins } from '../../application/world-pulse.js';
+import { assertJoinAllowed } from '../player.js';
 
 const PATCH_HZ = 0.5;
 const MAX_PLAYERS = 2_000;
@@ -89,8 +90,10 @@ export class MarketRoom extends Room {
     if (tokenStr !== '') {
       try {
         const jwtIssuer = createJwtIssuer();
-        await jwtIssuer.verifyAccess(tokenStr);
+        const claims = await jwtIssuer.verifyAccess(tokenStr);
+        await assertJoinAllowed(claims.sub ?? '');
       } catch (err) {
+        if ((err as Error).message === 'ACCOUNT_BANNED') throw err;
         throw new Error('INVALID_TOKEN', { cause: err });
       }
     }

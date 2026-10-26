@@ -56,6 +56,7 @@ import {
   type MoveAnchor,
   type Polygon,
 } from '../movement.js';
+import { BAN_CHANNEL } from '../../application/moderation.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -95,6 +96,22 @@ export class StreetRoom extends Room {
   private sessions = new Map<string, StreetSession>();
   /** userId -> vehicle exit position, from the vehicles room. */
   private exitGrants = new Map<string, IslandPos>();
+  private readonly onBan = (msg: unknown): void => {
+    const id = (msg as { userId?: string } | null)?.userId;
+    if (typeof id === 'string') this.kickUser(id);
+  };
+
+  /**
+   * Disconnect every session of a banned player (published on BAN_CHANNEL).
+   * @param userId - The banned player.
+   */
+  kickUser(userId: string): void {
+    for (const client of [...this.clients]) {
+      if (this.sessions.get(client.sessionId)?.userId === userId)
+        client.leave(4003, 'ACCOUNT_BANNED');
+    }
+  }
+
   private onExit = (data: unknown): void => this.handleVehicleExit(data);
   private onPolice = (data: unknown): void => this.handlePolice(data);
 
@@ -125,6 +142,7 @@ export class StreetRoom extends Room {
     this.onMessage('talking', (client, msg) => this.handleTalking(client, msg));
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
+    await this.presence?.subscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**
@@ -133,6 +151,7 @@ export class StreetRoom extends Room {
   override async onDispose(): Promise<void> {
     await this.presence?.unsubscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.unsubscribe(POLICE_CHANNEL, this.onPolice);
+    await this.presence?.unsubscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**

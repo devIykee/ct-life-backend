@@ -32,6 +32,9 @@ const BAN_FLAG_TTL_SEC = 24 * 60 * 60;
 type Queryable = Pick<PoolClient, 'query'>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Presence/pub-sub channel: `{userId}` of a player who was just banned. Rooms kick their sessions. */
+export const BAN_CHANNEL = 'ctl:ban';
+
 export const bannedFlagKey = (userId: string): string => `acct:banned:${userId}`;
 
 /**
@@ -150,8 +153,33 @@ async function applySanction(
 }
 
 async function setBanFlag(ctx: AppContext, userId: string, banned: boolean): Promise<void> {
-  if (banned) await ctx.redis.main.set(bannedFlagKey(userId), '1', 'EX', BAN_FLAG_TTL_SEC);
-  else await ctx.redis.main.del(bannedFlagKey(userId));
+  if (banned) {
+    await ctx.redis.main.set(bannedFlagKey(userId), '1', 'EX', BAN_FLAG_TTL_SEC);
+    // Cut live realtime sessions (street, venue, home rooms listen).
+    try {
+      await ctx.redis.main.publish(BAN_CHANNEL, JSON.stringify({ userId }));
+    } catch {
+      // The flag and the join check still hold; the kick is best effort.
+    }
+  } else {
+    await ctx.redis.main.del(bannedFlagKey(userId));
+  }
+}
+
+/**
+ * Refuse a banned account: the Redis flag first (instant), then the database
+ * (the flag expires after a day and Redis can be flushed).
+ * @param ctx - The app context.
+ * @param userId - The player.
+ */
+export async function assertNotBanned(ctx: AppContext, userId: string): Promise<void> {
+  try {
+    await assertNotBannedLive(ctx.redis, userId);
+  } catch (e) {
+    if (e instanceof AccountBannedError) throw e;
+    // Redis down: fall through to the database.
+  }
+  await ctx.db.withConnection((c) => assertNotBannedDb(c, userId));
 }
 
 /**

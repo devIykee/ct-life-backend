@@ -72,6 +72,7 @@ import {
   type MoveAnchor,
   type VenuePlacement,
 } from '../movement.js';
+import { BAN_CHANNEL } from '../../application/moderation.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -163,6 +164,30 @@ export class VenueRoom extends Room {
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
+  private readonly onBan = (msg: unknown): void => {
+    const id = (msg as { userId?: string } | null)?.userId;
+    if (typeof id === 'string') this.kickUser(id);
+  };
+
+  /**
+   * Disconnect every session of a banned player (published on BAN_CHANNEL).
+   * @param userId - The banned player.
+   */
+  kickUser(userId: string): void {
+    for (const client of [...this.clients]) {
+      if (this.state.players.get(client.sessionId)?.userId === userId) {
+        client.leave(4003, 'ACCOUNT_BANNED');
+      }
+    }
+  }
+
+  /**
+   * Stop listening for bans.
+   */
+  override async onDispose(): Promise<void> {
+    await this.presence?.unsubscribe(BAN_CHANNEL, this.onBan);
+  }
+
   /**
    *
    */
@@ -195,6 +220,7 @@ export class VenueRoom extends Room {
     // 1 Hz NPC tick.
     this.brainClock.set(Date.now());
     this.setSimulationInterval((dt) => this.tickNpcs(dt), 1000);
+    await this.presence?.subscribe(BAN_CHANNEL, this.onBan);
   }
 
   /**

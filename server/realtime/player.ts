@@ -67,7 +67,30 @@ export async function authenticateJoin(options: unknown): Promise<string> {
   } catch (err) {
     throw new Error('INVALID_TOKEN', { cause: err });
   }
+  await assertJoinAllowed(claims.sub ?? '');
   return claims.sub ?? '';
+}
+
+/**
+ * Refuse a banned account at the door of any room. A still-valid access token
+ * is not enough: the ban flag and, failing that, the database decide.
+ * @param userId - The verified token subject.
+ * @throws Error `ACCOUNT_BANNED`.
+ */
+export async function assertJoinAllowed(userId: string): Promise<void> {
+  if (userId === '') return;
+  const [{ buildContext }, { assertNotBanned }] = await Promise.all([
+    import('../application/context.js'),
+    import('../application/moderation.js'),
+  ]);
+  try {
+    await assertNotBanned(buildContext(), userId);
+  } catch (e) {
+    if ((e as { code?: string }).code === 'ACCOUNT_BANNED') {
+      throw new Error('ACCOUNT_BANNED', { cause: e });
+    }
+    throw e;
+  }
 }
 
 /**
@@ -140,7 +163,10 @@ export async function loadSayPolicy(userId: string): Promise<SayPolicy> {
   const ctx = buildContext();
   return ctx.db.withConnection(async (c) => {
     const [mute, blocks] = await Promise.all([
-      c.query('SELECT 1 FROM user_moderation WHERE user_id = $1 AND muted_until > now()', [userId]),
+      c.query(
+        'SELECT 1 FROM user_moderation WHERE user_id = $1 AND (muted_until > now() OR banned_at IS NOT NULL)',
+        [userId],
+      ),
       c.query<{ other: string }>(
         `SELECT blocked_user_id AS other FROM blocks WHERE blocker_user_id = $1
          UNION SELECT blocker_user_id FROM blocks WHERE blocked_user_id = $1`,
