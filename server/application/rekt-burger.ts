@@ -452,6 +452,8 @@ async function afterSettle(
   settled: Settled,
   now: Date,
 ): Promise<void> {
+  // The shift is over: viewers see the player out of the crew outfit again.
+  await refreshOutfit(ctx, userId);
   if (settled.promotion) await publishPromotion(ctx, userId, settled.promotion, now);
   if (settled.counted) {
     await recordQuestEvent(ctx, userId, 'shift_complete', `rb:${settled.result.shiftId}`, now);
