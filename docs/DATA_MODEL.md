@@ -253,3 +253,9 @@ payment assertions. See [character likeness](CHARACTER_LIKENESS.md).
 - `season_tier_claims` — PK `(user_id, season_id, track, tier)`; `reward_kind` is `cash | cosmetic | furniture`.
 - `collected_nods` — PK `(user_id, nod_id)`.
 - `nod_set_grants` — PK `(user_id, set_id)`.
+
+## Group chats (migration 103)
+
+- `groups` (kind friends | alpha | tribe, cap, rules, slow_mode, hidden_at), `group_members` (role owner | mod | member, muted_until, last_read_at), `group_bans`, `group_invites` (code, optional invitee, max_uses, expiry), `group_messages` (topic chat | calls | wins, text, card), `group_reports`, `venue_booths` (one group per booth, one booth per group).
+
+See [Groups](GROUPS.md).

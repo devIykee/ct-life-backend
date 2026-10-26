@@ -24,6 +24,8 @@ export const USER_CHANNEL = 'rt:user';
 export type UserMessageType =
   | 'toast'
   | 'dm'
+  | 'group_msg'
+  | 'group_invite'
   | 'call_invite'
   | 'space_update'
   | 'payment_confirmed'

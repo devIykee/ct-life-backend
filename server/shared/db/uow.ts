@@ -6,9 +6,12 @@
  * writes inside a UoW. The UoW:
  *
  *   1. Borrows a single client from the pool.
- *   2. Sets `ISOLATION LEVEL SERIALIZABLE` for the transaction.
- *   3. Sets a per-transaction `statement_timeout` so a single bad
- *      statement cannot hang the lock past 5 s.
+ *   2. Sets `ISOLATION LEVEL SERIALIZABLE` for the transaction (or READ
+ *      COMMITTED when the caller holds its invariants with row locks; see
+ *      UowOptions.isolation).
+ *   3. Keeps the pool's 5 s `statement_timeout` (or sets a LOCAL one
+ *      when the caller asks) so a single bad statement cannot hang the
+ *      lock.
  *   4. Runs the caller's `fn` with the client.
  *   5. Commits on success; rolls back on throw; on Postgres
  *      SQLSTATE 40001 (serialization_failure) retries with jittered
@@ -24,6 +27,15 @@ import { createDb } from './pool.js';
 export interface UowOptions {
   /** Per-statement timeout inside the transaction, in ms. */
   readonly statementTimeoutMs?: number;
+  /**
+   * SERIALIZABLE by default. 'read committed' is only for transactions whose
+   * every invariant is held by explicit row locks taken first (SELECT ...
+   * FOR UPDATE on a per-player row): there SSI adds nothing but predicate
+   * locks, and range reads over a busy table (the ledger) escalate them to
+   * relation locks that fail unrelated transactions in bursts. Measured in
+   * docs/LOAD-TEST.md.
+   */
+  readonly isolation?: 'serializable' | 'read committed';
   /** Retry count on serialization failures (40001). */
   readonly maxRetries?: number;
   /** Base backoff in ms; doubled per retry. */
@@ -67,9 +79,18 @@ export async function runInTransaction<T>(
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const client = await db.connect();
     try {
-      await client.query('BEGIN');
-      await client.query('SET TRANSACTION ISOLATION LEVEL SERIALIZABLE');
-      await client.query(`SET statement_timeout = ${stmtTimeout}`);
+      // One round trip to open the transaction. The pool already sets the
+      // default statement timeout on every connection, so it is only set
+      // here when the caller asks for a different one, and LOCAL so it ends
+      // with the transaction instead of leaking onto the pooled connection.
+      await client.query(
+        options.isolation === 'read committed'
+          ? 'BEGIN ISOLATION LEVEL READ COMMITTED'
+          : 'BEGIN ISOLATION LEVEL SERIALIZABLE',
+      );
+      if (stmtTimeout !== DEFAULT_STATEMENT_TIMEOUT_MS) {
+        await client.query(`SET LOCAL statement_timeout = ${Math.trunc(stmtTimeout)}`);
+      }
       const result = await fn(client);
       await client.query('COMMIT');
       return result;
@@ -81,17 +102,14 @@ export async function runInTransaction<T>(
         // an error path and the connection is about to be released.
       }
       const code = (e as { code?: string }).code;
-      if (code === '40001' && attempt < maxRetries) {
-        // Serialization failure; retry with jitter.
-        const wait = backoffMs * 2 ** attempt + Math.random() * backoffMs;
-        lastErr = e;
-        await sleep(wait);
-        continue;
-      }
-      throw e;
+      if (code !== '40001' || attempt >= maxRetries) throw e;
+      lastErr = e;
     } finally {
       client.release();
     }
+    // Serialization failure: back off with jitter, without holding a
+    // pooled connection while we wait.
+    await sleep(backoffMs * 2 ** attempt + Math.random() * backoffMs);
   }
   throw new UowRetryExhausted(lastErr);
 }

@@ -1,3 +1,13 @@
+## 2026-10-26 - Group chats and alpha groups
+
+Migration 103. Full client contract in `docs/GROUPS.md`.
+
+- New `/groups` routes: list (joins your tribe chat), create (`friends` cap 12, `alpha` cap 50; `tribe` chats are automatic, cap 200), info, settings (rules, slow mode), members, remove (bans), roles, leave, mute, read, report (3 reporters hide a group), invite links (`ctlife://invite/<code>`, max uses, expiry) and direct invites, `/invites/{code}` preview, accept (atomic cap) and decline, messages per topic, delete, booths (`/venues/{venueId}/booths`, claim, release).
+- Free and invite-only: no entry fee, nothing paid for inviting or posting a link.
+- Alpha groups: topics `calls` (owner only; a structured call that becomes a real alpha call with the server price as entry, graded by the existing evaluator, so the Trust score is earned), `chat`, `wins` (needs realized profit on the coin).
+- Realtime `group_msg` and `group_invite` (city room, like `dm`); never sent to someone who blocked the author.
+- Messages, rules and notes mask links, e-mails, phone numbers and wallet addresses; slow mode per topic; a per-player burst of 10 messages, then one a second.
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.
