@@ -3,7 +3,7 @@
  * it, a muted speaker is told and heard by no one, and a policy failure drops
  * the message instead of sending it to everyone.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { VenueRoom } from './venue.js';
 import { StreetRoom } from './street.js';
@@ -33,10 +33,6 @@ async function user(): Promise<string> {
   );
   return id;
 }
-
-afterAll(async () => {
-  await db.end?.();
-});
 
 for (const kind of ['venue', 'street'] as const) {
   describe(`${kind} say audience`, () => {
