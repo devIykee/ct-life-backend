@@ -504,6 +504,32 @@ export class NameNotAllowedError extends DomainError {
   }
 }
 
+export class ContentNotAllowedError extends DomainError {
+  readonly code = 'CONTENT_NOT_ALLOWED';
+  /** @param details - `field` says which input was refused (alias, dm, post). */
+  constructor(details: Record<string, unknown> = {}) {
+    super('That text contains words that are not allowed.', details);
+    this.httpStatus = 400;
+  }
+}
+
+export class AccountMutedError extends DomainError {
+  readonly code = 'ACCOUNT_MUTED';
+  /** @param details - `until` is the ISO time the mute ends. */
+  constructor(details: Record<string, unknown> = {}) {
+    super('This account is muted and cannot send messages or posts right now.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class AccountBannedError extends DomainError {
+  readonly code = 'ACCOUNT_BANNED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This account has been banned.', details);
+    this.httpStatus = 403;
+  }
+}
+
 export class CheckinRejectedError extends DomainError {
   readonly code = 'CHECKIN_REJECTED';
   /**

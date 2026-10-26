@@ -3092,8 +3092,13 @@ paths:
               targetId: '0192a1c2-...'
               reasonId: 'harassment'
               note: 'harassing me in DMs'
+      description: |
+        At most 10 an hour per player (burst of 5): beyond that `429 RATE_LIMITED`. Reporting a target
+        that you already have an open report on is a no-op (204). Reporting yourself is `400`.
       responses:
         '204': { description: Reported }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/RateLimited' }
 
   /leaderboards/{boardId}:
     get:
@@ -3176,6 +3181,8 @@ paths:
       tags: [social]
       operationId: postFeedPosts
       summary: Post to the in-game feed. (Not X; never awards real money for posting.)
+      description: |
+        `400 CONTENT_NOT_ALLOWED` (`details.field: post`) for a slur or strong profanity; `403 ACCOUNT_MUTED` while muted.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3194,6 +3201,30 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FeedPost' }
+        '400':
+          description: Validation failed, or the text is not allowed (`CONTENT_NOT_ALLOWED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONTENT_NOT_ALLOWED,
+                      message: 'That text contains words that are not allowed.',
+                      details: { field: post },
+                    },
+                }
+        '403':
+          description: Muted (`ACCOUNT_MUTED`, `details.until`) or banned (`ACCOUNT_BANNED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    { code: ACCOUNT_BANNED, message: 'This account has been banned.', details: {} },
+                }
 
   /follows/{userId}:
     post:
@@ -3269,6 +3300,9 @@ paths:
       tags: [social]
       operationId: postDmsUserId
       summary: Send a DM. 500 char cap. Blocked by the receiver returns 403.
+      description: |
+        `400 CONTENT_NOT_ALLOWED` (`details.field: dm`) when the text has a slur or strong profanity.
+        `403 ACCOUNT_MUTED` (`details.until`) while the sender is muted; `403 ACCOUNT_BANNED` for a banned account.
       x-phase: 3
       parameters:
         - name: userId
@@ -5463,29 +5497,89 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
-  /admin/moderation/queue:
+  /admin/reports:
     get:
       tags: [admin]
-      operationId: getAdminModerationQueue
-      summary: Reports and pending actions.
-      x-phase: 1
+      operationId: getAdminReports
+      summary: The report review queue (admin).
+      description: |
+        Oldest first. Each row carries what was reported: `preview` is the DM or post text, or the
+        player's alias for a user report, and `targetUserId` is who it is about. `openOnTarget`
+        counts open reports on the same target. Page with `next` (pass it as `after`).
+      x-phase: 6
+      parameters:
+        - {
+            name: status,
+            in: query,
+            schema: { type: string, enum: [open, resolved, all], default: open },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+          }
+        - { name: after, in: query, schema: { type: integer, minimum: 0 } }
       responses:
         '200':
-          description: Queue
+          description: Reports
           content:
             application/json:
               schema:
-                type: array
-                items: { $ref: '#/components/schemas/ModerationItem' }
+                type: object
+                required: [reports, next]
+                properties:
+                  reports:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        [
+                          reportId,
+                          reporterUserId,
+                          targetType,
+                          targetId,
+                          reasonId,
+                          createdAt,
+                          openOnTarget,
+                        ]
+                      properties:
+                        reportId: { type: integer }
+                        reporterUserId: { type: string, format: uuid }
+                        targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                        targetId: { type: string }
+                        reasonId: { type: string }
+                        note: { type: [string, 'null'] }
+                        createdAt: { type: string, format: date-time }
+                        resolvedAt: { type: [string, 'null'], format: date-time }
+                        action:
+                          {
+                            type: [string, 'null'],
+                            enum: [dismiss, remove_content, mute, ban, null],
+                          }
+                        resolutionNote: { type: [string, 'null'] }
+                        targetUserId: { type: [string, 'null'], format: uuid }
+                        preview: { type: [string, 'null'] }
+                        openOnTarget: { type: integer }
+                  next: { type: [integer, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
-  /admin/bans:
+  /admin/reports/{reportId}/resolve:
     post:
       tags: [admin]
-      operationId: postAdminBans
-      summary: Ban a user.
-      x-phase: 1
+      operationId: postAdminReportResolve
+      summary: Close a report and act on it (admin).
+      description: |
+        `dismiss` closes it. `remove_content` blanks the reported DM or post (`[removed]`).
+        `mute` (`hours` 1..720, default 24) and `ban` act on the author of the reported
+        content or the reported player. Every other open report on the same target is closed with
+        the same action. An already closed report is `409 CONFLICT`. A muted player gets
+        `403 ACCOUNT_MUTED` (`details.until`) on DMs, feed posts and room chat; a banned player gets
+        `403 ACCOUNT_BANNED` on every request and cannot sign in.
+      x-phase: 6
       parameters:
+        - { name: reportId, in: path, required: true, schema: { type: integer } }
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -5493,14 +5587,57 @@ paths:
           application/json:
             schema:
               type: object
-              required: [userId, reasonId, until]
+              required: [action]
+              additionalProperties: false
               properties:
-                userId: { type: string, format: uuid }
-                reasonId: { type: string }
-                until: { type: string, format: date-time }
+                action: { type: string, enum: [dismiss, remove_content, mute, ban] }
+                hours: { type: integer, minimum: 1, maximum: 720 }
+                note: { type: string, maxLength: 500 }
       responses:
-        '204': { description: Banned }
+        '200':
+          description: Done
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [action, targetUserId, closed]
+                properties:
+                  action: { type: string }
+                  targetUserId: { type: [string, 'null'], format: uuid }
+                  closed: { type: integer, description: Reports closed, this one included. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Report already resolved }
+
+  /admin/users/{userId}/sanction:
+    post:
+      tags: [admin]
+      operationId: postAdminUserSanction
+      summary: Mute, unmute, ban or unban a player without a report (admin).
+      x-phase: 6
+      parameters:
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [action]
+              additionalProperties: false
+              properties:
+                action: { type: string, enum: [mute, unmute, ban, unban] }
+                hours: { type: integer, minimum: 1, maximum: 720 }
+                reason: { type: string, maxLength: 500 }
+      responses:
+        '204': { description: Done }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /admin/ads/approve:
     post:

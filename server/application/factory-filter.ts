@@ -120,6 +120,60 @@ function tokens(raw: string): string[] {
     .map((t) => t.replace(/(.)\1{2,}/g, '$1$1'));
 }
 
+function hasBlockedWord(raw: string, squashedText: string): boolean {
+  // The block lists are squashed the same way ("nigg" stays "nig").
+  for (const w of BLOCK_SUBSTRING) {
+    if (squashedText.includes(w.replace(/(.)\1+/g, '$1'))) return true;
+  }
+  const toks = new Set(tokens(raw));
+  for (const w of BLOCK_TOKEN) {
+    if (toks.has(w)) return true;
+  }
+  return false;
+}
+
+/**
+ * True when ONE word of the text is a slur or strong profanity. For free text
+ * (DMs, posts, chat, aliases) where "this hit" or "who removed" must not trip
+ * the filter the way the whole-text squash used for coin names does. Letters
+ * spaced out ("f u c k") are caught by also testing runs of single characters
+ * joined together. No links, brands or contact data here.
+ * @param raw - Any player text.
+ */
+export function containsProfanity(raw: string): boolean {
+  const words = raw.split(/\s+/).filter((w) => w !== '');
+  for (const w of words) {
+    if (hasBlockedWord(w, squash(w))) return true;
+  }
+  // Runs of 3+ single-character words: "f u c k", "s h i t".
+  let run = '';
+  for (const w of [...words, '']) {
+    if (w.length === 1) {
+      run += w;
+      continue;
+    }
+    if (run.length >= 3 && hasBlockedWord(run, squash(run))) return true;
+    run = '';
+  }
+  return false;
+}
+
+/**
+ * Mask profanity for places that cannot reject (live chat): every offending
+ * word becomes asterisks; if only the whole sentence trips the filter (letters
+ * split by spaces), the whole text is hidden.
+ * @param raw - The message.
+ * @returns The text to show.
+ */
+export function maskProfanity(raw: string): string {
+  if (!containsProfanity(raw)) return raw;
+  const masked = raw
+    .split(/(\s+)/)
+    .map((w) => (w.trim() !== '' && containsProfanity(w) ? '*'.repeat(w.length) : w))
+    .join('');
+  return containsProfanity(masked) ? '[message hidden]' : masked;
+}
+
 /**
  * True when the text carries a blocked word, link, e-mail, phone number or
  * wallet-like string.
@@ -127,16 +181,9 @@ function tokens(raw: string): string[] {
  */
 export function isBlockedText(raw: string): boolean {
   const squashed = squash(raw);
-  // The block lists are squashed the same way ("nigg" stays "nig").
-  for (const w of BLOCK_SUBSTRING) {
-    if (squashed.includes(w.replace(/(.)\1+/g, '$1'))) return true;
-  }
+  if (hasBlockedWord(raw, squashed)) return true;
   for (const b of BLOCK_BRAND) {
     if (squashed.includes(b)) return true;
-  }
-  const toks = new Set(tokens(raw));
-  for (const w of BLOCK_TOKEN) {
-    if (toks.has(w)) return true;
   }
   if (/\.(com|io|xyz|fun|gg|app|net|org|sol)\b/i.test(raw)) return true;
   return chatFilter(raw).filtered;

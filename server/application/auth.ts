@@ -8,6 +8,7 @@
  * Layering: this is application code. It calls the JWT issuer and
  * the Helius client. It does not touch the transport layer.
  */
+import { assertNotBannedDb } from './moderation.js';
 import { PublicKey } from '@solana/web3.js';
 import { createPublicKey, verify as ed25519Verify } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
@@ -282,6 +283,7 @@ export class AuthService {
   }
 
   private async mintTokens(user: UserRow): Promise<{ accessToken: string; refreshToken: string }> {
+    await this.ctx.db.withConnection((c) => assertNotBannedDb(c, user.id));
     const accessToken = await this.ctx.jwt.signAccess(user.id, user.wallet, user.isSeeker);
     const refreshToken = await this.ctx.jwt.signRefresh(user.id, randomUUID());
     return { accessToken, refreshToken };

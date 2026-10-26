@@ -11,6 +11,7 @@ import { MarketState, CoinState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { listMarketCoins } from '../../application/world-pulse.js';
+import { BanGuard } from '../ban-guard.js';
 
 const PATCH_HZ = 0.5;
 const MAX_PLAYERS = 2_000;
@@ -18,6 +19,7 @@ const MAX_PLAYERS = 2_000;
 const MAX_COINS = 50;
 
 export class MarketRoom extends Room {
+  private readonly ban = new BanGuard(this);
   static maxClients = MAX_PLAYERS;
   static patchRate = (1 / PATCH_HZ) * 1000;
   declare state: MarketState;
@@ -27,6 +29,7 @@ export class MarketRoom extends Room {
    * TODO: M3 wires the market engine snapshots here.
    */
   override async onCreate(_options: unknown): Promise<void> {
+    await this.ban.attach();
     this.state = new MarketState();
     this.state.coins = new MapSchema<CoinState>();
 
@@ -79,7 +82,7 @@ export class MarketRoom extends Room {
   /**
    * B5 fix: Verify JWT token before allowing join
    */
-  override async onJoin(_client: Client, options: unknown): Promise<void> {
+  override async onJoin(client: Client, options: unknown): Promise<void> {
     const tokenStr = String((options as { token?: string })?.token ?? '');
     // Reject if no token provided and not in dev mode
     if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
@@ -89,10 +92,26 @@ export class MarketRoom extends Room {
     if (tokenStr !== '') {
       try {
         const jwtIssuer = createJwtIssuer();
-        await jwtIssuer.verifyAccess(tokenStr);
+        const claims = await jwtIssuer.verifyAccess(tokenStr);
+        this.ban.track(client, claims.sub ?? '');
+        await this.ban.confirm(claims.sub ?? '');
       } catch (err) {
+        if ((err as Error).message === 'ACCOUNT_BANNED') throw err;
         throw new Error('INVALID_TOKEN', { cause: err });
       }
     }
+  }
+
+  /**
+   * Forget the session.
+   * @param client - The leaving client.
+   */
+  override onLeave(client: Client): void {
+    this.ban.untrack(client);
+  }
+
+  /** Stop listening for bans. */
+  override async onDispose(): Promise<void> {
+    await this.ban.detach();
   }
 }

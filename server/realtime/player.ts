@@ -8,6 +8,7 @@ import { PlayerState } from '../../contract/realtime/states.js';
 import { computeOutfit, outfitStateSql } from '../shared/domain/outfit.js';
 import { createJwtIssuer } from '../shared/auth/jwt.js';
 import { loadConfig } from '../shared/config/config.js';
+import { maskProfanity } from '../application/factory-filter.js';
 
 /** Contract order of PlayerState.look. */
 const LOOK_SLOTS = [
@@ -67,7 +68,31 @@ export async function authenticateJoin(options: unknown): Promise<string> {
   } catch (err) {
     throw new Error('INVALID_TOKEN', { cause: err });
   }
+  await assertJoinAllowed(claims.sub ?? '');
   return claims.sub ?? '';
+}
+
+/**
+ * Refuse a banned account at the door of any room. A still-valid access token
+ * is not enough: the ban flag and, failing that, the database decide.
+ * @param userId - The verified token subject.
+ * @throws Error `ACCOUNT_BANNED`.
+ */
+export async function assertJoinAllowed(userId: string): Promise<void> {
+  // Only real accounts (UUIDs) can be banned; dev-token ids never touch the database.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) return;
+  const [{ buildContext }, { assertNotBanned }] = await Promise.all([
+    import('../application/context.js'),
+    import('../application/moderation.js'),
+  ]);
+  try {
+    await assertNotBanned(buildContext(), userId);
+  } catch (e) {
+    if ((e as { code?: string }).code === 'ACCOUNT_BANNED') {
+      throw new Error('ACCOUNT_BANNED', { cause: e });
+    }
+    throw e;
+  }
 }
 
 /**
@@ -140,7 +165,43 @@ export function filterSay(raw: string): string {
     .slice(0, SAY_MAX_LENGTH)
     .replace(LINK_REGEX, '[link]')
     .replace(PHONE_REGEX, '[phone]')
-    .replace(/[^\x20-\x7e]/g, '');
+    .replace(/[^\x20-\x7e]/g, '')
+    .replace(/^.*$/s, (t) => maskProfanity(t));
+}
+
+export interface SayPolicy {
+  /** The speaker is muted: nothing is delivered. */
+  readonly muted: boolean;
+  /** Users who blocked the speaker or were blocked by them (rows exist both ways). */
+  readonly blocked: ReadonlySet<string>;
+}
+
+/**
+ * Load who may hear a player's `say`: their mute and every block either way.
+ * Read per message (the say cooldown is 2 s), so a block made a second ago
+ * already applies. Callers must drop the message when this throws.
+ * @param userId - The speaker.
+ */
+export async function loadSayPolicy(userId: string): Promise<SayPolicy> {
+  const { buildContext } = await import('../application/context.js');
+  const ctx = buildContext();
+  return ctx.db.withConnection(async (c) => {
+    const [mute, blocks] = await Promise.all([
+      c.query(
+        'SELECT 1 FROM user_moderation WHERE user_id = $1 AND (muted_until > now() OR banned_at IS NOT NULL)',
+        [userId],
+      ),
+      c.query<{ other: string }>(
+        `SELECT blocked_user_id AS other FROM blocks WHERE blocker_user_id = $1
+         UNION SELECT blocker_user_id FROM blocks WHERE blocked_user_id = $1`,
+        [userId],
+      ),
+    ]);
+    return {
+      muted: (mute.rowCount ?? 0) > 0,
+      blocked: new Set(blocks.rows.map((r) => r.other)),
+    };
+  });
 }
 
 /**

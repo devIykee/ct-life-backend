@@ -22,6 +22,7 @@ import {
   validateCharacterPalette,
   type CharacterLook,
 } from '../shared/domain/character-palettes.js';
+import { assertCleanText } from './moderation.js';
 import type { AppContext } from './context.js';
 import { ensureCatalog } from './cosmetics.js';
 import { refreshOutfit } from './realtime-bus.js';
@@ -187,6 +188,7 @@ export class CharacterService {
     likenessJobId: string | null;
   }> {
     // B13 fix: Validate all IDs before attempting creation
+    assertCleanText(input.alias, 'alias');
     this.validateInput(input);
 
     return runInTransaction(async (client) => {
