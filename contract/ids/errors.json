@@ -273,6 +273,21 @@
       "message": "The server's last position for you is more than the collect radius from this nod."
     },
     {
+      "code": "CONTENT_NOT_ALLOWED",
+      "httpStatus": 400,
+      "message": "That text contains words that are not allowed."
+    },
+    {
+      "code": "ACCOUNT_MUTED",
+      "httpStatus": 403,
+      "message": "This account is muted and cannot send messages or posts right now."
+    },
+    {
+      "code": "ACCOUNT_BANNED",
+      "httpStatus": 403,
+      "message": "This account has been banned."
+    },
+    {
       "code": "NAME_NOT_ALLOWED",
       "httpStatus": 400,
       "message": "That coin name or ticker is not allowed."

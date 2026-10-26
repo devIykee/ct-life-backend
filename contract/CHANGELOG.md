@@ -1,3 +1,14 @@
+## 2026-10-26 - Moderation: filter, admin report queue, mute and ban, block-aware chat
+
+Migration 101. From POLICY-CHECK.md (user-generated content rules of both stores).
+
+- **Text filter.** `POST /dms/{userId}`, `POST /feed/posts` and `POST /characters` (alias) now answer `400 CONTENT_NOT_ALLOWED` (`details.field`: `dm`, `post` or `alias`) when a word is a slur or strong profanity (leetspeak, repeated letters and spaced-out letters are caught; the check is per word, so "this hit" is fine). Show "That text contains words that are not allowed." and let the player edit. The list is the one the Rugpull Factory already uses, kept in the repo, no new package. Room `say` is not rejected: offending words arrive as asterisks (`****`) and a message that can only be caught as a whole is sent as `[message hidden]`.
+- **Block-aware room chat.** `say` in street and venue rooms is no longer sent to players who blocked the speaker or were blocked by them. Checked per message, so a block applies at once.
+- **Report limits.** `POST /reports`: 10 an hour per player (burst 5) else `429 RATE_LIMITED` with `Retry-After`; reporting the same target again while your report is open is a silent 204; reporting yourself is `400`.
+- **Admin queue** (admin wallet): `GET /admin/reports?status=open|resolved|all&limit&after` (rows have `preview`, `targetUserId`, `openOnTarget`, paging `next`); `POST /admin/reports/{reportId}/resolve {action: dismiss|remove_content|mute|ban, hours?, note?}`; `POST /admin/users/{userId}/sanction {action: mute|unmute|ban|unban, hours?, reason?}`. The two old stubs `/admin/moderation/queue` and `/admin/bans` (never built) are gone from the spec. Every action is written to `moderation_actions`.
+- **Mute** (1 to 720 hours): `403 ACCOUNT_MUTED` (`details.until`) on DM, feed post and room chat (`rejected {type:'say', code:'ACCOUNT_MUTED'}`); the player can still read. **Ban:** every request is `403 ACCOUNT_BANNED`, sign-in and refresh are refused (403) until unbanned. FE: on `ACCOUNT_BANNED` show a banned screen and clear tokens.
+- New error codes: `CONTENT_NOT_ALLOWED` (400), `ACCOUNT_MUTED` (403), `ACCOUNT_BANNED` (403).
+
 ## 2026-10-25 - Cash tips burn a 3% fee
 
 Migration 095. The goal is that tip and quest farming between alt accounts is a net loss.

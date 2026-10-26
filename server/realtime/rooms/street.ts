@@ -32,6 +32,7 @@ import {
   authenticateJoin,
   loadPlayerState,
   filterSay,
+  loadSayPolicy,
   newMessageId,
   SAY_COOLDOWN_MS,
   EMOTE_COOLDOWN_MS,
@@ -268,17 +269,41 @@ export class StreetRoom extends Room {
       return;
     }
     s.lastSayAt = now;
-    this.broadcast(
-      'said',
-      {
-        messageId: newMessageId(),
-        userId: s.userId,
-        sessionId: client.sessionId,
-        text: filterSay(parsed.data.text),
-        at: now,
-      },
-      { except: client },
-    );
+    const payload = {
+      messageId: newMessageId(),
+      userId: s.userId,
+      sessionId: client.sessionId,
+      text: filterSay(parsed.data.text),
+      at: now,
+    };
+    void this.deliverSay(client, s.userId, payload);
+  }
+
+  /**
+   * Fan a `said` out to everyone except the speaker and anyone who blocked them
+   * (or whom they blocked). A muted speaker is told and nothing is sent. If the
+   * policy cannot be read the message is dropped (fail closed).
+   */
+  private async deliverSay(
+    client: Client,
+    userId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const policy = await loadSayPolicy(userId);
+      if (policy.muted) {
+        client.send('rejected', { type: 'say', code: 'ACCOUNT_MUTED' });
+        return;
+      }
+      for (const c of this.clients) {
+        if (c.sessionId === client.sessionId) continue;
+        const other = this.sessions.get(c.sessionId)?.userId;
+        if (other !== undefined && policy.blocked.has(other)) continue;
+        c.send('said', payload);
+      }
+    } catch {
+      // fail closed
+    }
   }
 
   private handleTalking(client: Client, msg: unknown): void {

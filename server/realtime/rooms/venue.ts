@@ -55,6 +55,7 @@ import {
   authenticateJoin,
   loadPlayerState,
   filterSay,
+  loadSayPolicy,
   newMessageId,
   SAY_COOLDOWN_MS,
   EMOTE_COOLDOWN_MS,
@@ -443,20 +444,41 @@ export class VenueRoom extends Room {
     this.lastSayAt.set(client.sessionId, now);
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
-    const id = newMessageId();
-    // Broadcast to every other client in the room; block-aware
-    // filtering happens in M5. M2 fans out to everyone.
-    this.broadcast(
-      'said',
-      {
-        messageId: id,
-        userId: player.userId,
-        sessionId: client.sessionId,
-        text,
-        at: now,
-      },
-      { except: client },
-    );
+    const payload = {
+      messageId: newMessageId(),
+      userId: player.userId,
+      sessionId: client.sessionId,
+      text,
+      at: now,
+    };
+    void this.deliverSay(client, player.userId, payload);
+  }
+
+  /**
+   * Fan a `said` out to everyone except the speaker and anyone who blocked them
+   * (or whom they blocked). A muted speaker is told and nothing is sent. If the
+   * policy cannot be read the message is dropped (fail closed).
+   */
+  private async deliverSay(
+    client: Client,
+    userId: string,
+    payload: Record<string, unknown>,
+  ): Promise<void> {
+    try {
+      const policy = await loadSayPolicy(userId);
+      if (policy.muted) {
+        client.send('rejected', { type: 'say', code: 'ACCOUNT_MUTED' });
+        return;
+      }
+      for (const c of this.clients) {
+        if (c.sessionId === client.sessionId) continue;
+        const other = this.state.players.get(c.sessionId)?.userId;
+        if (other !== undefined && policy.blocked.has(other)) continue;
+        c.send('said', payload);
+      }
+    } catch {
+      // fail closed
+    }
   }
 
   private handleTalking(client: Client, msg: unknown): void {

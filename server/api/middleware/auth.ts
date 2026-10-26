@@ -7,7 +7,9 @@
  * to the right envelope.
  */
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
+import { assertNotBannedLive } from '../../application/moderation.js';
 import {
+  AccountBannedError,
   ForbiddenError,
   SignatureInvalidError,
   TokenExpiredError,
@@ -36,8 +38,10 @@ export async function requireAuth(
   try {
     const claims = await req.ctx.jwt.verifyAccess(token);
     req.user = claims;
+    await assertNotBannedLive(req.ctx.redis, claims.sub);
     return claims;
   } catch (e) {
+    if (e instanceof AccountBannedError) throw e;
     const err = e as { code?: string; name?: string; message?: string };
     if (err.name === 'JWTExpired' || err.code === 'ERR_JWT_EXPIRED') {
       throw new TokenExpiredError({});

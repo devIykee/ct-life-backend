@@ -223,6 +223,7 @@ export const RejectedMessage = z.object({
     'FORBIDDEN',
     'BLOCKED',
     'RATE_LIMITED',
+    'ACCOUNT_MUTED',
     'INSUFFICIENT_CASH',
     'LEVERAGE_NOT_ALLOWED',
     'SLIPPAGE_EXCEEDED',
