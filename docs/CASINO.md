@@ -18,6 +18,9 @@ A Cash-only, play-money casino, 18+. Code: `server/application/casino.ts` (servi
 | Disclaimer                           | Every success response carries `disclaimer: "Play money. No cash value. 18+"`.                                                                                                                                                       |
 | No gambling ads, no real-money links | Product rule for the client (plan P2). The backend has no such surface.                                                                                                                                                              |
 
+The 18+ flag is readable outside the casino too: `GET /v1/casino/state` and `GET /v1/me` both carry
+`ageConfirmed` (the same column), so the Prediction Pit and Factory screens can ask before a bet.
+
 Caps are counted from the ledger for the UTC day, so they include stakes held in escrow
 and exclude refunded stakes. Casino actions of one player are serialized by a lock
 on their `casino_players` row, so two parallel bets cannot slip past a cap.

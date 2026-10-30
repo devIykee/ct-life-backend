@@ -361,6 +361,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       dream_id: string;
       home_id: string;
       likeness_job_id: string | null;
+      age_confirmed: boolean;
       has_needs: boolean;
       energy: number;
       hunger: number;
@@ -383,6 +384,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
               u.lottery_rolled_at, u.miner_tier,
               ch.user_id IS NOT NULL AS has_character, ch.alias, ch.look, ch.tribe_id, ch.trait_ids,
               ch.dream_id, ch.home_id, ch.likeness_job_id,
+              ch.age_confirmed_at IS NOT NULL AS age_confirmed,
               n.user_id IS NOT NULL AS has_needs, n.energy, n.hunger, n.fun, n.hygiene, n.sanity,
               n.last_action_at,
               s.user_id IS NOT NULL AS has_skills, s.clout, s.coding, s.trading, s.writing, s.design,
@@ -508,6 +510,9 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       homeId: activeKind ?? chRow?.home_id ?? 'parents_basement',
       home,
       minerTier: uRow.miner_tier || 'none',
+      // The 18+ confirmation the casino, Prediction Pit and Factory check
+      // (`characters.age_confirmed_at`, as in GET /casino/state). False without a character.
+      ageConfirmed: row.age_confirmed === true,
       flags: {
         // The first-session onboarding: new accounts start `active`, older ones read `done`.
         firstSession: await firstSession,

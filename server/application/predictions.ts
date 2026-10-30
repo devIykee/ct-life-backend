@@ -2,7 +2,8 @@
  * Prediction Pit bets (unlock D3, app capability `predict`).
  *
  *   POST /v1/predictions/markets/{marketId}/bets {outcomeId, stakeCents}
- *   GET  /v1/predictions?status=          the caller's bets (unwrapped array)
+ *   GET  /v1/predictions?status=          the caller's bets (unwrapped array), each
+ *                                         with its market's `fairness` proof
  *   POST /v1/predictions                  410 GONE (use market bets)
  *
  * A bet names a server market (prediction-markets.ts) and one of its
@@ -33,7 +34,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 import { predictionsConfig, type Horizon } from './prediction-config.js';
-import { MARKET_COLUMNS, type MarketRow } from './prediction-markets.js';
+import { MARKET_COLUMNS, fairnessOf, type Fairness, type MarketRow } from './prediction-markets.js';
 import { resolveDueMarkets, settleBets } from './prediction-resolver.js';
 import type { ReferencePriceSource } from './price-source.js';
 
@@ -71,6 +72,8 @@ export interface PredictionRow {
   readonly params: Record<string, string> | null;
   readonly resolvedOutcomeId: string | null;
   readonly payoutCents: number | null;
+  /** The market's commit-reveal proof (seed once resolved); null for crypto and legacy bets. */
+  readonly fairness: Fairness;
 }
 
 function utcDayStart(now: Date): Date {
@@ -236,10 +239,12 @@ export async function listPredictions(
       params: Record<string, string> | null;
       resolved_outcome_id: string | null;
       payout_cents: string | null;
+      market_status: MarketRow['status'] | null;
+      basis: MarketRow['basis'] | null;
     }>(
       `SELECT p.prediction_id, p.outcome_id, p.stake_cents, p.status, p.horizon, p.closes_at,
               p.created_at, p.market_id, m.question_key, m.params, m.resolved_outcome_id,
-              p.payout_cents
+              p.payout_cents, m.status AS market_status, m.basis
          FROM predictions p
          LEFT JOIN prediction_markets m ON m.market_id = p.market_id
         WHERE ${where}
@@ -261,5 +266,9 @@ export async function listPredictions(
     params: row.params,
     resolvedOutcomeId: row.resolved_outcome_id,
     payoutCents: row.payout_cents === null ? null : Number(row.payout_cents),
+    fairness:
+      row.market_status && row.basis
+        ? fairnessOf({ status: row.market_status, basis: row.basis })
+        : null,
   }));
 }
