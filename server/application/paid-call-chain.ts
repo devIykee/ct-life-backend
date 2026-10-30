@@ -13,7 +13,7 @@
  * Settle and refund never depend on the state of an account a player controls. The
  * program accepts ANY USDC token account whose token owner is the fan / creator /
  * treasury (lib.rs Settle and Refund constraints), so before each send the server reads
- * the canonical ATAs and plans a destination for each (`planDestinations`):
+ * the canonical ATAs and plans a destination for each (`settleInstructions`, `refundInstructions`):
  *   - present, owned by the right wallet, not frozen  -> use it (no create, no rent);
  *   - missing                                         -> idempotent ATA create;
  *   - handed to another owner (SetAuthority) or frozen -> a FRESH token account owned by
