@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { requireCapability } from '../middleware/capability.js';
+import { requireNotJailed } from '../middleware/jail.js';
 import { GoneError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { listPredictions, placeBet, type PredictionStatus } from '../../application/predictions.js';
 import { listMarkets } from '../../application/prediction-markets.js';
@@ -49,7 +50,9 @@ export function registerPredictionRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/predictions/markets/:marketId/bets',
-    { preHandler: [requireCapability('predict'), requireAuth, withIdempotency()] },
+    {
+      preHandler: [requireCapability('predict'), requireAuth, requireNotJailed, withIdempotency()],
+    },
     async (req, reply) => {
       const p = MarketParams.safeParse(req.params);
       const body = BetBody.safeParse(req.body);

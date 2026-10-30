@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "_note": "Prediction Pit (unlock D3). Play-money Cash only, house-banked fixed odds. Each market's strike is recorded when it opens and the bet window is short, so nobody can bet after watching most of the move. See docs/PREDICTIONS.md.",
+  "_note": "Prediction Pit (unlock D3). Play-money Cash only, house-banked fixed odds. Each market's strike is recorded when it opens and the bet window is short, so nobody can bet after watching most of the move. Sim markets only use house coins past the bonding curve, whose price only the engine moves. See docs/PREDICTIONS.md.",
   "payoutBps": 19000,
   "minStakeCents": 100,
   "maxStakeCents": 50000,
@@ -8,21 +8,33 @@
   "sim": {
     "topCoins": 3,
     "horizons": [
-      { "horizon": "5m", "everySec": 60, "betWindowSec": 60 },
-      { "horizon": "15m", "everySec": 180, "betWindowSec": 180 },
-      { "horizon": "1h", "everySec": 600, "betWindowSec": 600 }
+      {
+        "horizon": "5m",
+        "everySec": 60,
+        "betWindowSec": 45
+      },
+      {
+        "horizon": "15m",
+        "everySec": 180,
+        "betWindowSec": 120
+      },
+      {
+        "horizon": "1h",
+        "everySec": 600,
+        "betWindowSec": 300
+      }
     ]
   },
   "event": {
     "everySec": 600,
-    "betWindowSec": 600,
+    "betWindowSec": 300,
     "horizon": "1h",
-    "questions": ["event_rug_1h", "event_graduate_1h"]
+    "questions": ["event_rug_1h"]
   },
   "crypto": {
     "symbols": ["BTCUSDT", "SOLUSDT"],
     "everySec": 3600,
-    "betWindowSec": 3600,
+    "betWindowSec": 1800,
     "horizonSec": 86400
   },
   "resolveGraceSec": 1800,

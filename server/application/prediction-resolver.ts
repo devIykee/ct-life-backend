@@ -12,8 +12,11 @@
  *                  market worker). Missing snapshot: the live price if still
  *                  within `snapshotGraceSec` of `resolves_at`, else void.
  *                  `yes` iff value > strike.
- *        - event:  how many coins of the set recorded at open rugged (`dead`)
- *                  or graduated (`final`/`graduated`). `yes` iff > 0.
+ *        - event:  how many coins of the set recorded at open reached the
+ *                  target stage AFTER the bet window closed, i.e. not already
+ *                  in it in `closedStages` (recorded within seconds of
+ *                  `closesAt`). `yes` iff > 0. No close record within
+ *                  `snapshotGraceSec` of `closesAt`: void.
  *        - crypto: the close of the 1-minute candle that ends at `resolves_at`
  *                  from the reference source; void after `resolveGraceSec`.
  *   2. Settle: every open bet on a resolved or void market is claimed with a
@@ -31,7 +34,12 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import type { AppContext } from './context.js';
 import { predictionsConfig } from './prediction-config.js';
-import { MARKET_COLUMNS, type MarketRow } from './prediction-markets.js';
+import {
+  MARKET_COLUMNS,
+  eventTargetStages,
+  snapshotClosedEvents,
+  type MarketRow,
+} from './prediction-markets.js';
 import type { ReferencePriceSource } from './price-source.js';
 import { publishToUser } from './realtime-bus.js';
 
@@ -69,15 +77,22 @@ async function decideSim(ctx: AppContext, m: MarketRow, now: Date): Promise<Deci
 }
 
 async function decideEvent(ctx: AppContext, m: MarketRow): Promise<Decision> {
-  const ids = m.basis.coinIds ?? [];
-  const stages = m.question_key === 'event_rug_1h' ? ['dead'] : ['final', 'graduated'];
+  const closed = m.basis.closedStages;
+  const closedAt = m.basis.closedAt ? new Date(m.basis.closedAt) : null;
+  const lateMs = closedAt ? closedAt.getTime() - m.closes_at.getTime() : Infinity;
+  // Without a timely close record there is no way to tell pre-close changes apart.
+  if (!closed || lateMs > predictionsConfig().snapshotGraceSec * 1000) return 'void';
+  const targets = eventTargetStages(m.question_key);
   const r = await ctx.db.withConnection((c) =>
-    c.query<{ n: string }>(
-      `SELECT count(*) AS n FROM coins WHERE coin_id = ANY($1::uuid[]) AND stage = ANY($2::text[])`,
-      [ids, stages],
+    c.query<{ coin_id: string; stage: string }>(
+      `SELECT coin_id, stage FROM coins WHERE coin_id = ANY($1::uuid[])`,
+      [m.basis.coinIds ?? []],
     ),
   );
-  const n = BigInt(r.rows[0]?.n ?? '0');
+  const changed = r.rows.filter(
+    (row) => targets.includes(row.stage) && !targets.includes(closed[row.coin_id] ?? ''),
+  );
+  const n = BigInt(changed.length);
   return { valueMicros: n, outcomeId: n > 0n ? 'yes' : 'no' };
 }
 
@@ -119,6 +134,7 @@ export async function resolveDueMarkets(
   now: Date,
   source: ReferencePriceSource | null,
 ): Promise<number> {
+  await ctx.db.withConnection((c) => snapshotClosedEvents(c, now));
   const due = await ctx.db.withConnection((c) =>
     c.query<MarketRow>(
       `SELECT ${MARKET_COLUMNS} FROM prediction_markets

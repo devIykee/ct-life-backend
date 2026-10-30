@@ -6,9 +6,17 @@
  * The market worker (server/workers/prediction-markets.ts) calls
  * `generateMarkets` once a minute. It opens:
  *   - `sim`: "is $TICKER higher at resolvesAt than now?" on the top in-game
- *     coins by 5-minute volume, at the 5m / 15m / 1h horizons;
- *   - `event`: "will any live coin rug in the next hour?" and "will any new
- *     coin graduate in the next hour?", from the market sim's own outcomes;
+ *     coins by 5-minute volume, at the 5m / 15m / 1h horizons. Only house
+ *     coins past the bonding curve (`final`/`graduated`, not player-launched):
+ *     their price is written only by the market engine's drift. Terminal Cafe
+ *     trades execute at the quote without moving it, and the launchpad buy
+ *     that does move a price only works on `new` coins. So no player can push
+ *     the price a sim market settles on;
+ *   - `event`: "will any of these coins rug in the next hour?" over the same
+ *     kind of coins (`event_graduate_1h` exists but is off by default: anyone
+ *     can push a `new` coin to graduation with launchpad buys). The coin set
+ *     and each coin's stage are recorded at open, and each coin's stage again
+ *     right after `closesAt` (`closedStages`); only changes after that count;
  *   - `crypto`: "is BTC (SOL) higher in 24 h than now?" from the configured
  *     reference source, only when PREDICTIONS_CRYPTO_SOURCE is not `off`.
  *
@@ -73,9 +81,23 @@ export interface MarketRow {
   max_stake_cents: string;
   status: MarketStatus;
   strike_micros: string | null;
-  basis: { coinIds?: string[]; symbol?: string };
+  basis: {
+    coinIds?: string[];
+    symbol?: string;
+    openStages?: Record<string, string>;
+    closedStages?: Record<string, string>;
+    closedAt?: string;
+  };
   resolved_outcome_id: string | null;
 }
+
+/** The stages that make an event question `yes`. */
+export function eventTargetStages(questionKey: string): string[] {
+  return questionKey === 'event_rug_1h' ? ['dead'] : ['final', 'graduated'];
+}
+
+/** Coins whose price only the engine moves: house coins past the curve. */
+const ENGINE_ONLY_COINS = `stage IN ('final', 'graduated') AND NOT player_launched AND creator_id IS NULL`;
 
 export const MARKET_COLUMNS = `market_id, kind, question_key, params, outcomes, horizon, opens_at,
   closes_at, resolves_at, source, payout_bps, min_stake_cents, max_stake_cents, status,
@@ -173,7 +195,7 @@ async function openSimMarkets(c: PoolClient, now: Date): Promise<number> {
   const cfg = predictionsConfig();
   const coins = await c.query<{ coin_id: string; ticker: string; price_micros: string }>(
     `SELECT coin_id, ticker, price_micros FROM coins
-      WHERE stage IN ('new', 'final', 'graduated') AND price_micros > 0
+      WHERE ${ENGINE_ONLY_COINS} AND price_micros > 0
       ORDER BY vol_5m_cents DESC, coin_id
       LIMIT $1`,
     [cfg.sim.topCoins],
@@ -209,12 +231,13 @@ async function openEventMarkets(c: PoolClient, now: Date): Promise<number> {
   if (!p) return 0;
   let n = 0;
   for (const q of ev.questions) {
-    // The set the question is about is fixed now: rugs among the live coins,
-    // graduations among the coins still on the curve.
-    const stages = q === 'event_rug_1h' ? ['new', 'final', 'graduated'] : ['new'];
-    const coins = await c.query<{ coin_id: string }>(
-      `SELECT coin_id FROM coins WHERE stage = ANY($1::text[]) ORDER BY coin_id`,
-      [stages],
+    // The set the question is about is fixed now: rugs among the engine-only
+    // live coins, graduations among the coins still on the curve.
+    const coins = await c.query<{ coin_id: string; stage: string }>(
+      q === 'event_rug_1h'
+        ? `SELECT coin_id, stage FROM coins WHERE ${ENGINE_ONLY_COINS} ORDER BY coin_id`
+        : `SELECT coin_id, stage FROM coins
+            WHERE stage = 'new' AND NOT player_launched AND creator_id IS NULL ORDER BY coin_id`,
     );
     if (coins.rows.length === 0) continue;
     const ok = await insertMarket(c, {
@@ -228,7 +251,10 @@ async function openEventMarkets(c: PoolClient, now: Date): Promise<number> {
       resolvesAt: new Date((p.startSec + HORIZON_SEC[ev.horizon]) * 1000),
       source: { type: 'sim', ref: 'market' },
       strikeMicros: null,
-      basis: { coinIds: coins.rows.map((r) => r.coin_id) },
+      basis: {
+        coinIds: coins.rows.map((r) => r.coin_id),
+        openStages: Object.fromEntries(coins.rows.map((r) => [r.coin_id, r.stage])),
+      },
     });
     if (ok) n++;
   }
@@ -271,6 +297,30 @@ async function openCryptoMarkets(
 }
 
 /**
+ * Record each event coin's stage right after the bet window closed
+ * (`basis.closedStages`, `basis.closedAt`), once. The resolver counts only
+ * changes after this, so a rug that happened while bets were open never
+ * decides the market. Called by the generator (every minute) and by the
+ * settlement sweep (every 5 s), so it lands within seconds of `closesAt`.
+ * @param c - A client.
+ * @param now - The current time.
+ */
+export async function snapshotClosedEvents(c: Pick<PoolClient, 'query'>, now: Date): Promise<void> {
+  await c.query(
+    `UPDATE prediction_markets m
+        SET basis = m.basis || jsonb_build_object(
+              'closedAt', to_jsonb($1::timestamptz),
+              'closedStages', COALESCE((
+                SELECT jsonb_object_agg(co.coin_id::text, co.stage) FROM coins co
+                 WHERE co.coin_id::text IN (SELECT jsonb_array_elements_text(m.basis->'coinIds'))
+              ), '{}'::jsonb))
+      WHERE m.kind = 'event' AND m.status IN ('open', 'closed') AND m.closes_at <= $1
+        AND NOT (m.basis ? 'closedStages')`,
+    [now],
+  );
+}
+
+/**
  * One generator run: open due markets, snapshot sim prices, close ended
  * windows, prune. Safe to run on several replicas at once.
  * @param ctx - The app context.
@@ -296,6 +346,7 @@ export async function generateMarkets(
        ON CONFLICT (coin_id, minute) DO NOTHING`,
       [now],
     );
+    await snapshotClosedEvents(c, now);
     await c.query(
       `UPDATE prediction_markets SET status = 'closed' WHERE status = 'open' AND closes_at <= $1`,
       [now],

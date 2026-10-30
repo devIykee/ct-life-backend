@@ -3310,7 +3310,7 @@ paths:
         until `closesAt` (a short window after `opensAt`); the outcome is decided once at
         `resolvesAt` from a recorded value (`source`). Kinds: `sim` (an in-game coin higher at
         `resolvesAt` than at open; params `coinId, ticker, strikeMicros`), `event`
-        (`event_rug_1h` / `event_graduate_1h` over the coins recorded at open; params `coins`),
+        (`event_rug_1h` over the coins recorded at open, counting only rugs after `closesAt`; params `coins`),
         `crypto` (BTCUSDT / SOLUSDT higher in 24 h than the open of the first minute; params
         `symbol, strikeMicros`; only when the server has a reference source configured). Page size
         50.
@@ -3382,13 +3382,13 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '403':
-          description: '`AGE_REQUIRED` (confirm 18+ first)'
+          description: '`AGE_REQUIRED` (confirm 18+ first) or `JAILED`'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: '`CONFLICT {reason: market_closed, closesAt}`'
+          description: '`CONFLICT {reason: market_closed, closesAt}` or `CONFLICT {reason: outcome_decided}` (event market already decided)'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

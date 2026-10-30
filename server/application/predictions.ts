@@ -13,7 +13,10 @@
  *
  * Limits: the market's min/max stake, a daily stake cap per player (UTC day,
  * predictions.json `dailyStakeCapCents`), the 18+ confirmation the casino and
- * the Factory use, and the bet window (`closesAt`).
+ * the Factory use, not being in Jail (route preHandler), and the bet window
+ * (`closesAt`). An event market whose outcome is already decided (a coin of
+ * its set already reached the target stage) refuses bets:
+ * `409 CONFLICT {reason:'outcome_decided'}`.
  *
  * Resolution and payouts: prediction-resolver.ts (workers only, behind
  * PREDICTIONS_SETTLEMENT_ENABLED).
@@ -31,7 +34,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 import { predictionsConfig, type Horizon } from './prediction-config.js';
-import { MARKET_COLUMNS, type MarketRow } from './prediction-markets.js';
+import { MARKET_COLUMNS, eventTargetStages, type MarketRow } from './prediction-markets.js';
 import { resolveDueMarkets, settleBets } from './prediction-resolver.js';
 import type { ReferencePriceSource } from './price-source.js';
 
@@ -126,6 +129,18 @@ export async function placeBet(
       `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
       [input.userId],
     );
+    if (m.kind === 'event') {
+      // A rug that already happened decides the market: no bet on a known
+      // outcome. The coin rows are share-locked so the engine cannot flip a
+      // stage between this check and the commit.
+      const decided = await client.query(
+        `SELECT coin_id FROM coins
+          WHERE coin_id = ANY($1::uuid[]) AND stage = ANY($2::text[])
+            FOR SHARE`,
+        [m.basis.coinIds ?? [], eventTargetStages(m.question_key)],
+      );
+      if ((decided.rowCount ?? 0) > 0) throw new ConflictError({ reason: 'outcome_decided' });
+    }
     const dayStart = utcDayStart(now);
     const used = await client.query<{ s: string }>(
       `SELECT COALESCE(sum(stake_cents), 0) AS s FROM predictions

@@ -12,11 +12,24 @@ App capability: `predict` (`GET /v1/config` `capabilities.apps.predict`). Contra
 
 The workers process opens markets once a minute (`server/workers/prediction-markets.ts`):
 
-| Kind     | Question key                           | Opens                                    | Bet window            | Resolves                             | Recorded at open                   | Decided from (at `resolvesAt`)                                  |
-| -------- | -------------------------------------- | ---------------------------------------- | --------------------- | ------------------------------------ | ---------------------------------- | --------------------------------------------------------------- |
-| `sim`    | `sim_higher`                           | top 3 coins by 5-min volume, per horizon | 60 s / 3 min / 10 min | 5m / 15m / 1h after the period start | the coin price (`strikeMicros`)    | the coin's minute snapshot; `yes` iff higher than the strike    |
-| `event`  | `event_rug_1h`, `event_graduate_1h`    | every 10 min                             | 10 min                | 1 h after the period start           | the coin set (live / on the curve) | how many of those coins rugged / graduated; `yes` iff any       |
-| `crypto` | `crypto_higher_24h` (BTCUSDT, SOLUSDT) | every hour, only with a source           | 1 h                   | 24 h after the hour                  | open of the hour's first 1m candle | close of the 1m candle ending at `resolvesAt`; `yes` iff higher |
+| Kind     | Question key                           | Opens                                                  | Bet window           | Resolves                             | Recorded at open                                                            | Decided from (at `resolvesAt`)                                  |
+| -------- | -------------------------------------- | ------------------------------------------------------ | -------------------- | ------------------------------------ | --------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `sim`    | `sim_higher`                           | top 3 engine-priced coins by 5-min volume, per horizon | 45 s / 2 min / 5 min | 5m / 15m / 1h after the period start | the coin price (`strikeMicros`)                                             | the coin's minute snapshot; `yes` iff higher than the strike    |
+| `event`  | `event_rug_1h`                         | every 10 min                                           | 5 min                | 1 h after the period start           | the coin set and each coin's stage; each stage again right after `closesAt` | coins that rugged after the close; `yes` iff any                |
+| `crypto` | `crypto_higher_24h` (BTCUSDT, SOLUSDT) | every hour, only with a source                         | 30 min               | 24 h after the hour                  | open of the hour's first 1m candle                                          | close of the 1m candle ending at `resolvesAt`; `yes` iff higher |
+
+**No player can push a settling value.** `sim` and `event` markets use only house coins past the
+bonding curve (`final`/`graduated`, not player-launched). Their price is written only by the market
+engine's drift: Terminal Cafe trades execute at the quote without moving `price_micros`, and the
+launchpad buy (the one player path that writes a price) is refused past the curve. A coin's death is a
+drawdown from its engine-made peak, so players cannot force a rug either. `event_graduate_1h` is
+implemented but off by default: anyone can push a `new` coin to graduation with launchpad buys.
+
+**No betting on a known outcome.** An `event` market refuses bets (`409 CONFLICT {reason:
+outcome_decided}`) once a coin of its set has rugged, checked inside the bet transaction with the coin
+rows share-locked. Each coin's stage is recorded again within seconds of `closesAt` (`closedStages`, by
+the 5 s settlement sweep), and only rugs after that count. No timely close record (within
+`snapshotGraceSec`) voids the market.
 
 **Why the windows are short.** The plan's draft closed bets 60 s before resolution. At fixed odds that
 lets a player watch nearly the whole move and then bet on the side that is already winning, which
@@ -41,6 +54,8 @@ refunded (bet status `cancelled`, `payoutCents` = stake).
 - Daily stake cap per player per UTC day, $2,000 (`429 RATE_LIMITED {reason: daily_stake_cap, resetAt}`).
 - 18+ confirmation, the same one the casino and the Factory use (`403 AGE_REQUIRED`).
 - Only while `status` is `open` and before `closesAt` (`409 CONFLICT {reason: market_closed}`).
+- Not in Jail (`403 JAILED`, like the other money routes).
+- Event markets: not after the outcome is decided (`409 CONFLICT {reason: outcome_decided}`).
 - Win: `stake x payoutBps / 10000` (1.9x, ledger `prediction_payout`). Loss: 0. Void: the stake
   (ledger `prediction_refund`). The player gets `prediction_settled`.
 

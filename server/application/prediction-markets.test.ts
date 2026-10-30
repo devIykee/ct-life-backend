@@ -24,6 +24,8 @@ import { generateMarkets } from './prediction-markets.js';
 import { resolveDueMarkets, settleBets } from './prediction-resolver.js';
 import { BinanceKlineSource, decimalToMicros } from './price-source.js';
 import { predictionsConfig } from './prediction-config.js';
+import { launchpadBuy } from './launchpad.js';
+import { executeTrade } from './terminal-cafe.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 _resetConfigForTests();
@@ -38,14 +40,18 @@ const coins: string[] = [];
 const users: string[] = [];
 const BIG_VOL = '9000000000000000';
 
-async function newCoin(priceMicros: number, stage = 'new'): Promise<string> {
+async function newCoin(
+  priceMicros: number,
+  stage = 'graduated',
+  playerLaunched = false,
+): Promise<string> {
   const id = uuidv7();
   coins.push(id);
   await pool.query(
     `INSERT INTO coins (coin_id, ticker, name, stage, price_micros, mcap_cents, vol_5m_cents,
-                        launched_at, hidden_arc, seed)
-     VALUES ($1, $2, 'Pred Test', $3, $4, 100000, $5, now(), '{}'::jsonb, 1)`,
-    [id, `PT${id.slice(-6).toUpperCase()}`, stage, priceMicros, BIG_VOL],
+                        launched_at, hidden_arc, seed, player_launched)
+     VALUES ($1, $2, 'Pred Test', $3, $4, 100000, $5, now(), '{}'::jsonb, 1, $6)`,
+    [id, `PT${id.slice(-6).toUpperCase()}`, stage, priceMicros, BIG_VOL, playerLaunched],
   );
   return id;
 }
@@ -88,8 +94,12 @@ async function market(id: string): Promise<Record<string, unknown>> {
   return r.rows[0] as Record<string, unknown>;
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   ctx = buildContext();
+  // Coins a crashed earlier run left behind would outrank this run's coins.
+  const old = `SELECT coin_id FROM coins WHERE name = 'Pred Test'`;
+  await pool.query(`DELETE FROM positions WHERE coin_id IN (${old})`);
+  await pool.query(`DELETE FROM coins WHERE coin_id IN (${old})`);
 });
 
 afterAll(async () => {
@@ -102,6 +112,7 @@ afterAll(async () => {
   await pool.query(`DELETE FROM prediction_price_snapshots WHERE coin_id = ANY($1::uuid[])`, [
     coins,
   ]);
+  await pool.query(`DELETE FROM positions WHERE coin_id = ANY($1::uuid[])`, [coins]);
   await pool.query(`DELETE FROM coins WHERE coin_id = ANY($1::uuid[])`, [coins]);
   await pool.end();
 });
@@ -133,7 +144,7 @@ describe('sim markets', () => {
       strike_micros: '1000000',
       horizon: '5m',
     });
-    expect((m.closes_at as Date).getTime()).toBe(HOUR0 + 60_000); // 60 s window
+    expect((m.closes_at as Date).getTime()).toBe(HOUR0 + 45_000); // 45 s window
     expect((m.resolves_at as Date).getTime()).toBe(HOUR0 + 300_000);
     expect(m.params).toMatchObject({ coinId: up, strikeMicros: '1000000' });
 
@@ -197,19 +208,77 @@ describe('sim markets', () => {
 });
 
 describe('event markets', () => {
-  it('resolve from the coin set recorded at open', async () => {
+  it('resolve from stage changes after the window closed', async () => {
     const c1 = await newCoin(1_000_000);
     const base = 7200;
     await generateMarkets(ctx, at(base + 1), null);
     const startSec = Math.floor(HOUR0 / 1000) + base;
     const rug = `event:event_rug_1h:${startSec}`;
-    const grad = `event:event_graduate_1h:${startSec}`;
-    expect((await market(rug)).basis).toMatchObject({ coinIds: expect.arrayContaining([c1]) });
+    expect((await market(rug)).basis).toMatchObject({
+      coinIds: expect.arrayContaining([c1]),
+      openStages: expect.objectContaining({ [c1]: 'graduated' }),
+    });
+    // The sweep right after closesAt records each coin's stage.
+    const closesSec = predictionsConfig().event.betWindowSec;
+    await resolveDueMarkets(ctx, at(base + closesSec + 3), null);
+    expect((await market(rug)).basis).toMatchObject({ closedStages: { [c1]: 'graduated' } });
     await pool.query(`UPDATE coins SET stage = 'dead' WHERE coin_id = $1`, [c1]);
-    await newCoin(1_000_000, 'graduated'); // not in the set: does not count
+    await newCoin(1_000_000); // not in the set: does not count
     await resolveDueMarkets(ctx, at(base + 3600), null);
     expect(await market(rug)).toMatchObject({ status: 'resolved', resolved_outcome_id: 'yes' });
-    expect((await market(grad)).status).toBe('resolved');
+  });
+
+  it('a rug before the window closed does not resolve the market', async () => {
+    const base = 14_400;
+    const early = await newCoin(1_000_000);
+    await generateMarkets(ctx, at(base + 1), null);
+    const rug = `event:event_rug_1h:${Math.floor(HOUR0 / 1000) + base}`;
+    expect((await market(rug)).basis).toMatchObject({ coinIds: expect.arrayContaining([early]) });
+    // Rugs while bets are still open (a bettor could have seen it).
+    await pool.query(`UPDATE coins SET stage = 'dead' WHERE coin_id = $1`, [early]);
+    await resolveDueMarkets(ctx, at(base + predictionsConfig().event.betWindowSec + 2), null);
+    await resolveDueMarkets(ctx, at(base + 3600), null);
+    expect(await market(rug)).toMatchObject({ status: 'resolved', resolved_outcome_id: 'no' });
+  });
+
+  it('voids when nothing recorded the close in time', async () => {
+    const base = 18_000;
+    await newCoin(1_000_000);
+    await generateMarkets(ctx, at(base + 1), null);
+    const rug = `event:event_rug_1h:${Math.floor(HOUR0 / 1000) + base}`;
+    await resolveDueMarkets(ctx, at(base + 3600), null); // first sweep only at resolution
+    expect((await market(rug)).status).toBe('void');
+  });
+});
+
+describe('sim markets and player trades', () => {
+  it('use only engine-priced coins, so no trade can push the settling price', async () => {
+    const base = 21_600;
+    const onCurve = await newCoin(1_000_000, 'new'); // launchpad buys move its price
+    const playerCoin = await newCoin(1_000_000, 'graduated', true);
+    const house = await newCoin(1_000_000, 'graduated');
+    await generateMarkets(ctx, at(base + 2), null);
+    const s = Math.floor(HOUR0 / 1000) + base;
+    expect(await market(`sim:${onCurve}:5m:${s}`)).toBeUndefined();
+    expect(await market(`sim:${playerCoin}:5m:${s}`)).toBeUndefined();
+    // A launchpad buy, the only player path that writes a price, is refused past the curve.
+    const trader = await newUser(1_000_000);
+    await expect(launchpadBuy(ctx, trader, house, 50_000, 10_000)).rejects.toMatchObject({
+      details: { reason: 'coin already past launchpad' },
+    });
+    // A Terminal Cafe buy executes at the quote and leaves the price alone.
+    await executeTrade(ctx, {
+      userId: trader,
+      coinId: house,
+      side: 'buy',
+      cashCents: 50_000,
+      maxSlippageBps: 10_000,
+    }).catch(() => undefined);
+    const price = await pool.query<{ price_micros: string }>(
+      `SELECT price_micros FROM coins WHERE coin_id = $1`,
+      [house],
+    );
+    expect(price.rows[0]!.price_micros).toBe('1000000');
   });
 });
 

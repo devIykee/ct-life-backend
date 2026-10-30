@@ -49,7 +49,7 @@ describe('prediction market generator gate', () => {
     await pool.query(
       `INSERT INTO coins (coin_id, ticker, name, stage, price_micros, mcap_cents, vol_5m_cents,
                           launched_at, hidden_arc, seed)
-       VALUES ($1, $2, 'Gate Test', 'new', 1000, 1000, 8000000000000000, now(), '{}'::jsonb, 1)`,
+       VALUES ($1, $2, 'Gate Test', 'graduated', 1000, 1000, 8000000000000000, now(), '{}'::jsonb, 1)`,
       [coin, `GT${coin.slice(-6).toUpperCase()}`],
     );
     expect(await handlePredictionMarkets(job, withFlags(false, true), now)).toBe(0);
