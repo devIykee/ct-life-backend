@@ -145,33 +145,38 @@ export async function resolveClosedPredictions(ctx: AppContext): Promise<number>
     );
   });
   for (const row of r.rows) {
-    const correct = await resolveOutcome(ctx, row.outcome_id);
-    await runInTransaction(async (client) => {
-      if (correct) {
-        // 2x stake back.
-        const payout = BigInt(row.stake_cents) * 2n;
-        await client.query(
-          `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
-           ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
-          [row.user_id, payout.toString()],
+    try {
+      const correct = await resolveOutcome(ctx, row.outcome_id);
+      // Claim the row first: a second worker run (another replica, or an
+      // overlapping tick) finds it no longer open and pays nothing.
+      const claimed = await runInTransaction(async (client) => {
+        const claim = await client.query(
+          `UPDATE predictions SET status = $2 WHERE prediction_id = $1 AND status = 'open'`,
+          [row.prediction_id, correct ? 'won' : 'lost'],
         );
-        await client.query(
-          `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-           VALUES ($1, $2, 'cash', 'prediction_payout', 'prediction', $3, $4)`,
-          [row.user_id, payout.toString(), row.prediction_id, `pred-payout:${row.prediction_id}`],
-        );
-        await client.query(`UPDATE predictions SET status = 'won' WHERE prediction_id = $1`, [
-          row.prediction_id,
-        ]);
-      } else {
-        // Loser; stake forfeit (no payout).
-        await client.query(`UPDATE predictions SET status = 'lost' WHERE prediction_id = $1`, [
-          row.prediction_id,
-        ]);
-      }
-    });
-    await ctx.redis.main.zrem(ACTIVE_KEY(row.horizon), row.prediction_id);
-    resolved++;
+        if ((claim.rowCount ?? 0) === 0) return false;
+        if (correct) {
+          // 2x stake back. A loser's stake is forfeit (no payout).
+          const payout = BigInt(row.stake_cents) * 2n;
+          await client.query(
+            `INSERT INTO balances (user_id, cash_cents) VALUES ($1, $2)
+             ON CONFLICT (user_id) DO UPDATE SET cash_cents = balances.cash_cents + EXCLUDED.cash_cents, updated_at = now()`,
+            [row.user_id, payout.toString()],
+          );
+          await client.query(
+            `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+             VALUES ($1, $2, 'cash', 'prediction_payout', 'prediction', $3, $4)`,
+            [row.user_id, payout.toString(), row.prediction_id, `pred-payout:${row.prediction_id}`],
+          );
+        }
+        return true;
+      });
+      await ctx.redis.main.zrem(ACTIVE_KEY(row.horizon), row.prediction_id);
+      if (claimed) resolved++;
+    } catch (e) {
+      // One bad row must not stop the batch; the next run retries it.
+      console.error(`[predictions] ${row.prediction_id} failed:`, (e as Error).message);
+    }
   }
   return resolved;
 }
