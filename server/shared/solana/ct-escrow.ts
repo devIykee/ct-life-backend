@@ -755,9 +755,11 @@ export function settlementSplit(args: {
  * `confirmed`. Callers must run `assertDevnetRpc` first.
  */
 export async function sendAuthorityTx(args: {
-  connection: Connection;
+  connection: Pick<Connection, 'getLatestBlockhash' | 'sendRawTransaction' | 'confirmTransaction'>;
   signer: Keypair;
   instructions: TransactionInstruction[];
+  /** Extra signers (e.g. a fresh token account being created in the same tx). */
+  extraSigners?: Keypair[];
 }): Promise<string> {
   const { connection } = args;
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
@@ -766,15 +768,19 @@ export async function sendAuthorityTx(args: {
     blockhash,
     lastValidBlockHeight,
   }).add(...args.instructions);
-  tx.sign(args.signer);
+  tx.sign(args.signer, ...(args.extraSigners ?? []));
   const sig = await connection.sendRawTransaction(tx.serialize(), {
     skipPreflight: false,
     maxRetries: 3,
   });
-  await connection.confirmTransaction(
+  const confirmed = await connection.confirmTransaction(
     { signature: sig, blockhash, lastValidBlockHeight },
     'confirmed',
   );
+  // Passing preflight is not landing: a tx that failed on chain must not be recorded as done.
+  if (confirmed.value.err !== null) {
+    throw new Error(`transaction ${sig} failed on chain: ${JSON.stringify(confirmed.value.err)}`);
+  }
   return sig;
 }
 

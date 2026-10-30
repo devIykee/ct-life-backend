@@ -19,6 +19,7 @@ import {
   decodeEscrowConfig,
   decodeEscrowSession,
   sessionPda,
+  sendAuthorityTx,
   sessionVault,
   settlementSplit,
 } from './ct-escrow.js';
@@ -211,5 +212,38 @@ describe('settlement split (lib.rs settle)', () => {
       fee: 250_000n,
       refund: 0n,
     });
+  });
+});
+
+describe('sendAuthorityTx', () => {
+  const fake = (err: unknown) => ({
+    async getLatestBlockhash() {
+      return { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1 };
+    },
+    async sendRawTransaction() {
+      return 'sig1';
+    },
+    async confirmTransaction() {
+      return { context: { slot: 1 }, value: { err } };
+    },
+  });
+  it('returns the signature when the transaction landed', async () => {
+    const signer = Keypair.generate();
+    const accept = buildAcceptIx({ settleAuthority: signer.publicKey, fan, creator, sessionId });
+    await expect(
+      sendAuthorityTx({ connection: fake(null) as never, signer, instructions: [accept] }),
+    ).resolves.toBe('sig1');
+  });
+
+  it('throws when the confirmation carries an on-chain error (security review L1)', async () => {
+    const signer = Keypair.generate();
+    const accept = buildAcceptIx({ settleAuthority: signer.publicKey, fan, creator, sessionId });
+    await expect(
+      sendAuthorityTx({
+        connection: fake({ InstructionError: [0, { Custom: 6006 }] }) as never,
+        signer,
+        instructions: [accept],
+      }),
+    ).rejects.toThrow(/failed on chain/);
   });
 });
