@@ -718,3 +718,11 @@ export class CapabilityOffError extends DomainError {
     this.httpStatus = 503;
   }
 }
+
+export class NetWorthTooLowError extends DomainError {
+  readonly code = 'NET_WORTH_TOO_LOW';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Your net worth is below what this needs.', details);
+    this.httpStatus = 403;
+  }
+}

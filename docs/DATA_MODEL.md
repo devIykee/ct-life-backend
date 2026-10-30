@@ -282,3 +282,12 @@ collisions. CI and Railway run with `--no-check-order`, so blocks may land out o
 | D Platform (markets, homes, NFT gallery) | `1700000140000-1700000149000` |
 
 Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
+
+## Cabal invite revoke (migration 110, unlock A3)
+
+`cabal_invites.revoked_at timestamptz` (null until the host revokes a pending invite with
+`POST /v1/cabal/invites/{id}/revoke`; set once, never cleared). `guest_user_id` is now also set at
+creation for a targeted invite, and only that player can accept it. The status the API reports is
+derived: `revoked` > `accepted` (`used_at`) > `expired` (`expires_at` passed) > `pending`. Partial index
+`cabal_invites_guest_pending_idx (guest_user_id, host_user_id) WHERE used_at IS NULL AND revoked_at IS
+NULL` serves the guest's list and the duplicate-pending check.

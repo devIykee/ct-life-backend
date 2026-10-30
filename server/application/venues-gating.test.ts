@@ -6,6 +6,9 @@
  * home refused, Cabal invite create + accept, host cannot
  * accept own invite, double-accept refused, expired invite
  * refused, listCabalInvites with hostId/guestId/used filter.
+ * Unlock A3: host gate and cap, targeted invites (only the guest may
+ * accept, blocks, duplicates, members), revoke, derived status and the
+ * code shown only to the host.
  */
 import { Pool } from 'pg';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
@@ -14,13 +17,23 @@ import { config as loadDotenv } from 'dotenv';
 import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import {
+  BlockedError,
+  ConflictError,
+  ForbiddenError,
+  NetWorthTooLowError,
+  NotFoundError,
+  ValidationFailedError,
+} from '../shared/domain/errors.js';
 import {
   acceptCabalInvite,
   createCabalInvite,
+  CABAL_INVITES_PER_HOST,
+  getMyCabal,
   listCabalInvites,
   marinaVisit,
   MARINA_GATE_CENTS,
+  revokeCabalInvite,
 } from './venues-gating.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
@@ -101,11 +114,13 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
   it('createCabalInvite + acceptCabalInvite happy path', async () => {
     const ctx = buildContext();
     const host = await newUser('host');
+    await setBalance(host, MARINA_GATE_CENTS);
     const guest = await newUser('guest');
     const inv = await createCabalInvite(ctx, host);
     expect(inv.hostUserId).toBe(host);
     expect(inv.guestUserId).toBeNull();
-    expect(inv.code.length).toBeGreaterThanOrEqual(16);
+    expect(inv.code!.length).toBeGreaterThanOrEqual(16);
+    expect(inv.status).toBe('pending');
     const accepted = await acceptCabalInvite(ctx, guest, inv.inviteId);
     expect(accepted.guestUserId).toBe(guest);
     expect(accepted.usedAt).not.toBeNull();
@@ -114,6 +129,7 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
   it('acceptCabalInvite refuses the host accepting their own invite', async () => {
     const ctx = buildContext();
     const host = await newUser('self');
+    await setBalance(host, MARINA_GATE_CENTS);
     const inv = await createCabalInvite(ctx, host);
     await expect(acceptCabalInvite(ctx, host, inv.inviteId)).rejects.toBeInstanceOf(
       ValidationFailedError,
@@ -123,6 +139,7 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
   it('acceptCabalInvite refuses a second accept (single-use)', async () => {
     const ctx = buildContext();
     const host = await newUser('h2');
+    await setBalance(host, MARINA_GATE_CENTS);
     const guest1 = await newUser('g2a');
     const guest2 = await newUser('g2b');
     const inv = await createCabalInvite(ctx, host);
@@ -135,6 +152,7 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
   it('acceptCabalInvite refuses an expired invite', async () => {
     const ctx = buildContext();
     const host = await newUser('h3');
+    await setBalance(host, MARINA_GATE_CENTS);
     const guest = await newUser('g3');
     const inv = await createCabalInvite(ctx, host);
     // Backdate the invite to 30 days ago.
@@ -157,6 +175,7 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
   it('listCabalInvites filters by hostId and used', async () => {
     const ctx = buildContext();
     const host = await newUser('h5');
+    await setBalance(host, MARINA_GATE_CENTS);
     const guest = await newUser('g5');
     const inv1 = await createCabalInvite(ctx, host);
     const inv2 = await createCabalInvite(ctx, host);
@@ -175,5 +194,118 @@ describe('venues gating (Dubai Marina + Cabal)', () => {
     await expect(listCabalInvites(ctx, testHost, {}, 0)).rejects.toBeInstanceOf(
       ValidationFailedError,
     );
+  });
+});
+
+describe('Cabal invites (unlock A3)', () => {
+  async function richHost(tag: string): Promise<string> {
+    const h = await newUser(tag);
+    await setBalance(h, MARINA_GATE_CENTS);
+    return h;
+  }
+
+  it('refuses a host below the net-worth gate and caps pending invites', async () => {
+    const ctx = buildContext();
+    const poor = await newUser('a3poor');
+    await setBalance(poor, MARINA_GATE_CENTS - 1);
+    await expect(createCabalInvite(ctx, poor)).rejects.toBeInstanceOf(NetWorthTooLowError);
+    const host = await richHost('a3cap');
+    const made = [];
+    for (let i = 0; i < CABAL_INVITES_PER_HOST; i++) made.push(await createCabalInvite(ctx, host));
+    await expect(createCabalInvite(ctx, host)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'invites_exhausted' },
+    });
+    // A revoked invite frees a slot.
+    await revokeCabalInvite(ctx, host, made[0]!.inviteId);
+    expect((await getMyCabal(ctx, host)).invitesRemaining).toBe(1);
+    await expect(createCabalInvite(ctx, host)).resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('a targeted invite is only for its guest', async () => {
+    const ctx = buildContext();
+    const host = await richHost('a3t');
+    const guest = await newUser('a3tg');
+    const stranger = await newUser('a3ts');
+    const inv = await createCabalInvite(ctx, host, guest);
+    expect(inv.guestUserId).toBe(guest);
+    await expect(acceptCabalInvite(ctx, stranger, inv.inviteId)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      details: { reason: 'not_guest' },
+    });
+    // The guest sees it in their list, without the bearer code.
+    const mine = await listCabalInvites(ctx, guest, { guestUserId: guest });
+    expect(mine.map((i) => i.inviteId)).toEqual([inv.inviteId]);
+    expect(mine[0]!.code).toBeUndefined();
+    expect(mine[0]!.status).toBe('pending');
+    const ok = await acceptCabalInvite(ctx, guest, inv.inviteId);
+    expect(ok.status).toBe('accepted');
+    // Now a member: a second invite to them is a conflict.
+    await expect(createCabalInvite(ctx, host, guest)).rejects.toMatchObject({
+      details: { reason: 'already_member' },
+    });
+  });
+
+  it('refuses self, unknown, blocked and duplicate targets', async () => {
+    const ctx = buildContext();
+    const host = await richHost('a3r');
+    const guest = await newUser('a3rg');
+    const blocked = await newUser('a3rb');
+    await expect(createCabalInvite(ctx, host, host)).rejects.toBeInstanceOf(ValidationFailedError);
+    await expect(createCabalInvite(ctx, host, uuidv7())).rejects.toBeInstanceOf(NotFoundError);
+    await pool.query(`INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2)`, [
+      blocked,
+      host,
+    ]);
+    await expect(createCabalInvite(ctx, host, blocked)).rejects.toBeInstanceOf(BlockedError);
+    await createCabalInvite(ctx, host, guest);
+    await expect(createCabalInvite(ctx, host, guest)).rejects.toMatchObject({
+      details: { reason: 'invite_pending' },
+    });
+  });
+
+  it('refuses an open invite to a player in a block pair with the host', async () => {
+    const ctx = buildContext();
+    const host = await richHost('a3ob');
+    const guest = await newUser('a3obg');
+    const inv = await createCabalInvite(ctx, host);
+    await pool.query(`INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2)`, [
+      host,
+      guest,
+    ]);
+    await expect(acceptCabalInvite(ctx, guest, inv.inviteId)).rejects.toBeInstanceOf(BlockedError);
+  });
+
+  it('revoke: host only, pending only, and a revoked invite cannot be accepted', async () => {
+    const ctx = buildContext();
+    const host = await richHost('a3v');
+    const guest = await newUser('a3vg');
+    const inv = await createCabalInvite(ctx, host, guest);
+    await expect(revokeCabalInvite(ctx, guest, inv.inviteId)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      details: { reason: 'not_host' },
+    });
+    const r = await revokeCabalInvite(ctx, host, inv.inviteId);
+    expect(r.status).toBe('revoked');
+    expect(r.revokedAt).not.toBeNull();
+    await expect(revokeCabalInvite(ctx, host, inv.inviteId)).rejects.toBeInstanceOf(ConflictError);
+    await expect(acceptCabalInvite(ctx, guest, inv.inviteId)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    await expect(revokeCabalInvite(ctx, host, uuidv7())).rejects.toBeInstanceOf(NotFoundError);
+    // Accepted and expired invites are not pending either.
+    const used = await createCabalInvite(ctx, host);
+    await acceptCabalInvite(ctx, guest, used.inviteId);
+    await expect(revokeCabalInvite(ctx, host, used.inviteId)).rejects.toMatchObject({
+      details: { reason: 'not_pending', status: 'accepted' },
+    });
+    const old = await createCabalInvite(ctx, host);
+    await pool.query(
+      `UPDATE cabal_invites SET expires_at = now() - interval '1 day' WHERE invite_id = $1`,
+      [old.inviteId],
+    );
+    await expect(revokeCabalInvite(ctx, host, old.inviteId)).rejects.toMatchObject({
+      details: { reason: 'not_pending', status: 'expired' },
+    });
   });
 });
