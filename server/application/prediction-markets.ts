@@ -2,6 +2,7 @@
  * Prediction Pit markets (unlock D3): generation and the public list.
  *
  *   GET /v1/predictions/markets?status=open&cursor=
+ *   GET /v1/predictions/markets/{marketId}
  *
  * The market worker (server/workers/prediction-markets.ts) calls
  * `generateMarkets` once a minute. It opens:
@@ -36,7 +37,7 @@
 import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
-import { ValidationFailedError } from '../shared/domain/errors.js';
+import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
 import { HORIZON_SEC, predictionsConfig, type Horizon } from './prediction-config.js';
 import type { ReferencePriceSource } from './price-source.js';
@@ -122,8 +123,6 @@ export function drawOutcome(seedHex: string, marketId: string): 'yes' | 'no' {
  */
 export function toMarketView(r: MarketRow, now: Date): MarketView {
   const status = r.status === 'open' && r.closes_at <= now ? 'closed' : r.status;
-  const sealed = r.basis.commitment !== undefined;
-  const revealed = r.status === 'resolved' || r.status === 'void';
   return {
     marketId: r.market_id,
     kind: r.kind,
@@ -140,10 +139,48 @@ export function toMarketView(r: MarketRow, now: Date): MarketView {
     status,
     resolvedOutcomeId: r.resolved_outcome_id,
     source: r.source,
-    fairness: sealed
-      ? { commitment: r.basis.commitment!, seed: revealed ? (r.basis.seed ?? null) : null }
-      : null,
+    fairness: fairnessOf(r),
   };
+}
+
+/** The commit-reveal proof of a market, as the contract shows it. */
+export type Fairness = { commitment: string; seed: string | null } | null;
+
+/**
+ * The public proof of a sealed draw: the commitment always, the secret only
+ * once the market is resolved or void (never while bets could still matter).
+ * @param r - The market's stored status and basis.
+ * @param r.status - The stored status.
+ * @param r.basis - The stored basis (holds the secret).
+ * @returns The proof; null for markets that are not sealed draws (crypto).
+ */
+export function fairnessOf(r: Pick<MarketRow, 'status' | 'basis'>): Fairness {
+  if (r.basis.commitment === undefined) return null;
+  const revealed = r.status === 'resolved' || r.status === 'void';
+  return { commitment: r.basis.commitment, seed: revealed ? (r.basis.seed ?? null) : null };
+}
+
+/**
+ * GET /predictions/markets/{marketId}: one market, any status, so a bet's
+ * history row can be verified however old it is.
+ * @param ctx - The app context.
+ * @param marketId - The market.
+ * @param now - The current time.
+ * @returns The market.
+ */
+export async function getMarket(
+  ctx: AppContext,
+  marketId: string,
+  now: Date = new Date(),
+): Promise<MarketView> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<MarketRow>(`SELECT ${MARKET_COLUMNS} FROM prediction_markets WHERE market_id = $1`, [
+      marketId,
+    ]),
+  );
+  const row = r.rows[0];
+  if (!row) throw new NotFoundError({ resource: 'prediction_market', id: marketId });
+  return toMarketView(row, now);
 }
 
 interface NewMarket {

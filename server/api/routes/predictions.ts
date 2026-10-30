@@ -2,6 +2,7 @@
  * Prediction routes.
  *
  *   GET  /v1/predictions/markets?status=&cursor=        (app capability predict)
+ *   GET  /v1/predictions/markets/:marketId              (app capability predict)
  *   POST /v1/predictions/markets/:marketId/bets         (app capability predict)
  *   GET  /v1/predictions?status=                        the caller's bets
  *   POST /v1/predictions                                410 GONE {reason:'use_market_bets'}
@@ -14,7 +15,7 @@ import { requireCapability } from '../middleware/capability.js';
 import { requireNotJailed } from '../middleware/jail.js';
 import { GoneError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { listPredictions, placeBet, type PredictionStatus } from '../../application/predictions.js';
-import { listMarkets } from '../../application/prediction-markets.js';
+import { getMarket, listMarkets } from '../../application/prediction-markets.js';
 
 const BetBody = z
   .object({
@@ -46,6 +47,16 @@ export function registerPredictionRoutes(app: FastifyInstance): void {
     '/v1/predictions/markets',
     { preHandler: [requireCapability('predict'), requireAuth] },
     async (req, reply) => reply.send(await listMarkets(req.ctx, req.query)),
+  );
+
+  app.get(
+    '/v1/predictions/markets/:marketId',
+    { preHandler: [requireCapability('predict'), requireAuth] },
+    async (req, reply) => {
+      const p = MarketParams.safeParse(req.params);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+      return reply.send(await getMarket(req.ctx, p.data.marketId));
+    },
   );
 
   app.post(

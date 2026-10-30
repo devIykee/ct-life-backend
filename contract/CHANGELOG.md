@@ -1,3 +1,12 @@
+## 2026-10-30 - Client contract gaps: flat door knock, prediction proofs, ageConfirmed
+
+No migration. Additive only.
+
+- New `POST /units/{unitId}/knock` (Idempotency-Key, capability `visitorPolicy`) -> empty `204`: a flat door can knock without the knocker knowing who lives there. The owner is resolved server-side and gets the same realtime `home_knock {fromUserId, alias, homeId, at}`. Errors: `404` (unknown or vacant door), `400 {reason: self_knock}`, `403 HOME_CLOSED`, `429 RATE_LIMITED {reason: knock_cooldown | knock_limit}`, `503 CAPABILITY_OFF`. So the door never reveals who is behind it, a block is silent (the same `204`, the same rate limit spent, the owner not told) and the per-door cooldown is keyed by the unit. The 10-an-hour budget is shared with `POST /homes/{ownerId}/knock`.
+- `GET /predictions` rows gain `fairness: {commitment, seed} | null`, the market's commit-reveal proof (`seed` only once the market is resolved or void; null for crypto markets and legacy bets).
+- New `GET /predictions/markets/{marketId}` (capability `predict`) -> one `PredictionMarket` of any status; `404` unknown.
+- `GET /me` gains `ageConfirmed: bool`, the 18+ confirmation `GET /casino/state` reports (`characters.age_confirmed_at`); false without a character.
+
 ## 2026-10-30 - WP-C security review follow-up (paid calls, season pass, Factory)
 
 Migration 132 (`paid_calls` backoff and rent columns, status `stuck`). Everything stays dark behind the existing capabilities.

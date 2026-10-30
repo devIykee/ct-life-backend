@@ -5,7 +5,8 @@ Play-money binary markets. Players bet in-game Cash, which cannot be bought out 
 players: a win is a faucet, a loss is a sink.
 
 App capability: `predict` (`GET /v1/config` `capabilities.apps.predict`). Contract: `contract/openapi.yaml`
-(`/predictions/markets`, `/predictions/markets/{marketId}/bets`, `/predictions`), realtime
+(`/predictions/markets`, `/predictions/markets/{marketId}`, `/predictions/markets/{marketId}/bets`,
+`/predictions`), realtime
 `prediction_settled` ([Realtime](REALTIME.md)). Tuning: `contract/config/predictions.json`.
 
 ## Markets
@@ -37,6 +38,11 @@ fixed odds, so these markets no longer ask one. The coin is only the theme.
    anything about the secret.
 4. A secret that does not match its commitment voids the market (refund).
 
+Verifying an old bet: every `GET /v1/predictions` row carries its market's `fairness` (the same
+`{commitment, seed}` as the market list; `seed` once resolved or void, null for crypto and legacy
+bets), and `GET /v1/predictions/markets/{marketId}` returns one market of any status. Markets that
+have bets are never pruned, so the proof stays available.
+
 Both outcomes have probability 1/2, and 1.9x keeps a 5% house edge. A simulation test checks the yes-rate
 is 50% ± 3.5 points over 2,000 markets per horizon and kind, and that a coin that only goes up still
 resolves about half `no`. [Inference] This makes sim markets a house game of chance like the casino's coin
@@ -66,7 +72,7 @@ legacy bets are refunded once their `closes_at` passes.
 
 - `PREDICTIONS_SETTLEMENT_ENABLED=1` (workers) schedules both the settlement sweep (5 s) and the
   market generator (1 min). Off: no market opens and nothing settles.
-- `predict` in `CAPABILITIES_ON` opens the two routes (API) and lets the generator run (workers).
+- `predict` in `CAPABILITIES_ON` opens the three market routes (API) and lets the generator run (workers).
   Set it on both services.
 - `PREDICTIONS_CRYPTO_SOURCE` (workers): `off` (default), `binance` (`api.binance.com`) or
   `binance_vision` (`data-api.binance.vision`). With `off`, or when the source fails, only `sim` and

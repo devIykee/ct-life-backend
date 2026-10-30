@@ -838,6 +838,7 @@ paths:
                 debtCents: 0
                 homeId: 'hacker_house'
                 minerTier: 'none'
+                ageConfirmed: true
                 flags: {}
         '401': { $ref: '#/components/responses/Unauthorized' }
 
@@ -3261,6 +3262,9 @@ paths:
       tags: [markets]
       operationId: getPredictions
       summary: My Prediction Pit bets, newest first (unwrapped array, up to 200).
+      description: >-
+        Readable while `predict` is off. Each row carries its market's `fairness` proof (seed once
+        resolved or void), so the client can verify an old bet without paging the market list.
       x-phase: 2
       parameters:
         - name: status
@@ -9258,6 +9262,62 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /units/{unitId}/knock:
+    post:
+      tags: [player]
+      operationId: postUnitKnock
+      summary: Knock on a flat door without knowing who lives there (capability `visitorPolicy`).
+      x-phase: 4
+      description: >-
+        For a door that `GET /units/{unitId}/access` answers `locked`: the server finds the live
+        home behind the unit and its owner gets the realtime `home_knock {fromUserId, alias, homeId,
+        at}` if online, exactly as from `POST /homes/{ownerId}/knock`. The response never names the
+        occupant (empty `204`). Refused: an unknown door or a vacant one (`404`; `/access` already
+        says `vacant`), your own door (`400 {reason: self_knock}`), a `closed` home
+        (`403 HOME_CLOSED`). A block in either direction is silent: the knocker gets the same `204`
+        and spends the same rate limit, and the owner is not told, so the door does not reveal who
+        is behind it. Rate limits: one knock per door per minute (keyed by the unit, separate from
+        profile knocks) and 10 knocks an hour per player across both knock routes
+        (`429 RATE_LIMITED {reason: knock_cooldown | knock_limit, retryAfterMs}`).
+      parameters:
+        - name: unitId
+          in: path
+          required: true
+          schema: { type: string, maxLength: 200 }
+          description: A door id from `contract/ids/home_units.json`, e.g. `flat:midrise_01:0`.
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Knocked (also the answer to a blocked knocker; nobody is told) }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /predictions/markets/{marketId}:
+    get:
+      tags: [markets]
+      operationId: getPredictionMarket
+      summary: One Prediction Pit market, any status (app capability `predict`).
+      description: >-
+        The same `PredictionMarket` as in the list, looked up by id, so a bet of any age can be
+        verified: `fairness.commitment` from the start, `fairness.seed` once the market is resolved
+        or void. Markets with bets are never pruned.
+      x-phase: 2
+      parameters:
+        - { name: marketId, in: path, required: true, schema: { type: string, maxLength: 200 } }
+      responses:
+        '200':
+          description: The market
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PredictionMarket' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -9842,6 +9902,12 @@ components:
             The current lease: the newest active or overdue home, else the newest evicted one;
             null for a player with no home (street).
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
+        ageConfirmed:
+          type: boolean
+          description: >-
+            The server's 18+ confirmation (`characters.age_confirmed_at`), the same flag
+            `GET /casino/state` reports and the casino, Prediction Pit and Factory check before
+            `403 AGE_REQUIRED`. False without a character.
         flags:
           type: object
           additionalProperties: true
@@ -10904,6 +10970,15 @@ components:
             type: [integer, 'null'],
             description: 'Credited on settlement: 0 on a loss, the stake on a void.',
           }
+        fairness:
+          type: [object, 'null']
+          description: >-
+            The market's commit-reveal proof, as on `PredictionMarket`: `commitment` always,
+            `seed` once the market is resolved or void. Null for crypto markets and legacy bets.
+          required: [commitment, seed]
+          properties:
+            commitment: { type: string, description: sha256 of the secret, hex. }
+            seed: { type: [string, 'null'], description: 'The secret, hex; null until resolved.' }
     AlphaCall:
       type: object
       required: [callId, userId, coinId, entryMicros, targetMicros, stopMicros, at]

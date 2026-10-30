@@ -14,6 +14,7 @@
  *   GET  /v1/homes/me/settings          (capability visitorPolicy)
  *   PUT  /v1/homes/me/settings          (capability visitorPolicy)
  *   POST /v1/homes/:ownerId/knock       (capability visitorPolicy)
+ *   POST /v1/units/:unitId/knock        (capability visitorPolicy)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -33,7 +34,7 @@ import {
 } from '../../application/homes.js';
 import { unitAccess } from '../../application/home-units.js';
 import { moveHome } from '../../application/home-move.js';
-import { knock } from '../../application/home-knock.js';
+import { knock, knockUnit } from '../../application/home-knock.js';
 import {
   VisitorPolicySchema,
   getHomeSettings,
@@ -51,6 +52,7 @@ const HomeKind = z.enum([
 const CreateBody = z.object({ kind: HomeKind });
 const SettingsBody = z.object({ visitors: VisitorPolicySchema }).strict();
 const KnockParams = z.object({ ownerId: z.string().uuid() });
+const UnitParams = z.object({ unitId: z.string().min(1).max(200) });
 const GuestParams = z.object({ homeId: z.string().min(1), userId: z.string().uuid() });
 
 /**
@@ -101,6 +103,18 @@ export function registerHomeRoutes(app: FastifyInstance): void {
       const p = KnockParams.safeParse(req.params);
       if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
       await knock(req.ctx, req.user!.sub, p.data.ownerId);
+      return reply.status(204).send();
+    },
+  );
+
+  // Knock on a flat door; the owner is resolved here and never shown to the knocker.
+  app.post(
+    '/v1/units/:unitId/knock',
+    { preHandler: [requireCapability('visitorPolicy'), requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const p = UnitParams.safeParse(req.params);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+      await knockUnit(req.ctx, req.user!.sub, p.data.unitId);
       return reply.status(204).send();
     },
   );
