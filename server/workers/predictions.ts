@@ -5,6 +5,10 @@
  * `resolveClosedPredictions` (server/application/predictions.ts). A
  * prediction is claimed with a conditional status update before any
  * payout, so an overlapping run never pays one twice.
+ *
+ * Scheduled only with PREDICTIONS_SETTLEMENT_ENABLED=1 (off by default):
+ * `resolveOutcome` is still the M3 dev stub, not an oracle, so settling
+ * real stakes with it is unsafe.
  */
 import type { Job } from 'bullmq';
 import type { AppContext } from '../application/context.js';

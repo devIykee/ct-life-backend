@@ -36,10 +36,11 @@
  *   - Analytics retention: a daily job (03:15 UTC) deletes product events
  *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
  *
- *   - Perp liquidation (every 5 s), prediction resolution (every 5 s), alpha
- *     call grading (every 30 s), the payment poller (every 30 s, the top-up
- *     and ad payment backstop) and weekly rent (Monday 00:00 UTC). See
- *     liquidation.ts, predictions.ts, alpha.ts, payment-poller.ts, rent.ts.
+ *   - Perp liquidation (every 5 s), alpha call grading (every 30 s), the
+ *     payment poller (every 30 s, the top-up and ad payment backstop) and
+ *     weekly rent (Monday 00:00 UTC). Prediction resolution (every 5 s) only
+ *     with PREDICTIONS_SETTLEMENT_ENABLED=1. See liquidation.ts, alpha.ts,
+ *     payment-poller.ts, rent.ts, predictions.ts.
  *
  * Multiple replicas: every repeatable job above is a BullMQ job scheduler,
  * so each tick is one job that one worker takes, whichever replica it runs
@@ -400,12 +401,20 @@ export async function buildWorkers(likeness?: {
     { every: 5_000 },
     { name: 'sweep', data: {}, opts: sweepJobOpts },
   );
-  // Prediction Pit: resolve bets whose closes_at has passed.
-  await predictionsQueue.upsertJobScheduler(
-    'predictions',
-    { every: 5_000 },
-    { name: 'sweep', data: {}, opts: sweepJobOpts },
-  );
+  // Prediction Pit: resolve bets whose closes_at has passed. Fails closed:
+  // only with PREDICTIONS_SETTLEMENT_ENABLED=1, because the outcome resolver
+  // is still a dev stub (application/predictions.ts). With the flag off, a
+  // scheduler left by an earlier run is removed so nothing settles.
+  if (cfg.features.predictionSettlement) {
+    await predictionsQueue.upsertJobScheduler(
+      'predictions',
+      { every: 5_000 },
+      { name: 'sweep', data: {}, opts: sweepJobOpts },
+    );
+  } else {
+    await predictionsQueue.removeJobScheduler('predictions');
+    log.info('prediction settlement off (PREDICTIONS_SETTLEMENT_ENABLED unset)');
+  }
   // Alpha calls: grade hit target / hit stop / expired.
   await alphaQueue.upsertJobScheduler(
     'alpha-grading',
@@ -473,7 +482,6 @@ export async function buildWorkers(likeness?: {
   void callersQueue;
   void rektQueue;
   void log;
-  void cfg;
 
   return {
     redis,

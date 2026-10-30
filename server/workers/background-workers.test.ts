@@ -18,6 +18,8 @@ import type { HeliusClient } from '../shared/solana/helius.js';
 import { handleLiquidation } from './liquidation.js';
 import { handlePredictions } from './predictions.js';
 import { handleAlphaGrading } from './alpha.js';
+import { placeAlphaCall } from '../application/alpha.js';
+import { loadConfig } from '../shared/config/config.js';
 import { handlePaymentPoller } from './payment-poller.js';
 import { rentWeekKey, runWeeklyRent } from './rent.js';
 
@@ -168,6 +170,55 @@ describe('alpha grading', () => {
     expect(status.get(hit)).toBe('hit_target');
     expect(status.get(stopped)).toBe('hit_stop');
     expect(status.get(open)).toBe('open');
+  });
+});
+
+describe('alpha call placement', () => {
+  it('stores the server price as entry and refuses a band the price is already outside', async () => {
+    const user = await newUser(0);
+    const coin = await newCoin(1_500_000);
+    const call = (target: string, stop: string): ReturnType<typeof placeAlphaCall> =>
+      placeAlphaCall(ctx, {
+        userId: user,
+        coinId: coin,
+        entryMicros: '1',
+        targetMicros: target,
+        stopMicros: stop,
+      });
+    // The client claims an entry of 1 micro; the server records 1.5.
+    const ok = await call('2000000', '1000000');
+    expect(ok.entryMicros).toBe('1500000');
+    const stored = await pool.query<{ entry_micros: string }>(
+      `SELECT entry_micros FROM alpha_calls WHERE call_id = $1`,
+      [ok.callId],
+    );
+    expect(stored.rows[0]!.entry_micros).toBe('1500000');
+    // Target already reached / stop already hit: no instant grade.
+    await expect(call('1200000', '800000')).rejects.toMatchObject({
+      code: 'VALIDATION_FAILED',
+      details: { reason: 'price_outside_band' },
+    });
+    await expect(call('3000000', '1600000')).rejects.toMatchObject({
+      details: { reason: 'price_outside_band' },
+    });
+    await expect(
+      placeAlphaCall(ctx, {
+        userId: user,
+        coinId: uuidv7(),
+        entryMicros: '1',
+        targetMicros: '2',
+        stopMicros: '1',
+      }),
+    ).rejects.toMatchObject({ details: { reason: 'unknown_coin' } });
+  });
+});
+
+describe('prediction settlement flag', () => {
+  it('is off unless PREDICTIONS_SETTLEMENT_ENABLED is set', () => {
+    const raw = (process.env.PREDICTIONS_SETTLEMENT_ENABLED ?? '').toLowerCase();
+    if (!['1', 'true', 'yes', 'on'].includes(raw)) {
+      expect(loadConfig().features.predictionSettlement).toBe(false);
+    }
   });
 });
 
