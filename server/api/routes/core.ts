@@ -41,6 +41,7 @@ import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
 import { projectsClientConfig } from '../../application/project-events.js';
 import { loadConfig } from '../../shared/config/config.js';
+import { chainConfigPayload } from '../../application/chain-config.js';
 
 /**
  * B34: Compare semver versions. Returns true if clientVersion < minVersion.
@@ -134,6 +135,9 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       // Finished-but-dark features (env CAPABILITIES_ON only; missing = off) and the
       // derived v1.2 `competitionCapabilities`. See shared/domain/capabilities.ts.
       ...buildCapabilitiesPayload(req.ctx.config.capabilities.on),
+      // Chain package blocks (seasonPass, ...): present only while their capability is on.
+      // See application/chain-config.ts.
+      ...chainConfigPayload(req.ctx),
       // Registries (subset for M2). Optional per the contract's
       // ConfigResponse, so a missing file yields null instead of failing
       // the whole response.

@@ -282,6 +282,8 @@ export type LiquidatedMessage = z.infer<typeof LiquidatedMessage>;
 export const PaymentConfirmedMessage = z.object({
   intentId: z.string().min(1),
   cashCents: z.number().int(),
+  /** Set for a season-pass purchase (cashCents 0); absent for a top-up. */
+  kind: z.enum(['season_pass']).optional(),
 });
 export type PaymentConfirmedMessage = z.infer<typeof PaymentConfirmedMessage>;
 
