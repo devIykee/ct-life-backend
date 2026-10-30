@@ -4,12 +4,15 @@
  *   GET /v1/x/link/start
  *   GET /v1/x/link/callback?code=...&state=...
  *   GET /v1/x/link
+ *   DELETE /v1/x/link   (capability xUnlink)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/capability.js';
+import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
-import { completeXLink, getXLink, startXLink } from '../../application/x-link.js';
+import { completeXLink, getXLink, startXLink, unlinkXLink } from '../../application/x-link.js';
 import { createXClient } from '../../shared/x/client.js';
 
 /**
@@ -56,6 +59,16 @@ export function registerXLinkRoutes(app: FastifyInstance): void {
     const out = await getXLink(req.ctx, req.user!.sub);
     return reply.send({ link: out });
   });
+
+  // Works even with X_LINK_ENABLED off: removing your data never needs X's API.
+  app.delete(
+    '/v1/x/link',
+    { preHandler: [requireCapability('xUnlink'), requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      await unlinkXLink(req.ctx, req.user!.sub);
+      return reply.status(204).send();
+    },
+  );
 }
 
 /** Stub X client for dev / tests when X_CLIENT_ID is missing. */

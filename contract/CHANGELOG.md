@@ -1,3 +1,10 @@
+## 2026-10-30 - X: unlink (unlock A4)
+
+No migration. Capability `xUnlink` (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`).
+
+- New `DELETE /x/link` -> `204`: deletes the verified X link with its handle, avatar and token hashes (and any in-flight start). `404 NOT_FOUND` when nothing is linked. Works with X linking disabled. The X account can then be linked by another player.
+- New user message `x_link_update {status: 'unlinked', linked: false, at}` (city room) after an unlink; `status` is what the competition client parses.
+
 ## 2026-10-30 - Cabal: targeted invites and revoke (unlock A3)
 
 Migration 110 (`cabal_invites.revoked_at`). Capabilities `cabalInvites` (targeted invites; also turns on `competitionCapabilities.targetedCabalInvites`) and `cabalRevoke`.

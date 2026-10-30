@@ -46,6 +46,7 @@ export type UserMessageType =
   | 'jailed'
   | 'released'
   | 'event'
+  | 'x_link_update'
   | 'cabal_invite';
 
 export interface UserMessage {
