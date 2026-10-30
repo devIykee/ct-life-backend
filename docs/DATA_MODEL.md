@@ -347,3 +347,13 @@ live phase, copied from Redis `beef:act:<matchId>` when the match moves to votin
 
 `sybil_jail_one_open_idx`: unique `(user_id) WHERE released_at IS NULL`. A stay whose timer ran out is
 closed (`released_at = release_at`) when the next one is rolled, so the index never blocks a new stay.
+
+## Devnet drip: signature before send (review L2, no migration)
+
+`devnet_drips.signature` is now written before the transfer is sent (the server signs locally, so the
+signature is known first); the note under "Chain (unlock WP-C)" that it is filled after the send is
+superseded. A row is deleted (the day's slot freed) only when the send provably never reached the
+cluster: the RPC answered with a JSON-RPC error (a failed preflight) or refused the HTTP request (401,
+403, 429), and `getSignatureStatuses` has no status for the signature. A timeout, a network error, an
+HTTP 5xx, an on-chain error status or a failed status lookup keeps the row, so a retry can never be paid
+twice and the global daily budget counts every drip that may have landed.

@@ -7,6 +7,7 @@
  *   GET  /v1/beef?scope=all|mine|open|arena&status=&cursor=&limit=
  *   POST /v1/beef                     {topicId, invitedUserId?, stakeCents?: 0}
  *   GET  /v1/beef/elo?userId=
+ *   GET  /v1/beef/eligibility         may I open / accept (progress to the gate)
  *   GET  /v1/beef/:id
  *   POST /v1/beef/:id/accept
  *   POST /v1/beef/:id/decline        (the invited player)
@@ -31,6 +32,7 @@ import {
 } from '../../application/ratio-arena.js';
 import { settleMatch } from '../../application/beef-close.js';
 import { castVote } from '../../application/beef-votes.js';
+import { beefEligibility } from '../../application/beef-eligibility.js';
 
 const OpenBody = z
   .object({
@@ -97,6 +99,11 @@ export function registerRatioArenaRoutes(app: FastifyInstance): void {
     if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
     return reply.send(await getElo(req.ctx, q.data.userId ?? req.user!.sub));
   });
+
+  // Also before /v1/beef/:id.
+  app.get('/v1/beef/eligibility', { preHandler: [beef, requireAuth] }, async (req, reply) =>
+    reply.send(await beefEligibility(req.ctx, req.user!.sub)),
+  );
 
   app.get('/v1/beef/:id', { preHandler: [beef, requireAuth] }, async (req, reply) =>
     reply.send(await getMatch(req.ctx, req.user!.sub, id(req.params))),

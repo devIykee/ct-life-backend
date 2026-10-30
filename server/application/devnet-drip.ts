@@ -39,6 +39,8 @@ import {
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { loadKeypair, walletHash } from '../shared/solana/keypair.js';
+import { HeliusError } from '../shared/solana/helius.js';
+import { getBase58Decoder } from '@solana/kit';
 
 /** Circle's public faucet; the player picks Solana Devnet and pastes their address. */
 export const USDC_FAUCET_URL = 'https://faucet.circle.com/';
@@ -50,6 +52,9 @@ export const USDC_DEVNET_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 
 /** No drip while the wallet already holds this much (0.05 SOL). */
 export const DRIP_BALANCE_CEILING_LAMPORTS = 50_000_000n;
+/** Bytes to base58 (a transaction signature as the RPC reports it). */
+const base58 = getBase58Decoder();
+
 /** The treasury keeps this much for its own fees (0.01 SOL). */
 export const DRIP_TREASURY_RESERVE_LAMPORTS = 10_000_000n;
 
@@ -206,7 +211,9 @@ export interface DripResult {
  *   key, or the treasury is below its reserve.
  * @throws ConflictError `balance_sufficient` when the wallet already holds 0.05 SOL.
  * @throws RateLimitedError `daily_drip` (already dripped today) or `drip_budget`.
- * @throws ServerBusyError when the RPC refused the transaction (the slot is freed).
+ * @throws ServerBusyError `drip_send_failed` when the transfer provably never reached the
+ *   cluster (the slot is freed), or `drip_outcome_unknown` when it may have (the slot is
+ *   kept, so it can never be paid twice).
  */
 export async function requestDrip(
   ctx: AppContext,
@@ -236,29 +243,53 @@ export async function requestDrip(
   const dripId = uuidv7();
   await claimSlot({ dripId, userId, wallet, now, settings, retryMs, nextAt });
 
+  // Sign locally and store the signature BEFORE sending (review L2), so a send whose
+  // outcome is unknown can still be looked up and is never paid twice.
+  let wire: string;
   let signature: string;
   try {
     const { blockhash, lastValidBlockHeight } = await latestBlockhash(ctx);
     const tx = new Transaction({ feePayer: treasury.publicKey, blockhash, lastValidBlockHeight });
     tx.add(dripInstruction(treasury, wallet, settings.lamports));
     tx.sign(treasury);
-    signature = await clusterRpc(ctx).rpc<string>('sendTransaction', [
-      tx.serialize().toString('base64'),
-      { encoding: 'base64', preflightCommitment: 'confirmed' },
-    ]);
-  } catch (e) {
-    // Nothing reached the network: give the day's slot back.
+    signature = base58.decode(tx.signature!);
+    wire = tx.serialize().toString('base64');
     await ctx.db.withConnection((c) =>
-      c.query('DELETE FROM devnet_drips WHERE drip_id = $1', [dripId]),
+      c.query('UPDATE devnet_drips SET signature = $1 WHERE drip_id = $2', [signature, dripId]),
     );
+  } catch (e) {
+    // Nothing was sent yet: give the day's slot back.
+    await releaseSlot(ctx, dripId);
     throw new ServerBusyError(30_000, {
       reason: 'drip_send_failed',
       message: (e as Error).message,
     });
   }
-  await ctx.db.withConnection((c) =>
-    c.query('UPDATE devnet_drips SET signature = $1 WHERE drip_id = $2', [signature, dripId]),
-  );
+
+  try {
+    await clusterRpc(ctx).rpc<string>('sendTransaction', [
+      wire,
+      { encoding: 'base64', preflightCommitment: 'confirmed' },
+    ]);
+  } catch (e) {
+    const outcome = await sendOutcome(ctx, signature, e);
+    if (outcome === 'rejected') {
+      await releaseSlot(ctx, dripId);
+      throw new ServerBusyError(30_000, {
+        reason: 'drip_send_failed',
+        message: (e as Error).message,
+      });
+    }
+    if (outcome === 'unknown') {
+      // It may still land: keep the slot (and the global budget) and say so.
+      throw new ServerBusyError(retryMs, {
+        reason: 'drip_outcome_unknown',
+        signature,
+        nextAt: nextAt.toISOString(),
+      });
+    }
+    // 'landed': the error came after the transfer reached the cluster; answer as sent.
+  }
   return {
     dripId,
     signature,
@@ -266,6 +297,58 @@ export async function requestDrip(
     wallet: wallet.toBase58(),
     nextAt: nextAt.toISOString(),
   };
+}
+
+async function releaseSlot(ctx: AppContext, dripId: string): Promise<void> {
+  await ctx.db.withConnection((c) =>
+    c.query('DELETE FROM devnet_drips WHERE drip_id = $1', [dripId]),
+  );
+}
+
+/**
+ * True when the send failed in a way that proves the transfer never reached the
+ * cluster: the node answered with a JSON-RPC error object (a failed preflight, a bad
+ * signature, an unknown blockhash: the node refuses before forwarding), or the RPC
+ * provider refused the HTTP request itself (401, 403, 429). A timeout, a network error
+ * or an HTTP 5xx is not proof: the request may have been forwarded.
+ * @param e - What `sendTransaction` threw.
+ */
+export function sendRefusedOutright(e: unknown): boolean {
+  if (!(e instanceof HeliusError)) return false;
+  if (e.rpcCode !== undefined) return true;
+  return e.code === 'UNAUTHORIZED' || e.code === 'RATE_LIMITED';
+}
+
+/**
+ * What became of a send that threw. The slot is freed only for `rejected`: the RPC
+ * refused it outright AND the cluster has no status for the signature. A clean status
+ * means it landed; anything else (an ambiguous error, a status with an on-chain error,
+ * or the status lookup failing) is `unknown`, which keeps the slot.
+ * @param ctx - The app context.
+ * @param signature - The drip's signature (base58).
+ * @param sendError - What `sendTransaction` threw.
+ */
+export async function sendOutcome(
+  ctx: AppContext,
+  signature: string,
+  sendError: unknown,
+): Promise<'landed' | 'rejected' | 'unknown'> {
+  let status: { err: unknown } | null;
+  try {
+    const r = await clusterRpc(ctx).rpc<{ value: Array<{ err: unknown } | null> }>(
+      'getSignatureStatuses',
+      [[signature], { searchTransactionHistory: false }],
+    );
+    status = r.value[0] ?? null;
+  } catch {
+    return 'unknown';
+  }
+  if (status !== null) {
+    // On chain. With an error the fee was paid but the transfer failed; that is not a
+    // provable "never sent" either, so the slot stays.
+    return status.err === null || status.err === undefined ? 'landed' : 'unknown';
+  }
+  return sendRefusedOutright(sendError) ? 'rejected' : 'unknown';
 }
 
 /** The transfer the treasury signs. Exported for tests. */
