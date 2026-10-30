@@ -4,9 +4,12 @@
  *
  * Economy rule (docs/ECONOMY.md): Cash never moves between players. So:
  *   - a role's wage is a fixed band from contract/config/projects.json, paid
- *     by the game (a faucet), and only for a week the member worked;
- *   - the project treasury pays a matching operating cost (a sink) in the
- *     same run, so the founder still feels payroll;
+ *     by the game (a faucet), only for a week the member did a task for that
+ *     project, prorated for a mid-week join, one paid role per player, and
+ *     capped per project and per founder. Wages never depend on the treasury,
+ *     so founder deposits can never become someone's wage;
+ *   - the project treasury pays an operating cost (a pure sink) in the same
+ *     run, so the founder still feels payroll;
  *   - treasury Cash only ever leaves through sinks (launch, operating cost,
  *     risk losses), never to a player.
  */
@@ -42,10 +45,15 @@ export interface ProjectsConfig {
   readonly wages: Readonly<Record<HireRole, WageBand>>;
   readonly payroll: {
     readonly operatingCostBps: number;
-    readonly workLedgerReasons: readonly string[];
+    readonly maxWagesCentsPerProjectWeek: number;
+    readonly maxWagesCentsPerFounderWeek: number;
   };
+  readonly task: { readonly durationMinutes: number };
   readonly offers: { readonly ttlHours: number; readonly maxPendingPerProject: number };
-  readonly membership: { readonly maxRolesPerPlayer: number };
+  readonly membership: {
+    readonly maxRolesPerPlayer: number;
+    readonly maxProjectsPerPlayer: number;
+  };
   readonly fund: { readonly maxCentsPerCall: number };
   readonly launch: {
     readonly costCentsByKind: Readonly<Record<ProjectKind, number>>;
@@ -116,40 +124,69 @@ export interface PayrollMember {
   readonly userId: string;
   readonly role: MemberRole;
   readonly salaryCentsPerWeek: number;
+  /** A project_work_log row for THIS project and week (a real project task). */
   readonly worked: boolean;
+  /** When they joined; a mid-week join is prorated. */
+  readonly joinedAtMs: number;
+  /**
+   * False when this is not the player's one paid role this week (an earlier
+   * membership elsewhere, or already paid this week by another project).
+   */
+  readonly paidRoleEligible: boolean;
 }
 
 export interface PayrollPlan {
-  /** Wages the game credits (only members who worked). */
+  /** Wages the game credits (a faucet; independent of the treasury). */
   readonly wages: ReadonlyArray<{ readonly userId: string; readonly cents: number }>;
-  /** What the treasury pays as the matching operating cost. */
+  /** The operating cost the treasury owes (a sink; matches the wages). */
   readonly operatingCostCents: number;
-  /** False when the treasury cannot cover the operating cost: nothing is paid. */
-  readonly affordable: boolean;
 }
 
 /**
- * One week's payroll for one project.
+ * The share of the week `[weekStartMs, weekStartMs + 7d)` a member was in the
+ * project, as a wage in cents (floor).
+ * @param fullCents - The weekly wage.
+ * @param joinedAtMs - When they joined.
+ * @param weekStartMs - Monday 00:00 UTC of the week.
+ * @returns The prorated wage.
+ */
+export function proratedWage(fullCents: number, joinedAtMs: number, weekStartMs: number): number {
+  const weekEnd = weekStartMs + WEEK_MS;
+  const from = Math.max(joinedAtMs, weekStartMs);
+  if (from >= weekEnd) return 0;
+  return Math.floor((fullCents * (weekEnd - from)) / WEEK_MS);
+}
+
+/**
+ * One week's payroll for one project. The treasury plays no part in what a
+ * member earns: wages come from the game, so a founder's deposits cannot be
+ * piped to another account.
  * @param cfg - projects.json.
- * @param members - Every member with whether they worked that week.
- * @param treasuryCents - The project's treasury before the run.
- * @returns The wages to pay and the operating cost to debit.
+ * @param members - Every member with their work, join time and eligibility.
+ * @param weekStartMs - Monday 00:00 UTC of the week being paid.
+ * @param capCents - What this project may still pay this week (the smaller of
+ *   the per-project cap and what is left of the founder's weekly cap).
+ * @returns The wages and the operating cost.
  */
 export function planPayroll(
   cfg: ProjectsConfig,
   members: readonly PayrollMember[],
-  treasuryCents: number,
+  weekStartMs: number,
+  capCents: number,
 ): PayrollPlan {
-  const wages = members
-    .filter((m) => m.role !== 'founder' && m.worked)
-    .map((m) => ({ userId: m.userId, cents: payableWage(cfg, m.role, m.salaryCentsPerWeek) }))
-    .filter((w) => w.cents > 0);
+  let left = Math.max(0, Math.min(capCents, cfg.payroll.maxWagesCentsPerProjectWeek));
+  const wages: Array<{ userId: string; cents: number }> = [];
+  const ordered = [...members].sort((a, b) => a.joinedAtMs - b.joinedAtMs);
+  for (const m of ordered) {
+    if (m.role === 'founder' || !m.worked || !m.paidRoleEligible) continue;
+    const full = payableWage(cfg, m.role, m.salaryCentsPerWeek);
+    const cents = Math.min(left, proratedWage(full, m.joinedAtMs, weekStartMs));
+    if (cents <= 0) continue;
+    wages.push({ userId: m.userId, cents });
+    left -= cents;
+  }
   const total = wages.reduce((s, w) => s + w.cents, 0);
-  const operatingCostCents = Math.ceil((total * cfg.payroll.operatingCostBps) / 10_000);
-  const affordable = treasuryCents >= operatingCostCents;
-  return affordable
-    ? { wages, operatingCostCents, affordable }
-    : { wages: [], operatingCostCents, affordable };
+  return { wages, operatingCostCents: Math.ceil((total * cfg.payroll.operatingCostBps) / 10_000) };
 }
 
 export type LaunchBlocker = 'insufficient_treasury' | 'wrong_status' | 'no_dev_hired' | 'cooldown';

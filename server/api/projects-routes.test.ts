@@ -100,6 +100,8 @@ describe('builder capability off', () => {
         ['GET', `/v1/projects/${id}/launch-quote`],
         ['POST', `/v1/projects/${id}/launch`],
         ['GET', `/v1/projects/${id}/events`],
+        ['POST', `/v1/projects/${id}/tasks`],
+        ['POST', `/v1/projects/${id}/tasks/${id}/complete`],
       ] as const) {
         const r = await call(app, u, method, url, method === 'GET' ? undefined : {});
         expect(r.status, `${method} ${url}`).toBe(503);
@@ -357,5 +359,53 @@ describe('builder capability on', () => {
       `/v1/projects/${projectId}/members/${member.sub}`,
     );
     expect(gone.status).toBe(404);
+  });
+
+  it('project task: start -> 409 task_not_finished -> complete -> worked; founder 403; project_limit', async () => {
+    const boss = await devAuth(app);
+    await giveCash(boss, 10_000_000);
+    const p = await call(app, boss, 'POST', '/v1/projects', { kind: 'memecoin' });
+    expect(p.status, JSON.stringify(p.body)).toBe(201);
+    const projectId = p.body.projectId as string;
+    const member = await devAuth(app);
+    const o = await call(app, boss, 'POST', `/v1/projects/${projectId}/offers`, {
+      userId: member.sub,
+      role: 'kol',
+      salaryCentsPerWeek: 10_000,
+    });
+    await call(app, member, 'POST', `/v1/project-offers/${o.body.offerId as string}/accept`);
+    const f = await call(app, boss, 'POST', `/v1/projects/${projectId}/tasks`);
+    expect(f.status).toBe(403);
+    expect(err(f.body).details.reason).toBe('founder');
+    const t = await call(app, member, 'POST', `/v1/projects/${projectId}/tasks`);
+    expect(t.status).toBe(201);
+    expect(Object.keys(t.body).sort()).toEqual(['endsAt', 'projectId', 'startedAt', 'taskId']);
+    const early = await call(
+      app,
+      member,
+      'POST',
+      `/v1/projects/${projectId}/tasks/${t.body.taskId as string}/complete`,
+    );
+    expect(early.status).toBe(409);
+    expect(err(early.body).details).toMatchObject({ reason: 'task_not_finished' });
+    await createDb().withConnection((c) =>
+      c.query(`UPDATE project_tasks SET ends_at = now() - interval '1 second' WHERE task_id = $1`, [
+        t.body.taskId,
+      ]),
+    );
+    const done = await call(
+      app,
+      member,
+      'POST',
+      `/v1/projects/${projectId}/tasks/${t.body.taskId as string}/complete`,
+    );
+    expect(done.status).toBe(200);
+    expect(done.body).toMatchObject({ worked: true, taskId: t.body.taskId });
+    expect(done.body.weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    // The limit (2) counts founder roles.
+    expect((await call(app, boss, 'POST', '/v1/projects', { kind: 'memecoin' })).status).toBe(201);
+    const extra = await call(app, boss, 'POST', '/v1/projects', { kind: 'memecoin' });
+    expect(extra.status).toBe(409);
+    expect(err(extra.body).details).toMatchObject({ reason: 'project_limit', max: 2 });
   });
 });

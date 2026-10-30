@@ -7,11 +7,15 @@
 --
 -- project_members replaces project_hires as the source of truth: the founder
 -- plus at most one player per role. project_hires is kept (no longer written)
--- so a rollback of the code still finds its table.
+-- so a rollback of the code still finds its table. Legacy hires are NOT made
+-- members (they never consented, and one player could hold several paid
+-- roles): each becomes a pending offer the player must accept, which runs
+-- the one-paid-role cap.
 --
 -- project_events: server-written lifecycle and risk events (GET /projects/{id}/events).
--- project_work_log: weeks a member did a project task that is not a ledger
---   row (the HQ shift, B3). Career shifts count from the ledger directly.
+-- project_work_log: the weeks a member worked for THIS project (a finished
+--   project task, or the HQ shift in B3). The only thing payroll counts as work.
+-- project_tasks: timed project tasks (start, then complete after the duration).
 -- project_payroll_runs: one row per project and week, so the weekly payroll
 --   is idempotent across replicas and retries.
 
@@ -41,18 +45,22 @@ SELECT p.project_id, p.owner_user_id, 'founder', 0, p.created_at
   JOIN users u ON u.id = p.owner_user_id
 ON CONFLICT DO NOTHING;
 
--- Existing direct hires become members: one per role, the earliest wins.
-INSERT INTO project_members (project_id, user_id, role, salary_cents_per_week, joined_at)
-SELECT DISTINCT ON (h.project_id, h.role)
-       h.project_id, h.user_id, h.role, h.salary_cents_per_week, h.hired_at
-  FROM project_hires h
-  JOIN users u ON u.id = h.user_id
- ORDER BY h.project_id, h.role, h.hired_at
-ON CONFLICT DO NOTHING;
-
 -- One pending offer per (project, invitee).
 CREATE UNIQUE INDEX IF NOT EXISTS project_offers_one_pending_idx
   ON project_offers (project_id, to_user_id) WHERE status = 'pending';
+
+-- Existing direct hires become pending offers from the founder (48 h), so
+-- the player consents and the role caps apply on accept.
+INSERT INTO project_offers
+  (offer_id, project_id, from_user_id, to_user_id, role, salary_cents_per_week, status, expires_at, created_at)
+SELECT h.hire_id, h.project_id, p.owner_user_id, h.user_id, h.role, h.salary_cents_per_week,
+       'pending', now() + interval '48 hours', now()
+  FROM project_hires h
+  JOIN projects p ON p.project_id = h.project_id
+  JOIN users fu ON fu.id = p.owner_user_id
+  JOIN users tu ON tu.id = h.user_id
+ WHERE h.user_id <> p.owner_user_id
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS project_events (
   id                uuid PRIMARY KEY,
@@ -76,6 +84,19 @@ CREATE TABLE IF NOT EXISTS project_work_log (
   PRIMARY KEY (project_id, user_id, week_start)
 );
 
+CREATE TABLE IF NOT EXISTS project_tasks (
+  task_id       uuid PRIMARY KEY,
+  project_id    uuid NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
+  user_id       uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  started_at    timestamptz NOT NULL,
+  ends_at       timestamptz NOT NULL,
+  completed_at  timestamptz
+);
+
+-- One open task per member and project.
+CREATE UNIQUE INDEX IF NOT EXISTS project_tasks_one_open_idx
+  ON project_tasks (project_id, user_id) WHERE completed_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS project_payroll_runs (
   project_id            uuid NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
   week_start            date NOT NULL,
@@ -88,9 +109,11 @@ CREATE TABLE IF NOT EXISTS project_payroll_runs (
 
 -- Down Migration
 DROP TABLE IF EXISTS project_payroll_runs;
+DROP TABLE IF EXISTS project_tasks;
 DROP TABLE IF EXISTS project_work_log;
 DROP TABLE IF EXISTS project_events;
 DROP INDEX IF EXISTS project_offers_one_pending_idx;
+DELETE FROM project_offers o USING project_hires h WHERE o.offer_id = h.hire_id;
 DROP TABLE IF EXISTS project_members;
 ALTER TABLE projects DROP COLUMN IF EXISTS paused_at;
 ALTER TABLE projects DROP COLUMN IF EXISTS launched_at;

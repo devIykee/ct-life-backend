@@ -24,7 +24,7 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { salaryOutOfBand, type HireRole } from '../shared/domain/projects.js';
 import { publishToUser } from './realtime-bus.js';
-import { assertOwner, lockProject } from './projects.js';
+import { assertOwner, countActiveMemberships, lockProject } from './projects.js';
 import { projectsConfig, publishProjectEvent, recordProjectEvent } from './project-events.js';
 import type { AppContext } from './context.js';
 
@@ -261,6 +261,12 @@ export async function acceptOffer(
       throw new ConflictError({
         reason: 'membership_limit',
         max: cfg.membership.maxRolesPerPlayer,
+      });
+    // Founder roles count too (per-account project limit).
+    if ((await countActiveMemberships(client, userId)) >= cfg.membership.maxProjectsPerPlayer)
+      throw new ConflictError({
+        reason: 'project_limit',
+        max: cfg.membership.maxProjectsPerPlayer,
       });
     const taken = await client.query(
       `SELECT 1 FROM project_members WHERE project_id = $1 AND role = $2`,

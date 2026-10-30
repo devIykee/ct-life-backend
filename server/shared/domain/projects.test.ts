@@ -4,6 +4,7 @@ import {
   nextPayrollAt,
   payableWage,
   planPayroll,
+  proratedWage,
   quoteLaunch,
   rollRisk,
   salaryOutOfBand,
@@ -30,7 +31,7 @@ function scripted(answers: boolean[]): Rng {
 }
 
 describe('projects config (inflation-safe defaults)', () => {
-  it('every band is positive and min <= max, and the operating cost matches wages 1:1 or more', () => {
+  it('bands are sane, op cost >= wages, one paid role, caps nest', () => {
     for (const role of ['dev', 'mod', 'kol', 'auditor'] as const) {
       const b = cfg.wages[role];
       expect(b.minCentsPerWeek).toBeGreaterThan(0);
@@ -38,6 +39,9 @@ describe('projects config (inflation-safe defaults)', () => {
     }
     expect(cfg.payroll.operatingCostBps).toBeGreaterThanOrEqual(10_000);
     expect(cfg.membership.maxRolesPerPlayer).toBe(1);
+    expect(cfg.payroll.maxWagesCentsPerProjectWeek).toBeLessThanOrEqual(
+      cfg.payroll.maxWagesCentsPerFounderWeek,
+    );
   });
 
   it('no risk event can add Cash to a treasury', () => {
@@ -73,24 +77,65 @@ describe('payroll weeks (UTC)', () => {
 });
 
 describe('planPayroll', () => {
-  const members = [
-    { userId: 'f', role: 'founder' as const, salaryCentsPerWeek: 0, worked: true },
-    { userId: 'd', role: 'dev' as const, salaryCentsPerWeek: 20_000, worked: true },
-    { userId: 'm', role: 'mod' as const, salaryCentsPerWeek: 10_000, worked: false },
-  ];
+  const week = Date.parse('2026-11-02T00:00:00Z');
+  const before = week - 86_400_000;
+  const m = (
+    userId: string,
+    role: MemberRole,
+    cents: number,
+    over: Partial<{ worked: boolean; joinedAtMs: number; paidRoleEligible: boolean }> = {},
+  ) => ({
+    userId,
+    role,
+    salaryCentsPerWeek: cents,
+    worked: true,
+    joinedAtMs: before,
+    paidRoleEligible: true,
+    ...over,
+  });
 
-  it('pays only members who worked, never the founder, with a matching operating cost', () => {
-    const p = planPayroll(cfg, members, 1_000_000);
-    expect(p.affordable).toBe(true);
+  it('pays only members who worked for this project, never the founder, with a matching operating cost', () => {
+    const p = planPayroll(
+      cfg,
+      [m('f', 'founder', 0), m('d', 'dev', 20_000), m('x', 'mod', 10_000, { worked: false })],
+      week,
+      Number.MAX_SAFE_INTEGER,
+    );
     expect(p.wages).toEqual([{ userId: 'd', cents: 20_000 }]);
     expect(p.operatingCostCents).toBe(20_000);
   });
 
-  it('pays nobody when the treasury cannot cover the operating cost', () => {
-    const p = planPayroll(cfg, members, 19_999);
-    expect(p.affordable).toBe(false);
-    expect(p.wages).toEqual([]);
-    expect(p.operatingCostCents).toBe(20_000);
+  it('takes no treasury input at all: wages cannot depend on founder deposits', () => {
+    expect(planPayroll.length).toBe(4);
+    const a = planPayroll(cfg, [m('d', 'dev', 20_000)], week, 1e9);
+    const b = planPayroll(cfg, [m('d', 'dev', 20_000)], week, 1e9);
+    expect(a).toEqual(b);
+  });
+
+  it('prorates a mid-week join and pays nothing for a join after the week', () => {
+    const midweek = week + 3.5 * 86_400_000;
+    expect(proratedWage(20_000, midweek, week)).toBe(10_000);
+    expect(proratedWage(20_000, before, week)).toBe(20_000);
+    expect(proratedWage(20_000, week + 7 * 86_400_000, week)).toBe(0);
+    const p = planPayroll(cfg, [m('d', 'dev', 20_000, { joinedAtMs: midweek })], week, 1e9);
+    expect(p.wages).toEqual([{ userId: 'd', cents: 10_000 }]);
+  });
+
+  it('skips a second paid role and caps per project and per founder', () => {
+    const team = [
+      m('d', 'dev', 30_000),
+      m('a', 'auditor', 30_000),
+      m('k', 'kol', 20_000),
+      m('o', 'mod', 15_000, { paidRoleEligible: false }),
+    ];
+    const capped = planPayroll(cfg, team, week, 1e9);
+    expect(capped.wages.reduce((s, w) => s + w.cents, 0)).toBe(
+      cfg.payroll.maxWagesCentsPerProjectWeek,
+    );
+    expect(capped.wages.map((w) => w.userId)).not.toContain('o');
+    const founderCap = planPayroll(cfg, team, week, 25_000);
+    expect(founderCap.wages).toEqual([{ userId: 'd', cents: 25_000 }]);
+    expect(planPayroll(cfg, team, week, -5).wages).toEqual([]);
   });
 });
 

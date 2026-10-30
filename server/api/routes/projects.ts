@@ -19,6 +19,8 @@
  *   GET    /v1/projects/{id}/launch-quote
  *   POST   /v1/projects/{id}/launch
  *   GET    /v1/projects/{id}/events
+ *   POST   /v1/projects/{id}/tasks                    start a timed project task
+ *   POST   /v1/projects/{id}/tasks/{taskId}/complete  finish it (the week counts as worked)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -43,6 +45,7 @@ import {
 } from '../../application/project-offers.js';
 import { getLaunchQuote, launchProject } from '../../application/project-launch.js';
 import { listProjectEvents } from '../../application/project-events.js';
+import { completeProjectTask, startProjectTask } from '../../application/project-tasks.js';
 
 const FoundBody = z.object({
   kind: z.enum(PROJECT_KINDS),
@@ -196,6 +199,24 @@ export function registerProjectRoutes(app: FastifyInstance): void {
     const q = parse(EventsQuery, req.query);
     return reply.send(await listProjectEvents(req.ctx, id, q.cursor ?? null, q.limit));
   });
+
+  app.post(
+    '/v1/projects/:id/tasks',
+    { preHandler: [builder, requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      return reply.status(201).send(await startProjectTask(req.ctx, req.user!.sub, id));
+    },
+  );
+
+  app.post(
+    '/v1/projects/:id/tasks/:taskId/complete',
+    { preHandler: [builder, requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { id, taskId } = req.params as { id: string; taskId: string };
+      return reply.send(await completeProjectTask(req.ctx, req.user!.sub, id, taskId));
+    },
+  );
 
   app.get('/v1/projects/:id', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };

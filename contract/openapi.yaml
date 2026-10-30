@@ -7272,6 +7272,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ProjectSummary' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: >-
+            `CONFLICT {reason: 'project_limit', max}`: I am already in `membership.maxProjectsPerPlayer` (2)
+            non-rugged projects, founder roles included.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /projects/{id}:
     get:
@@ -7315,8 +7320,11 @@ paths:
       description: |
         `salaryCentsPerWeek` must sit inside the role's band in
         `contract/config/projects.json` `wages` (dev/auditor $150-$300, kol
-        $100-$200, mod $80-$150 a week); the game pays it weekly for a week the
-        member worked. The invitee gets `hire_offer` on the city room.
+        $100-$200, mod $80-$150 a week). The game pays it (not the founder) every
+        Monday for a week the member finished a project task for this project
+        (`POST /projects/{id}/tasks`), prorated for a mid-week join, one paid role
+        per player, capped per project and per founder. The invitee gets
+        `hire_offer` on the city room.
         Errors (`details.reason`): 400 `salary_out_of_band` (+`min`, `max`),
         400 `self`; 403 `FORBIDDEN` `not_owner`; 403 `BLOCKED`; 404 (project or
         user); 409 `CONFLICT` `already_member` | `role_filled` | `offer_pending` |
@@ -7400,7 +7408,8 @@ paths:
       description: |
         Errors: 403 `FORBIDDEN` `not_invitee`; 404; 409 `CONFLICT` `not_pending`
         | `expired` | `already_member` | `role_filled` | `membership_limit` (a
-        player holds `membership.maxRolesPerPlayer` = 1 role across projects) |
+        player holds `membership.maxRolesPerPlayer` = 1 paid role across projects) |
+        `project_limit` (`maxProjectsPerPlayer` = 2, founder roles included) |
         `wrong_status`. Members get `project_event` `proj_member_joined`.
       parameters:
         - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -7615,6 +7624,79 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/tasks:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdTasks
+      summary: Start a timed project task (capability builder). Non-founder members only.
+      description: |
+        A finished task (`.../complete` after `endsAt`, `task.durationMinutes` =
+        10) is the only work that earns this week's wage: generic career shifts do
+        not count. One counted task per member, project and UTC week (Monday).
+        Errors: 403 `FORBIDDEN` `not_member` | `founder` (the founder earns no
+        wage); 404; 409 `CONFLICT` `already_worked` (+`weekStart`) |
+        `task_in_progress` (+`taskId`, `endsAt`) | `wrong_status`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taskId, projectId, startedAt, endsAt]
+                properties:
+                  taskId: { type: string, format: uuid }
+                  projectId: { type: string, format: uuid }
+                  startedAt: { type: string, format: date-time }
+                  endsAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/tasks/{taskId}/complete:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdTasksTaskIdComplete
+      summary: Finish a project task once its timer ran; this week counts as worked (capability builder).
+      description: |
+        Errors: 403 `not_member` (removed meanwhile); 404; 409 `task_not_finished`
+        (+`endsAt`) | `not_open`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Done
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taskId, projectId, completedAt, weekStart, worked]
+                properties:
+                  taskId: { type: string, format: uuid }
+                  projectId: { type: string, format: uuid }
+                  completedAt: { type: string, format: date-time }
+                  weekStart:
+                    {
+                      type: string,
+                      format: date,
+                      description: Monday (UTC) of the week it counts for.,
+                    }
+                  worked: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
 components:
@@ -10212,7 +10294,7 @@ components:
           {
             type: [string, 'null'],
             format: date-time,
-            description: 'Next Monday 00:00 UTC; null unless founded or live.',
+            description: 'Next Monday 00:00 UTC; null while launching or rugged.',
           }
         vcStakes: { type: array, items: { type: object } }
         recentEvents: { type: array, items: { $ref: '#/components/schemas/ProjectEvent' } }

@@ -1,19 +1,43 @@
 {
   "version": "1.0.0",
-  "_note": "Builder (player projects). Wages are paid by the game, never by the founder: each role has a fixed weekly band, and the project treasury pays a matching operating cost (a Cash sink). Cash never moves between players. Treasury Cash is never withdrawable. Routes: contract/openapi.yaml (tag projects).",
+  "_note": "Builder (player projects). Wages are a game faucet, never the founder's money: each role has a fixed weekly band, paid only for a week the member did a project task for THIS project (project_work_log), prorated for a mid-week join, one paid role per player, capped per project and per founder. The project treasury pays an operating cost (a pure sink) that does not fund or gate wages. Cash never moves between players. Treasury Cash is never withdrawable. Routes: contract/openapi.yaml (tag projects).",
   "wages": {
-    "dev": { "minCentsPerWeek": 15000, "maxCentsPerWeek": 30000 },
-    "auditor": { "minCentsPerWeek": 15000, "maxCentsPerWeek": 30000 },
-    "kol": { "minCentsPerWeek": 10000, "maxCentsPerWeek": 20000 },
-    "mod": { "minCentsPerWeek": 8000, "maxCentsPerWeek": 15000 }
+    "dev": {
+      "minCentsPerWeek": 15000,
+      "maxCentsPerWeek": 30000
+    },
+    "auditor": {
+      "minCentsPerWeek": 15000,
+      "maxCentsPerWeek": 30000
+    },
+    "kol": {
+      "minCentsPerWeek": 10000,
+      "maxCentsPerWeek": 20000
+    },
+    "mod": {
+      "minCentsPerWeek": 8000,
+      "maxCentsPerWeek": 15000
+    }
   },
   "payroll": {
     "operatingCostBps": 10000,
-    "workLedgerReasons": ["shift_pay", "job_rekt_burger"]
+    "maxWagesCentsPerProjectWeek": 60000,
+    "maxWagesCentsPerFounderWeek": 90000
   },
-  "offers": { "ttlHours": 48, "maxPendingPerProject": 8 },
-  "membership": { "maxRolesPerPlayer": 1 },
-  "fund": { "maxCentsPerCall": 10000000 },
+  "task": {
+    "durationMinutes": 10
+  },
+  "offers": {
+    "ttlHours": 48,
+    "maxPendingPerProject": 8
+  },
+  "membership": {
+    "maxRolesPerPlayer": 1,
+    "maxProjectsPerPlayer": 2
+  },
+  "fund": {
+    "maxCentsPerCall": 10000000
+  },
   "launch": {
     "costCentsByKind": {
       "memecoin": 50000,

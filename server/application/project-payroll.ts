@@ -2,16 +2,22 @@
  * Builder: the weekly payroll and the daily risk roll (run by
  * server/workers/projects.ts).
  *
- * Payroll, Monday 00:00 UTC, for the week that just ended:
- *   - a member is paid only for a week they worked: at least one ledger row
- *     with a `payroll.workLedgerReasons` reason (a career or McDonald's
- *     shift) or a `project_work_log` row (the HQ shift, B3);
- *   - the wage is the role's band (projects.json), paid BY THE GAME with a
- *     `project_payroll` ledger row (unique per project, week and member);
- *   - the treasury pays a matching operating cost (`operatingCostBps`, 100%
- *     by default), a sink, so the founder still feels payroll;
- *   - if the treasury cannot cover it, nobody is paid and the project is
- *     `paused` (`proj_payroll_missed`, `proj_paused`). Funding resumes it.
+ * Payroll, Monday 00:00 UTC, for the week that just ended. Wages are a game
+ * faucet that never depends on the founder's money:
+ *   - "worked" means a `project_work_log` row for THIS project and week (a
+ *     finished project task, or the HQ shift in B3). Generic career shifts do
+ *     not count, so a founder cannot pay an alt for playing elsewhere;
+ *   - the wage is the role's band (projects.json), prorated for a mid-week
+ *     join, paid BY THE GAME with a `project_payroll` ledger row whose
+ *     idempotency ref is per player and week (`proj-wage:<week>:<user>`), so a
+ *     player is paid for one role a week at most; only their earliest
+ *     non-founder membership is eligible;
+ *   - wages are capped per project (`maxWagesCentsPerProjectWeek`) and per
+ *     founder across their projects (`maxWagesCentsPerFounderWeek`);
+ *   - the treasury pays an operating cost equal to the wages (a pure sink).
+ *     It neither funds nor gates the wages: if the treasury is short it pays
+ *     what it has and the project is `paused` (no launch, no risk roll, no VC
+ *     offers) until the founder funds it again.
  * Cash never moves from one player to another: the founder's Cash only
  * ever goes into the treasury, and the treasury only into sinks.
  *
@@ -50,7 +56,7 @@ export interface PayrollResult {
 }
 
 /**
- * Run payroll for every founded or live project, for the week before `now`.
+ * Run payroll for every founded, live or paused project, for the week before `now`.
  * Idempotent per project and week (project_payroll_runs).
  * @param ctx - The application context.
  * @param now - The run time (Monday 00:00 UTC in production).
@@ -63,7 +69,7 @@ export async function runWeeklyPayroll(
   const weekStart = weekStartUtc(now.getTime()) - WEEK_MS;
   const ids = await ctx.db.withConnection((c) =>
     c.query<{ project_id: string }>(
-      `SELECT project_id FROM projects WHERE status IN ('founded', 'live') ORDER BY project_id`,
+      `SELECT project_id FROM projects WHERE status IN ('founded', 'live', 'paused') ORDER BY project_id`,
     ),
   );
   const out = { projects: 0, paid: 0, paused: 0, wagesCents: 0 };
@@ -99,7 +105,6 @@ export async function payProject(
 ): Promise<{ paused: boolean; wagesCents: number } | null> {
   const cfg = projectsConfig(ctx);
   const week = isoDate(weekStartMs);
-  const weekEnd = new Date(weekStartMs + WEEK_MS);
   const res = await runInTransaction(async (c) => {
     const claim = await c.query(
       `INSERT INTO project_payroll_runs (project_id, week_start, wages_cents, operating_cost_cents, paid)
@@ -107,27 +112,44 @@ export async function payProject(
       [projectId, week],
     );
     if ((claim.rowCount ?? 0) === 0) return null; // this week already ran
-    const p = await c.query<{ status: string; cash_cents: string }>(
-      `SELECT status, cash_cents FROM projects WHERE project_id = $1 FOR UPDATE`,
+    const p = await c.query<{ status: string; cash_cents: string; owner_user_id: string }>(
+      `SELECT status, cash_cents, owner_user_id FROM projects WHERE project_id = $1 FOR UPDATE`,
       [projectId],
     );
     const proj = p.rows[0];
-    if (!proj || (proj.status !== 'founded' && proj.status !== 'live')) return null;
+    if (!proj || !['founded', 'live', 'paused'].includes(proj.status)) return null;
+    // The founder cap spans their projects: serialize their payroll runs.
+    await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `proj-founder:${proj.owner_user_id}`,
+    ]);
+    const used = await c.query<{ n: string }>(
+      `SELECT COALESCE(SUM(r.wages_cents), 0) AS n
+         FROM project_payroll_runs r JOIN projects x ON x.project_id = r.project_id
+        WHERE x.owner_user_id = $1 AND r.week_start = $2::date`,
+      [proj.owner_user_id, week],
+    );
+    const founderLeft = cfg.payroll.maxWagesCentsPerFounderWeek - Number(used.rows[0]?.n ?? 0);
     const m = await c.query<{
       user_id: string;
       role: MemberRole;
       salary_cents_per_week: string;
+      joined_at: Date;
       worked: boolean;
+      eligible: boolean;
     }>(
-      `SELECT pm.user_id, pm.role, pm.salary_cents_per_week,
-              (EXISTS (SELECT 1 FROM ledger_entries le
-                        WHERE le.user_id = pm.user_id AND le.reason = ANY($2::text[])
-                          AND le.created_at >= $3 AND le.created_at < $4)
-               OR EXISTS (SELECT 1 FROM project_work_log w
-                           WHERE w.project_id = pm.project_id AND w.user_id = pm.user_id
-                             AND w.week_start = $5::date)) AS worked
+      `SELECT pm.user_id, pm.role, pm.salary_cents_per_week, pm.joined_at,
+              EXISTS (SELECT 1 FROM project_work_log w
+                       WHERE w.project_id = pm.project_id AND w.user_id = pm.user_id
+                         AND w.week_start = $2::date) AS worked,
+              (NOT EXISTS (SELECT 1 FROM project_members o
+                            WHERE o.user_id = pm.user_id AND o.role <> 'founder'
+                              AND o.project_id <> pm.project_id
+                              AND (o.joined_at, o.project_id) < (pm.joined_at, pm.project_id))
+               AND NOT EXISTS (SELECT 1 FROM ledger_entries le
+                                WHERE le.idempotency_ref = 'proj-wage:' || $2 || ':' || pm.user_id::text))
+                AS eligible
          FROM project_members pm WHERE pm.project_id = $1`,
-      [projectId, cfg.payroll.workLedgerReasons, new Date(weekStartMs), weekEnd, week],
+      [projectId, week],
     );
     const plan = planPayroll(
       cfg,
@@ -136,37 +158,16 @@ export async function payProject(
         role: r.role,
         salaryCentsPerWeek: Number(r.salary_cents_per_week),
         worked: r.worked,
+        joinedAtMs: r.joined_at.getTime(),
+        paidRoleEligible: r.eligible,
       })),
-      Number(proj.cash_cents),
+      weekStartMs,
+      founderLeft,
     );
     const events: ProjectEventRow[] = [];
     const wagesCents = plan.wages.reduce((s, w) => s + w.cents, 0);
-    if (plan.operatingCostCents === 0) return { paused: false, wagesCents: 0, events };
-    if (!plan.affordable) {
-      await c.query(`UPDATE projects SET status = 'paused', paused_at = $2 WHERE project_id = $1`, [
-        projectId,
-        now,
-      ]);
-      for (const eventId of ['proj_payroll_missed', 'proj_paused']) {
-        const e = await recordProjectEvent(c, {
-          projectId,
-          eventId,
-          params: { needCents: String(plan.operatingCostCents), week },
-          at: now,
-          dedupeKey: `${eventId}:${projectId}:${week}`,
-        });
-        if (e) events.push(e);
-      }
-      await c.query(
-        `UPDATE project_payroll_runs SET operating_cost_cents = $3 WHERE project_id = $1 AND week_start = $2`,
-        [projectId, week, plan.operatingCostCents],
-      );
-      return { paused: true, wagesCents: 0, events };
-    }
-    await c.query(`UPDATE projects SET cash_cents = cash_cents - $2 WHERE project_id = $1`, [
-      projectId,
-      plan.operatingCostCents,
-    ]);
+    if (wagesCents === 0) return { paused: false, wagesCents: 0, events };
+    // Wages: the game pays them, whatever the treasury holds.
     for (const w of plan.wages) {
       await creditCash(
         c,
@@ -175,24 +176,48 @@ export async function payProject(
         'project_payroll',
         'project',
         projectId,
-        `proj-wage:${projectId}:${week}:${w.userId}`,
+        `proj-wage:${week}:${w.userId}`,
       );
     }
-    const e = await recordProjectEvent(c, {
+    // Operating cost: a sink, paid from what the treasury has.
+    const treasury = Number(proj.cash_cents);
+    const charged = Math.min(treasury, plan.operatingCostCents);
+    const short = charged < plan.operatingCostCents;
+    await c.query(
+      `UPDATE projects
+          SET cash_cents = cash_cents - $2,
+              status = CASE WHEN $3::boolean THEN 'paused' ELSE status END,
+              paused_at = CASE WHEN $3::boolean AND status <> 'paused' THEN $4 ELSE paused_at END
+        WHERE project_id = $1`,
+      [projectId, charged, short, now],
+    );
+    const paid = await recordProjectEvent(c, {
       projectId,
       eventId: 'proj_payroll_paid',
-      cashDeltaCents: -plan.operatingCostCents,
+      cashDeltaCents: -charged,
       params: { wagesCents: String(wagesCents), paidMembers: String(plan.wages.length), week },
       at: now,
       dedupeKey: `proj_payroll_paid:${projectId}:${week}`,
     });
-    if (e) events.push(e);
+    if (paid) events.push(paid);
+    if (short) {
+      for (const eventId of ['proj_payroll_missed', 'proj_paused']) {
+        const e = await recordProjectEvent(c, {
+          projectId,
+          eventId,
+          params: { needCents: String(plan.operatingCostCents - charged), week },
+          at: now,
+          dedupeKey: `${eventId}:${projectId}:${week}`,
+        });
+        if (e) events.push(e);
+      }
+    }
     await c.query(
       `UPDATE project_payroll_runs SET wages_cents = $3, operating_cost_cents = $4, paid = true
         WHERE project_id = $1 AND week_start = $2`,
-      [projectId, week, wagesCents, plan.operatingCostCents],
+      [projectId, week, wagesCents, charged],
     );
-    return { paused: false, wagesCents, events };
+    return { paused: short, wagesCents, events };
   }, RC);
   if (res === null) return null;
   for (const e of res.events) await publishProjectEvent(ctx, e);

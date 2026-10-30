@@ -221,6 +221,22 @@ export async function lockProject(client: PoolClient, projectId: string): Promis
   };
 }
 
+/**
+ * Projects a player is in (any role, founder included) that are not rugged.
+ * @param c - A connection or open transaction.
+ * @param userId - The player.
+ * @returns The count.
+ */
+export async function countActiveMemberships(c: PoolClient, userId: string): Promise<number> {
+  const r = await c.query<{ n: number }>(
+    `SELECT COUNT(*)::int AS n FROM project_members pm
+       JOIN projects p ON p.project_id = pm.project_id
+      WHERE pm.user_id = $1 AND p.status <> 'rugged'`,
+    [userId],
+  );
+  return r.rows[0]?.n ?? 0;
+}
+
 /** Throw `403 FORBIDDEN {reason:'not_owner'}` unless `userId` founded the project. */
 export function assertOwner(p: LockedProject, userId: string): void {
   if (p.ownerUserId !== userId) throw new ForbiddenError({ reason: 'not_owner' });
@@ -249,7 +265,16 @@ export async function foundProject(
   }
   const projectId = uuidv7();
   const now = new Date();
+  const maxProjects = projectsConfig(ctx).membership.maxProjectsPerPlayer;
   const { summary, event } = await runInTransaction(async (client) => {
+    // Founder roles count toward the per-account project limit (with member
+    // roles), so one account cannot spin up projects to stack payrolls.
+    await client.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+      `proj-member:${ownerUserId}`,
+    ]);
+    if ((await countActiveMemberships(client, ownerUserId)) >= maxProjects) {
+      throw new ConflictError({ reason: 'project_limit', max: maxProjects });
+    }
     await client.query(
       `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 0)
        ON CONFLICT (user_id) DO NOTHING`,
@@ -354,7 +379,7 @@ export async function getProject(ctx: AppContext, projectId: string): Promise<Pr
       [projectId],
     );
     const payroll = hires.reduce((s, h) => s + h.salaryCentsPerWeek, 0);
-    const paying = project.status === 'founded' || project.status === 'live';
+    const paying = project.status !== 'rugged' && project.status !== 'launching';
     return {
       project,
       members,

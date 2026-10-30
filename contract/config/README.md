@@ -22,7 +22,7 @@ Files:
 | `ads.json`        | Ad placement kinds, term lengths, USDC prices, creative constraints.                                                                     | Creative is EXIF-stripped, re-encoded to PNG/JPG, max 1 MB.                                                                       |
 | `ore.json`        | Miner tier thresholds, board cache interval, max round age.                                                                              | Tiers are derived from the player's ORE balance and the `["stake", user]` PDA.                                                    |
 | `casino.json`     | The Rug Room: stake limits, slots reel weights and paytable (with the computed RTP), crash growth, coinflip payout and head-to-head cut. | Multipliers are plain numbers (2 decimals); caps are env settings. `contract:check` recomputes the slots RTP and requires 94-96%. |
-| `projects.json`   | Builder: weekly wage band per role, operating cost, offer TTL, role cap, launch cost per kind and Builder discount, daily risk odds.     | Wages are game-paid for worked weeks; the treasury pays a matching operating cost. No event adds Cash.                            |
+| `projects.json`   | Builder: weekly wage band per role, operating cost, offer TTL, role cap, launch cost per kind and Builder discount, daily risk odds.     | Wages are game-paid for a project task, capped; the treasury op cost is a sink. No event adds Cash.                               |
 
 The schema validator (`tools/contract-check/schema-validate.ts`) loads every `*.schema.json`, compiles the corresponding JSON file, and fails the build on any error. The CI `contract-check` job runs this on every push.
 
