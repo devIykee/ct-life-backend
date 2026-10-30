@@ -631,7 +631,11 @@ describe('Elo reads never write (review L10)', () => {
 });
 
 describe('aimed-challenge rate limits (review L11)', () => {
-  it('cancel-and-resend to the same player is cooled down; one target gets at most N an hour', async () => {
+  const pushesTo = (u: string): number =>
+    msgs.filter((m) => m.type === 'beef_challenge' && m.userId === u).length;
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 200));
+
+  it('cancel-and-resend to the same player is cooled down', async () => {
     const t0 = new Date();
     const a = await player();
     const b = await player();
@@ -651,13 +655,62 @@ describe('aimed-challenge rate limits (review L11)', () => {
     await expect(openMatch(ctx, a, { topicId: TOPIC }, t0)).resolves.toMatchObject({
       status: 'open',
     });
+  });
 
+  it('griefers cannot block a friend: the per-target limit only mutes pushes', async () => {
+    const t0 = new Date();
     const target = await player();
-    for (let i = 0; i < cfg.limits.maxInvitesPerTargetPerHour; i++) {
+    msgs.length = 0;
+    for (let i = 0; i < cfg.limits.maxNotificationsPerTargetPerHour; i++) {
       await openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: target }, t0);
     }
+    const friend = await player();
+    const m = await openMatch(ctx, friend, { topicId: TOPIC, invitedUserId: target }, t0);
+    expect(m.invitedUserId).toBe(target);
+    await settle();
+    expect(pushesTo(target)).toBe(cfg.limits.maxNotificationsPerTargetPerHour);
+    // The friend's challenge is listed for the target even though it was not pushed.
+    const page = await listMatches(ctx, target, 'open', null, 100, null, t0);
+    expect(page.matches.map((x) => x.matchId)).toContain(m.matchId);
+  });
+
+  it('one sender is capped per hour; others are not affected', async () => {
+    const t0 = new Date();
+    const griefer = await player();
+    const victims: string[] = [];
+    for (let i = 0; i < cfg.limits.maxInvitesPerSenderPerHour; i++) {
+      const v = await player();
+      victims.push(v);
+      const m = await openMatch(ctx, griefer, { topicId: TOPIC, invitedUserId: v }, t0);
+      await cancelMatch(ctx, griefer, m.matchId, t0); // stay under the open-challenge cap
+    }
     await expect(
-      openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: target }, t0),
-    ).rejects.toMatchObject({ code: 'RATE_LIMITED', details: { reason: 'target_invite_cap' } });
+      openMatch(ctx, griefer, { topicId: TOPIC, invitedUserId: await player() }, t0),
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED', details: { reason: 'sender_invite_cap' } });
+    await expect(
+      openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: victims[0]! }, t0),
+    ).resolves.toMatchObject({ invitedUserId: victims[0] });
+  });
+
+  it('concurrent challenges stay within the caps', async () => {
+    const t0 = new Date();
+    const target = await player();
+    const senders = await Promise.all(
+      Array.from({ length: cfg.limits.maxNotificationsPerTargetPerHour + 5 }, () => player()),
+    );
+    msgs.length = 0;
+    const made = await Promise.all(
+      senders.map((s) => openMatch(ctx, s, { topicId: TOPIC, invitedUserId: target }, t0)),
+    );
+    expect(made).toHaveLength(senders.length);
+    await settle();
+    expect(pushesTo(target)).toBe(cfg.limits.maxNotificationsPerTargetPerHour);
+    // The same pair racing: exactly one gets through the cooldown.
+    const a = await player();
+    const b = await player();
+    const race = await Promise.allSettled(
+      Array.from({ length: 5 }, () => openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, t0)),
+    );
+    expect(race.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
   });
 });

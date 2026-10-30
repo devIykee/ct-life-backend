@@ -7825,7 +7825,7 @@ paths:
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '429':
-          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or target_invite_cap (10 an hour per target); details.retryAfterMs
+          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or sender_invite_cap (per-sender hourly cap); details.retryAfterMs. Never limited by what others sent the target; past the target's hourly push cap an invite is created and listed but not pushed.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
@@ -8852,7 +8852,7 @@ paths:
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '429':
-          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or target_invite_cap (10 an hour per target); details.retryAfterMs
+          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or sender_invite_cap (per-sender hourly cap); details.retryAfterMs. Never limited by what others sent the target; past the target's hourly push cap an invite is created and listed but not pushed.
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }

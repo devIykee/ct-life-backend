@@ -42,7 +42,7 @@ import { beefConfig } from './beef-rules.js';
 import { markLive } from './beef-activity.js';
 import { publishBeef, publishBeefChallenge } from './beef-events.js';
 import { isSybilJailed } from './sybil-jail.js';
-import { assertInviteRate } from './invite-rate.js';
+import { checkInviteRate } from './invite-rate.js';
 
 export type BeefStatus =
   'open' | 'active' | 'voting' | 'closed' | 'declined' | 'cancelled' | 'expired';
@@ -298,49 +298,60 @@ export async function openMatch(
     throw new ValidationFailedError({ field: 'topicId', reason: 'unknown_topic' });
   }
   const invited = input.invitedUserId ?? null;
-  const row = await runInTransaction(async (c) => {
-    await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [challengerUserId]);
-    if (await isSybilJailed(c, challengerUserId, now)) throw new SybilJailedError({});
-    await assertParticipantEligible(c, cfg, challengerUserId, now);
-    if (invited !== null) {
-      if (invited === challengerUserId) {
-        throw new ValidationFailedError({ field: 'invitedUserId', reason: 'self' });
+  let notify = false;
+  const row = await runInTransaction(
+    async (c) => {
+      await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [challengerUserId]);
+      if (await isSybilJailed(c, challengerUserId, now)) throw new SybilJailedError({});
+      await assertParticipantEligible(c, cfg, challengerUserId, now);
+      if (invited !== null) {
+        if (invited === challengerUserId) {
+          throw new ValidationFailedError({ field: 'invitedUserId', reason: 'self' });
+        }
+        const u = await c.query(`SELECT 1 FROM users WHERE id = $1`, [invited]);
+        if ((u.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'user', id: invited });
+        if (await blockedPair(c, challengerUserId, invited)) throw new BlockedError();
+        ({ notify } = await checkInviteRate(c, 'beef', challengerUserId, invited, now, {
+          pairCooldownMs: cfg.limits.inviteCooldownSeconds * 1000,
+          perSenderPerHour: cfg.limits.maxInvitesPerSenderPerHour,
+          notifyPerTargetPerHour: cfg.limits.maxNotificationsPerTargetPerHour,
+        }));
       }
-      const u = await c.query(`SELECT 1 FROM users WHERE id = $1`, [invited]);
-      if ((u.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'user', id: invited });
-      if (await blockedPair(c, challengerUserId, invited)) throw new BlockedError();
-      await assertInviteRate(c, 'beef', challengerUserId, invited, now, {
-        pairCooldownMs: cfg.limits.inviteCooldownSeconds * 1000,
-        perTargetPerHour: cfg.limits.maxInvitesPerTargetPerHour,
-      });
-    }
-    const open = await c.query<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM beef_matches
+      const open = await c.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM beef_matches
         WHERE challenger_user_id = $1 AND status = 'open' AND phase_ends_at > $2`,
-      [challengerUserId, now.toISOString()],
-    );
-    if ((open.rows[0]?.n ?? 0) >= cfg.limits.maxOpenPerChallenger) {
-      throw new ConflictError({ reason: 'too_many_open', limit: cfg.limits.maxOpenPerChallenger });
-    }
-    const ends = new Date(now.getTime() + cfg.phases.openSeconds * 1000);
-    const r = await c.query<BeefMatchDbRow>(
-      `INSERT INTO beef_matches (match_id, challenger_user_id, invited_user_id, topic_id,
+        [challengerUserId, now.toISOString()],
+      );
+      if ((open.rows[0]?.n ?? 0) >= cfg.limits.maxOpenPerChallenger) {
+        throw new ConflictError({
+          reason: 'too_many_open',
+          limit: cfg.limits.maxOpenPerChallenger,
+        });
+      }
+      const ends = new Date(now.getTime() + cfg.phases.openSeconds * 1000);
+      const r = await c.query<BeefMatchDbRow>(
+        `INSERT INTO beef_matches (match_id, challenger_user_id, invited_user_id, topic_id,
                                  stake_cents, status, phase_ends_at, reward_cents, opened_at)
        VALUES ($1, $2, $3, $4, 0, 'open', $5, $6, $7)
        RETURNING ${MATCH_COLS}`,
-      [
-        uuidv7(),
-        challengerUserId,
-        invited,
-        input.topicId,
-        ends.toISOString(),
-        cfg.reward.winnerCents,
-        now.toISOString(),
-      ],
-    );
-    return r.rows[0]!;
-  });
-  if (invited !== null) {
+        [
+          uuidv7(),
+          challengerUserId,
+          invited,
+          input.topicId,
+          ends.toISOString(),
+          cfg.reward.winnerCents,
+          now.toISOString(),
+        ],
+      );
+      return r.rows[0]!;
+      // Read committed: every count here runs after an explicit lock (the
+      // challenger's row, the target's advisory lock), so SSI would only add
+      // serialization failures under bursts of invites to one target.
+    },
+    { isolation: 'read committed' },
+  );
+  if (invited !== null && notify) {
     await publishBeefChallenge(ctx, invited, {
       matchId: row.match_id,
       fromUserId: challengerUserId,

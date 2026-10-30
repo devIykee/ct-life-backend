@@ -30,7 +30,8 @@ export interface BeefConfig {
   readonly limits: {
     maxOpenPerChallenger: number;
     inviteCooldownSeconds: number;
-    maxInvitesPerTargetPerHour: number;
+    maxInvitesPerSenderPerHour: number;
+    maxNotificationsPerTargetPerHour: number;
   };
 }
 

@@ -177,7 +177,12 @@
     },
     "limits": {
       "type": "object",
-      "required": ["maxOpenPerChallenger", "inviteCooldownSeconds", "maxInvitesPerTargetPerHour"],
+      "required": [
+        "maxOpenPerChallenger",
+        "inviteCooldownSeconds",
+        "maxInvitesPerSenderPerHour",
+        "maxNotificationsPerTargetPerHour"
+      ],
       "additionalProperties": false,
       "properties": {
         "maxOpenPerChallenger": {
@@ -190,9 +195,14 @@
           "minimum": 0,
           "maximum": 86400
         },
-        "maxInvitesPerTargetPerHour": {
+        "maxInvitesPerSenderPerHour": {
           "type": "integer",
           "minimum": 1,
+          "maximum": 1000
+        },
+        "maxNotificationsPerTargetPerHour": {
+          "type": "integer",
+          "minimum": 0,
           "maximum": 1000
         }
       }
