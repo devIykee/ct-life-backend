@@ -1,3 +1,10 @@
+## 2026-10-30 - X: unlink (unlock A4)
+
+No migration. Capability `xUnlink` (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`).
+
+- New `DELETE /x/link` -> `204`: deletes the verified X link with its handle, avatar and token hashes (and any in-flight start). `404 NOT_FOUND` when nothing is linked. Works with X linking disabled. The X account can then be linked by another player.
+- New user message `x_link_update {linked: false, at}` (city room) after an unlink.
+
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
 Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.

@@ -7217,6 +7217,26 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /x/link:
+    delete:
+      tags: [competition]
+      operationId: deleteXLink
+      summary: Unlink my verified X account.
+      description: >-
+        Deletes the link with its handle, avatar and token hashes (and any in-flight OAuth start)
+        immediately; X's developer policy asks for deletion within 24 h of a request. The user
+        gets the realtime message `x_link_update {linked: false, at}`. Works even when X linking is
+        disabled on the server. `404 NOT_FOUND` when no verified link exists. Capability
+        `xUnlink`: `503 CAPABILITY_OFF` while it is off.
+      x-phase: 6
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Unlinked }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
