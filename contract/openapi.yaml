@@ -3330,7 +3330,12 @@ paths:
       tags: [markets]
       operationId: postAlphaCalls
       summary: Post an alpha call.
-      description: Calls are immutable; there is no delete endpoint.
+      description: >-
+        Calls are immutable; there is no delete endpoint. The stored entry is the coin's server
+        price at placement (the body's `entryMicros` must be positive but is otherwise ignored).
+        The call is accepted only while stopMicros < price < targetMicros; otherwise
+        `VALIDATION_FAILED` with `details.reason` `price_outside_band` (and `details.priceMicros`),
+        `unknown_coin` or `coin_dead`.
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'

@@ -191,7 +191,7 @@ Written by apply (creates the row, never resets it) and by shift completion, in 
 - `home_guests`: `(home_id, user_id)`, the people the owner lets through the door.
 - `home_visits`: append-only visit log, unchanged.
 
-Flow: `POST /homes` takes a free unit of the kind's tier (`409 NO_FREE_UNIT` when all are held; a tier with no units leases without a door). The rent worker moves a home `active` to `overdue` on a missed week and to `evicted` after 4 in a row, freeing the unit; `POST /homes/{homeId}/move-out` frees it by choice. `GET /units/{unitId}/access` and `POST /homes/{ownerId}/visit` allow the owner and guests of a live home and nobody else.
+Flow: `POST /homes` takes a free unit of the kind's tier (`409 NO_FREE_UNIT` when all are held; a tier with no units leases without a door). The rent worker (Monday 00:00 UTC) moves a home `active` to `overdue` on a missed week and to `evicted` after 4 in a row, freeing the unit. It charges each live home at most once per rent week: the week's ledger row has the key `home-rent-weekly:<homeId>:<monday>`, the cash debit when paid or a zero-delta `rent_missed` row when not; `POST /homes/{homeId}/move-out` frees it by choice. `GET /units/{unitId}/access` and `POST /homes/{ownerId}/visit` allow the owner and guests of a live home and nobody else.
 
 ## ER diagram
 
