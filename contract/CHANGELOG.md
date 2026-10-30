@@ -1,3 +1,12 @@
+## 2026-10-30 - Devnet test tokens: daily SOL drip and the "Get test tokens" card (unlock WP-C)
+
+Migration 130 (`devnet_drips`). Dark until the operator adds `devnetDrip` to `CAPABILITIES_ON` and sets `DEVNET_DRIP_KEYPAIR`; devnet only.
+
+- `GET /config` `capabilities.features` gains `devnetDrip` (appended).
+- New `GET /devnet/test-tokens` → `{cluster: 'devnet', wallet, usdc {faucetUrl: 'https://faucet.circle.com/', mint, perRequestBaseUnits: '20000000', everyHours: 2}, sol {dripLamports, available, reason: unconfigured | claimed_today | budget_spent | null, nextAt}}`.
+- New `POST /devnet/drip` (Idempotency-Key) → `{dripId, signature, lamports, wallet, nextAt}`: 0.02 SOL from the ops treasury, once per wallet and account per UTC day, never while the wallet holds 0.05 SOL, inside a global daily budget. `409 CONFLICT {reason: balance_sufficient}`, `429 RATE_LIMITED {reason: daily_drip | drip_budget, nextAt}`, `503 CAPABILITY_OFF {reason: drip_unconfigured | treasury_low | rpc_not_devnet | devnet_only}`, `503 SERVER_BUSY {reason: drip_send_failed}`.
+- New env: `DEVNET_DRIP_KEYPAIR`, `DEVNET_DRIP_LAMPORTS`, `DEVNET_DRIP_DAILY_CAP_LAMPORTS`.
+
 ## 2026-10-30 - X: unlink (unlock A4)
 
 No migration. Capability `xUnlink` (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`).

@@ -69,3 +69,34 @@ export function assertDevnetChain(
     throw new CapabilityOffError({ capability, reason: 'devnet_only' });
   }
 }
+
+/** Genesis hash of Solana devnet (`getGenesisHash`, read 2026-10-30). */
+export const DEVNET_GENESIS_HASH = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG';
+
+let devnetRpcChecked = false;
+
+/**
+ * Before the server signs and sends anything: refuse unless the cluster RPC really is
+ * devnet (`getGenesisHash`), so a mis-set RPC URL can never spend on mainnet even when
+ * `config.solana.cluster` says devnet. Checked once per process.
+ *
+ * @param ctx - The app context.
+ * @param capability - The capability the caller serves (echoed in the error).
+ */
+export async function assertDevnetRpc(
+  ctx: Pick<AppContext, 'config' | 'helius'>,
+  capability: CapabilityName,
+): Promise<void> {
+  assertDevnetChain(ctx, capability);
+  if (devnetRpcChecked) return;
+  const genesis = await clusterRpc(ctx).rpc<string>('getGenesisHash', []);
+  if (genesis !== DEVNET_GENESIS_HASH) {
+    throw new CapabilityOffError({ capability, reason: 'rpc_not_devnet' });
+  }
+  devnetRpcChecked = true;
+}
+
+/** Test-only: forget the genesis check. */
+export function _resetDevnetRpcCheckForTests(): void {
+  devnetRpcChecked = false;
+}
