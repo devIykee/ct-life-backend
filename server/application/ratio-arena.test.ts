@@ -49,16 +49,23 @@ let sub: Redis;
 const msgs: UserMessage[] = [];
 
 async function player(
-  opts: { ageHours?: number; level?: number; cash?: number } = {},
+  opts: { ageHours?: number; shiftDays?: number; cash?: number } = {},
 ): Promise<string> {
   const id = uuidv7();
-  const created = new Date(Date.now() - (opts.ageHours ?? 48) * 3_600_000);
+  const created = new Date(Date.now() - (opts.ageHours ?? 96) * 3_600_000);
   await pool.query(`INSERT INTO users (id, wallet, created_at) VALUES ($1, $2, $3)`, [
     id,
     `wpa6-${id}`,
     created.toISOString(),
   ]);
-  await pool.query(`INSERT INTO skills (user_id, clout) VALUES ($1, $2)`, [id, opts.level ?? 3]);
+  // Paid shifts on distinct past UTC days (the server-controlled eligibility signal).
+  for (let d = 1; d <= (opts.shiftDays ?? 2); d++) {
+    await pool.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, created_at)
+       VALUES ($1, 4000, 'cash', 'shift_pay', 'shift', $2, now() - make_interval(days => $3))`,
+      [id, uuidv7(), d],
+    );
+  }
   await pool.query(`INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, $2, 0)`, [
     id,
     opts.cash ?? 0,
@@ -76,7 +83,7 @@ async function cash(userId: string): Promise<number> {
 
 async function ledger(userId: string): Promise<Array<{ reason: string; delta: number }>> {
   const r = await pool.query<{ reason: string; delta_cents: string }>(
-    `SELECT reason, delta_cents FROM ledger_entries WHERE user_id = $1 ORDER BY id`,
+    `SELECT reason, delta_cents FROM ledger_entries WHERE user_id = $1 AND reason <> 'shift_pay' ORDER BY id`,
     [userId],
   );
   return r.rows.map((x) => ({ reason: x.reason, delta: Number(x.delta_cents) }));
@@ -269,8 +276,8 @@ describe('phases, votes and the result', () => {
     await expect(castVote(ctx, await player({ ageHours: 1 }), id, a, tv)).rejects.toMatchObject({
       details: { reason: 'too_new' },
     });
-    await expect(castVote(ctx, await player({ level: 1 }), id, a, tv)).rejects.toMatchObject({
-      details: { reason: 'level' },
+    await expect(castVote(ctx, await player({ shiftDays: 1 }), id, a, tv)).rejects.toMatchObject({
+      details: { reason: 'shift_days' },
     });
     const jailed = await player();
     await setSybilJailed(ctx, jailed);
@@ -504,24 +511,24 @@ describe('phases, votes and the result', () => {
 });
 
 describe('reward farming guards', () => {
-  it('both participants must be old enough and leveled to open or accept', async () => {
+  it('both participants need account age and paid shift days to open or accept', async () => {
     const t0 = new Date();
     const vet = await player();
     const young = await player({ ageHours: 1 });
-    const low = await player({ level: 1 });
+    const low = await player({ shiftDays: 1 });
     await expect(openMatch(ctx, young, { topicId: TOPIC }, t0)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       details: { reason: 'too_new' },
     });
     await expect(openMatch(ctx, low, { topicId: TOPIC }, t0)).rejects.toMatchObject({
-      details: { reason: 'level' },
+      details: { reason: 'shift_days' },
     });
     const m = await openMatch(ctx, vet, { topicId: TOPIC }, t0);
     await expect(acceptMatch(ctx, young, m.matchId, t0)).rejects.toMatchObject({
       details: { reason: 'too_new' },
     });
     await expect(acceptMatch(ctx, low, m.matchId, t0)).rejects.toMatchObject({
-      details: { reason: 'level' },
+      details: { reason: 'shift_days' },
     });
   });
 
@@ -574,5 +581,136 @@ describe('listing', () => {
     await expect(listMatches(ctx, me, 'all', null, 1, 'garbage', t0)).rejects.toBeInstanceOf(
       ValidationFailedError,
     );
+  });
+});
+
+describe('the crowd never outvotes real players (review L9)', () => {
+  it('a maxed-out crowd loses to a 3-1 player vote and only breaks player ties', async () => {
+    const t0 = new Date();
+    const { id, a, b } = await live(t0);
+    // a farms the crowd score to the cap; b gets more real votes.
+    await recordArenaActivity(ctx.redis.main, a, 'talk', 30);
+    for (let i = 0; i < 300; i++) await recordArenaActivity(ctx.redis.main, a, 'emote', 1);
+    await advanceBeefPhases(ctx, toVoting(t0));
+    await votes(id, b, 3);
+    await votes(id, a, 1);
+    await advanceBeefPhases(ctx, toClose(t0));
+    const done = await getMatch(ctx, b, id);
+    expect(done.crowdVotes).toEqual({ challenger: 5, accepter: 0 });
+    expect(done.winnerUserId).toBe(b);
+    expect(done.rewardPaidCents).toBe(cfg.reward.winnerCents);
+  });
+
+  it('decideWinner: votes first, crowd only on a tie, else a draw', async () => {
+    const { decideWinner } = await import('./beef-close.js');
+    expect(decideWinner('c', 'a', 1, 3, { challenger: 5, accepter: 0 })).toBe('a');
+    expect(decideWinner('c', 'a', 2, 2, { challenger: 5, accepter: 0 })).toBe('c');
+    expect(decideWinner('c', 'a', 0, 0, { challenger: 2, accepter: 2 })).toBeNull();
+  });
+});
+
+describe('Elo reads never write (review L10)', () => {
+  it('a player who never played reads the start rating with no row; unknown users 404', async () => {
+    const p = await player();
+    expect(await getElo(ctx, p)).toEqual({
+      userId: p,
+      elo: cfg.elo.start,
+      matchesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+    });
+    const rows = await pool.query(`SELECT 1 FROM beef_elo WHERE user_id = $1`, [p]);
+    expect(rows.rowCount).toBe(0);
+    const ghost = uuidv7();
+    await expect(getElo(ctx, ghost)).rejects.toBeInstanceOf(NotFoundError);
+    expect((await pool.query(`SELECT 1 FROM beef_elo WHERE user_id = $1`, [ghost])).rowCount).toBe(
+      0,
+    );
+  });
+});
+
+describe('aimed-challenge rate limits (review L11)', () => {
+  const pushesTo = (u: string): number =>
+    msgs.filter((m) => m.type === 'beef_challenge' && m.userId === u).length;
+  const settle = (): Promise<void> => new Promise((r) => setTimeout(r, 200));
+
+  it('cancel-and-resend to the same player is cooled down', async () => {
+    const t0 = new Date();
+    const a = await player();
+    const b = await player();
+    const m = await openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, t0);
+    await cancelMatch(ctx, a, m.matchId, t0);
+    await expect(openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, t0)).rejects.toMatchObject(
+      {
+        code: 'RATE_LIMITED',
+        details: { reason: 'invite_cooldown' },
+      },
+    );
+    const later = at(t0, cfg.limits.inviteCooldownSeconds + 1);
+    await expect(
+      openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, later),
+    ).resolves.toMatchObject({ invitedUserId: b });
+    // Open challenges (no target) are not affected.
+    await expect(openMatch(ctx, a, { topicId: TOPIC }, t0)).resolves.toMatchObject({
+      status: 'open',
+    });
+  });
+
+  it('griefers cannot block a friend: the per-target limit only mutes pushes', async () => {
+    const t0 = new Date();
+    const target = await player();
+    msgs.length = 0;
+    for (let i = 0; i < cfg.limits.maxNotificationsPerTargetPerHour; i++) {
+      await openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: target }, t0);
+    }
+    const friend = await player();
+    const m = await openMatch(ctx, friend, { topicId: TOPIC, invitedUserId: target }, t0);
+    expect(m.invitedUserId).toBe(target);
+    await settle();
+    expect(pushesTo(target)).toBe(cfg.limits.maxNotificationsPerTargetPerHour);
+    // The friend's challenge is listed for the target even though it was not pushed.
+    const page = await listMatches(ctx, target, 'open', null, 100, null, t0);
+    expect(page.matches.map((x) => x.matchId)).toContain(m.matchId);
+  });
+
+  it('one sender is capped per hour; others are not affected', async () => {
+    const t0 = new Date();
+    const griefer = await player();
+    const victims: string[] = [];
+    for (let i = 0; i < cfg.limits.maxInvitesPerSenderPerHour; i++) {
+      const v = await player();
+      victims.push(v);
+      const m = await openMatch(ctx, griefer, { topicId: TOPIC, invitedUserId: v }, t0);
+      await cancelMatch(ctx, griefer, m.matchId, t0); // stay under the open-challenge cap
+    }
+    await expect(
+      openMatch(ctx, griefer, { topicId: TOPIC, invitedUserId: await player() }, t0),
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED', details: { reason: 'sender_invite_cap' } });
+    await expect(
+      openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: victims[0]! }, t0),
+    ).resolves.toMatchObject({ invitedUserId: victims[0] });
+  });
+
+  it('concurrent challenges stay within the caps', async () => {
+    const t0 = new Date();
+    const target = await player();
+    const senders = await Promise.all(
+      Array.from({ length: cfg.limits.maxNotificationsPerTargetPerHour + 5 }, () => player()),
+    );
+    msgs.length = 0;
+    const made = await Promise.all(
+      senders.map((s) => openMatch(ctx, s, { topicId: TOPIC, invitedUserId: target }, t0)),
+    );
+    expect(made).toHaveLength(senders.length);
+    await settle();
+    expect(pushesTo(target)).toBe(cfg.limits.maxNotificationsPerTargetPerHour);
+    // The same pair racing: exactly one gets through the cooldown.
+    const a = await player();
+    const b = await player();
+    const race = await Promise.allSettled(
+      Array.from({ length: 5 }, () => openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, t0)),
+    );
+    expect(race.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
   });
 });

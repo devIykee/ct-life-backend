@@ -71,6 +71,8 @@ export const INTEREST_DROP_M = 300;
 /** Matches the client offer range: a car whose centre is up to ~4.4 m away is offered, plus door walk-up. */
 const ENTER_RADIUS_M = 6;
 const EXIT_RADIUS_M = 6;
+/** How far a parked car's stored pose may trail the pose a client reports and still be corrected on entry. */
+const PARKED_DRIFT_M = 30;
 const MIN_Y_M = -20;
 /** How far over the water past the island outline a vehicle may go. */
 const WATER_MARGIN_M = 50;
@@ -219,7 +221,8 @@ export class VehiclesRoom extends Room {
       userId,
       view,
       driving: null,
-      moveBucket: new TokenBucket(12, 6),
+      // Clients send a driving pose every 100 ms: refill at that rate so the last pose before an exit is not dropped.
+      moveBucket: new TokenBucket(20, 12),
       actionBucket: new TokenBucket(2, 3),
     });
     client.send('welcome', { serverNow: Date.now(), instanceId: this.roomId || 'vehicles' });
@@ -239,11 +242,11 @@ export class VehiclesRoom extends Room {
 
   private async handleEnter(client: Client, msg: unknown): Promise<void> {
     const parsed = VehicleEnterMessage.safeParse(msg);
-    const reject = (code: string): void => {
+    const reject = (code: string, extra: Record<string, number> = {}): void => {
       createLogger()
         .child({ room: 'vehicles' })
         .info(
-          { code, vehicleId: parsed.data?.id, kind: parsed.data?.kind },
+          { code, vehicleId: parsed.data?.id, kind: parsed.data?.kind, ...extra },
           'vehicle_enter rejected',
         );
       client.send('rejected', { type: 'vehicle_enter', code, id: parsed.data?.id });
@@ -278,6 +281,7 @@ export class VehiclesRoom extends Room {
     const reach = ENTER_RADIUS_M + WALK_SPEED_M_PER_S * Math.min(1, (now - where.at) / 1000);
 
     let v = this.state.vehicles.get(m.id);
+    let repark = false;
     const kind = v ? v.kind : m.kind;
     if (kind === 'roadstar' && this.isStealTarget(s.userId, m.id, traffic)) {
       return reject('VEHICLE_NOT_STEALABLE');
@@ -288,10 +292,32 @@ export class VehiclesRoom extends Room {
     const previousOwner = v && !traffic ? (this.meta.get(m.id)?.spawnedBy ?? null) : null;
     if (v) {
       if (v.driver !== '') return reject('VEHICLE_TAKEN');
-      if (Math.hypot(v.x - where.x, v.z - where.z) > reach) return reject('VEHICLE_TOO_FAR');
+      const fromStored = Math.hypot(v.x - where.x, v.z - where.z);
+      if (fromStored > reach) {
+        // The stored pose of a parked car can trail the real one (a dropped last move before the exit): when the
+        // player stands by the car the client reports, and that is close to the stored pose, the client's is right.
+        const fromReported =
+          m.x !== undefined && m.z !== undefined
+            ? Math.hypot(m.x - where.x, m.z - where.z)
+            : Infinity;
+        const drift =
+          m.x !== undefined && m.z !== undefined ? Math.hypot(m.x - v.x, m.z - v.z) : Infinity;
+        if (fromReported > reach || drift > PARKED_DRIFT_M) {
+          return reject('VEHICLE_TOO_FAR', {
+            fromStored: Math.round(fromStored),
+            fromReported: Math.round(fromReported),
+            drift: Math.round(drift),
+            posAgeMs: now - where.at,
+          });
+        }
+        repark = true; // applied once every check below has passed
+      }
     } else {
       if (!m.kind || m.x === undefined || m.z === undefined) return reject('NOT_FOUND');
-      if (Math.hypot(m.x - where.x, m.z - where.z) > reach) return reject('VEHICLE_TOO_FAR');
+      const d = Math.hypot(m.x - where.x, m.z - where.z);
+      if (d > reach) {
+        return reject('VEHICLE_TOO_FAR', { fromReported: Math.round(d), posAgeMs: now - where.at });
+      }
     }
     if (stealing) {
       if (m.steal !== true) return reject('STEAL_REQUIRED');
@@ -343,6 +369,12 @@ export class VehiclesRoom extends Room {
           at: now,
         });
       }
+    }
+    if (repark && m.x !== undefined && m.z !== undefined) {
+      v.x = m.x;
+      v.z = m.z;
+      if (m.y !== undefined) v.y = Math.min(VEHICLE_MAX_Y_M, Math.max(MIN_Y_M, m.y));
+      if (m.yaw !== undefined) v.yaw = m.yaw;
     }
     v.driver = s.userId;
     meta.driverSession = client.sessionId;

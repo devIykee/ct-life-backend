@@ -30,6 +30,8 @@ import {
   acceptCabalInvite,
   createCabalInvite,
   CABAL_INVITES_PER_HOST,
+  CABAL_INVITES_PER_SENDER_PER_HOUR,
+  CABAL_NOTIFY_PER_TARGET_PER_HOUR,
   getMyCabal,
   listCabalInvites,
   marinaVisit,
@@ -322,6 +324,66 @@ describe('Cabal invites (unlock A3)', () => {
     );
     await expect(revokeCabalInvite(ctx, host, old.inviteId)).rejects.toMatchObject({
       details: { reason: 'not_pending', status: 'expired' },
+    });
+  });
+});
+
+describe('Cabal invite rate limits (review L11)', () => {
+  async function richHost(tag: string): Promise<string> {
+    const h = await newUser(tag);
+    await setBalance(h, MARINA_GATE_CENTS);
+    return h;
+  }
+
+  it('revoke-and-resend to the same guest is cooled down', async () => {
+    const ctx = buildContext();
+    const host = await richHost('l11h');
+    const guest = await newUser('l11g');
+    const first = await createCabalInvite(ctx, host, guest);
+    await revokeCabalInvite(ctx, host, first.inviteId);
+    await expect(createCabalInvite(ctx, host, guest)).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      details: { reason: 'invite_cooldown' },
+    });
+    const later = new Date(Date.now() + 11 * 60_000);
+    await expect(createCabalInvite(ctx, host, guest, later)).resolves.toMatchObject({
+      status: 'pending',
+    });
+  });
+
+  it('griefers cannot block a friend; concurrent invites ring the guest at most 10 times', async () => {
+    const ctx = buildContext();
+    const target = await newUser('l11t');
+    const rung: UserMessage[] = [];
+    const sub = subscribeUserMessages(ctx.redis.main, (m) => {
+      if (m.type === 'cabal_invite' && m.userId === target) rung.push(m);
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const hosts = await Promise.all(
+      Array.from({ length: CABAL_NOTIFY_PER_TARGET_PER_HOUR + 4 }, (_, i) => richHost(`l11x${i}`)),
+    );
+    const made = await Promise.all(hosts.map((h) => createCabalInvite(ctx, h, target)));
+    expect(made).toHaveLength(hosts.length);
+    // A friend still gets through (listed for the guest), just not pushed.
+    const friend = await richHost('l11f');
+    const inv = await createCabalInvite(ctx, friend, target);
+    await new Promise((r) => setTimeout(r, 200));
+    await sub.quit();
+    expect(rung).toHaveLength(CABAL_NOTIFY_PER_TARGET_PER_HOUR);
+    const mine = await listCabalInvites(ctx, target, { guestUserId: target }, 100);
+    expect(mine.map((x) => x.inviteId)).toContain(inv.inviteId);
+  });
+
+  it('one host is capped per hour', async () => {
+    const ctx = buildContext();
+    const host = await richHost('l11s');
+    for (let i = 0; i < CABAL_INVITES_PER_SENDER_PER_HOUR; i++) {
+      const inv = await createCabalInvite(ctx, host, await newUser(`l11v${i}`));
+      await revokeCabalInvite(ctx, host, inv.inviteId); // stay under the 3-pending cap
+    }
+    await expect(createCabalInvite(ctx, host, await newUser('l11w'))).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      details: { reason: 'sender_invite_cap' },
     });
   });
 });

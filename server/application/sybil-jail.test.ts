@@ -221,3 +221,47 @@ describe('sybil_status message', () => {
     });
   });
 });
+
+describe('one stay at a time (review L8)', () => {
+  it('claims racing at the top tier jail once; one bail frees the player', async () => {
+    const ctx = ctxWith('sybilBail');
+    const u = await newPlayer('degen_trader', 1_000_000);
+    const now = new Date();
+    // Push the window to the 100% tier, then race eight rolls.
+    await ctx.redis.main.set(`sybil:claims:${u}`, '19', 'EX', 3600);
+    const out = await Promise.all(
+      Array.from({ length: 8 }, () => rollSybilJail(ctx, u, 500, now, always)),
+    );
+    expect(out.every((s) => s?.jailed)).toBe(true);
+    const rows = await pool.query(`SELECT 1 FROM sybil_jail WHERE user_id = $1`, [u]);
+    expect(rows.rowCount).toBe(1);
+    await paySybilBail(ctx, u, now);
+    expect((await getSybilStatus(ctx, u, now)).jailed).toBe(false);
+    const paid = await pool.query(
+      `SELECT 1 FROM ledger_entries WHERE user_id = $1 AND reason = 'sybil_bail'`,
+      [u],
+    );
+    expect(paid.rowCount).toBe(1);
+  });
+
+  it('a stay whose timer ran out does not block the next one, and the database allows one open stay', async () => {
+    const ctx = ctxWith('sybilBail');
+    const u = await newPlayer('degen_trader');
+    const t0 = new Date();
+    for (let i = 0; i < 5; i++) await rollSybilJail(ctx, u, 500, t0, always);
+    const later = new Date(t0.getTime() + 3 * 3_600_000);
+    for (let i = 0; i < 5; i++) await rollSybilJail(ctx, u, 500, later, always);
+    const rows = await pool.query<{ open: boolean }>(
+      `SELECT released_at IS NULL AS open FROM sybil_jail WHERE user_id = $1 ORDER BY jailed_at`,
+      [u],
+    );
+    expect(rows.rows.map((r) => r.open)).toEqual([false, true]);
+    await expect(
+      pool.query(
+        `INSERT INTO sybil_jail (jail_id, user_id, reason_id, release_at, bail_cents_per_hour)
+         VALUES ($1, $2, 'sybil_claim_spam', now() + interval '1 hour', 500)`,
+        [uuidv7(), u],
+      ),
+    ).rejects.toThrow(/sybil_jail_one_open_idx/);
+  });
+});

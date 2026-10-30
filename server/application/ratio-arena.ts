@@ -42,6 +42,7 @@ import { beefConfig } from './beef-rules.js';
 import { markLive } from './beef-activity.js';
 import { publishBeef, publishBeefChallenge } from './beef-events.js';
 import { isSybilJailed } from './sybil-jail.js';
+import { checkInviteRate } from './invite-rate.js';
 
 export type BeefStatus =
   'open' | 'active' | 'voting' | 'closed' | 'declined' | 'cancelled' | 'expired';
@@ -223,9 +224,34 @@ export async function refundStake(c: Tx, m: BeefMatchDbRow, userId: string): Pro
 }
 
 /**
- * Both participants must meet `participants` (account age, level) to open or
- * accept: a brand-new alt cannot feed its main a win.
- * `403 FORBIDDEN {reason: too_new | level}`.
+ * A player's standing for the beef gates, from signals only the server
+ * controls: account age, and on how many distinct UTC days the player was paid
+ * for a server-timed shift (`shift_pay` ledger rows; a shift starts with a
+ * server `endsAt` and cannot be completed before it). Client-reported mini-game
+ * scores change the pay and the career XP, never the number of shift days, so
+ * no score can buy eligibility; an alt has to be played across days.
+ * @returns null when the user does not exist.
+ */
+export async function playerStanding(
+  c: Tx,
+  userId: string,
+): Promise<{ created_at: Date; shiftDays: number } | null> {
+  const r = await c.query<{ created_at: Date; shift_days: number }>(
+    `SELECT u.created_at,
+            (SELECT COUNT(DISTINCT (l.created_at AT TIME ZONE 'UTC')::date)::int
+               FROM ledger_entries l
+              WHERE l.user_id = u.id AND l.reason = 'shift_pay' AND l.ref_type = 'shift') AS shift_days
+       FROM users u WHERE u.id = $1`,
+    [userId],
+  );
+  const row = r.rows[0];
+  return row ? { created_at: row.created_at, shiftDays: row.shift_days } : null;
+}
+
+/**
+ * Both participants must meet `participants` (account age, paid shift days)
+ * to open or accept: a brand-new alt cannot feed its main a win.
+ * `403 FORBIDDEN {reason: too_new | shift_days}`.
  */
 async function assertParticipantEligible(
   c: Tx,
@@ -233,13 +259,7 @@ async function assertParticipantEligible(
   userId: string,
   now: Date,
 ): Promise<void> {
-  const u = await c.query<{ created_at: Date; level: number | null }>(
-    `SELECT u.created_at,
-            GREATEST(s.clout, s.coding, s.trading, s.writing, s.design, s.security) AS level
-       FROM users u LEFT JOIN skills s ON s.user_id = u.id WHERE u.id = $1`,
-    [userId],
-  );
-  const me = u.rows[0];
+  const me = await playerStanding(c, userId);
   if (
     !me ||
     now.getTime() - me.created_at.getTime() < cfg.participants.minAccountAgeHours * 3_600_000
@@ -249,8 +269,12 @@ async function assertParticipantEligible(
       minAccountAgeHours: cfg.participants.minAccountAgeHours,
     });
   }
-  if ((me.level ?? 1) < cfg.participants.minLevel) {
-    throw new ForbiddenError({ reason: 'level', minLevel: cfg.participants.minLevel });
+  if (me.shiftDays < cfg.participants.minShiftDays) {
+    throw new ForbiddenError({
+      reason: 'shift_days',
+      minShiftDays: cfg.participants.minShiftDays,
+      shiftDays: me.shiftDays,
+    });
   }
 }
 
@@ -274,45 +298,60 @@ export async function openMatch(
     throw new ValidationFailedError({ field: 'topicId', reason: 'unknown_topic' });
   }
   const invited = input.invitedUserId ?? null;
-  const row = await runInTransaction(async (c) => {
-    await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [challengerUserId]);
-    if (await isSybilJailed(c, challengerUserId, now)) throw new SybilJailedError({});
-    await assertParticipantEligible(c, cfg, challengerUserId, now);
-    if (invited !== null) {
-      if (invited === challengerUserId) {
-        throw new ValidationFailedError({ field: 'invitedUserId', reason: 'self' });
+  let notify = false;
+  const row = await runInTransaction(
+    async (c) => {
+      await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [challengerUserId]);
+      if (await isSybilJailed(c, challengerUserId, now)) throw new SybilJailedError({});
+      await assertParticipantEligible(c, cfg, challengerUserId, now);
+      if (invited !== null) {
+        if (invited === challengerUserId) {
+          throw new ValidationFailedError({ field: 'invitedUserId', reason: 'self' });
+        }
+        const u = await c.query(`SELECT 1 FROM users WHERE id = $1`, [invited]);
+        if ((u.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'user', id: invited });
+        if (await blockedPair(c, challengerUserId, invited)) throw new BlockedError();
+        ({ notify } = await checkInviteRate(c, 'beef', challengerUserId, invited, now, {
+          pairCooldownMs: cfg.limits.inviteCooldownSeconds * 1000,
+          perSenderPerHour: cfg.limits.maxInvitesPerSenderPerHour,
+          notifyPerTargetPerHour: cfg.limits.maxNotificationsPerTargetPerHour,
+        }));
       }
-      const u = await c.query(`SELECT 1 FROM users WHERE id = $1`, [invited]);
-      if ((u.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'user', id: invited });
-      if (await blockedPair(c, challengerUserId, invited)) throw new BlockedError();
-    }
-    const open = await c.query<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM beef_matches
+      const open = await c.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM beef_matches
         WHERE challenger_user_id = $1 AND status = 'open' AND phase_ends_at > $2`,
-      [challengerUserId, now.toISOString()],
-    );
-    if ((open.rows[0]?.n ?? 0) >= cfg.limits.maxOpenPerChallenger) {
-      throw new ConflictError({ reason: 'too_many_open', limit: cfg.limits.maxOpenPerChallenger });
-    }
-    const ends = new Date(now.getTime() + cfg.phases.openSeconds * 1000);
-    const r = await c.query<BeefMatchDbRow>(
-      `INSERT INTO beef_matches (match_id, challenger_user_id, invited_user_id, topic_id,
+        [challengerUserId, now.toISOString()],
+      );
+      if ((open.rows[0]?.n ?? 0) >= cfg.limits.maxOpenPerChallenger) {
+        throw new ConflictError({
+          reason: 'too_many_open',
+          limit: cfg.limits.maxOpenPerChallenger,
+        });
+      }
+      const ends = new Date(now.getTime() + cfg.phases.openSeconds * 1000);
+      const r = await c.query<BeefMatchDbRow>(
+        `INSERT INTO beef_matches (match_id, challenger_user_id, invited_user_id, topic_id,
                                  stake_cents, status, phase_ends_at, reward_cents, opened_at)
        VALUES ($1, $2, $3, $4, 0, 'open', $5, $6, $7)
        RETURNING ${MATCH_COLS}`,
-      [
-        uuidv7(),
-        challengerUserId,
-        invited,
-        input.topicId,
-        ends.toISOString(),
-        cfg.reward.winnerCents,
-        now.toISOString(),
-      ],
-    );
-    return r.rows[0]!;
-  });
-  if (invited !== null) {
+        [
+          uuidv7(),
+          challengerUserId,
+          invited,
+          input.topicId,
+          ends.toISOString(),
+          cfg.reward.winnerCents,
+          now.toISOString(),
+        ],
+      );
+      return r.rows[0]!;
+      // Read committed: every count here runs after an explicit lock (the
+      // challenger's row, the target's advisory lock), so SSI would only add
+      // serialization failures under bursts of invites to one target.
+    },
+    { isolation: 'read committed' },
+  );
+  if (invited !== null && notify) {
     await publishBeefChallenge(ctx, invited, {
       matchId: row.match_id,
       fromUserId: challengerUserId,
@@ -516,30 +555,35 @@ function decodeCursor(cursor: string | null): { at: string; id: string } | null 
   return { at, id };
 }
 
-/** A player's Elo (creates the row at the start rating on first read). */
+/**
+ * A player's Elo. Read-only: a player who never played gets the start rating
+ * with zero counts and no row is written (rows are created only for real
+ * participants, at accept). An unknown user is `404` (review L10).
+ */
 export async function getElo(ctx: AppContext, userId: string): Promise<BeefEloRow> {
   const start = beefConfig(ctx).elo.start;
-  return runInTransaction(async (c) => {
-    await getOrCreateElo(c, userId, start);
+  return ctx.db.withConnection(async (c) => {
     const r = await c.query<{
-      user_id: string;
-      elo: number;
-      matches_played: number;
-      wins: number;
-      losses: number;
-      draws: number;
+      elo: number | null;
+      matches_played: number | null;
+      wins: number | null;
+      losses: number | null;
+      draws: number | null;
     }>(
-      `SELECT user_id, elo, matches_played, wins, losses, draws FROM beef_elo WHERE user_id = $1`,
+      `SELECT e.elo, e.matches_played, e.wins, e.losses, e.draws
+         FROM users u LEFT JOIN beef_elo e ON e.user_id = u.id
+        WHERE u.id = $1`,
       [userId],
     );
-    const row = r.rows[0]!;
+    const row = r.rows[0];
+    if (!row) throw new NotFoundError({ kind: 'user', id: userId });
     return {
-      userId: row.user_id,
-      elo: row.elo,
-      matchesPlayed: row.matches_played,
-      wins: row.wins,
-      losses: row.losses,
-      draws: row.draws,
+      userId,
+      elo: row.elo ?? start,
+      matchesPlayed: row.matches_played ?? 0,
+      wins: row.wins ?? 0,
+      losses: row.losses ?? 0,
+      draws: row.draws ?? 0,
     };
   });
 }

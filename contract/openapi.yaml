@@ -7832,6 +7832,10 @@ paths:
           description: CONFLICT with details.reason invites_exhausted, already_member or invite_pending
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '429':
+          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or sender_invite_cap (per-sender hourly cap); details.retryAfterMs. Never limited by what others sent the target; past the target's hourly push cap an invite is created and listed but not pushed.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
     get:
       tags: [competition]
@@ -8817,8 +8821,7 @@ paths:
         the house, at most 3 rewarded wins a day and 1 per pair of players a day, for accounts at
         least 24 h old, and only when at least 3 real players voted and the winner leads on player
         votes alone; a match the NPC crowd decides moves Elo but pays nothing (config
-        `beef_topics.json`). Both participants need an account at least 24 h old and level 2 to
-        open or accept (`403 FORBIDDEN {reason: too_new | level}`). `stakeCents` may be omitted or 0; more is `400
+        `beef_topics.json`). Both participants need an account at least 48 h old and paid shifts on at least 2 distinct UTC days (server-timed; mini-game scores never count) to open or accept (`403 FORBIDDEN {reason: too_new | shift_days}`). `stakeCents` may be omitted or 0; more is `400
         VALIDATION_FAILED {reason: stakes_disabled}`. `topicId` from the registry (`400
         {reason: unknown_topic}`). With `invitedUserId` only that player may accept or decline and
         they get `beef_challenge`: `404` unknown, `400` yourself, `403 BLOCKED`. At most 3 open
@@ -8856,6 +8859,10 @@ paths:
           description: CONFLICT too_many_open
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '429':
+          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or sender_invite_cap (per-sender hourly cap); details.retryAfterMs. Never limited by what others sent the target; past the target's hourly push cap an invite is created and listed but not pushed.
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /beef/elo:
@@ -8863,6 +8870,9 @@ paths:
       tags: [competition]
       operationId: getBeefElo
       summary: A player's beef Elo (mine by default).
+      description: >-
+        Read-only. A player who never played gets the start rating (1500) with zero counts; `404
+        NOT_FOUND` for an unknown user.
       x-phase: 6
       parameters:
         - { name: userId, in: query, required: false, schema: { type: string, format: uuid } }
@@ -8872,6 +8882,7 @@ paths:
           content:
             application/json: { schema: { $ref: '#/components/schemas/BeefElo' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /beef/{id}:
     get:
@@ -8903,7 +8914,7 @@ paths:
         not_invited}`); never your own (`400`). `409 CONFLICT {reason: not_open}` when it is no
         longer open or expired, `{reason: in_match}` when either player is already in a live
         match, `{reason: legacy_stake}` for a pre-A6 staked challenge. `403 BLOCKED`, `403
-        SYBIL_JAILED`, `403 FORBIDDEN {reason: too_new | level}` (either participant). Capability `beef`.
+        SYBIL_JAILED`, `403 FORBIDDEN {reason: too_new | shift_days}` (either participant). Capability `beef`.
       x-phase: 6
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -8982,12 +8993,10 @@ paths:
       summary: Vote for one participant while the match is in its voting window.
       description: >-
         One vote per player per match; tallies stay hidden until close. Not a participant, not in
-        the Barn, account at least 24 h old, level (highest skill) at least 2: else `403
-        VOTE_NOT_ALLOWED {reason: participant | too_new | level}` or `403 SYBIL_JAILED`. `409
+        the Barn, account at least 48 h old, paid shifts on at least 2 distinct UTC days: else `403
+        VOTE_NOT_ALLOWED {reason: participant | too_new | shift_days}` or `403 SYBIL_JAILED`. `409
         ALREADY_VOTED`; `409 CONFLICT {reason: not_voting}` outside the 10-minute window; `400`
-        when `votedUserId` is not a participant. At close an arena crowd of 5 NPC votes is split
-        by each participant's activity in the Debate Arena during the live phase. Capabilities
-        `beef` and `beefVoting`.
+        when `votedUserId` is not a participant. At close an arena crowd of 5 NPC votes is split by each participant's activity in the Debate Arena during the live phase; it only breaks a tie in player votes and never outvotes real players. Capabilities `beef` and `beefVoting`.
       x-phase: 6
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -9135,7 +9144,7 @@ paths:
       description: >-
         Every `assetId` must be in the caller's current holdings (`GET /nfts/me`), else
         `403 FORBIDDEN {reason: not_owner, assetId}`. Slots 1..`nft.maxSlots` (12),
-        `400 {reason: slot_out_of_range}`; `400 {reason: duplicate_slot | duplicate_asset}`. Framing a new non-allow-listed image past the per-wallet daily image quota is `429 RATE_LIMITED {reason: image_quota}`. An
+        `400 {reason: slot_out_of_range}`; `400 {reason: duplicate_slot | duplicate_asset}`. Framing a new non-allow-listed image past the per-wallet daily image quota is `429 RATE_LIMITED {reason: image_quota}`. Framing needs an active, paid home: otherwise `403 FORBIDDEN {reason: home_required}` (an empty list always works). Framed images also share a global byte ceiling (`maxFramedImageBytes`); past it a new frame's image 404s until there is room. An
         empty list clears the wall. A daily job removes a frame whose asset left the wallet.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
