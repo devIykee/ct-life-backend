@@ -68,7 +68,8 @@ import { BanGuard } from '../ban-guard.js';
 
 export const INTEREST_ADD_M = 250;
 export const INTEREST_DROP_M = 300;
-const ENTER_RADIUS_M = 4;
+/** Matches the client offer range: a car whose centre is up to ~4.4 m away is offered, plus door walk-up. */
+const ENTER_RADIUS_M = 6;
 const EXIT_RADIUS_M = 6;
 const MIN_Y_M = -20;
 /** How far over the water past the island outline a vehicle may go. */
