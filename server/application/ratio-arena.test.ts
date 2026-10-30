@@ -608,3 +608,24 @@ describe('the crowd never outvotes real players (review L9)', () => {
     expect(decideWinner('c', 'a', 0, 0, { challenger: 2, accepter: 2 })).toBeNull();
   });
 });
+
+describe('Elo reads never write (review L10)', () => {
+  it('a player who never played reads the start rating with no row; unknown users 404', async () => {
+    const p = await player();
+    expect(await getElo(ctx, p)).toEqual({
+      userId: p,
+      elo: cfg.elo.start,
+      matchesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+    });
+    const rows = await pool.query(`SELECT 1 FROM beef_elo WHERE user_id = $1`, [p]);
+    expect(rows.rowCount).toBe(0);
+    const ghost = uuidv7();
+    await expect(getElo(ctx, ghost)).rejects.toBeInstanceOf(NotFoundError);
+    expect((await pool.query(`SELECT 1 FROM beef_elo WHERE user_id = $1`, [ghost])).rowCount).toBe(
+      0,
+    );
+  });
+});

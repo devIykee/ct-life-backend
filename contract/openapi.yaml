@@ -8854,6 +8854,9 @@ paths:
       tags: [competition]
       operationId: getBeefElo
       summary: A player's beef Elo (mine by default).
+      description: >-
+        Read-only. A player who never played gets the start rating (1500) with zero counts; `404
+        NOT_FOUND` for an unknown user.
       x-phase: 6
       parameters:
         - { name: userId, in: query, required: false, schema: { type: string, format: uuid } }
@@ -8863,6 +8866,7 @@ paths:
           content:
             application/json: { schema: { $ref: '#/components/schemas/BeefElo' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /beef/{id}:
     get:

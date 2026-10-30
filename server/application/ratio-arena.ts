@@ -539,30 +539,35 @@ function decodeCursor(cursor: string | null): { at: string; id: string } | null 
   return { at, id };
 }
 
-/** A player's Elo (creates the row at the start rating on first read). */
+/**
+ * A player's Elo. Read-only: a player who never played gets the start rating
+ * with zero counts and no row is written (rows are created only for real
+ * participants, at accept). An unknown user is `404` (review L10).
+ */
 export async function getElo(ctx: AppContext, userId: string): Promise<BeefEloRow> {
   const start = beefConfig(ctx).elo.start;
-  return runInTransaction(async (c) => {
-    await getOrCreateElo(c, userId, start);
+  return ctx.db.withConnection(async (c) => {
     const r = await c.query<{
-      user_id: string;
-      elo: number;
-      matches_played: number;
-      wins: number;
-      losses: number;
-      draws: number;
+      elo: number | null;
+      matches_played: number | null;
+      wins: number | null;
+      losses: number | null;
+      draws: number | null;
     }>(
-      `SELECT user_id, elo, matches_played, wins, losses, draws FROM beef_elo WHERE user_id = $1`,
+      `SELECT e.elo, e.matches_played, e.wins, e.losses, e.draws
+         FROM users u LEFT JOIN beef_elo e ON e.user_id = u.id
+        WHERE u.id = $1`,
       [userId],
     );
-    const row = r.rows[0]!;
+    const row = r.rows[0];
+    if (!row) throw new NotFoundError({ kind: 'user', id: userId });
     return {
-      userId: row.user_id,
-      elo: row.elo,
-      matchesPlayed: row.matches_played,
-      wins: row.wins,
-      losses: row.losses,
-      draws: row.draws,
+      userId,
+      elo: row.elo ?? start,
+      matchesPlayed: row.matches_played ?? 0,
+      wins: row.wins ?? 0,
+      losses: row.losses ?? 0,
+      draws: row.draws ?? 0,
     };
   });
 }
