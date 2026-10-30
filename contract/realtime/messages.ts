@@ -366,6 +366,35 @@ export const TapeMessage = z.object({
 export type TapeMessage = z.infer<typeof TapeMessage>;
 
 // ---------------------------------------------------------------------------
+// Server -> client (city room, Builder: unlock WP-B)
+// ---------------------------------------------------------------------------
+
+/** To the invitee: same shape as the REST `HireOffer`. */
+export const HireOfferMessage = z.object({
+  offerId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  projectName: z.string().min(1),
+  fromUserId: z.string().uuid(),
+  toUserId: z.string().uuid(),
+  role: z.enum(['dev', 'mod', 'kol', 'auditor']),
+  salaryCentsPerWeek: z.number().int().positive(),
+  status: z.enum(['pending', 'accepted', 'declined', 'expired', 'withdrawn']),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+});
+export type HireOfferMessage = z.infer<typeof HireOfferMessage>;
+
+/** To every project member: same shape as the REST `ProjectEvent`. */
+export const ProjectEventMessage = z.object({
+  eventId: z.string().regex(/^proj_[a-z_]+$/),
+  projectId: z.string().uuid(),
+  cashDeltaCents: z.number().int(),
+  params: z.record(z.string(), z.string()),
+  at: z.string(),
+});
+export type ProjectEventMessage = z.infer<typeof ProjectEventMessage>;
+
+// ---------------------------------------------------------------------------
 // Limits (enforced in the room handler)
 // ---------------------------------------------------------------------------
 

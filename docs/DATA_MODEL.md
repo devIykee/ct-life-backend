@@ -282,3 +282,12 @@ collisions. CI and Railway run with `--no-check-order`, so blocks may land out o
 | D Platform (markets, homes, NFT gallery) | `1700000140000-1700000149000` |
 
 Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
+
+## Builder projects (migration 1700000120000, unlock WP-B B1)
+
+- `projects` gains `coin_id` (launchpad coin once live), `launched_at`, `paused_at`. `cash_cents` is the treasury (`treasuryCents` on the wire).
+- `project_members` — PK `(project_id, user_id)`, `UNIQUE (project_id, role)`; `role` founder | dev | mod | kol | auditor; `salary_cents_per_week` (0 for the founder), `offer_id`. Replaces `project_hires` as the source of truth (backfilled from it; `project_hires` is no longer written).
+- `project_offers` gains a partial unique index: one `pending` offer per `(project_id, to_user_id)`.
+- `project_events` — `event_id` (`proj_*`), `cash_delta_cents` (treasury change), `params` jsonb, `dedupe_key` UNIQUE (payroll week, daily risk roll).
+- `project_work_log` — PK `(project_id, user_id, week_start)`; `source` hq_shift | project_task. Weeks worked that are not a ledger row (the HQ shift).
+- `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.

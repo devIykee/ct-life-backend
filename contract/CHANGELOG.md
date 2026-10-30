@@ -1,3 +1,14 @@
+## 2026-10-30 - Builder: role offers, treasury, launch, game-paid payroll (unlock WP-B B1, migration 1700000120000)
+
+Behind the `builder` capability (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`). Keeps the rule that Cash never moves between players.
+
+- New: `POST /projects/{id}/offers`, `POST /project-offers/{offerId}/accept|decline`, `POST /projects/{id}/fund` (`{project}`), `DELETE /projects/{id}/members/{userId}` (204), `GET /projects/{id}/launch-quote`, `GET /projects/{id}/events?cursor&limit`. Shapes and every `details.reason` in `openapi.yaml` (tag `projects`).
+- Changed: `POST /projects/{id}/launch` now takes `{ticker, quotedCostCents}`, debits the treasury, lists a coin on the in-game launchpad and returns `ProjectSummary` with `status: live` and `coinId` (was a `founded -> launching` flip). Broadcasts `evt_project_launch` (new id in `ids/events.json`).
+- Removed: `POST /projects/{id}/hire` answers `410 GONE {reason: 'use_offers'}` (it paid the hire from the founder without consent). Not gated: the old route breaks the Cash rule.
+- Additive: `ProjectSummary` (POST/GET `/projects`) gains `name`, `ticker`, `ownerAlias`, `memberCount`, `treasuryCents`, `coinId`, `openRoles`; `cashCents` stays. `GET /projects/{id}` gains `members`, `payrollCentsPerWeek`, `nextPayrollAt`, `vcStakes`, `recentEvents`; `hires` stays.
+- Wages: fixed weekly bands per role (`contract/config/projects.json`: dev/auditor $150-$300, kol $100-$200, mod $80-$150), paid by the game every Monday 00:00 UTC for a week the member worked (a career or McDonald's shift, or an HQ shift), with a matching operating cost from the treasury. A treasury that cannot cover it pauses the project (funding resumes it). One role per player. Daily risk roll for live projects (exploit, rug accusation, audit passed) with a treasury loss and a launchpad price shock.
+- Realtime (city): `hire_offer` (invitee) and `project_event` (every member).
+
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
 Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.

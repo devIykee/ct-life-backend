@@ -18,6 +18,12 @@ The full content lives in M2 onward. This is the table of contents and the rules
   An on-chain tip is a wallet-to-wallet transfer; the game only records an informational note and
   never credits Cash for it.
 - Cash is credited to a player only for their OWN top-up, their own play, or a reward.
+- **Builder projects** (unlock B1): a founder's Cash only goes into their own project treasury
+  (seed, `POST /projects/{id}/fund`), and the treasury only into sinks (launch, the weekly
+  operating cost, risk losses); it is never withdrawable. A member's wage is a fixed band from
+  `contract/config/projects.json`, paid by the game for a week they worked, and the treasury pays
+  a matching operating cost in the same run. One role per player. `POST /projects/{id}/hire`
+  (founder paid the hire directly) answers `410 GONE`.
 
 ## Cash units
 
@@ -39,6 +45,7 @@ The full content lives in M2 onward. This is the table of contents and the rules
 | Weekly Meta bonus         | spec 4       | per `meta.json`                                      |
 | Rent rebates / promotions | spec 4       | TBD                                                  |
 | Cash top-ups (real money) | spec 4       | USDC, SOL, SKR, ORE; ORE 15% bonus, SKR 10%          |
+| Project wages (Builder)   | unlock B1    | game-paid weekly band, worked weeks only             |
 
 ## Sinks (Cash out)
 
@@ -54,7 +61,7 @@ The full content lives in M2 onward. This is the table of contents and the rules
 | Bail                              | spec 4       | after moderation                         |
 | Cosmetics (Cash items)            | spec 4       | shop purchases                           |
 | Trade fees                        | spec 4       | per trade                                |
-| Project salaries (player-founded) | M6           | Cash to roles                            |
+| Project treasury (player-founded) | unlock B1    | seed, fund, launch, matching op cost     |
 
 ## Tax brackets (weekly, resets Mon 00:00 UTC)
 

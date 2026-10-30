@@ -37,6 +37,9 @@ export type UserMessageType =
   | 'quest_progress'
   | 'career_promoted'
   | 'job_unlocked'
+  // Builder and VC Row (unlock WP-B).
+  | 'hire_offer'
+  | 'project_event'
   | 'event_live'
   | 'event_ended'
   | 'irl_checkin'
