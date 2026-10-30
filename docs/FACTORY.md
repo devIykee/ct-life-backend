@@ -23,7 +23,10 @@ creator fee, rug detection, Sleuth post), `factory-filter.ts` (name filter), `pl
    is broadcast with `{coinId, ticker, playerLaunched: "1", templateId, creatorAlias}`.
 3. Anyone trades it with `POST /v1/market/trades` (same endpoint and AMM as house coins).
 4. The hidden arc plays out: price drifts, and a coin that falls 95% (rug), 50% (bleed), 15%
-   (sideways) or 20% (moon) below its peak dies and gets a tombstone like any coin.
+   (sideways) or 20% (moon) below its peak dies and gets a tombstone like any coin. No coin rises past a
+   $1T market cap (`MAX_MCAP_CENTS` in `market-engine.ts`): at that ceiling a rising arc turns (its slope
+   flips negative), so `mcap_cents` can never overflow `bigint`. VC Row unlocks and project payroll price
+   shocks use the same ceiling.
 
 ## Arc odds (server side only)
 

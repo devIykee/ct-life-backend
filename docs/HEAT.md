@@ -44,7 +44,7 @@ Every change is a row in `player_heat_events` (source, delta, heat after).
 
 Rules, all checked on the server:
 
-- Within 4 m of the player's server position (the street room's position hash), 2 messages a second, and one
+- Within 6 m of the player's server position (the street room's position hash), 2 messages a second, and one
   steal per player per 15 s (`RATE_LIMITED`).
 - Without `steal: true` the answer is `STEAL_REQUIRED` (the client shows the Steal prompt, then resends).
 - A vehicle someone is driving is `VEHICLE_TAKEN`. There is no stealing from a driver, so no griefing.
