@@ -84,8 +84,11 @@ export class CityRoom extends Room {
         if (userId !== '') {
           this.userIdBySession.set(client.sessionId, userId);
           const set = this.sessionsByUser.get(userId) ?? new Set<string>();
+          const first = set.size === 0;
           set.add(client.sessionId);
           this.sessionsByUser.set(userId, set);
+          // The player's first session in this room: tell the city they came online (not awaited).
+          if (first) void this.announceJoin(userId);
         }
       } catch (err) {
         if ((err as Error).message === 'ACCOUNT_BANNED') throw err;
@@ -95,6 +98,20 @@ export class CityRoom extends Room {
     this.state.online = this.clients.length;
     client.send('welcome', { serverNow: Date.now(), instanceId: this.roomId ?? 'city' });
   }
+  /**
+   * Announce a player's arrival (overridden in tests). Never throws.
+   * @param userId - The player who joined.
+   */
+  protected async announceJoin(userId: string): Promise<void> {
+    try {
+      const { buildContext } = await import('../../application/context.js');
+      const { announceJoin } = await import('../../application/player-joined.js');
+      await announceJoin(buildContext(), userId);
+    } catch {
+      // Presence is best effort.
+    }
+  }
+
   /**
    * Forward one published message to its recipient.
    *
