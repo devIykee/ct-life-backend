@@ -312,9 +312,7 @@ describe('proxiedImage', () => {
     await pool_.query(`DELETE FROM users WHERE id = $1`, [owner]);
   });
 
-  // WIP (checkpoint 06:10): fails at the in-loop cap assertion (usage reached 3 images with a 2-image cap);
-  // the storeImage/repool framed-cap path needs debugging before this is re-enabled.
-  it.skip('stops framed bytes at the global cap across many owners (alts)', async () => {
+  it('stops framed bytes at the global cap across many owners (alts)', async () => {
     const one = BigInt((await reencode(bigPng)).png.length);
     const cap = Number((await usage('framed')) + one * 2n); // room for two more framed images
     const owners: string[] = [];

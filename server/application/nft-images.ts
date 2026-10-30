@@ -467,11 +467,11 @@ async function storeImage(
     if (!r) return false;
     if (r.status === 'ok') return true; // another replica stored it
     const n = BigInt(out.png.length);
-    // Framed images are bounded per owner (slots x maxImageBytes): no shared budget.
-    if (
-      r.pool !== 'framed' &&
-      !(await makeRoom(c, usage, r.pool, n, budgetOf(r.pool, budgets), hash))
-    ) {
+    // Framed images: bounded per owner (slots x maxImageBytes) and globally
+    // (maxFramedImageBytes), never evicting; unframed ones: their LRU pool.
+    if (r.pool === 'framed') {
+      if (usage.framed + n > framedCap(budgets)) return false;
+    } else if (!(await makeRoom(c, usage, r.pool, n, budgetOf(r.pool, budgets), hash))) {
       return false;
     }
     await c.query(
