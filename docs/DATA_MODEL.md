@@ -282,3 +282,12 @@ collisions. CI and Railway run with `--no-check-order`, so blocks may land out o
 | D Platform (markets, homes, NFT gallery) | `1700000140000-1700000149000` |
 
 Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
+
+## Sybil jail (migration 111, unlock A5)
+
+`sybil_jail`: one row per game-rolled stay in the Sybil Barn (`jail_id`, `user_id`, `reason_id` from
+`config/sybil_reasons.json`, `jailed_at`, `release_at`, `bail_cents_per_hour` = the player's farm yield at
+jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active while `released_at IS NULL
+AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
+over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
+idempotency ref `sybil-bail:<jail_id>`), a sink.

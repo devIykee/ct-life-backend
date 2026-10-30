@@ -20,8 +20,10 @@
  *     (users.sgt_mint IS NOT NULL)
  *
  * The cash credit runs through a 'airdrop' ledger row inside
- * runInTransaction. The sybil-jailed user is refused with
- * ForbiddenError (the master prompt's "Sybil jail" gate).
+ * runInTransaction. A sybil-jailed user (admin flag or a game stay,
+ * server/application/sybil-jail.ts) is refused with 403 SYBIL_JAILED
+ * {releaseAt, reasonId}. While the capability sybilBail is on, every
+ * attempt is counted and may roll a game jail (unlock A5).
  *
  * The daily cap is 4 claims per day per user; the second
  * claim on the same day is a no-op (UNIQUE on user_id+day_date
@@ -29,10 +31,21 @@
  * of 10_000 cents per day to bound the faucet.
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import { NotFoundError, SybilJailedError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { recordCareerAction } from './ladders.js';
 import type { AppContext } from './context.js';
+import { isCapabilityOn } from './capabilities.js';
+import {
+  getSybilStatus,
+  readSybilStatus,
+  rollSybilJail,
+  sybilConfig,
+  type Roll,
+  type SybilStatusRow,
+} from './sybil-jail.js';
+
+export { getSybilStatus, type SybilStatusRow } from './sybil-jail.js';
 
 const BASE_AIRDROP_CENTS = 500; // $5
 const SGT_BONUS_BPS = 5000; // 1.5x = 1 + 50%
@@ -73,19 +86,26 @@ export async function claimAirdrop(
   ctx: AppContext,
   userId: string,
   now: Date = new Date(),
+  roll?: Roll,
 ): Promise<AirdropClaimRow> {
   const dayDate = todayUtc();
+  const before = await getSybilStatus(ctx, userId, now);
+  if (before.jailed) throw jailedError(before);
+  if (isCapabilityOn(ctx, 'sybilBail')) {
+    const jailed = await rollSybilJail(ctx, userId, await claimYieldCents(ctx, userId), now, roll);
+    if (jailed) throw jailedError(jailed);
+  }
+  const cfg = sybilConfig(ctx);
   const claim = await runInTransaction(async (client) => {
-    // Lock the user row + check sybil jail.
+    // Lock the user row + re-check the jail inside the transaction.
     const u = await client.query<UserRow>(
       `SELECT is_sybil_jailed, sgt_mint FROM users WHERE id = $1 FOR UPDATE`,
       [userId],
     );
     const userRow = u.rows[0];
     if (!userRow) throw new NotFoundError({ kind: 'user', id: userId });
-    if (userRow.is_sybil_jailed) {
-      throw new ForbiddenError({ reason: 'sybil_jailed' });
-    }
+    const status = await readSybilStatus(client, cfg, userId, now);
+    if (status.jailed) throw jailedError(status);
     // Idempotency: if a claim exists for today, return it.
     const existing = await client.query<AirdropClaimDbRow>(
       `SELECT claim_id, user_id, day_date, claim_count, amount_cents,
@@ -256,42 +276,27 @@ async function tribeBonusBpsFor(
   return r.rows[0]?.tribe_id === 'airdrop_farmer' ? TRIBE_FARM_BONUS_BPS : 0;
 }
 
-export interface SybilStatusRow {
-  readonly jailed: boolean;
-  readonly jailedAt: string | null;
-  readonly releaseAt: string | null;
-  readonly reasonId: string | null;
-  readonly bailCents: number | null;
-  readonly bailable: boolean;
+/** `403 SYBIL_JAILED {releaseAt, reasonId}`. */
+function jailedError(status: SybilStatusRow): SybilJailedError {
+  return new SybilJailedError({ releaseAt: status.releaseAt, reasonId: status.reasonId });
 }
 
 /**
- * The caller's Sybil Barn status.
- *
- * Only is_sybil_jailed and sybil_jailed_at are stored, so releaseAt,
- * reasonId and bailCents are null and bailable is false until a bail
- * flow exists. Reported rather than invented.
- * @param ctx - The application context.
- * @param userId - The calling user.
- * @returns The status.
+ * What today's claim pays this player (the bail-per-hour snapshot for a jail).
+ * @param ctx - The app context.
+ * @param userId - The player.
  */
-export async function getSybilStatus(ctx: AppContext, userId: string): Promise<SybilStatusRow> {
-  const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{ is_sybil_jailed: boolean; sybil_jailed_at: Date | null }>(
-      'SELECT is_sybil_jailed, sybil_jailed_at FROM users WHERE id = $1',
+async function claimYieldCents(ctx: AppContext, userId: string): Promise<number> {
+  return ctx.db.withConnection(async (c) => {
+    const u = await c.query<{ sgt_mint: string | null }>(
+      'SELECT sgt_mint FROM users WHERE id = $1',
       [userId],
     );
+    return airdropAmountCents(
+      (u.rows[0]?.sgt_mint ?? null) !== null,
+      await tribeBonusBpsFor(c, userId),
+    );
   });
-  const row = r.rows[0];
-  if (!row) throw new NotFoundError({ kind: 'user', id: userId });
-  return {
-    jailed: row.is_sybil_jailed,
-    jailedAt: row.sybil_jailed_at ? row.sybil_jailed_at.toISOString() : null,
-    releaseAt: null,
-    reasonId: null,
-    bailCents: null,
-    bailable: false,
-  };
 }
 
 export interface FarmStatusRow {

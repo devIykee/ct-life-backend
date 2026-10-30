@@ -7217,6 +7217,134 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /me/sybil-status:
+    get:
+      tags: [competition]
+      operationId: getMeSybilStatus
+      summary: Whether I am in the Sybil Barn, why, until when, and the bail.
+      description: >-
+        `source: game` is a game-rolled stay (too many Airdrop Fields claim attempts in an hour;
+        tiers in `config/sybil_reasons.json`): bailable, `bailCents` is the price right now (farm
+        yield per started hour still to serve). `source: admin` is a moderation jail for real
+        multi-accounting: never bailable, `releaseAt` null. Release is checked on read.
+      x-phase: 6
+      responses:
+        '200':
+          description: Sybil status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SybilStatus' }
+              example:
+                jailed: true
+                jailedAt: '2026-10-30T10:00:00.000Z'
+                releaseAt: '2026-10-30T12:00:00.000Z'
+                reasonId: 'sybil_claim_spam'
+                bailCents: 1150
+                bailable: true
+                source: game
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /me/sybil-status/bail:
+    post:
+      tags: [competition]
+      operationId: postMeSybilStatusBail
+      summary: Pay Cash bail to leave a game-rolled Sybil Barn stay early.
+      description: >-
+        Debits `bailCents` (ledger `sybil_bail`, a sink: the Cash leaves the economy) and ends the
+        stay; answers the new status (`jailed: false`). Once per stay. `402 INSUFFICIENT_CASH
+        {have, need}`; `409 CONFLICT {reason: not_jailed}` with no active stay, `{reason:
+        not_bailable}` for an admin jail. The user also gets `sybil_status`. Capability
+        `sybilBail`: `503 CAPABILITY_OFF` while off (no game jail is rolled while it is off).
+      x-phase: 6
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Released
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SybilStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: INSUFFICIENT_CASH
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '409':
+          description: CONFLICT with details.reason not_jailed or not_bailable
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /sybil-barn:
+    get:
+      tags: [competition]
+      operationId: getSybilBarn
+      summary: Who is in the Sybil Barn right now (venue board).
+      description: >-
+        `count` is everyone jailed (game and admin). `inmates` lists game stays only, by alias,
+        soonest release first, at most 50; `anon` tribe members and admin jails are counted, never
+        listed. Capability `sybilBarn`: `503 CAPABILITY_OFF` while off.
+      x-phase: 6
+      responses:
+        '200':
+          description: Inmates
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SybilBarn' }
+              example:
+                count: 3
+                nextCursor: null
+                inmates:
+                  - userId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e41'
+                    alias: 'farmer99'
+                    reasonId: 'sybil_claim_spam'
+                    jailedAt: '2026-10-30T10:00:00.000Z'
+                    releaseAt: '2026-10-30T12:00:00.000Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /airdrop/claim:
+    post:
+      tags: [competition]
+      operationId: postAirdropClaim
+      summary: Claim today's Airdrop Fields drop (once per UTC day).
+      description: >-
+        A second claim on the same UTC day returns the same claim without paying again. A jailed
+        player (admin or game stay) gets `403 SYBIL_JAILED {releaseAt, reasonId}`. While capability
+        `sybilBail` is on, every attempt that reaches the server (a new Idempotency-Key) is counted
+        for the hour and may roll a game jail (`config/sybil_reasons.json`); a hit refuses that
+        attempt with `SYBIL_JAILED` and pushes `sybil_status`.
+      x-phase: 6
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Claim
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [claimId, userId, dayDate, claimCount, amountCents, sgtBonus, claimedAt]
+                properties:
+                  claimId: { type: string, format: uuid }
+                  userId: { type: string, format: uuid }
+                  dayDate: { type: string, format: date }
+                  claimCount: { type: integer }
+                  amountCents: { type: integer }
+                  sgtBonus: { type: boolean }
+                  claimedAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: SYBIL_JAILED
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: SYBIL_JAILED
+                  message: 'You are in the Sybil Barn.'
+                  details: { releaseAt: '2026-10-30T12:00:00.000Z', reasonId: 'sybil_claim_spam' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -9737,3 +9865,34 @@ components:
         targetId: { type: string }
         reasonId: { type: string }
         createdAt: { type: string, format: date-time }
+    SybilStatus:
+      type: object
+      required: [jailed, jailedAt, releaseAt, reasonId, bailCents, bailable, source]
+      properties:
+        jailed: { type: boolean }
+        jailedAt: { type: [string, 'null'], format: date-time }
+        releaseAt:
+          { type: [string, 'null'], format: date-time, description: 'null for an admin jail.' }
+        reasonId: { type: [string, 'null'], description: 'Id from config/sybil_reasons.json.' }
+        bailCents:
+          { type: [integer, 'null'], description: 'Bail right now; null when not bailable.' }
+        bailable: { type: boolean }
+        source: { type: [string, 'null'], enum: [game, admin, null] }
+    SybilBarn:
+      type: object
+      required: [count, inmates, nextCursor]
+      properties:
+        count: { type: integer, minimum: 0 }
+        inmates:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [userId, alias, reasonId, jailedAt, releaseAt]
+            properties:
+              userId: { type: string, format: uuid }
+              alias: { type: string }
+              reasonId: { type: string }
+              jailedAt: { type: string, format: date-time }
+              releaseAt: { type: string, format: date-time }
+        nextCursor: { type: 'null' }

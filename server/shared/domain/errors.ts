@@ -718,3 +718,11 @@ export class CapabilityOffError extends DomainError {
     this.httpStatus = 503;
   }
 }
+
+export class SybilJailedError extends DomainError {
+  readonly code = 'SYBIL_JAILED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are in the Sybil Barn.', details);
+    this.httpStatus = 403;
+  }
+}

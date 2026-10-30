@@ -32,6 +32,7 @@ import { randomBytes } from 'node:crypto';
 import { careerAreasAt } from './ladders.js';
 import { activeJail, JAIL_VENUE_ID } from './heat.js';
 import type { AppContext } from './context.js';
+import { isSybilJailed } from './sybil-jail.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
 const CABAL_INVITE_TTL_DAYS = 7;
@@ -250,10 +251,8 @@ export async function getVenueAccess(
       'SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1',
       [userId],
     );
-    const jail = await c.query<{ is_sybil_jailed: boolean }>(
-      'SELECT is_sybil_jailed FROM users WHERE id = $1',
-      [userId],
-    );
+    // Admin flag or a game stay (unlock A5) both put you in the Barn.
+    const jailed = await isSybilJailed(c, userId, new Date());
     const member = await c.query<{ invite_id: string }>(
       `SELECT invite_id FROM cabal_invites
         WHERE guest_user_id = $1 AND used_at IS NOT NULL
@@ -262,7 +261,7 @@ export async function getVenueAccess(
     );
     return {
       netWorth: Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
-      jailed: jail.rows[0]?.is_sybil_jailed ?? false,
+      jailed,
       isMember: (member.rowCount ?? 0) > 0,
     };
   });
