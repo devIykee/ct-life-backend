@@ -161,7 +161,23 @@ describe('nft gallery', () => {
       devnet: [asset(id(11), { owner: w })],
       mainnet: [asset(id(12), { owner: w, collection: MAD_LADS })],
     });
+    // No home (or an overdue one): no frames. Each wall costs real rent.
+    const noHome = await api.call(owner, 'PUT', '/v1/homes/me/gallery', {
+      frames: [{ slot: 1, assetId: id(11) }],
+    });
+    expect(noHome.status).toBe(403);
+    expect(errDetails(noHome)).toMatchObject({ reason: 'home_required' });
     await leaseBasement(owner);
+    await db().withConnection((c) =>
+      c.query(`UPDATE homes SET status = 'overdue' WHERE owner_user_id = $1`, [owner.sub]),
+    );
+    const overdue = await api.call(owner, 'PUT', '/v1/homes/me/gallery', {
+      frames: [{ slot: 1, assetId: id(11) }],
+    });
+    expect(errDetails(overdue)).toMatchObject({ reason: 'home_required' });
+    await db().withConnection((c) =>
+      c.query(`UPDATE homes SET status = 'active' WHERE owner_user_id = $1`, [owner.sub]),
+    );
     const bad = await api.call(owner, 'PUT', '/v1/homes/me/gallery', {
       frames: [{ slot: 1, assetId: id(99) }],
     });

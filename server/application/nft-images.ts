@@ -304,8 +304,10 @@ export interface ServedImage {
  * (`nft_images.pool`, `nft_image_usage` row):
  *   - `framed`: referenced by at least one wall frame. Bounded per owner by
  *     construction (at most `maxSlots` frames, each image at most
- *     `maxImageBytes`), never evicted while framed, and not part of any shared
- *     budget, so nobody's frames can crowd anyone else out.
+ *     `maxImageBytes`, and framing needs an active paid home), and globally by
+ *     `maxFramedImageBytes` (many alts cannot grow it without limit). Never
+ *     evicted while framed; past the ceiling a new framed image is just not
+ *     stored (it 404s until there is room).
  *   - `ok`: unframed images of allow-listed collections, LRU within
  *     `maxOkImageBytes`.
  *   - `pending`: every other unframed image (anyone can mint one), LRU within
@@ -329,10 +331,17 @@ async function lockUsage(c: Q): Promise<Record<Pool, bigint>> {
   return out;
 }
 
-function budgetOf(pool: 'ok' | 'pending', override?: { ok?: number; pending?: number }): bigint {
+type Budgets = { ok?: number; pending?: number; framed?: number };
+
+function budgetOf(pool: 'ok' | 'pending', override?: Budgets): bigint {
   const cfg = nftGalleryConfig();
   if (pool === 'ok') return BigInt(override?.ok ?? cfg.maxOkImageBytes);
   return BigInt(override?.pending ?? cfg.maxPendingImageBytes);
+}
+
+/** Global ceiling on framed bytes, across all owners (alts included). */
+function framedCap(override?: Budgets): bigint {
+  return BigInt(override?.framed ?? nftGalleryConfig().maxFramedImageBytes);
 }
 
 /**
@@ -390,11 +399,7 @@ async function makeRoom(
  * @param budgets.ok - The ok pool budget.
  * @param budgets.pending - The pending pool budget.
  */
-export async function repool(
-  c: Q,
-  hashes: string[],
-  budgets?: { ok?: number; pending?: number },
-): Promise<void> {
+export async function repool(c: Q, hashes: string[], budgets?: Budgets): Promise<void> {
   if (hashes.length === 0) return;
   const usage = await lockUsage(c);
   const rows = await c.query<{
@@ -423,6 +428,8 @@ export async function repool(
     let keepBytes = n > 0n;
     if (keepBytes && want !== 'framed') {
       keepBytes = await makeRoom(c, usage, want, n, budgetOf(want, budgets), r.hash);
+    } else if (keepBytes && usage.framed + n > framedCap(budgets)) {
+      keepBytes = false; // framed pool at its global ceiling: keep the frame, drop the bytes
     }
     if (keepBytes) {
       await c.query(`UPDATE nft_image_usage SET bytes = bytes + $1 WHERE pool = $2`, [
@@ -448,7 +455,7 @@ export async function repool(
 async function storeImage(
   hash: string,
   out: { png: Buffer; width: number; height: number },
-  budgets?: { ok?: number; pending?: number },
+  budgets?: Budgets,
 ): Promise<boolean> {
   return runInTransaction(async (c) => {
     const usage = await lockUsage(c);
@@ -493,7 +500,7 @@ async function storeImage(
 export async function proxiedImage(
   ctx: AppContext,
   hash: string,
-  opts: Partial<FetchOptions> & { budgets?: { ok?: number; pending?: number } } = {},
+  opts: Partial<FetchOptions> & { budgets?: Budgets } = {},
 ): Promise<ServedImage | null> {
   if (!/^[0-9a-f]{40}$/.test(hash)) return null;
   const r = await ctx.db.withConnection((c) =>

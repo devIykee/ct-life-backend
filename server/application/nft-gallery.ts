@@ -422,6 +422,15 @@ export async function putGallery(
   if (new Set(frames.map((f) => f.assetId)).size !== frames.length) {
     throw new ValidationFailedError({ reason: 'duplicate_asset' });
   }
+  if (frames.length > 0) {
+    // Each wall costs real in-game rent: only an active, paid lease can frame.
+    const home = await ctx.db.withConnection((c) =>
+      c.query(`SELECT 1 FROM homes WHERE owner_user_id = $1 AND status = 'active' LIMIT 1`, [
+        userId,
+      ]),
+    );
+    if ((home.rowCount ?? 0) === 0) throw new ForbiddenError({ reason: 'home_required' });
+  }
   const held =
     frames.length > 0
       ? new Map((await holdingsOf(ctx, userId)).items.map((h) => [h.assetId, h]))
