@@ -30,11 +30,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS vc_offers_one_pending_idx
 ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS offer_id uuid;
 ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS unlock_at timestamptz;
 ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS dumped_at timestamptz;
+-- Anti front-running (security review H2): the dump starts at a hidden random
+-- time after unlock and bleeds in small steps; none of this is ever sent.
+ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS dump_start_at timestamptz;
+ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS dump_shock_bps int NOT NULL DEFAULT 0;
+ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS dump_steps int NOT NULL DEFAULT 0;
+ALTER TABLE vc_deals ADD COLUMN IF NOT EXISTS dump_steps_done int NOT NULL DEFAULT 0;
 ALTER TABLE vc_deals DROP CONSTRAINT IF EXISTS vc_deals_status_check;
 ALTER TABLE vc_deals ADD CONSTRAINT vc_deals_status_check
   CHECK (status IN ('active', 'unlocked', 'dumped', 'exited', 'written_off'));
 
-CREATE INDEX IF NOT EXISTS vc_deals_unlock_idx ON vc_deals (unlock_at) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS vc_deals_unlock_idx ON vc_deals (unlock_at) WHERE status IN ('active', 'unlocked');
 
 -- Down Migration
 DROP INDEX IF EXISTS vc_deals_unlock_idx;
@@ -42,6 +48,10 @@ UPDATE vc_deals SET status = 'exited' WHERE status IN ('unlocked', 'dumped');
 ALTER TABLE vc_deals DROP CONSTRAINT IF EXISTS vc_deals_status_check;
 ALTER TABLE vc_deals ADD CONSTRAINT vc_deals_status_check
   CHECK (status IN ('active', 'exited', 'written_off'));
+ALTER TABLE vc_deals DROP COLUMN IF EXISTS dump_steps_done;
+ALTER TABLE vc_deals DROP COLUMN IF EXISTS dump_steps;
+ALTER TABLE vc_deals DROP COLUMN IF EXISTS dump_shock_bps;
+ALTER TABLE vc_deals DROP COLUMN IF EXISTS dump_start_at;
 ALTER TABLE vc_deals DROP COLUMN IF EXISTS dumped_at;
 ALTER TABLE vc_deals DROP COLUMN IF EXISTS unlock_at;
 ALTER TABLE vc_deals DROP COLUMN IF EXISTS offer_id;

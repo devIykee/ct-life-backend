@@ -26,6 +26,11 @@ export interface VcConfig {
   readonly dumpChanceBps: number;
   readonly dumpShockPerEquityBps: number;
   readonly maxDumpShockBps: number;
+  readonly dumpWindowHours: number;
+  readonly dumpSteps: number;
+  readonly dumpStepChanceBps: number;
+  readonly maxBleedHours: number;
+  readonly perpFreezeLeadHours: number;
 }
 
 export interface VcTerms {
@@ -92,4 +97,40 @@ export function shouldOffer(cfg: VcConfig, q: OfferDecisionInput, rng: Rng): boo
   const since = q.lastOfferAtMs ?? q.liveSinceMs;
   if (q.nowMs - since >= cfg.guaranteeAfterDays * 86_400_000) return true;
   return rng.chance(cfg.dailyOfferChanceBps / 10_000);
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * What players see of an unlock: the UTC day only. The exact time, and when
+ * the dump really starts, stay on the server (security review H2).
+ * @param unlockAtMs - The exact unlock time.
+ * @returns 00:00 UTC of that day (epoch ms).
+ */
+export function publicUnlockAt(unlockAtMs: number): number {
+  return Math.floor(unlockAtMs / DAY_MS) * DAY_MS;
+}
+
+/**
+ * When the dump starts: a hidden uniform time in [unlock, unlock + window).
+ * @param cfg - projects.json `vc`.
+ * @param unlockAtMs - The exact unlock time.
+ * @param rng - Injected randomness.
+ * @returns The start (epoch ms).
+ */
+export function scheduleDumpStart(cfg: VcConfig, unlockAtMs: number, rng: Rng): number {
+  return unlockAtMs + Math.floor(rng.float() * cfg.dumpWindowHours * 3_600_000);
+}
+
+/**
+ * The per-step shock so `steps` equal multiplicative steps add up to the
+ * total: (1 + s)^steps = 1 + total.
+ * @param totalBps - The whole dump (negative), e.g. -2250.
+ * @param steps - How many steps.
+ * @returns The per-step shock in bps (negative, rounded toward zero).
+ */
+export function dumpStepBps(totalBps: number, steps: number): number {
+  if (steps <= 0 || totalBps === 0) return 0;
+  const per = Math.pow(1 + totalBps / 10_000, 1 / steps) - 1;
+  return Math.trunc(per * 10_000);
 }

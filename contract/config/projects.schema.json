@@ -241,7 +241,12 @@
         "unlockDays",
         "dumpChanceBps",
         "dumpShockPerEquityBps",
-        "maxDumpShockBps"
+        "maxDumpShockBps",
+        "dumpWindowHours",
+        "dumpSteps",
+        "dumpStepChanceBps",
+        "maxBleedHours",
+        "perpFreezeLeadHours"
       ],
       "properties": {
         "archetypeIds": {
@@ -329,6 +334,31 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 5000
+        },
+        "dumpWindowHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 336
+        },
+        "dumpSteps": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 200
+        },
+        "dumpStepChanceBps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "maxBleedHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 72
+        },
+        "perpFreezeLeadHours": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 168
         }
       }
     }

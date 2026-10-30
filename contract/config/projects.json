@@ -102,7 +102,7 @@
     "proj_vc_dump"
   ],
   "vc": {
-    "_note": "VC Row NPCs buy into live projects cheap (valuationDiscountBps off the coin's market cap) and dump at unlock. VC money is an NPC faucet into the TREASURY only, which only feeds sinks; it never reaches a player.",
+    "_note": "VC Row NPCs buy into live projects cheap (valuationDiscountBps off the coin's market cap) and dump at unlock. VC money is an NPC faucet into the TREASURY only, which only feeds sinks; it never reaches a player. Anti front-running (security review H2): only the unlock DAY is published; the dump starts at a hidden random time within dumpWindowHours after unlock and bleeds in dumpSteps small steps at random worker runs (each below one market tick's noise), finishing by maxBleedHours; new perps on the coin are refused from perpFreezeLeadHours before unlock until the bleed ends; events go out only after it completes.",
     "archetypeIds": ["vc"],
     "treasuryThresholdCents": 500000,
     "minLiveHours": 24,
@@ -122,6 +122,11 @@
     "unlockDays": 7,
     "dumpChanceBps": 10000,
     "dumpShockPerEquityBps": 15000,
-    "maxDumpShockBps": 3000
+    "maxDumpShockBps": 3000,
+    "dumpWindowHours": 72,
+    "dumpSteps": 24,
+    "dumpStepChanceBps": 4000,
+    "maxBleedHours": 12,
+    "perpFreezeLeadHours": 24
   }
 }

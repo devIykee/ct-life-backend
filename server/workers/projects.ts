@@ -5,7 +5,7 @@
  *   risk           daily 12:00 UTC   exploit / rug accusation / audit, price shock
  *   expire-offers  hourly at :07     pending role and VC offers past expiry -> expired
  *   vc-offers      daily 15:00 UTC   VC Row term sheets for qualifying live projects (B2)
- *   vc-unlock      hourly at :17     deals past unlock: the VC dumps (B2)
+ *   vc-unlock      every 5 minutes   unlock, hidden random start, bleed the dump (B2, review H2)
  *
  * Every handler is idempotent (payroll runs table, a per-day Redis claim for
  * risk, a conditional UPDATE for offers), so a retried or overlapping job
@@ -95,7 +95,7 @@ export async function startProjectsWorker(
   );
   await queue.upsertJobScheduler(
     'projects-vc-unlock',
-    { pattern: '17 * * * *', tz: 'UTC' },
+    { pattern: '*/5 * * * *', tz: 'UTC' },
     { name: 'vc-unlock', data: {}, opts },
   );
   return async () => {

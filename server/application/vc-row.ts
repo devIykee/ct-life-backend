@@ -21,7 +21,17 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ConflictError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import type { Rng } from '../shared/domain/rng.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { rollVcTerms, shouldOffer, vcDumpShockBps, type VcConfig } from '../shared/domain/vc.js';
+import {
+  dumpStepBps,
+  publicUnlockAt,
+  rollVcTerms,
+  scheduleDumpStart,
+  shouldOffer,
+  vcDumpShockBps,
+  type VcConfig,
+} from '../shared/domain/vc.js';
+import { SeededRng } from '../shared/domain/rng.js';
+import { randomInt } from 'node:crypto';
 import { publishToUser, publishWorldEvent } from './realtime-bus.js';
 import { assertOwner, lockProject } from './projects.js';
 import { projectsConfig, publishProjectEvent, recordProjectEvent } from './project-events.js';
@@ -80,7 +90,10 @@ function vcConfig(ctx: AppContext): VcConfig {
 
 function toOffer(r: OfferDbRow, nowMs: number): VcOffer {
   const expired = r.status === 'pending' && r.expires_at.getTime() <= nowMs;
-  const unlock = r.deal_unlock_at ?? new Date(nowMs + r.unlock_days * DAY_MS);
+  // Only the unlock DAY is ever sent (security review H2).
+  const unlock = new Date(
+    publicUnlockAt((r.deal_unlock_at ?? new Date(nowMs + r.unlock_days * DAY_MS)).getTime()),
+  );
   return {
     offerId: r.offer_id,
     projectId: r.project_id,
@@ -154,13 +167,17 @@ export async function acceptVcOffer(
   ctx: AppContext,
   userId: string,
   offerId: string,
+  rng: Rng = new SeededRng(randomInt(0, 2 ** 31)),
 ): Promise<VcOffer> {
   const now = new Date();
+  const cfg = vcConfig(ctx);
   const { offer, event } = await runInTransaction(async (c) => {
     const { offer: o, project } = await lockOfferForFounder(c, userId, offerId, now.getTime());
     if (project.status !== 'live' || project.coinId === null)
       throw new ConflictError({ reason: 'wrong_status', status: project.status });
     const unlockAt = new Date(now.getTime() + o.unlock_days * DAY_MS);
+    // Hidden: when the VC really starts selling (never sent to clients).
+    const dumpStartAt = new Date(scheduleDumpStart(cfg, unlockAt.getTime(), rng));
     await c.query(`UPDATE vc_offers SET status = 'accepted' WHERE offer_id = $1`, [offerId]);
     await c.query(
       `UPDATE vc_offers SET status = 'expired'
@@ -172,8 +189,8 @@ export async function acceptVcOffer(
       Number(o.invest_cents),
     ]);
     await c.query(
-      `INSERT INTO vc_deals (deal_id, project_id, vc_archetype_id, invest_cents, equity_bps, status, offer_id, unlock_at, created_at)
-       VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8)`,
+      `INSERT INTO vc_deals (deal_id, project_id, vc_archetype_id, invest_cents, equity_bps, status, offer_id, unlock_at, created_at, dump_start_at)
+       VALUES ($1, $2, $3, $4, $5, 'active', $6, $7, $8, $9)`,
       [
         uuidv7(),
         o.project_id,
@@ -183,6 +200,7 @@ export async function acceptVcOffer(
         offerId,
         unlockAt,
         now,
+        dumpStartAt,
       ],
     );
     const ev = await recordProjectEvent(c, {
@@ -192,7 +210,7 @@ export async function acceptVcOffer(
       params: {
         vcArchetypeId: o.vc_archetype_id,
         equityBps: String(o.equity_bps),
-        unlockAt: unlockAt.toISOString(),
+        unlockOn: new Date(publicUnlockAt(unlockAt.getTime())).toISOString().slice(0, 10),
       },
       at: now,
     });
@@ -397,7 +415,7 @@ export async function offerForProject(
       vcArchetypeId: terms.vcArchetypeId,
       investCents: terms.investCents,
       equityBps: terms.equityBps,
-      unlockAt: new Date(now.getTime() + cfg.unlockDays * DAY_MS).toISOString(),
+      unlockAt: new Date(publicUnlockAt(now.getTime() + cfg.unlockDays * DAY_MS)).toISOString(),
       status: 'pending',
       expiresAt: expiresAt.toISOString(),
     };
@@ -409,13 +427,23 @@ export async function offerForProject(
 }
 
 /**
- * Hourly: every active deal past `unlock_at` unlocks; with `dumpChanceBps`
- * (100% by default) the VC dumps: launchpad price shock, `proj_vc_dump`,
- * world event `evt_vc_dump`, status `dumped`; otherwise `unlocked`.
+ * Every 5 minutes. Built so the dump cannot be front-run (security review
+ * H2): players only ever see the unlock DAY, and
+ *   1. at `unlock_at` a deal turns `unlocked` and decides whether the VC dumps
+ *      (`dumpChanceBps`) and by how much (1.5x the stake, capped);
+ *   2. from a hidden random `dump_start_at` (0 to `dumpWindowHours` after
+ *      unlock) the sell bleeds out in `dumpSteps` equal multiplicative steps
+ *      (about -1% each, smaller than one market tick's noise), one step at a
+ *      random run (`dumpStepChanceBps`), all remaining steps by
+ *      `maxBleedHours` after the start;
+ *   3. only when the last step lands: status `dumped`, `proj_vc_dump`, world
+ *      event `evt_vc_dump`.
+ * New perps on the coin are refused from `perpFreezeLeadHours` before unlock
+ * until the bleed ends (`vcDumpFreezesPerps`, called by openPerp).
  * @param ctx - The application context.
  * @param rng - Injected randomness.
  * @param now - The run time.
- * @returns How many deals dumped.
+ * @returns How many deals finished dumping on this run.
  */
 export async function runVcUnlocks(
   ctx: AppContext,
@@ -425,51 +453,98 @@ export async function runVcUnlocks(
   const cfg = vcConfig(ctx);
   const due = await ctx.db.withConnection((c) =>
     c.query<{ deal_id: string; project_id: string }>(
-      `SELECT deal_id, project_id FROM vc_deals WHERE status = 'active' AND unlock_at <= $1 ORDER BY unlock_at`,
+      `SELECT deal_id, project_id FROM vc_deals
+        WHERE (status = 'active' AND unlock_at <= $1)
+           OR (status = 'unlocked' AND dump_steps_done < dump_steps AND dump_start_at <= $1)
+        ORDER BY unlock_at`,
       [now],
     ),
   );
-  let dumped = 0;
+  let finished = 0;
   for (const d of due.rows) {
     try {
       const res = await runInTransaction(async (c) => {
         const p = await lockProject(c, d.project_id);
-        const r = await c.query<{ status: string; equity_bps: number; vc_archetype_id: string }>(
-          `SELECT status, equity_bps, vc_archetype_id FROM vc_deals WHERE deal_id = $1 FOR UPDATE`,
+        const r = await c.query<{
+          status: string;
+          equity_bps: number;
+          vc_archetype_id: string;
+          dump_start_at: Date | null;
+          dump_shock_bps: number;
+          dump_steps: number;
+          dump_steps_done: number;
+        }>(
+          `SELECT status, equity_bps, vc_archetype_id, dump_start_at, dump_shock_bps, dump_steps, dump_steps_done
+             FROM vc_deals WHERE deal_id = $1 FOR UPDATE`,
           [d.deal_id],
         );
         const deal = r.rows[0];
-        if (!deal || deal.status !== 'active') return null;
-        const dump = rng.chance(cfg.dumpChanceBps / 10_000);
-        const shock = dump ? vcDumpShockBps(cfg, deal.equity_bps) : 0;
-        await c.query(
-          `UPDATE vc_deals SET status = $2, dumped_at = CASE WHEN $3::boolean THEN $4::timestamptz END WHERE deal_id = $1`,
-          [d.deal_id, dump ? 'dumped' : 'unlocked', dump, now],
-        );
-        if (dump && p.coinId !== null && shock !== 0) {
+        if (!deal) return null;
+        if (deal.status === 'active') {
+          const dump = rng.chance(cfg.dumpChanceBps / 10_000);
+          const shock = dump ? vcDumpShockBps(cfg, deal.equity_bps) : 0;
           await c.query(
-            `UPDATE coins SET price_micros = GREATEST(1, price_micros * (10000 + $2::bigint) / 10000)
-              WHERE coin_id = $1 AND stage <> 'dead'`,
-            [p.coinId, shock],
+            `UPDATE vc_deals SET status = 'unlocked', dump_shock_bps = $2, dump_steps = $3,
+                    dump_start_at = COALESCE(dump_start_at, $4)
+              WHERE deal_id = $1`,
+            [d.deal_id, shock, shock !== 0 ? cfg.dumpSteps : 0, now],
           );
+          if (shock !== 0) return null; // the bleed starts later, unannounced
+          const ev = await recordProjectEvent(c, {
+            projectId: d.project_id,
+            eventId: 'proj_vc_unlocked',
+            params: { vcArchetypeId: deal.vc_archetype_id, equityBps: String(deal.equity_bps) },
+            at: now,
+            dedupeKey: `vc-unlock:${d.deal_id}`,
+          });
+          return { ev, dumped: false, name: p.name, coinId: p.coinId };
         }
+        if (deal.status !== 'unlocked' || deal.dump_steps_done >= deal.dump_steps) return null;
+        const start = (deal.dump_start_at ?? now).getTime();
+        const overdue = now.getTime() >= start + cfg.maxBleedHours * 3_600_000;
+        const steps = overdue
+          ? deal.dump_steps - deal.dump_steps_done
+          : rng.chance(cfg.dumpStepChanceBps / 10_000)
+            ? 1
+            : 0;
+        if (steps === 0) return null;
+        const per = dumpStepBps(deal.dump_shock_bps, deal.dump_steps);
+        if (p.coinId !== null && per !== 0) {
+          for (let i = 0; i < steps; i++) {
+            await c.query(
+              `UPDATE coins SET price_micros = GREATEST(1, price_micros * (10000 + $2::bigint) / 10000)
+                WHERE coin_id = $1 AND stage <> 'dead'`,
+              [p.coinId, per],
+            );
+          }
+        }
+        const done = deal.dump_steps_done + steps;
+        const last = done >= deal.dump_steps;
+        await c.query(
+          `UPDATE vc_deals SET dump_steps_done = $2,
+                  status = CASE WHEN $3::boolean THEN 'dumped' ELSE status END,
+                  dumped_at = CASE WHEN $3::boolean THEN $4::timestamptz ELSE dumped_at END
+            WHERE deal_id = $1`,
+          [d.deal_id, done, last, now],
+        );
+        if (!last) return null;
         const ev = await recordProjectEvent(c, {
           projectId: d.project_id,
-          eventId: dump ? 'proj_vc_dump' : 'proj_vc_unlocked',
+          eventId: 'proj_vc_dump',
           params: {
             vcArchetypeId: deal.vc_archetype_id,
             equityBps: String(deal.equity_bps),
-            priceShockBps: String(shock),
+            priceShockBps: String(deal.dump_shock_bps),
           },
           at: now,
-          dedupeKey: `vc-unlock:${d.deal_id}`,
+          dedupeKey: `vc-dump:${d.deal_id}`,
         });
-        return { ev, dump, name: p.name, coinId: p.coinId };
+        return { ev, dumped: true, name: p.name, coinId: p.coinId };
       }, RC);
       if (!res) continue;
       if (res.ev) await publishProjectEvent(ctx, res.ev);
-      if (res.dump) {
-        dumped++;
+      if (res.dumped) {
+        finished++;
         await publishWorldEvent(ctx, 'evt_vc_dump', {
           projectId: d.project_id,
           name: res.name,
@@ -480,7 +555,39 @@ export async function runVcUnlocks(
       console.error(`[projects] vc unlock ${d.deal_id} failed:`, (e as Error).message);
     }
   }
-  return dumped;
+  return finished;
+}
+
+/**
+ * Whether new perps on this coin are frozen: a VC deal on its project is
+ * within `perpFreezeLeadHours` of unlock, or unlocked and still bleeding.
+ * Called by openPerp so nobody can open a short into a scheduled dump.
+ * @param c - A connection or transaction.
+ * @param coinId - The coin.
+ * @param now - The current time.
+ * @param leadHours - projects.json `vc.perpFreezeLeadHours`.
+ * @returns True when perp entry is frozen.
+ */
+export async function vcDumpFreezesPerps(
+  c: PoolClient,
+  coinId: string,
+  now: Date,
+  leadHours: number,
+): Promise<boolean> {
+  const r = await c.query(
+    `SELECT 1 FROM vc_deals d JOIN projects p ON p.project_id = d.project_id
+      WHERE p.coin_id = $1
+        AND ((d.status = 'active' AND d.unlock_at - make_interval(hours => $3) <= $2)
+          OR (d.status = 'unlocked' AND d.dump_steps_done < d.dump_steps))
+      LIMIT 1`,
+    [coinId, now, leadHours],
+  );
+  return (r.rowCount ?? 0) > 0;
+}
+
+/** @returns projects.json `vc.perpFreezeLeadHours`. */
+export function perpFreezeLeadHours(ctx: AppContext): number {
+  return vcConfig(ctx).perpFreezeLeadHours;
 }
 
 /**

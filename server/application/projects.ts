@@ -50,6 +50,7 @@ import {
   type ProjectEventRow,
 } from './project-events.js';
 import type { AppContext } from './context.js';
+import { publicUnlockAt } from '../shared/domain/vc.js';
 
 export type { ProjectKind, ProjectStatus } from '../shared/domain/projects.js';
 export type ProjectRole = HireRole;
@@ -432,7 +433,8 @@ export async function getProject(
         vcArchetypeId: d.vc_archetype_id,
         equityBps: d.equity_bps,
         investedCents: Number(d.invest_cents),
-        unlockAt: (d.unlock_at ?? d.created_at).toISOString(),
+        // Only the unlock DAY is sent (security review H2).
+        unlockAt: new Date(publicUnlockAt((d.unlock_at ?? d.created_at).getTime())).toISOString(),
       })),
       myTask:
         me?.task_id && me.started_at && me.ends_at

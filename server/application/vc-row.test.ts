@@ -24,6 +24,8 @@ import {
   offerForProject,
   runVcUnlocks,
 } from './vc-row.js';
+import { openPerp } from './perp-pit.js';
+import { dumpStepBps } from '../shared/domain/vc.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 _resetConfigForTests();
@@ -181,25 +183,84 @@ describe('term sheets', () => {
   });
 });
 
-describe('unlock', () => {
-  it('at unlockAt the VC dumps: price shock by stake, deal dumped, once', async () => {
+describe('unlock (security review H2: no front-running)', () => {
+  const at = (ms: number): Date => new Date(ms);
+  const no: Rng = { ...yes, chance: () => false };
+  /** chance(): the unlock decision (dump) is true; later step rolls follow `steps`. */
+  const unlockAt = async (projectId: string): Promise<number> => {
+    const r = await pool.query<{ u: Date }>(
+      `SELECT unlock_at AS u FROM vc_deals WHERE project_id = $1`,
+      [projectId],
+    );
+    return r.rows[0]!.u.getTime();
+  };
+
+  it('publishes only the unlock day; the dump starts hidden, bleeds in small steps, and is announced at the end', async () => {
     const ctx = buildContext();
     const { projectId, coinId } = await liveProject();
     const o = (await offerForProject(ctx, projectId, yes, new Date()))!;
-    await acceptVcOffer(ctx, founder, o.offerId);
-    expect(await runVcUnlocks(ctx, yes, new Date())).toBe(0); // not yet
+    // float() = 0: the hidden start is exactly the unlock time.
+    const a = await acceptVcOffer(ctx, founder, o.offerId, yes);
+    expect(a.unlockAt.endsWith('T00:00:00.000Z')).toBe(true);
+    const u = await unlockAt(projectId);
+    expect((await getProject(ctx, projectId)).vcStakes[0]!.unlockAt).toBe(a.unlockAt);
+
+    expect(await runVcUnlocks(ctx, yes, at(u - 60_000))).toBe(0); // not yet
     const p0 = await price(coinId);
-    const later = new Date(Date.now() + 8 * 86_400_000);
-    expect(await runVcUnlocks(ctx, yes, later)).toBeGreaterThanOrEqual(1);
-    const shock = -Math.min(3000, Math.floor((o.equityBps * 15_000) / 10_000));
-    expect(await price(coinId)).toBe((p0 * BigInt(10_000 + shock)) / 10_000n);
+    // Unlock: decided, but nothing moves and nothing is announced.
+    expect(await runVcUnlocks(ctx, no, at(u + 60_000))).toBe(0);
+    expect(await price(coinId)).toBe(p0);
+    // No step this run (chance false): still nothing.
+    await pool.query(
+      `UPDATE vc_deals SET dump_shock_bps = $2, dump_steps = 24 WHERE project_id = $1`,
+      [projectId, -2250],
+    );
+    expect(await runVcUnlocks(ctx, no, at(u + 120_000))).toBe(0);
+    expect(await price(coinId)).toBe(p0);
+    // One step: about -1%, and still no event.
+    expect(await runVcUnlocks(ctx, yes, at(u + 180_000))).toBe(0);
+    const p1 = await price(coinId);
+    expect(p1).toBe((p0 * BigInt(10_000 + dumpStepBps(-2250, 24))) / 10_000n);
+    expect((await getProject(ctx, projectId)).recentEvents[0]?.eventId).not.toBe('proj_vc_dump');
+    // Past maxBleedHours: every remaining step lands, then it is announced.
+    expect(await runVcUnlocks(ctx, no, at(u + 13 * 3_600_000))).toBe(1);
     const d = await getProject(ctx, projectId);
     expect(d.vcStakes).toEqual([]);
     expect(d.recentEvents[0]).toMatchObject({ eventId: 'proj_vc_dump' });
+    const ratio = Number(await price(coinId)) / Number(p0);
+    // -22.5% in 24 steps; integer micros floor each step, so allow a little more.
+    expect(ratio).toBeGreaterThan(0.74);
+    expect(ratio).toBeLessThan(0.78);
     const board = await listVcDeals(ctx, null, 50);
     expect(board.deals.find((x) => x.projectId === projectId)?.status).toBe('dumped');
-    const again = await price(coinId);
-    await runVcUnlocks(ctx, yes, later);
-    expect(await price(coinId)).toBe(again);
+  });
+
+  it('freezes new perps on the coin from 24 h before unlock until the bleed ends', async () => {
+    const ctx = buildContext();
+    const { projectId, coinId } = await liveProject();
+    const o = (await offerForProject(ctx, projectId, yes, new Date()))!;
+    await acceptVcOffer(ctx, founder, o.offerId, yes);
+    const open = (): Promise<unknown> =>
+      openPerp(ctx, { userId: founder, coinId, side: 'short', leverage: 1, marginCents: 1000 });
+    // Unlock is 7 days out: entry is open.
+    await expect(open()).resolves.toBeTruthy();
+    // Move the unlock to 23 h from now: frozen.
+    await pool.query(
+      `UPDATE vc_deals SET unlock_at = now() + interval '23 hours' WHERE project_id = $1`,
+      [projectId],
+    );
+    await expect(open()).rejects.toMatchObject({ details: { reason: 'perp_entry_frozen' } });
+    // Unlocked and bleeding: still frozen.
+    await pool.query(
+      `UPDATE vc_deals SET status = 'unlocked', dump_steps = 24, dump_steps_done = 3 WHERE project_id = $1`,
+      [projectId],
+    );
+    await expect(open()).rejects.toMatchObject({ details: { reason: 'perp_entry_frozen' } });
+    // Bleed over: open again.
+    await pool.query(
+      `UPDATE vc_deals SET status = 'dumped', dump_steps_done = 24 WHERE project_id = $1`,
+      [projectId],
+    );
+    await expect(open()).resolves.toBeTruthy();
   });
 });

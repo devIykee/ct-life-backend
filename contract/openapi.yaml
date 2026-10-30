@@ -3180,6 +3180,9 @@ paths:
       tags: [markets]
       operationId: postPerps
       summary: Open a perp.
+      description: >-
+        `409 CONFLICT {reason: 'perp_entry_frozen'}` while a VC Row dump is due on that project coin
+        (from 24 h before its unlock until the bleed ends).
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -7709,8 +7712,8 @@ paths:
         live for 24 h+, gets 1-3 term sheets a week (daily chance, guaranteed after
         7 quiet days, never two open at once). Terms: the VC values the project at
         50% of its coin's market cap and buys 8-18% (`equityBps`), cheque $200-$5,000.
-        For a pending offer `unlockAt` is when the stake would unlock if accepted now
-        (7 days). A pending offer past `expiresAt` (24 h) reads as `expired`. The
+        `unlockAt` is 00:00 UTC of the unlock DAY only (7 days after acceptance;
+        for a pending offer, if accepted now). The exact time is never sent. A pending offer past `expiresAt` (24 h) reads as `expired`. The
         founder also gets `vc_offer` on the city room. 403 `not_owner`; 404.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -7735,9 +7738,12 @@ paths:
       summary: Take the VC money (capability vc). Founder only.
       description: |
         `investCents` goes into the project treasury (an NPC faucet into the
-        treasury; never to a player). A deal opens that unlocks in 7 days; at
-        unlock the VC dumps (coin price shock of 1.5x the stake, capped at -30%;
-        `proj_vc_dump`, world event `evt_vc_dump {projectId, name, coinId}`).
+        treasury; never to a player). A deal opens that unlocks in 7 days. After
+        unlock the VC dumps 1.5x its stake (capped at -30%), starting at a hidden
+        random time within 72 h and bleeding out in 24 small steps over up to 12 h;
+        `proj_vc_dump` and world event `evt_vc_dump {projectId, name, coinId}` go
+        out when it ends. New perps on the coin are refused from 24 h before
+        unlock until the bleed ends (`POST /perps` 409 `perp_entry_frozen`).
         Other open offers expire. Errors: 403 `not_owner`; 404; 409 `not_pending` |
         `expired` | `wrong_status` (project not live).
       parameters:

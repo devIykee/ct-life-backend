@@ -1,6 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { rollVcTerms, shouldOffer, vcDumpShockBps, type VcConfig } from './vc.js';
+import {
+  dumpStepBps,
+  publicUnlockAt,
+  rollVcTerms,
+  scheduleDumpStart,
+  shouldOffer,
+  vcDumpShockBps,
+  type VcConfig,
+} from './vc.js';
 import { SeededRng, type Rng } from './rng.js';
 
 const cfg = (JSON.parse(readFileSync('contract/config/projects.json', 'utf8')) as { vc: VcConfig })
@@ -76,5 +84,96 @@ describe('shouldOffer', () => {
       lastOfferAtMs: now - 8 * 86_400_000,
     };
     expect(shouldOffer(cfg, quiet, fixed(0, false))).toBe(true);
+  });
+});
+
+describe('dump schedule (security review H2)', () => {
+  it('publishes the unlock day only, starts inside the hidden window, and steps add up', () => {
+    const t = Date.parse('2026-11-17T15:42:10Z');
+    expect(new Date(publicUnlockAt(t)).toISOString()).toBe('2026-11-17T00:00:00.000Z');
+    const rng = new SeededRng(3);
+    for (let i = 0; i < 100; i++) {
+      const s = scheduleDumpStart(cfg, t, rng);
+      expect(s).toBeGreaterThanOrEqual(t);
+      expect(s).toBeLessThan(t + cfg.dumpWindowHours * 3_600_000);
+    }
+    const per = dumpStepBps(-2250, cfg.dumpSteps);
+    expect(per).toBeLessThan(0);
+    expect(per).toBeGreaterThan(-150); // ~-1% a step, under one tick's noise (±80-400 bps)
+    expect(Math.pow(1 + per / 10_000, cfg.dumpSteps)).toBeCloseTo(0.775, 2);
+  });
+});
+
+/**
+ * Monte Carlo against the market engine's price model for a sideways coin
+ * (market-engine.ts: every 2 s tick multiplies the price by 1 + U(-80, 80) bps;
+ * hidden-arc.ts `sideways`), aggregated per 5-minute worker run, with the perp
+ * payoff (perp-pit.ts: no fees, settle at spot, liquidation at
+ * entry*(lev+1)/lev for a short, loss capped at the margin).
+ */
+describe('a short cannot reliably front-run the VC dump (simulation)', () => {
+  const TICKS_PER_RUN = 150; // 5 min of 2 s ticks
+  const a = 0.008;
+  const mu = (-TICKS_PER_RUN * a * a) / 6; // E[log(1+u)] per run
+  const sd = Math.sqrt((TICKS_PER_RUN * a * a) / 3);
+  const RUNS_PER_HOUR = 12;
+  const totalLog = Math.log(1 + vcDumpShockBps(cfg, 1500) / 10_000); // 15% stake: -22.5%
+
+  /** One short: true if it closes in profit. */
+  function shortWins(rng: Rng, lev: number, dump: boolean): boolean {
+    const liq = Math.log((lev + 1) / lev);
+    let logp = 0;
+    // Opened at the last allowed moment: perps freeze perpFreezeLeadHours
+    // before unlock; the dump starts a hidden U(0, window) later.
+    const wait =
+      cfg.perpFreezeLeadHours * RUNS_PER_HOUR + rng.int(cfg.dumpWindowHours * RUNS_PER_HOUR);
+    for (let i = 0; i < wait; i++) {
+      logp += mu + sd * rng.normal();
+      if (logp >= liq) return false;
+    }
+    const step = totalLog / cfg.dumpSteps;
+    let done = 0;
+    for (let r = 0; done < cfg.dumpSteps; r++) {
+      logp += mu + sd * rng.normal();
+      const overdue = r >= cfg.maxBleedHours * RUNS_PER_HOUR;
+      if (rng.chance(cfg.dumpStepChanceBps / 10_000) || overdue) {
+        const k = overdue ? cfg.dumpSteps - done : 1;
+        if (dump) logp += step * k;
+        done += k;
+      }
+      if (logp >= liq) return false;
+    }
+    return 1 - Math.exp(logp) > 0;
+  }
+
+  function winRate(lev: number, dump: boolean, n = 1500): number {
+    const rng = new SeededRng(42); // same paths with and without the dump
+    let w = 0;
+    for (let i = 0; i < n; i++) if (shortWins(rng, lev, dump)) w++;
+    return w / n;
+  }
+
+  it('the latest allowed short wins about as often with the dump as without', () => {
+    for (const lev of [1, 3]) {
+      const withDump = winRate(lev, true);
+      const without = winRate(lev, false);
+      expect(Math.abs(withDump - without), `lev ${lev}`).toBeLessThan(0.05);
+      expect(withDump, `lev ${lev}`).toBeLessThan(0.65);
+    }
+  });
+
+  it('the old exploit (short one run before a known single step) was near-certain; one bleed step is a coin flip', () => {
+    const rng = new SeededRng(9);
+    let oldWins = 0;
+    let newWins = 0;
+    const n = 2000;
+    for (let i = 0; i < n; i++) {
+      // Old: the whole -22.5% lands in one known run.
+      if (mu + sd * rng.normal() + totalLog < 0) oldWins++;
+      // New: even if a short were open across one run with a step in it.
+      if (mu + sd * rng.normal() + totalLog / cfg.dumpSteps < 0) newWins++;
+    }
+    expect(oldWins / n).toBeGreaterThan(0.95);
+    expect(newWins / n).toBeLessThan(0.6);
   });
 });
