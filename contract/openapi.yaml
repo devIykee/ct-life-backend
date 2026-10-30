@@ -7547,7 +7547,7 @@ paths:
         sets `status: live`, broadcasts `event {eventId: 'evt_project_launch',
         params {projectId, name, ticker, coinId}}` and `evt_coin_launch`.
         Errors (`details.reason`): 400 bad ticker; 402 `INSUFFICIENT_CASH`
-        (treasury `have`/`need`); 403 `not_owner`; 404; 409 `wrong_status` |
+        (treasury `have`/`need`); 403 `not_owner`; 403 `JAILED` (founder in jail); 404; 409 `wrong_status` |
         `quote_changed` (+`launchCostCents`, confirm again) | `no_dev_hired` |
         `cooldown` (+`retryAt`) | `ticker_taken`.
       parameters:

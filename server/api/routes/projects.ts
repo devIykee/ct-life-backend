@@ -27,6 +27,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { requireCapability } from '../middleware/capability.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireNotJailed } from '../middleware/jail.js';
 import { GoneError, ValidationFailedError } from '../../shared/domain/errors.js';
 import { HIRE_ROLES, PROJECT_KINDS } from '../../shared/domain/projects.js';
 import {
@@ -186,7 +187,8 @@ export function registerProjectRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/projects/:id/launch',
-    { preHandler: [builder, requireAuth, withIdempotency()] },
+    // Jail blocks launching coins (docs/HEAT.md), as on /v1/market/launchpad.
+    { preHandler: [builder, requireAuth, requireNotJailed, withIdempotency()] },
     async (req, reply) => {
       const { id } = req.params as { id: string };
       const body = parse(LaunchBody, req.body);

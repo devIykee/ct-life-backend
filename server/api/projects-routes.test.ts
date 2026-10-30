@@ -282,6 +282,23 @@ describe('builder capability on', () => {
       quotedCostCents: 50_000,
     });
     expect(bad.status).toBe(400);
+    // A jailed founder cannot launch (403 JAILED), as on /v1/market/launchpad.
+    await createDb().withConnection((c) =>
+      c.query(
+        `INSERT INTO player_jail (user_id, jail_id, jailed_at, jailed_until, bail_cents, heat_at_arrest)
+         VALUES ($1, $2, now(), now() + interval '1 hour', 1000, 5)`,
+        [founder.sub, uuidv7()],
+      ),
+    );
+    const jailed = await call(app, founder, 'POST', `/v1/projects/${projectId}/launch`, {
+      ticker: 'FROGE',
+      quotedCostCents: 50_000,
+    });
+    expect(jailed.status).toBe(403);
+    expect(err(jailed.body).code).toBe('JAILED');
+    await createDb().withConnection((c) =>
+      c.query(`DELETE FROM player_jail WHERE user_id = $1`, [founder.sub]),
+    );
     const tk = `F${uuidv7().replace(/-/g, '').slice(-6).toUpperCase()}`;
     const live = await call(app, founder, 'POST', `/v1/projects/${projectId}/launch`, {
       ticker: tk,
