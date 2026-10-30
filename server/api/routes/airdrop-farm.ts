@@ -3,12 +3,17 @@
  *
  *   POST /v1/airdrop/claim
  *   GET  /v1/airdrop/claims
+ *   GET  /v1/me/sybil-status
+ *   POST /v1/me/sybil-status/bail      (capability sybilBail)
+ *   GET  /v1/sybil-barn                (capability sybilBarn)
  *   POST /v1/admin/users/{id}/sybil_jail
  *   DELETE /v1/admin/users/{id}/sybil_jail
  */
 import type { FastifyInstance } from 'fastify';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireCapability } from '../middleware/capability.js';
+import { getSybilBarn, paySybilBail } from '../../application/sybil-jail.js';
 import {
   claimAirdrop,
   clearSybilJailed,
@@ -31,6 +36,20 @@ export function registerAirdropRoutes(app: FastifyInstance): void {
   app.get('/v1/me/sybil-status', { preHandler: requireAuth }, async (req, reply) => {
     return reply.send(await getSybilStatus(req.ctx, req.user!.sub));
   });
+
+  // Pay Cash bail to leave a game-rolled Sybil Barn stay early (a sink).
+  app.post(
+    '/v1/me/sybil-status/bail',
+    { preHandler: [requireCapability('sybilBail'), requireAuth, withIdempotency()] },
+    async (req, reply) => reply.send(await paySybilBail(req.ctx, req.user!.sub)),
+  );
+
+  // Who is in the Sybil Barn right now (aliases of game stays; count of all).
+  app.get(
+    '/v1/sybil-barn',
+    { preHandler: [requireCapability('sybilBarn'), requireAuth] },
+    async (req, reply) => reply.send(await getSybilBarn(req.ctx)),
+  );
 
   app.post(
     '/v1/airdrop/claim',

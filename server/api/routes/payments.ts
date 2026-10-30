@@ -1,7 +1,7 @@
 /**
  * Payments routes.
  *
- *   POST /v1/payments/intents                 — create a topup intent
+ *   POST /v1/payments/intents                 — create a topup (or season_pass) intent
  *   POST /v1/payments/intents/{id}/submitted  — client posts the tx signature
  *   POST /v1/webhooks/helius                  — Helius signed webhook
  */
@@ -24,7 +24,8 @@ import { handleProgramWebhook } from '../../application/program-webhook.js';
 const CreateIntentBody = z.object({
   kind: z.enum(['topup', 'cosmetic', 'ad', 'season_pass']),
   currency: z.enum(['USDC', 'SOL', 'SKR', 'ORE']),
-  sku: z.enum(['ramen', 'bag', 'whale', 'cabal', 'custom']),
+  // 'season_pass' is valid only with kind 'season_pass' (400 sku_kind_mismatch otherwise).
+  sku: z.enum(['ramen', 'bag', 'whale', 'cabal', 'custom', 'season_pass']),
   amountCents: z.number().int().positive().optional(),
 });
 

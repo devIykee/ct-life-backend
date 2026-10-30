@@ -34,6 +34,8 @@ export const CAPABILITY_FEATURES = [
   'seasonPassPurchase',
   'factory',
   'projectHq',
+  // Appended by the chain package (WP-C): the devnet SOL drip + "Get test tokens" card.
+  'devnetDrip',
 ] as const;
 
 /**

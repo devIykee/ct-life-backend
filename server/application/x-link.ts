@@ -44,6 +44,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
+import { publishToUser } from './realtime-bus.js';
 
 const PKCE_VERIFIER_BYTES = 32; // 43-char base64url
 const STATE_BYTES = 24; // 32-char base64url
@@ -224,6 +225,34 @@ export async function getXLink(ctx: AppContext, userId: string): Promise<XLinkRo
   const row = r.rows[0];
   if (!row) return null;
   return rowToLink(row);
+}
+
+/**
+ * Unlink the caller's verified X account (`DELETE /v1/x/link`): the row goes,
+ * with the handle, avatar and both token hashes, and any in-flight OAuth start
+ * with it. X's developer policy asks apps to delete a user's X data on request
+ * (within 24 h); this deletes it immediately. The client is told with the
+ * user message `x_link_update {status: 'unlinked', linked: false, at}`.
+ * @param ctx - The application context.
+ * @param userId - The caller.
+ * @returns Nothing; `404 NOT_FOUND` when no verified link exists (an in-flight
+ *   start is still cleared).
+ */
+export async function unlinkXLink(ctx: AppContext, userId: string): Promise<void> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{ verified_at: Date | null }>(
+      `DELETE FROM x_links WHERE user_id = $1 RETURNING verified_at`,
+      [userId],
+    ),
+  );
+  if (!r.rows.some((row) => row.verified_at !== null)) {
+    throw new NotFoundError({ kind: 'x_link' });
+  }
+  await publishToUser(ctx, userId, 'x_link_update', {
+    status: 'unlinked',
+    linked: false,
+    at: Date.now(),
+  });
 }
 
 function rowToLink(r: XLinkDbRow): XLinkRow {

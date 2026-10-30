@@ -368,10 +368,11 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
         maxMinutes: 5,
       },
     });
-    // The endpoint may reject because bob has no creator profile.
-    // The point is that the server does not allow alice to specify a
-    // different fan (no fan override field).
-    expect(r.statusCode).toBeLessThan(500);
+    // The endpoint may reject because bob has no creator profile, the body is strict
+    // (no fan override field), or paid calls are dark (503 CAPABILITY_OFF, unlock C2).
+    // The point is that the server does not allow alice to specify a different fan.
+    if (r.statusCode === 503) expect(r.json().error.code).toBe('CAPABILITY_OFF');
+    else expect(r.statusCode).toBeLessThan(500);
   });
 
   it('x-link: non-admin cannot link another user (no admin route here)', async () => {
@@ -412,20 +413,8 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
   });
 
   it('B1: non-admin cannot settle a Beef match', async () => {
-    // Create a beef match between alice and bob
-    const createR = await app.inject({
-      method: 'POST',
-      url: '/v1/beef',
-      headers: authHeaders(alice, `beef-create-${uuidv7()}`),
-      payload: { opponentUserId: bob.sub, stakeCents: 1000 },
-    });
-    // May fail if implementation incomplete, but we need a match id
-    if (createR.statusCode !== 201 && createR.statusCode !== 200) {
-      // Skip if beef creation not implemented
-      return;
-    }
-    const { id: matchId } = createR.json() as { id: string };
-
+    // Settle is admin-only before anything else is checked, so any match id will do.
+    const matchId = uuidv7();
     // Alice (participant, non-admin) tries to settle
     const settleR = await app.inject({
       method: 'POST',
@@ -447,16 +436,22 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
   });
 
   it('B2: cabal invites list shows only caller invites, not all codes', async () => {
+    // Hosts need net worth at the Marina gate ($100k) to create an invite.
+    const db = createDb();
+    await db.withConnection((c) =>
+      c.query(
+        `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 10000000, 0), ($2, 10000000, 0)
+         ON CONFLICT (user_id) DO UPDATE SET cash_cents = GREATEST(balances.cash_cents, 10000000)`,
+        [alice.sub, bob.sub],
+      ),
+    );
     // Alice creates an invite
     const aliceInvite = await app.inject({
       method: 'POST',
       url: '/v1/cabal/invites',
       headers: authHeaders(alice, `cabal-alice-${uuidv7()}`),
     });
-    if (aliceInvite.statusCode !== 201 && aliceInvite.statusCode !== 200) {
-      // Skip if cabal not implemented
-      return;
-    }
+    expect(aliceInvite.statusCode, aliceInvite.body).toBe(201);
     const aliceCode = (aliceInvite.json() as { code: string }).code;
 
     // Bob creates an invite

@@ -35,6 +35,8 @@
  *     call on a house coin when their turn comes (see npc-callers.ts).
  *   - Analytics retention: a daily job (03:15 UTC) deletes product events
  *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
+ *   - Paid calls: a 15-second sweep refunds, auto-ends and settles paid calls
+ *     (see paid-calls.ts; a no-op while the paidCalls capability is off).
  *
  *   - Perp liquidation (every 5 s), alpha call grading (every 30 s), the
  *     payment poller (every 30 s, the top-up and ad payment backstop) and
@@ -52,6 +54,10 @@
  * on. The handlers also hold row locks or conditional updates, so an
  * overlapping run (a slow tick, a stalled-job retry) never applies twice.
  * The in-process loops (market sim, police) run on every replica instead.
+ *
+ *   - Builder projects: weekly payroll (Monday 00:00 UTC), a daily risk roll,
+ *     an hourly offer-expiry sweep, and VC Row offers and unlocks, one queue
+ *     (see projects.ts).
  *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
@@ -81,6 +87,7 @@ import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
 import { PAYMENT_POLLER_QUEUE, handlePaymentPoller } from './payment-poller.js';
 import { RENT_QUEUE, handleWeeklyRent } from './rent.js';
 import { PREDICTION_MARKETS_QUEUE, handlePredictionMarkets } from './prediction-markets.js';
+import { startPaidCallSweep } from './paid-calls.js';
 import { NFT_GALLERY_QUEUE, handleNftGalleryRecheck } from './nft-gallery.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
@@ -90,6 +97,8 @@ import { startLikenessScheduler } from './likeness.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import type { LikenessGenerationWorker } from '../application/likeness-worker.js';
 import type { LikenessPhotoService } from '../application/likeness-photos.js';
+import { startProjectsWorker } from './projects.js';
+import { startBeefPhases } from './beef.js';
 
 export interface WorkersHandle {
   redis: ReturnType<typeof createRedis>;
@@ -478,6 +487,24 @@ export async function buildWorkers(likeness?: {
     { name: 'recheck', data: {} },
   );
 
+  // Builder projects: payroll, risk roll, offer expiry (one queue, three schedulers).
+  const stopProjects = await startProjectsWorker(
+    ctx,
+    conn,
+    newClient(redis),
+    log.child({ worker: 'projects' }),
+  );
+
+  // Paid calls (unlock C2): refunds, auto-end at the booked minutes, settle retries.
+  const paidCalls = await startPaidCallSweep({
+    connection: conn,
+    workerConnection: newClient(redis),
+    ctx,
+  });
+
+  // CT Beef phases (unlock A6): every 15 s while the capability `beef` is on.
+  const beefPhases = await startBeefPhases(ctx, conn, newClient(redis), log);
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -574,7 +601,10 @@ export async function buildWorkers(likeness?: {
       await alphaQueue.close();
       await paymentQueue.close();
       await rentQueue.close();
+      await stopProjects();
       await marketsQueue.close();
+      await paidCalls.close();
+      await beefPhases.close();
       await nftGalleryQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();

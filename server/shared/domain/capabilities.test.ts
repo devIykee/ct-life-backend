@@ -68,6 +68,7 @@ describe('buildCapabilitiesPayload', () => {
           seasonPassPurchase: false,
           factory: false,
           projectHq: false,
+          devnetDrip: false,
         },
       },
       competitionCapabilities: { version: 1, beefChallenges: false, targetedCabalInvites: false },
