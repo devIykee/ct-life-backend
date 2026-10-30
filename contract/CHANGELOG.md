@@ -1,3 +1,31 @@
+## 2026-10-30 - Report an AI NPC chat reply
+
+Migration 106.
+
+- `POST /llm/chat` now returns `replyId` (the stored interaction id) and `archetype` alongside `response`. The client already reads `replyId` and shows its Report button only when it is set.
+- `POST /reports` accepts `targetType: "npc_reply"` with `targetId` = that `replyId`. Only the player the reply was written for may report it; otherwise `400 VALIDATION_FAILED` with `details.reason: unknown_reply`. The admin queue shows the reply text as the preview, and `remove_content` blanks it.
+
+## 2026-10-30 - Venue voice tokens need presence in the venue
+
+- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
+- New error code `NOT_IN_VENUE` (403).
+
+## 2026-10-30 - Alpha calls use the server price; background sweeps start
+
+- `POST /alpha-calls`: the stored `entryMicros` is now the coin's server price at placement (the body's value must still be positive but is ignored), and the call is refused unless `stopMicros < price < targetMicros`: `400 VALIDATION_FAILED` with `details.reason` `price_outside_band` (plus `details.priceMicros`), `unknown_coin` or `coin_dead`. The response's `entryMicros` is the stored server price.
+- Perp liquidation (5 s), alpha grading (30 s), the payment poller (30 s) and weekly rent (Monday 00:00 UTC) now run in the workers process. Prediction settlement runs only with `PREDICTIONS_SETTLEMENT_ENABLED=1` (off by default; the resolver is still a dev stub).
+
+## 2026-10-26 - Approved display names (migration 105)
+
+The user approved real, relatable names for everything players see (ct-life-evidence/names/NAMES.md; the client table is `contract/ids/names.json`). Ids, slugs, codes and routes do not change; only display text the server writes or stores.
+
+- **Authors** (migration 105 UPDATEs the rows migration 102 seeded): `city` "CT City" -> "City News"; `sleuth` "The Sleuth" -> "Police" (`SLEUTH_ALIAS` too); callers "Candle Carla" -> "Chart Caller", "Rugwatch Ray" -> "Rug Watcher", "Moonboy Milo" -> "Moon Boy", "Auntie Ape" -> "Ape Auntie". Cosmetics `reward_rekt_burger_uniform` -> "McDonald's Uniform", `reward_s1_airdrop_tee` -> "S1 Season Tee". Old posts that mention a renamed place are rewritten the same way.
+- **Generated text:** city cards "liquidated in the Perp Pit" -> "liquidated on Hyperliquid", "in the Rug Room" -> "in the Casino"; venue card name "The Rug Room" -> "Casino"; career posts "Rekt Burger" -> "McDonald's" (and "see you on Hyperliquid"); busted post "CT Jail" -> "Jail"; the six rug exposes are now written as the Police ("Police report on ...", "wanted level" instead of "heat"); `npc_lines.json` "Sleuth ..." -> "Police ...", "Ratio Arena" -> "Debate Arena"; NPC persona "You are Sleuth" -> "You are a Police detective"; tribes "Cabal Lounge" -> "VIP Lounge".
+- **Error messages:** "The Rug Room is 18+" -> "The Casino is 18+"; "CT Jail" -> "Jail" (JAILED, NOT_JAILED); the position message "Rekt Burger counter" -> "McDonald's counter".
+- **Config display names:** careers "Rug Sleuth" -> "Fraud Investigator", "Rekt Burger" -> "McDonald's", uniform -> "McDonald's Uniform"; season "Airdrop Season" -> "Season 1", "S1 Airdrop Season Tee" -> "S1 Season Tee"; gig "Doot the Feed" -> "Like Posts"; casino note "The Rug Room" -> "Casino"; ledger labels "Duo Shop order/refund" -> "Amazon order/refund"; archetypes "Sleuth" -> "Police", "Town Crier" -> "News Reader".
+- **Venue names** in `venues.json` now equal the client's `venue.*` names: Times Square, X Spaces Studio, Starbucks, Hyperliquid, Hospital, ORE Mine, Polymarket, Pump.fun Tower, Debate Arena, VIP Lounge, Discord HQ, Nightclub, Convention Centre, Jail, Barn, Downtown (venue ids unchanged).
+- **Trait text the client matches on:** `traits.json` effect "Sleuth NPC pays you for tips" -> "The police pay for your tips" (client already shows this wording; both sides change together).
+
 ## 2026-10-26 - Rugpull Factory launches real tokens (Meteora DBC); the Cash Factory is retired
 
 Migration 104. Client contract and setup in `docs/FACTORY-REAL.md`.

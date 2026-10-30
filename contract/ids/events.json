@@ -8,7 +8,7 @@
       "label": "Liquidation",
       "effect": "city event; player REKT card; perp tombstones++"
     },
-    { "id": "evt_rug", "label": "Rug", "effect": "city event; Town Crier line; Sleuth exposé" },
+    { "id": "evt_rug", "label": "Rug", "effect": "city event; News Reader line; Police exposé" },
     {
       "id": "evt_coin_launch",
       "label": "Coin Launch",
@@ -19,11 +19,11 @@
       "label": "Market Mood Change",
       "effect": "city state; Doomposter spawn/despawn"
     },
-    { "id": "evt_exploit", "label": "Exploit", "effect": "city event; Sleuth exposé" },
+    { "id": "evt_exploit", "label": "Exploit", "effect": "city event; Police exposé" },
     {
       "id": "evt_ore_motherlode",
       "label": "ORE Motherlode",
-      "effect": "city event; Town Crier shouts the number"
+      "effect": "city event; News Reader shouts the number"
     }
   ]
 }

@@ -816,7 +816,7 @@ export async function reportCaught(
 const BUSTED_LINES = [
   '{alias} has been picked up by the compliance cruisers. Bail is {bail}. The receipts were public the whole time.',
   'Thread: {alias} thought nobody was tracing the wallet. Cuffed at heat {heat}. Bail set at {bail}.',
-  'Another one for the cell. {alias} is in CT Jail until someone pays {bail} or the clock runs out.',
+  'Another one for the cell. {alias} is in Jail until someone pays {bail} or the clock runs out.',
   '{alias} ran. The cruisers had the route mapped before the first turn. Heat {heat}. Bail {bail}.',
   'Called it. {alias} is booked at heat {heat}. Anyone with {bail} to spare can wave goodbye at the gate.',
   'On-chain trails do not lie, and neither do sirens. {alias} is behind the glass. Bail: {bail}.',

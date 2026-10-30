@@ -100,6 +100,11 @@
       "message": "All venue instances are at capacity; try again shortly."
     },
     {
+      "code": "NOT_IN_VENUE",
+      "httpStatus": 403,
+      "message": "You are not in that venue. Join it before connecting to its voice."
+    },
+    {
       "code": "SPOT_TAKEN",
       "httpStatus": 409,
       "message": "Spot is taken."
@@ -252,7 +257,7 @@
     {
       "code": "AGE_REQUIRED",
       "httpStatus": 403,
-      "message": "The Rug Room is 18+. Confirm your age to play."
+      "message": "The Casino is 18+. Confirm your age to play."
     },
     {
       "code": "STAKE_CAP_REACHED",
@@ -367,17 +372,17 @@
     {
       "code": "COUNTER_TOO_FAR",
       "httpStatus": 409,
-      "message": "The server's last position for you is too far from the Rekt Burger counter."
+      "message": "The server's last position for you is too far from the McDonald's counter."
     },
     {
       "code": "JAILED",
       "httpStatus": 403,
-      "message": "You are in CT Jail. Pay bail or wait it out."
+      "message": "You are in Jail. Pay bail or wait it out."
     },
     {
       "code": "NOT_JAILED",
       "httpStatus": 409,
-      "message": "You are not in CT Jail."
+      "message": "You are not in Jail."
     },
     {
       "code": "NO_PURSUIT",

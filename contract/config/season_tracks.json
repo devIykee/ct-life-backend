@@ -9,7 +9,7 @@
     },
     {
       "cosmeticId": "reward_s1_airdrop_tee",
-      "name": "S1 Airdrop Season Tee",
+      "name": "S1 Season Tee",
       "slot": "top"
     },
     {
@@ -41,7 +41,7 @@
   "seasons": [
     {
       "seasonId": "s1_airdrop_season",
-      "name": "Airdrop Season",
+      "name": "Season 1",
       "startsAt": "2026-10-19T00:00:00Z",
       "endsAt": "2026-12-14T00:00:00Z",
       "xpPerTier": 250,

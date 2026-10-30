@@ -200,6 +200,12 @@ export interface Config {
     readonly mainnetTests: boolean;
     /** Read the ORE board from mainnet (read-only). ORE_READER_ENABLED. */
     readonly oreReader: boolean;
+    /**
+     * Schedule the prediction settlement sweep in the workers process.
+     * PREDICTIONS_SETTLEMENT_ENABLED, off unless set: the outcome resolver is
+     * still a dev stub (see application/predictions.ts).
+     */
+    readonly predictionSettlement: boolean;
   };
 
   readonly llmModel: string;
@@ -504,6 +510,7 @@ export function loadConfig(): Config {
       xLinkEnabled: asBool('X_LINK_ENABLED', false),
       mainnetTests: asBool('RUN_MAINNET_TESTS', false),
       oreReader: asBool('ORE_READER_ENABLED', false),
+      predictionSettlement: asBool('PREDICTIONS_SETTLEMENT_ENABLED', false),
     },
 
     // `||`, not `??`: .env.example ships `LLM_MODEL=` (empty), which must mean "default".

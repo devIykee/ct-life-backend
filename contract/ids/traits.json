@@ -30,7 +30,7 @@
     {
       "id": "sleuth",
       "label": "Tipster",
-      "effect": "Sleuth NPC pays you for tips",
+      "effect": "The police pay for your tips",
       "effectText": "The onchain detective NPC pays you for tips."
     },
     {

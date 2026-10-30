@@ -111,7 +111,7 @@ describe('llm chat', () => {
     expect(a).toMatch(/NEVER/);
     expect(a).toMatch(/PII|personal information/);
     const s = systemPrompt('sleuth');
-    expect(s).toMatch(/Sleuth/);
+    expect(s).toMatch(/Police/);
   });
 
   it('chatWithLlmNpc happy path returns the stub reply', async () => {
@@ -125,6 +125,15 @@ describe('llm chat', () => {
     );
     expect(r.response).toBe('I track fresh launches every block.');
     expect(r.refused).toBe(false);
+    // The client reports a reply by this id (POST /v1/reports npc_reply).
+    expect(r.archetype).toBe('ai_agent');
+    const row = await ctx.db.withConnection((c) =>
+      c.query<{ user_id: string }>(
+        'SELECT user_id FROM llm_npc_interactions WHERE interaction_id = $1',
+        [r.replyId],
+      ),
+    );
+    expect(row.rows[0]?.user_id).toBe(u);
   });
 
   it('chatWithLlmNpc filters PII in the user input before the model', async () => {

@@ -14,6 +14,9 @@ import {
 let handle: ServerHandle;
 let token: string;
 const userId = randomUUID();
+// Aliases go through the profanity filter, which reads leetspeak: random hex can spell a blocked word
+// ("a55" is "ass"). A counter after a fixed prefix never does.
+let aliasSeq = 1;
 const schema = `test_palette_${randomUUID().replaceAll('-', '')}`;
 let admin: Pool;
 beforeAll(async () => {
@@ -140,7 +143,7 @@ describe('character palette HTTP capability', () => {
         method: 'POST',
         url: '/v1/characters',
         headers: { authorization: `Bearer ${access}`, 'idempotency-key': randomUUID() },
-        payload: { ...body, ...validIdentity(), alias: `leg_${id.slice(0, 16)}`, look },
+        payload: { ...body, ...validIdentity(), alias: `legx${aliasSeq++}`, look },
       });
       expect(result.statusCode).toBe(201);
       expect(result.json().look).toEqual(look);
@@ -155,7 +158,7 @@ describe('character palette HTTP capability', () => {
       method: 'POST',
       url: '/v1/characters',
       headers: { authorization: `Bearer ${token}`, 'idempotency-key': randomUUID() },
-      payload: { ...body, alias: `pal_${userId.slice(0, 16)}`, ...validIdentity() },
+      payload: { ...body, alias: `palx${aliasSeq++}`, ...validIdentity() },
     });
     expect(result.statusCode).toBe(201);
     expect(result.json().look).toEqual(body.look);

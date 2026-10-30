@@ -3,7 +3,7 @@
   "gigs": [
     {
       "id": "doot_feed",
-      "name": "Doot the Feed",
+      "name": "Like Posts",
       "durationSec": 30,
       "payCentsFormula": "1000 + clout * 50",
       "cooldownSec": 60

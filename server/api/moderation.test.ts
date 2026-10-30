@@ -14,6 +14,7 @@ import { authenticateJoin, loadSayPolicy } from '../realtime/player.js';
 import { createRedis } from '../shared/redis/client.js';
 import { BAN_CHANNEL, bannedFlagKey } from '../application/moderation.js';
 import { buildContext } from '../application/context.js';
+import { chatWithLlmNpc, stubLlmClient } from '../application/llm-npcs.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -153,6 +154,60 @@ describe('admin queue', () => {
     expect(
       (await call(p, 'POST', `/v1/admin/users/${p.sub}/sanction`, { action: 'ban' })).status,
     ).toBe(403);
+  });
+
+  it('takes a report on an AI NPC reply from the player it was written for', async () => {
+    const admin = await devAuth(adminKey);
+    const player = await devAuth();
+    const other = await devAuth();
+    const reply = await chatWithLlmNpc(
+      buildContext(),
+      { userId: player.sub, archetype: 'ai_agent', message: 'gm' },
+      stubLlmClient('buy my bags, ser'),
+    );
+    expect(reply.replyId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(reply.archetype).toBe('ai_agent');
+
+    const ok = await call(player, 'POST', '/v1/reports', {
+      targetType: 'npc_reply',
+      targetId: reply.replyId,
+      reasonId: 'scam',
+    });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(204);
+    // Someone else's reply, or an id that is no reply at all, is refused.
+    for (const [u, targetId] of [
+      [other, reply.replyId],
+      [player, uuidv7()],
+      [player, 'not-a-uuid'],
+    ] as const) {
+      const bad = await call(u, 'POST', '/v1/reports', {
+        targetType: 'npc_reply',
+        targetId,
+        reasonId: 'scam',
+      });
+      expect(bad.status).toBe(400);
+      expect(bad.body.error.details.reason).toBe('unknown_reply');
+    }
+
+    const list = await call(admin, 'GET', '/v1/admin/reports?status=open&limit=100');
+    const row = (list.body.reports as Array<Record<string, any>>).find(
+      (r) => r.targetId === reply.replyId,
+    )!;
+    expect(row.targetType).toBe('npc_reply');
+    expect(row.preview).toBe('buy my bags, ser');
+    expect(row.targetUserId).toBeNull();
+    const rm = await call(admin, 'POST', `/v1/admin/reports/${row.reportId}/resolve`, {
+      action: 'remove_content',
+    });
+    expect(rm.status).toBe(200);
+    expect(
+      (
+        await q<{ response_text: string }>(
+          'SELECT response_text FROM llm_npc_interactions WHERE interaction_id = $1',
+          [reply.replyId],
+        )
+      )[0]!.response_text,
+    ).toBe('[removed]');
   });
 
   it('lists with a preview, removes content, closes duplicates, mutes and bans', async () => {

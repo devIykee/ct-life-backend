@@ -201,7 +201,7 @@ export class TierLockedError extends DomainError {
 export class AgeRequiredError extends DomainError {
   readonly code = 'AGE_REQUIRED';
   constructor(details: Record<string, unknown> = {}) {
-    super('The Rug Room is 18+. Confirm your age to play.', details);
+    super('The Casino is 18+. Confirm your age to play.', details);
     this.httpStatus = 403;
   }
 }
@@ -361,6 +361,15 @@ export class VenueFullError extends DomainError {
   constructor(details: Record<string, unknown> = {}) {
     super('All venue instances are at capacity; try again shortly.', details);
     this.httpStatus = 503;
+  }
+}
+
+/** Venue voice was asked for an instance the caller is not currently in. */
+export class NotInVenueError extends DomainError {
+  readonly code = 'NOT_IN_VENUE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are not in that venue. Join it before connecting to its voice.', details);
+    this.httpStatus = 403;
   }
 }
 
@@ -603,7 +612,7 @@ export class GoneError extends DomainError {
 export class CounterTooFarError extends DomainError {
   readonly code = 'COUNTER_TOO_FAR';
   constructor(details: Record<string, unknown> = {}) {
-    super("The server's last position for you is too far from the Rekt Burger counter.", details);
+    super("The server's last position for you is too far from the McDonald's counter.", details);
     this.httpStatus = 409;
   }
 }
@@ -634,7 +643,7 @@ export class NftMintNotAllowedError extends DomainError {
 export class JailedError extends DomainError {
   readonly code = 'JAILED';
   constructor(details: Record<string, unknown> = {}) {
-    super('You are in CT Jail. Pay bail or wait it out.', details);
+    super('You are in Jail. Pay bail or wait it out.', details);
     this.httpStatus = 403;
   }
 }
@@ -642,7 +651,7 @@ export class JailedError extends DomainError {
 export class NotJailedError extends DomainError {
   readonly code = 'NOT_JAILED';
   constructor(details: Record<string, unknown> = {}) {
-    super('You are not in CT Jail.', details);
+    super('You are not in Jail.', details);
     this.httpStatus = 409;
   }
 }
