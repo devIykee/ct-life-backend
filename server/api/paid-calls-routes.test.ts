@@ -16,6 +16,8 @@ import { _resetConfigForTests } from '../shared/config/config.js';
 import {
   _setEscrowChainForTests,
   type EscrowChain,
+  type OpenCheck,
+  type SessionClosure,
   type SessionRef,
 } from '../application/paid-call-chain.js';
 import { sweepPaidCalls } from '../application/paid-calls.js';
@@ -34,6 +36,9 @@ const USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
 
 const sessions = new Map<string, EscrowSession>();
 let sent: string[] = [];
+let openCheck: OpenCheck = 'ok';
+let closureResult: SessionClosure | null = null;
+let settleFails = false;
 const key = (r: SessionRef): string => `${r.fan}:${r.creator}:${r.sessionId}`;
 
 const fakeChain: EscrowChain = {
@@ -56,6 +61,12 @@ const fakeChain: EscrowChain = {
     sent.push(`build:${ref.ratePerMin}:${ref.maxMinutes}`);
     return Buffer.from('unsigned-v0').toString('base64');
   },
+  async verifyOpen() {
+    return openCheck;
+  },
+  async closure() {
+    return closureResult;
+  },
   async accept(_ctx, ref) {
     const s = sessions.get(key(ref))!;
     sessions.set(key(ref), { ...s, status: 1 });
@@ -63,6 +74,7 @@ const fakeChain: EscrowChain = {
     return `accept${uuidv7()}`;
   },
   async settle(_ctx, ref) {
+    if (settleFails) throw new Error('blockhash expired');
     sessions.delete(key(ref));
     sent.push(`settle:${ref.secondsUsed}`);
     return `settle${uuidv7()}`;
@@ -187,6 +199,9 @@ async function ringing(fan: Authed, c: Authed, minutes = 5): Promise<string> {
 beforeEach(() => {
   _setEscrowChainForTests(fakeChain);
   sent = [];
+  openCheck = 'ok';
+  closureResult = null;
+  settleFails = false;
 });
 
 afterEach(async () => {
@@ -449,5 +464,134 @@ describe('paid calls and creator mode', () => {
     expect(signed.statusCode, signed.body).toBe(200);
     const r = await call(fan, 'GET', `/v1/paid-calls/${id}`);
     expect(r.body).toMatchObject({ status: 'settled', endReason: 'participant_left' });
+  }, 30_000);
+
+  it('stores a reported signature only after it verifies on chain', async () => {
+    await boot(ON);
+    const c = await creator();
+    const fan = await devAuth();
+    const b = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 5 });
+    const callId = b.body.callId as string;
+    await fund(callId);
+    for (const [check, status, reason] of [
+      ['not_found', 409, 'not_found_yet'],
+      ['failed', 400, 'tx_mismatch'],
+      ['mismatch', 400, 'tx_mismatch'],
+    ] as const) {
+      openCheck = check;
+      const r = await call(fan, 'POST', `/v1/paid-calls/${callId}/submitted`, {
+        signature: SIG(),
+      });
+      expect(r.status, check).toBe(status);
+      expect(errOf(r.body).details.reason).toBe(reason);
+    }
+    const row = await pool.query(
+      'SELECT open_signature, status FROM paid_calls WHERE call_id = $1',
+      [callId],
+    );
+    expect(row.rows[0]).toEqual({ open_signature: null, status: 'awaiting_payment' });
+    openCheck = 'ok';
+    const ok = await call(fan, 'POST', `/v1/paid-calls/${callId}/submitted`, { signature: SIG() });
+    expect(ok.body.status).toBe('ringing');
+  }, 30_000);
+
+  it('a busy creator: 409 call_in_progress at booking, and a funded second call is refunded', async () => {
+    await boot(ON);
+    const c = await creator();
+    const fanA = await devAuth();
+    const fanB = await devAuth();
+    // Both book while the creator is free.
+    const a = await call(fanA, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 5 });
+    const bCall = await call(fanB, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 5 });
+    expect(bCall.status).toBe(201);
+    await fund(a.body.callId as string);
+    await call(fanA, 'POST', `/v1/paid-calls/${a.body.callId}/submitted`, { signature: SIG() });
+    // B funded too, but the creator is now being rung for A.
+    const bId = bCall.body.callId as string;
+    await fund(bId);
+    const late = await call(fanB, 'POST', `/v1/paid-calls/${bId}/submitted`, { signature: SIG() });
+    expect(late.status).toBe(409);
+    expect(errOf(late.body).details).toMatchObject({ reason: 'call_in_progress', who: 'creator' });
+    const bRow = await call(fanB, 'GET', `/v1/paid-calls/${bId}`);
+    expect(bRow.body).toMatchObject({ status: 'refunding', endReason: 'creator_busy' });
+    // A third fan cannot even book now.
+    const fanC = await devAuth();
+    const third = await call(fanC, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(third.status).toBe(409);
+    expect(errOf(third.body).details).toMatchObject({ reason: 'call_in_progress', who: 'creator' });
+  }, 30_000);
+
+  async function settlingCall(): Promise<{ id: string; fan: Authed }> {
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c, 3);
+    await call(c, 'POST', `/v1/paid-calls/${id}/accept`);
+    settleFails = true;
+    const end = await call(fan, 'POST', `/v1/paid-calls/${id}/end`);
+    expect(end.body.status).toBe('settling');
+    settleFails = false;
+    // The session closed by some other transaction (e.g. the fan's refund after the deadline).
+    for (const k of [...sessions.keys()]) {
+      if (sessions.get(k)!.status === 1) sessions.delete(k);
+    }
+    return { id, fan };
+  }
+
+  it('a closed session is never assumed settled: it follows the closing transaction', async () => {
+    await boot(ON);
+    const ctx = buildContext();
+    const later = new Date(Date.now() + 30_000);
+
+    const unknown = await settlingCall();
+    closureResult = null;
+    await sweepPaidCalls(ctx, later);
+    expect((await call(unknown.fan, 'GET', `/v1/paid-calls/${unknown.id}`)).body).toMatchObject({
+      status: 'closed_unknown',
+      creatorAmount: '0',
+      feeAmount: '0',
+    });
+
+    const refunded = await settlingCall();
+    closureResult = { kind: 'refunded', signature: 'fanRefundSig', refundAmount: 1_650_000n };
+    await sweepPaidCalls(ctx, later);
+    expect((await call(refunded.fan, 'GET', `/v1/paid-calls/${refunded.id}`)).body).toMatchObject({
+      status: 'refunded',
+      creatorAmount: '0',
+      refundAmount: '1650000',
+      signatures: { refund: 'fanRefundSig', settle: null },
+    });
+
+    const settled = await settlingCall();
+    closureResult = {
+      kind: 'settled',
+      signature: 'realSettleSig',
+      creatorAmount: 500_000n,
+      fee: 50_000n,
+      refund: 1_100_000n,
+      minutes: 1n,
+    };
+    await sweepPaidCalls(ctx, later);
+    expect((await call(settled.fan, 'GET', `/v1/paid-calls/${settled.id}`)).body).toMatchObject({
+      status: 'settled',
+      creatorAmount: '500000',
+      signatures: { settle: 'realSettleSig' },
+    });
+  }, 30_000);
+
+  it('a refunding call whose session vanished without a refund tx is closed_unknown', async () => {
+    await boot(ON);
+    const ctx = buildContext();
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c);
+    await call(c, 'POST', `/v1/paid-calls/${id}/decline`);
+    sessions.clear();
+    closureResult = null;
+    await sweepPaidCalls(ctx, new Date(Date.now() + 130_000));
+    expect((await call(fan, 'GET', `/v1/paid-calls/${id}`)).body).toMatchObject({
+      status: 'closed_unknown',
+      creatorAmount: '0',
+    });
+    expect(sent).not.toContain('refund');
   }, 30_000);
 });

@@ -52,7 +52,8 @@ export type PaidCallStatus =
   | 'settled'
   | 'refunding'
   | 'refunded'
-  | 'expired';
+  | 'expired'
+  | 'closed_unknown';
 
 /** Seconds a fan has to sign and send the open_session transaction. */
 export const PAY_WINDOW_SEC = 120;
@@ -168,6 +169,12 @@ async function transition(ctx: AppContext, sql: string, params: unknown[]): Prom
   return r.rows[0] ?? null;
 }
 
+/** The violated unique constraint's name, or null for any other error. */
+function uniqueViolation(e: unknown): string | null {
+  const err = e as { code?: string; constraint?: string };
+  return err.code === '23505' ? (err.constraint ?? 'unknown') : null;
+}
+
 function guardOn(ctx: AppContext): void {
   assertCapabilityOn(ctx, 'paidCalls');
   assertDevnetChain(ctx, 'paidCalls');
@@ -218,6 +225,15 @@ export async function startPaidCall(
       [fanUserId, args.creatorId],
     );
     if ((b.rowCount ?? 0) > 0) throw new BlockedError({});
+    // The creator is on (or being rung for) another call: nobody pays for a call that
+    // could not ring.
+    const busy = await c.query(
+      `SELECT 1 FROM paid_calls WHERE creator_user_id = $1
+          AND status IN ('ringing', 'live', 'settling') LIMIT 1`,
+      [args.creatorId],
+    );
+    if ((busy.rowCount ?? 0) > 0)
+      throw new ConflictError({ reason: 'call_in_progress', who: 'creator' });
     const u = await c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [
       fanUserId,
     ]);
@@ -269,8 +285,8 @@ export async function startPaidCall(
       ),
     );
   } catch (e) {
-    if ((e as { code?: string }).code === '23505') {
-      throw new ConflictError({ reason: 'call_in_progress' });
+    if (uniqueViolation(e) === 'paid_calls_one_open_per_fan') {
+      throw new ConflictError({ reason: 'call_in_progress', who: 'fan' });
     }
     throw e;
   }
@@ -323,11 +339,14 @@ async function resolveUnpaid(ctx: AppContext, row: DbRow): Promise<void> {
 
 /**
  * The fan reports the open_session signature. The Session account on chain must exist
- * and match this call exactly (fan, creator, session id, rate, minutes, deposit, Open);
- * then the creator is rung. Idempotent for the same call.
+ * and match this call exactly (fan, creator, session id, rate, minutes, deposit, Open),
+ * and the reported signature itself must be a confirmed, successful open_session of this
+ * call's Session PDA signed by the fan's wallet (nothing unverified is stored). Then the
+ * creator is rung. Idempotent for the same call.
  *
- * @throws ConflictError `not_found_yet` (retry in a second or two).
- * @throws ValidationFailedError `tx_mismatch` when the Session differs.
+ * @throws ConflictError `not_found_yet` (retry in a second or two), or `call_in_progress`
+ *   when the creator got busy meanwhile (this call is then refunded).
+ * @throws ValidationFailedError `tx_mismatch` when the Session or the signature differs.
  */
 export async function submitOpenSignature(
   ctx: AppContext,
@@ -350,6 +369,9 @@ export async function submitOpenSignature(
     s.deposit === BigInt(row.deposit) &&
     s.status === 0;
   if (!matches) throw new ValidationFailedError({ reason: 'tx_mismatch' });
+  const check = await escrowChain().verifyOpen(ctx, ref(row), signature);
+  if (check === 'not_found') throw new ConflictError({ reason: 'not_found_yet' });
+  if (check !== 'ok') throw new ValidationFailedError({ reason: 'tx_mismatch', signature: check });
   const cfg = await escrowChain().config(ctx);
   const openedAt = new Date(Number(s.openedAt) * 1000);
   const acceptBy = new Date(openedAt.getTime() + (cfg.acceptWindowSecs - ACCEPT_MARGIN_SEC) * 1000);
@@ -362,7 +384,19 @@ export async function submitOpenSignature(
       [callId, signature, openedAt, acceptBy],
     );
   } catch (e) {
-    if ((e as { code?: string }).code === '23505') {
+    const constraint = uniqueViolation(e);
+    if (constraint === 'paid_calls_one_open_per_creator') {
+      // Funded, but the creator is on another call: refund this one (after the window).
+      await transition(
+        ctx,
+        `UPDATE paid_calls SET status = 'refunding', end_reason = 'creator_busy', opened_at = $2,
+                accept_by = $3, ended_at = now()
+          WHERE call_id = $1 AND status = 'awaiting_payment' RETURNING *`,
+        [callId, openedAt, acceptBy],
+      );
+      throw new ConflictError({ reason: 'call_in_progress', who: 'creator' });
+    }
+    if (constraint === 'paid_calls_open_signature_key') {
       throw new ValidationFailedError({ reason: 'signature_already_used' });
     }
     throw e;
@@ -587,17 +621,77 @@ async function sendSettle(ctx: AppContext, row: DbRow): Promise<DbRow> {
   }
 }
 
+/** Only ever called with a real settle signature (ours, or found on chain). */
 async function markSettled(
   ctx: AppContext,
   callId: string,
-  signature: string | null,
+  signature: string,
 ): Promise<DbRow | null> {
   return transition(
     ctx,
-    `UPDATE paid_calls SET status = 'settled', settle_signature = COALESCE($2, settle_signature)
+    `UPDATE paid_calls SET status = 'settled', settle_signature = $2
       WHERE call_id = $1 AND status = 'settling' RETURNING *`,
     [callId, signature],
   );
+}
+
+/**
+ * The Session account is gone: find the transaction that closed it and record what it
+ * really did. SessionSettled -> settled with the on-chain split; SessionRefunded ->
+ * refunded (nothing to the creator); not found -> `closed_unknown` with the creator and
+ * fee amounts zeroed. Never assumes a settle.
+ */
+async function reconcileClosed(
+  ctx: AppContext,
+  row: DbRow,
+  from: 'settling' | 'refunding',
+): Promise<DbRow | null> {
+  const c = await escrowChain().closure(ctx, ref(row));
+  if (c?.kind === 'settled') {
+    return transition(
+      ctx,
+      `UPDATE paid_calls SET status = 'settled', settle_signature = $3, creator_amount = $4,
+              fee_amount = $5, refund_amount = $6, minutes_used = $7
+        WHERE call_id = $1 AND status = $2 RETURNING *`,
+      [
+        row.call_id,
+        from,
+        c.signature,
+        c.creatorAmount.toString(),
+        c.fee.toString(),
+        c.refund.toString(),
+        Number(c.minutes),
+      ],
+    );
+  }
+  if (c?.kind === 'refunded') {
+    if (from === 'settling') {
+      console.error(
+        `[paid-calls] ALERT ${row.call_id}: settle never landed and the fan refunded on chain (${c.signature})`,
+      );
+    }
+    return transition(
+      ctx,
+      `UPDATE paid_calls SET status = 'refunded', refund_signature = $3, refund_amount = $4,
+              creator_amount = 0, fee_amount = 0, minutes_used = 0
+        WHERE call_id = $1 AND status = $2 RETURNING *`,
+      [row.call_id, from, c.signature, c.refundAmount.toString()],
+    );
+  }
+  console.error(
+    `[paid-calls] ALERT ${row.call_id}: session closed but no settle/refund found; closed_unknown`,
+  );
+  return transition(
+    ctx,
+    `UPDATE paid_calls SET status = 'closed_unknown', creator_amount = 0, fee_amount = 0
+      WHERE call_id = $1 AND status = $2 RETURNING *`,
+    [row.call_id, from],
+  );
+}
+
+/** Seconds before the program lets the fan refund an accepted call that was never settled. */
+function refundDeadline(row: DbRow): number {
+  return (row.opened_at?.getTime() ?? 0) + (Number(row.max_minutes) * 60 + 600) * 1000;
 }
 
 /** GET /paid-calls/:id, for the two participants only. */
@@ -692,28 +786,42 @@ async function sweepOne(
       }
       return;
     }
-    case 'settling':
-      // Leave a fresh claim to the request that made it.
-      if ((row.ended_at?.getTime() ?? 0) + 60_000 < t) {
-        const s = await escrowChain().session(ctx, ref(row));
-        const done =
-          s === null ? await markSettled(ctx, row.call_id, null) : await sendSettle(ctx, row);
-        if (done && done.status === 'settled') counts.settled += 1;
+    case 'settling': {
+      // Retry promptly (a fresh claim gets 20 s to finish its own send): the fan may
+      // refund the whole deposit on chain once the refund deadline passes.
+      const ended = row.ended_at?.getTime() ?? 0;
+      if (ended + 20_000 >= t) return;
+      if (ended + 5 * 60_000 < t || refundDeadline(row) - 120_000 < t) {
+        console.error(
+          `[paid-calls] ALERT ${row.call_id} stuck in settling since ${row.ended_at?.toISOString()}; ` +
+            `fan refund possible from ${new Date(refundDeadline(row)).toISOString()}`,
+        );
       }
+      const s = await escrowChain().session(ctx, ref(row));
+      const done =
+        s === null ? await reconcileClosed(ctx, row, 'settling') : await sendSettle(ctx, row);
+      if (done && done.status === 'settled') counts.settled += 1;
       return;
+    }
     default:
       return;
   }
 }
 
-/** Refund once the accept window has passed on chain; a closed session counts as done. */
+/**
+ * Refund once the accept window has passed on chain. A session that is already gone is
+ * reconciled from its closing transaction, never assumed refunded.
+ */
 async function refundIfAllowed(ctx: AppContext, row: DbRow, t: number): Promise<boolean> {
   const cfg = await escrowChain().config(ctx);
   const opened = row.opened_at?.getTime() ?? 0;
   if (opened + (cfg.acceptWindowSecs + 2) * 1000 > t) return false;
   const s = await escrowChain().session(ctx, ref(row));
-  let sig: string | null = null;
-  if (s !== null) sig = await escrowChain().refund(ctx, ref(row));
+  if (s === null) {
+    const done = await reconcileClosed(ctx, row, 'refunding');
+    return done?.status === 'refunded';
+  }
+  const sig = await escrowChain().refund(ctx, ref(row));
   const done = await transition(
     ctx,
     `UPDATE paid_calls SET status = 'refunded', refund_signature = $2, refund_amount = deposit,

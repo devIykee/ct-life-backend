@@ -4336,8 +4336,12 @@ paths:
         The server reads the ct_escrow Session account and requires it to match the booking
         (fan, creator, session id, rate, minutes, deposit, status Open), then rings the
         creator (`call_invite {kind: paid}`) and answers `status: ringing` with `acceptBy`.
+        The reported signature must itself be a confirmed, successful `open_session` of this
+        call's Session PDA signed by the fan's wallet before it is stored.
         `409 CONFLICT {reason: not_found_yet}`: not on chain yet, retry in 1-2 s.
-        `400 VALIDATION_FAILED {reason: tx_mismatch}`. Idempotent for the same call.
+        `400 VALIDATION_FAILED {reason: tx_mismatch}`. `409 CONFLICT {reason: call_in_progress,
+        who: creator}`: the creator got busy meanwhile; this call is refunded. Idempotent for
+        the same call.
       x-phase: 3
       parameters:
         - name: id
@@ -9233,7 +9237,18 @@ components:
         callId: { type: string, format: uuid }
         status:
           type: string
-          enum: [awaiting_payment, ringing, live, settling, settled, refunding, refunded, expired]
+          enum:
+            [
+              awaiting_payment,
+              ringing,
+              live,
+              settling,
+              settled,
+              refunding,
+              refunded,
+              expired,
+              closed_unknown,
+            ]
         minutesUsed: { type: integer, nullable: true }
         creatorAmount: { type: string, nullable: true, description: 'USDC base units.' }
         refundAmount: { type: string, nullable: true, description: 'USDC base units.' }
@@ -9253,8 +9268,10 @@ components:
           type: string
           nullable: true
           description: >-
-            declined, cancelled, not_answered, not_paid, paid_late, fan_ended, creator_ended,
-            max_reached, participant_left, room_finished
+            declined, cancelled, not_answered, not_paid, paid_late, creator_busy, fan_ended,
+            creator_ended, max_reached, participant_left, room_finished. `closed_unknown`: the
+            session closed and no settle or refund transaction for it was found (amounts to the
+            creator and fee are 0; investigate).
         signatures:
           type: object
           properties:

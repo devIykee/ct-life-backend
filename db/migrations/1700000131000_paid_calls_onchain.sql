@@ -14,7 +14,10 @@
 --   ringing -> live (accept sent) | refunding (declined / not answered in time)
 --   live -> settled | settling (settle send failed; the worker retries)
 --   refunding -> refunded
---   awaiting_payment -> expired (nothing on chain) | refunding (funded too late)
+--   awaiting_payment -> expired (nothing on chain) | refunding (funded too late, or the
+--                       creator got busy before it rang)
+--   settling / refunding -> closed_unknown (the session closed and no settle or refund
+--                       transaction for it was found; creator and fee amounts are zero)
 --
 -- One open call per fan and per creator (partial UNIQUE indexes) makes the
 -- `409 call_in_progress` race-free.
@@ -42,7 +45,8 @@ CREATE TABLE paid_calls (
   deposit           bigint NOT NULL CHECK (deposit > 0),
   status            text NOT NULL DEFAULT 'awaiting_payment'
                      CHECK (status IN ('awaiting_payment', 'ringing', 'live', 'settling',
-                                       'settled', 'refunding', 'refunded', 'expired')),
+                                       'settled', 'refunding', 'refunded', 'expired',
+                                       'closed_unknown')),
   end_reason        text,
   open_signature    text UNIQUE,
   accept_signature  text,
