@@ -23,6 +23,7 @@ import {
 } from './sybil-jail.js';
 import { claimAirdrop, setSybilJailed } from './airdrop-farm.js';
 import { getVenueAccess } from './venues-gating.js';
+import { subscribeUserMessages, type UserMessage } from './realtime-bus.js';
 
 const savedCaps = process.env.CAPABILITIES_ON;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -193,5 +194,30 @@ describe('the Barn', () => {
     expect((await getVenueAccess(ctx, game, 'sybil_barn')).allowed).toBe(true);
     const free = await newPlayer('degen_trader');
     expect((await getVenueAccess(ctx, free, 'sybil_barn')).allowed).toBe(false);
+  });
+});
+
+describe('sybil_status message', () => {
+  it('pushes the stay to the player with epoch-ms times', async () => {
+    const ctx = ctxWith('sybilBail');
+    const got: UserMessage[] = [];
+    const sub = subscribeUserMessages(ctx.redis.main, (m) => {
+      if (m.type === 'sybil_status') got.push(m);
+    });
+    await new Promise((r) => setTimeout(r, 150));
+    const u = await newPlayer('degen_trader');
+    const now = new Date();
+    for (let i = 0; i < 5; i++) await rollSybilJail(ctx, u, 500, now, always);
+    await new Promise((r) => setTimeout(r, 150));
+    await sub.quit();
+    const mine = got.filter((m) => m.userId === u);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.payload).toMatchObject({
+      jailed: true,
+      reasonId: 'sybil_claim_spam',
+      releaseAt: now.getTime() + 120 * 60_000,
+      jailedAt: now.getTime(),
+      at: now.getTime(),
+    });
   });
 });

@@ -183,6 +183,21 @@ export async function readSybilStatus(
   };
 }
 
+/**
+ * The `sybil_status` user message: the REST shape with epoch-ms times (the
+ * realtime convention), plus `at`.
+ * @param s - The status.
+ * @param now - Now.
+ */
+function realtimeStatus(s: SybilStatusRow, now: Date): Record<string, unknown> {
+  return {
+    ...s,
+    jailedAt: s.jailedAt === null ? null : Date.parse(s.jailedAt),
+    releaseAt: s.releaseAt === null ? null : Date.parse(s.releaseAt),
+    at: now.getTime(),
+  };
+}
+
 /** @returns The not-jailed status. */
 export function notJailed(): SybilStatusRow {
   return {
@@ -265,7 +280,7 @@ export async function rollSybilJail(
     // The window expires on its own.
   }
   const status = await getSybilStatus(ctx, userId, now);
-  await publishToUser(ctx, userId, 'sybil_status', { ...status, at: now.getTime() });
+  await publishToUser(ctx, userId, 'sybil_status', realtimeStatus(status, now));
   return status;
 }
 
@@ -323,9 +338,8 @@ export async function paySybilBail(
   );
   const out = notJailed();
   await publishToUser(ctx, userId, 'sybil_status', {
-    ...out,
+    ...realtimeStatus(out, now),
     bailPaidCents: paid,
-    at: now.getTime(),
   });
   return out;
 }

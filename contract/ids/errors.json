@@ -447,7 +447,7 @@
     {
       "code": "SYBIL_JAILED",
       "httpStatus": 403,
-      "message": "You are in the Sybil Barn."
+      "message": "You are in the Barn."
     }
   ]
 }

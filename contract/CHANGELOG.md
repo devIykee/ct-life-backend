@@ -8,7 +8,7 @@ Migration 111 (`sybil_jail`). New config `config/sybil_reasons.json`. Capabiliti
 - New `POST /me/sybil-status/bail` -> the status (`jailed: false`). Bail = farm yield per started hour still to serve, clamped to $5-$150; ledger `sybil_bail`, a sink (Cash never moves to another player). `402 INSUFFICIENT_CASH {have, need}`, `409 CONFLICT {reason: not_jailed | not_bailable}`.
 - New `GET /sybil-barn` -> `{count, inmates: [{userId, alias, reasonId, jailedAt, releaseAt}] (game stays, <= 50, no anon), nextCursor: null}`.
 - `GET /venues/sybil_barn/access` also admits game-jailed players.
-- New user message `sybil_status` (the status, plus `at`; `bailPaidCents` after a bail).
+- New user message `sybil_status` (the status with `jailedAt`/`releaseAt` as epoch ms, plus `at`; `bailPaidCents` after a bail).
 
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 

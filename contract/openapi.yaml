@@ -7342,7 +7342,7 @@ paths:
               example:
                 error:
                   code: SYBIL_JAILED
-                  message: 'You are in the Sybil Barn.'
+                  message: 'You are in the Barn.'
                   details: { releaseAt: '2026-10-30T12:00:00.000Z', reasonId: 'sybil_claim_spam' }
 
 components:

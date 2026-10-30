@@ -722,7 +722,7 @@ export class CapabilityOffError extends DomainError {
 export class SybilJailedError extends DomainError {
   readonly code = 'SYBIL_JAILED';
   constructor(details: Record<string, unknown> = {}) {
-    super('You are in the Sybil Barn.', details);
+    super('You are in the Barn.', details);
     this.httpStatus = 403;
   }
 }
