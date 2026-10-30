@@ -14,7 +14,9 @@
  *
  * A lease also takes a free unit (a door) of its tier, see home-units.ts.
  * A visit to a home that has a door needs access to it: the owner or a
- * guest, else 403 FORBIDDEN.
+ * guest, else 403 FORBIDDEN. Before the door, the owner's visitor policy
+ * (home-settings.ts) may refuse: 403 BLOCKED (either side blocked the other,
+ * under every policy), HOME_CLOSED or FORBIDDEN followers_only.
  *
  * Weekly rent is debited by `server/workers/rent.ts` (the rent
  * worker) at Monday 00:00 UTC. When the owner has insufficient
@@ -34,6 +36,7 @@ import {
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { notifyHomeVisit } from './push-delivery.js';
+import { policyRefusalError, visitorPolicyRefusal } from './home-settings.js';
 import { HOME_VISIT_COOLDOWN_DAYS, recordQuestEvent } from './quests.js';
 import type { AppContext } from './context.js';
 import {
@@ -514,29 +517,45 @@ export async function loadMeHome(
 }
 
 /**
- * Whether a user may enter a home (by instance id). A home without a door
- * is open, as it always was. Used by the home room on join.
+ * Why a user may not enter a home (by instance id), or null when they may.
+ * The owner's visitor policy (home-settings.ts) is checked first, then the
+ * door. A home without a door is open to anyone the policy lets in.
+ * Used by the home room on join; the code is the contract error code.
+ * @param ctx - The app context.
+ * @param homeId - The home's instance id.
+ * @param userId - The player joining.
+ * @returns `BLOCKED`, `HOME_CLOSED`, `FORBIDDEN`, `NOT_FOUND`, or null.
  */
-export async function canEnterHome(
+export async function homeEntryRefusal(
   ctx: AppContext,
   homeId: string,
   userId: string,
-): Promise<boolean> {
+): Promise<'BLOCKED' | 'HOME_CLOSED' | 'FORBIDDEN' | 'NOT_FOUND' | null> {
   return ctx.db.withConnection(async (c) => {
     const r = await c.query<{ owner_user_id: string; status: HomeStatus; unit_id: string | null }>(
       `SELECT owner_user_id, status, unit_id FROM homes WHERE home_id = $1`,
       [homeId],
     );
     const h = r.rows[0];
-    if (!h) return false;
-    if (h.unit_id === null) return isLive(h.status);
-    const a = await accessToHome(
-      c,
-      { homeId, ownerUserId: h.owner_user_id, status: h.status },
-      userId,
-    );
-    return a.canEnter;
+    if (!h) return 'NOT_FOUND';
+    const home = { homeId, ownerUserId: h.owner_user_id, status: h.status };
+    const policy = await visitorPolicyRefusal(c, home, userId);
+    if (policy !== null) return policy === 'followers_only' ? 'FORBIDDEN' : policy;
+    if (h.unit_id === null) return isLive(h.status) ? null : 'FORBIDDEN';
+    return (await accessToHome(c, home, userId)).canEnter ? null : 'FORBIDDEN';
   });
+}
+
+/**
+ * Whether a user may enter a home (by instance id): the visitor policy and
+ * the door both allow it. Used by the home room's re-check.
+ */
+export async function canEnterHome(
+  ctx: AppContext,
+  homeId: string,
+  userId: string,
+): Promise<boolean> {
+  return (await homeEntryRefusal(ctx, homeId, userId)) === null;
 }
 
 /** Record a visit. */
@@ -569,6 +588,15 @@ export async function recordVisit(
   const home = found.rows[0];
   if (home === undefined) throw new NotFoundError({ resource: 'home', id: homeId });
   const resolvedHomeId = home.home_id;
+  // The owner's visitor policy first (closed, followers only), then the door.
+  const refusal = await ctx.db.withConnection((c) =>
+    visitorPolicyRefusal(
+      c,
+      { homeId: resolvedHomeId, ownerUserId: home.owner_user_id },
+      visitorUserId,
+    ),
+  );
+  if (refusal !== null) throw policyRefusalError(refusal);
   // A home with a door is only open to its owner and guests. Checked before
   // anything is logged, so a refused visit leaves no row.
   if (home.unit_id !== null) {

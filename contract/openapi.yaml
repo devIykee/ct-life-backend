@@ -7434,6 +7434,67 @@ paths:
                 }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /homes/me/settings:
+    get:
+      tags: [player]
+      operationId: getHomesMeSettings
+      summary: Who may visit my home.
+      description: >-
+        Capability `visitorPolicy` (unlock D2). `open` (default): the door rules alone decide.
+        `followers`: only mutual followers (you follow each other) and your guests. `closed`: nobody
+        but you. Under every policy a player either of you blocked is refused with `BLOCKED`. The
+        policy is per player, so it survives a move, and it narrows access only: a home with a door
+        still needs the owner or a guest to open it.
+      x-phase: 4
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeSettings' }
+              example: { visitors: 'followers' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+    put:
+      tags: [player]
+      operationId: putHomesMeSettings
+      summary: Set who may visit my home.
+      description: >-
+        Capability `visitorPolicy` (unlock D2). Enforced in `POST /homes/{ownerId}/visit` and when
+        joining the `home` room: `closed` refuses with `403 HOME_CLOSED`, `followers` with
+        `403 FORBIDDEN {reason: followers_only}` (unless mutual follower or guest), and a block in
+        either direction with `403 BLOCKED` under every policy. Visitors already inside who no longer qualify are
+        shown out of the room.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HomeSettings' }
+      responses:
+        '200':
+          description: The stored settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeSettings' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >-
+            Not returned by this route; listed for the visit route and the home room, which refuse
+            a visitor with `HOME_CLOSED` (closed home) or `FORBIDDEN {reason: followers_only}`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    { code: HOME_CLOSED, message: 'This home is closed to visitors.', details: {} },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -9954,6 +10015,15 @@ components:
         targetId: { type: string }
         reasonId: { type: string }
         createdAt: { type: string, format: date-time }
+    HomeSettings:
+      type: object
+      required: [visitors]
+      additionalProperties: false
+      properties:
+        visitors:
+          type: string
+          enum: [open, followers, closed]
+          description: '`open` (default), `followers` (mutual followers and guests only) or `closed` (owner only).'
     DistrictStandings:
       type: object
       required: [districtId, dayDate, rolloverAt, standings, myTribeId, myContribution]
