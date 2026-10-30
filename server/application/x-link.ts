@@ -232,7 +232,7 @@ export async function getXLink(ctx: AppContext, userId: string): Promise<XLinkRo
  * with the handle, avatar and both token hashes, and any in-flight OAuth start
  * with it. X's developer policy asks apps to delete a user's X data on request
  * (within 24 h); this deletes it immediately. The client is told with the
- * user message `x_link_update {linked: false}`.
+ * user message `x_link_update {status: 'unlinked', linked: false, at}`.
  * @param ctx - The application context.
  * @param userId - The caller.
  * @returns Nothing; `404 NOT_FOUND` when no verified link exists (an in-flight
@@ -248,7 +248,11 @@ export async function unlinkXLink(ctx: AppContext, userId: string): Promise<void
   if (!r.rows.some((row) => row.verified_at !== null)) {
     throw new NotFoundError({ kind: 'x_link' });
   }
-  await publishToUser(ctx, userId, 'x_link_update', { linked: false, at: Date.now() });
+  await publishToUser(ctx, userId, 'x_link_update', {
+    status: 'unlinked',
+    linked: false,
+    at: Date.now(),
+  });
 }
 
 function rowToLink(r: XLinkDbRow): XLinkRow {

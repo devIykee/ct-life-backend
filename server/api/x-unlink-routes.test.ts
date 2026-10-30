@@ -126,7 +126,7 @@ describe('DELETE /v1/x/link', () => {
     expect(received.filter((m) => m.userId === u.id)).toEqual([
       expect.objectContaining({
         type: 'x_link_update',
-        payload: expect.objectContaining({ linked: false }),
+        payload: expect.objectContaining({ status: 'unlinked', linked: false }),
       }),
     ]);
     const again = await unlink(u.token);

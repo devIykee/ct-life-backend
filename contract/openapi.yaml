@@ -7225,7 +7225,7 @@ paths:
       description: >-
         Deletes the link with its handle, avatar and token hashes (and any in-flight OAuth start)
         immediately; X's developer policy asks for deletion within 24 h of a request. The user
-        gets the realtime message `x_link_update {linked: false, at}`. Works even when X linking is
+        gets the realtime message `x_link_update {status: unlinked, linked: false, at}`. Works even when X linking is
         disabled on the server. `404 NOT_FOUND` when no verified link exists. Capability
         `xUnlink`: `503 CAPABILITY_OFF` while it is off.
       x-phase: 6
