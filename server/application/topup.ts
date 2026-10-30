@@ -498,8 +498,9 @@ export async function reconcilePaymentIntent(
     // from a top-up pack) never grants a pass: it fails here and is refunded by hand.
     if (!isSeasonPassPrice(intent.amount))
       return failLegacySeasonPass(ctx, intent.intent_id, intent.amount);
-    // While the capability is off nothing is granted; the intent waits (pending).
-    if (!isCapabilityOn(ctx, 'seasonPassPurchase')) return 'pending';
+    // While the capability is off nothing is granted, but an abandoned intent (never
+    // signed, nothing on chain, past expiry + grace) still expires so none pile up.
+    if (!isCapabilityOn(ctx, 'seasonPassPurchase')) return expireIfAbandoned(ctx, intent);
   }
 
   const candidates = new Set<string>();
@@ -558,6 +559,28 @@ export async function reconcilePaymentIntent(
     return 'expired';
   }
   return 'pending';
+}
+
+/**
+ * Expire an intent that was never signed and has nothing on chain, once past its expiry
+ * plus grace; otherwise leave it pending. Grants nothing.
+ */
+async function expireIfAbandoned(ctx: AppContext, intent: OpenIntent): Promise<ReconcileOutcome> {
+  if (intent.status !== 'pending') return 'unchanged';
+  if (intent.signature !== null) return 'pending';
+  if (Date.now() <= new Date(intent.expires_at).getTime() + EXPIRY_GRACE_MS) return 'pending';
+  const history = await clusterRpc(ctx).rpc<Array<{ signature: string }> | null>(
+    'getSignaturesForAddress',
+    [intent.reference, { commitment: 'finalized', limit: 1 }],
+  );
+  if ((history ?? []).length > 0) return 'pending';
+  await ctx.db.withConnection((c) =>
+    c.query(
+      `UPDATE payment_intents SET status = 'expired' WHERE intent_id = $1 AND status = 'pending'`,
+      [intent.intent_id],
+    ),
+  );
+  return 'expired';
 }
 
 function isSeasonPassPrice(amount: string): boolean {
@@ -721,15 +744,22 @@ export async function reconcileOpenIntents(
   ctx: AppContext,
   limit = 50,
 ): Promise<Record<ReconcileOutcome, number>> {
-  const r = await ctx.db.withConnection((c) =>
-    c.query<{ intent_id: string }>(
-      `SELECT intent_id FROM payment_intents
-       WHERE kind IN ('topup', 'ad', 'season_pass')
-         AND (status = 'pending' OR (status = 'expired' AND expires_at > $1))
-       ORDER BY created_at ASC LIMIT $2`,
-      [new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString(), limit],
-    ),
-  );
+  // One bounded batch per kind, so a backlog of one kind never starves the others.
+  const since = new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString();
+  const rows: Array<{ intent_id: string }> = [];
+  for (const kind of RECONCILED_KINDS) {
+    const r = await ctx.db.withConnection((c) =>
+      c.query<{ intent_id: string }>(
+        `SELECT intent_id FROM payment_intents
+         WHERE kind = $1
+           AND (status = 'pending' OR (status = 'expired' AND expires_at > $2))
+         ORDER BY created_at ASC LIMIT $3`,
+        [kind, since, limit],
+      ),
+    );
+    rows.push(...r.rows);
+  }
+  const r = { rows };
   const counts: Record<ReconcileOutcome, number> = {
     confirmed: 0,
     pending: 0,

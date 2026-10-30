@@ -262,4 +262,71 @@ describe('top-up reconciliation', () => {
     expect(await cash(victim.userId)).toBe(1000n);
     expect(await cash(squatter.userId)).toBe(0n);
   });
+
+  /** A 5 USDC season_pass intent (seasonPassPurchase is off in this file's env). */
+  async function passIntent(opts: {
+    signature?: string;
+    expiresInMs: number;
+    createdAgoMs?: number;
+  }) {
+    const userId = uuidv7();
+    const reference = Keypair.generate().publicKey.toBase58();
+    await pool.query('INSERT INTO users (id, wallet) VALUES ($1, $2)', [
+      userId,
+      Keypair.generate().publicKey.toBase58(),
+    ]);
+    const intentId = uuidv7();
+    await pool.query(
+      `INSERT INTO payment_intents
+       (intent_id, user_id, kind, currency, amount, recipient, mint, reference, memo, cash_cents,
+        bonus_bps, status, signature, expires_at, created_at)
+       VALUES ($1, $2, 'season_pass', 'USDC', '5000000', $3, $4, $5, $6, 0, 0, 'pending', $7, $8, $9)`,
+      [
+        intentId,
+        userId,
+        TREASURY,
+        MINT,
+        reference,
+        uuidv7(),
+        opts.signature ?? null,
+        new Date(Date.now() + opts.expiresInMs).toISOString(),
+        new Date(Date.now() - (opts.createdAgoMs ?? 0)).toISOString(),
+      ],
+    );
+    return { intentId, reference };
+  }
+
+  it('with seasonPassPurchase off, an abandoned season_pass intent still expires (nothing granted)', async () => {
+    const abandoned = await passIntent({ expiresInMs: -10 * 60_000 });
+    expect(await reconcilePaymentIntent(ctx(), abandoned.intentId)).toBe('expired');
+    expect(await status(abandoned.intentId)).toBe('expired');
+    // Paid on chain (reference history), or signed, or not yet expired: it waits.
+    const paid = await passIntent({ expiresInMs: -10 * 60_000 });
+    history.set(paid.reference, [sig()]);
+    expect(await reconcilePaymentIntent(ctx(), paid.intentId)).toBe('pending');
+    const signed = await passIntent({ expiresInMs: -10 * 60_000, signature: sig() });
+    expect(await reconcilePaymentIntent(ctx(), signed.intentId)).toBe('pending');
+    const fresh = await passIntent({ expiresInMs: 10 * 60_000 });
+    expect(await reconcilePaymentIntent(ctx(), fresh.intentId)).toBe('pending');
+  });
+
+  it('a backlog of one kind cannot starve another: each kind gets its own batch', async () => {
+    // 60 signed season_pass intents, older than everything, that stay pending while off.
+    for (let n = 0; n < 60; n++) {
+      await passIntent({
+        expiresInMs: 10 * 60_000,
+        signature: sig(),
+        createdAgoMs: 6.9 * 86_400_000,
+      });
+    }
+    const topup = await newIntent();
+    await pool.query(
+      `UPDATE payment_intents SET created_at = now() - interval '6 days' WHERE intent_id = $1`,
+      [topup.intentId],
+    );
+    finalized.set('topupsig', paymentTx(topup));
+    history.set(topup.reference, ['topupsig']);
+    await reconcileOpenIntents(ctx(), 50);
+    expect(await status(topup.intentId)).toBe('confirmed');
+  });
 });
