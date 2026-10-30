@@ -48,6 +48,9 @@
  * overlapping run (a slow tick, a stalled-job retry) never applies twice.
  * The in-process loops (market sim, police) run on every replica instead.
  *
+ *   - Builder projects: weekly payroll (Monday 00:00 UTC), a daily risk roll
+ *     and an hourly offer-expiry sweep, one queue (see projects.ts).
+ *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
  * configured `PORT_WORKERS` if non-zero.
@@ -83,6 +86,7 @@ import { startLikenessScheduler } from './likeness.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import type { LikenessGenerationWorker } from '../application/likeness-worker.js';
 import type { LikenessPhotoService } from '../application/likeness-photos.js';
+import { startProjectsWorker } from './projects.js';
 
 export interface WorkersHandle {
   redis: ReturnType<typeof createRedis>;
@@ -434,6 +438,14 @@ export async function buildWorkers(likeness?: {
     { name: 'rent', data: {} },
   );
 
+  // Builder projects: payroll, risk roll, offer expiry (one queue, three schedulers).
+  const stopProjects = await startProjectsWorker(
+    ctx,
+    conn,
+    newClient(redis),
+    log.child({ worker: 'projects' }),
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -526,6 +538,7 @@ export async function buildWorkers(likeness?: {
       await alphaQueue.close();
       await paymentQueue.close();
       await rentQueue.close();
+      await stopProjects();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

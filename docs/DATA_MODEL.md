@@ -300,3 +300,13 @@ NULL` serves the guest's list and the duplicate-pending check.
 ## Chain (unlock WP-C)
 
 - `devnet_drips` (migration 130) — one row per devnet SOL drip from the ops treasury (`POST /v1/devnet/drip`). `wallet_hash` is sha256 of the wallet (no address stored); `UNIQUE (wallet_hash, day)` and `UNIQUE (user_id, day)` cap it at one drip per wallet and per account per UTC day; `signature` is filled after the send. A send the RPC refuses deletes the row. `user_id` is `ON DELETE CASCADE`.
+
+## Builder projects (migration 1700000120000, unlock WP-B B1)
+
+- `projects` gains `coin_id` (launchpad coin once live), `launched_at`, `paused_at`. `cash_cents` is the treasury (`treasuryCents` on the wire).
+- `project_members` — PK `(project_id, user_id)`, `UNIQUE (project_id, role)`; `role` founder | dev | mod | kol | auditor; `salary_cents_per_week` (0 for the founder), `offer_id`. Replaces `project_hires` as the source of truth (`project_hires` is no longer written; its rows became pending `project_offers` with the same id, so the player consents and the role caps apply).
+- `project_offers` gains a partial unique index: one `pending` offer per `(project_id, to_user_id)`.
+- `project_events` — `event_id` (`proj_*`), `cash_delta_cents` (treasury change), `params` jsonb, `dedupe_key` UNIQUE (payroll week, daily risk roll).
+- `project_work_log` — PK `(project_id, user_id, week_start)`; `source` hq_shift | project_task. The only thing payroll counts as work for that project and week.
+- `project_tasks` — timed project tasks (`started_at`, `ends_at`, `completed_at`); one open task per member and project (partial unique index).
+- `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.
