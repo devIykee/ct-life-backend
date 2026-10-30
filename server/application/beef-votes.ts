@@ -6,8 +6,8 @@
  * stay hidden until the match closes (ratio-arena.ts `rowToMatch`), so nobody
  * bandwagons. Eligibility (contract/config/beef_topics.json `voters`, the B12
  * defaults): not a participant, not jailed (Barn), account at least
- * `minAccountAgeHours` old, career level (ratio-arena.ts `playerStanding`: the
- * highest career level, raised by paid shifts) at least `minLevel`.
+ * `minAccountAgeHours` old, paid for server-timed shifts on at least
+ * `minShiftDays` distinct UTC days (ratio-arena.ts `playerStanding`).
  */
 import { runInTransaction } from '../shared/db/uow.js';
 import {
@@ -63,8 +63,11 @@ export async function castVote(
     if (!me || ageMs < cfg.voters.minAccountAgeHours * 3_600_000) {
       throw new VoteNotAllowedError({ reason: 'too_new' });
     }
-    if ((me.level ?? 1) < cfg.voters.minLevel) {
-      throw new VoteNotAllowedError({ reason: 'level', minLevel: cfg.voters.minLevel });
+    if (me.shiftDays < cfg.voters.minShiftDays) {
+      throw new VoteNotAllowedError({
+        reason: 'shift_days',
+        minShiftDays: cfg.voters.minShiftDays,
+      });
     }
     const ins = await c.query<{ at: Date }>(
       `INSERT INTO beef_votes (match_id, voter_user_id, voted_user_id, at)

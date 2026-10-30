@@ -39,6 +39,17 @@ async function boot(caps: string): Promise<void> {
   stop = handle.stop;
 }
 
+/** Paid server-timed shifts on `n` distinct past UTC days. */
+async function shiftDays(userId: string, n: number): Promise<void> {
+  for (let d = 1; d <= n; d++) {
+    await pool.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, created_at)
+       VALUES ($1, 4000, 'cash', 'shift_pay', 'shift', $2, now() - make_interval(days => $3))`,
+      [userId, uuidv7(), d],
+    );
+  }
+}
+
 /** A dev-auth player; `veteran` makes them old enough and leveled to play and vote. */
 async function devUser(veteran = false): Promise<U> {
   const r = await app!.inject({
@@ -53,11 +64,7 @@ async function devUser(veteran = false): Promise<U> {
     await pool.query(`UPDATE users SET created_at = now() - interval '3 days' WHERE id = $1`, [
       b.id,
     ]);
-    await pool.query(
-      `INSERT INTO career_progress (user_id, career_id, level) VALUES ($1, 'discord_mod', 3)
-       ON CONFLICT (user_id, career_id) DO UPDATE SET level = 3`,
-      [b.id],
-    );
+    await shiftDays(b.id, 2);
   }
   return { id: b.id, token: b.accessToken };
 }
@@ -213,27 +220,32 @@ describe('beef routes', () => {
     expect(view.body.myVote).toBe(a.id);
   }, 30_000);
 
-  it('a normal player reaches the gate: one good paid shift lifts career level to 2', async () => {
+  it('client scores alone never qualify; paid shifts on two days do', async () => {
     await boot('beef');
     const p = await devUser();
-    // Old enough, but no shift yet: career level 1.
-    await pool.query(`UPDATE users SET created_at = now() - interval '3 days' WHERE id = $1`, [
+    await pool.query(`UPDATE users SET created_at = now() - interval '4 days' WHERE id = $1`, [
       p.id,
     ]);
-    const before = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
-    expect(before.status).toBe(403);
-    expect(before.body.error.details.reason).toBe('level');
-    // Work one shift the normal way (apply, start, complete a perfect mini-game).
     expect((await call(p, 'POST', '/v1/careers/discord_mod/apply', {})).status).toBe(200);
-    const start = await call(p, 'POST', '/v1/shifts', { careerId: 'discord_mod' });
-    expect(start.status, JSON.stringify(start.body)).toBe(200);
-    const shiftId = start.body.shiftId as string;
-    _shifts.set(shiftId, { ..._shifts.get(shiftId)!, endsAt: 0 });
-    const done = await call(p, 'POST', `/v1/shifts/${shiftId}/complete`, {
-      results: [{ miniGameId: 'discord_mod_ban', score: 10 }],
-    });
-    expect(done.body).toMatchObject({ promoted: true });
-    const after = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
-    expect(after.status, JSON.stringify(after.body)).toBe(201);
+    // Day 1: a perfect shift with a maxed client-reported score (promotes the career).
+    const work = async (): Promise<void> => {
+      const start = await call(p, 'POST', '/v1/shifts', { careerId: 'discord_mod' });
+      expect(start.status, JSON.stringify(start.body)).toBe(200);
+      const shiftId = start.body.shiftId as string;
+      _shifts.set(shiftId, { ..._shifts.get(shiftId)!, endsAt: 0 });
+      const done = await call(p, 'POST', `/v1/shifts/${shiftId}/complete`, {
+        results: [{ miniGameId: 'discord_mod_ban', score: 10 }],
+      });
+      expect(done.status, JSON.stringify(done.body)).toBe(200);
+    };
+    await work();
+    await work();
+    const sameDay = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(sameDay.status).toBe(403);
+    expect(sameDay.body.error.details).toMatchObject({ reason: 'shift_days', shiftDays: 1 });
+    // A shift paid on an earlier UTC day (a second day of play) qualifies.
+    await shiftDays(p.id, 1);
+    const ok = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
   }, 30_000);
 });

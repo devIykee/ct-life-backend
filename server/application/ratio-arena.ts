@@ -223,31 +223,34 @@ export async function refundStake(c: Tx, m: BeefMatchDbRow, userId: string): Pro
 }
 
 /**
- * A player's account age and level for the beef gates. "Level" is the
- * player's highest career level (`career_progress.level`, 1-5), which only
- * rises through paid shifts (shifts.ts `addCareerXp`): one good shift in any
- * career reaches level 2. It is server-earned, time-gated (shift length,
- * daily caps) and cannot be bought, so an alt has to work for it.
+ * A player's standing for the beef gates, from signals only the server
+ * controls: account age, and on how many distinct UTC days the player was paid
+ * for a server-timed shift (`shift_pay` ledger rows; a shift starts with a
+ * server `endsAt` and cannot be completed before it). Client-reported mini-game
+ * scores change the pay and the career XP, never the number of shift days, so
+ * no score can buy eligibility; an alt has to be played across days.
  * @returns null when the user does not exist.
  */
 export async function playerStanding(
   c: Tx,
   userId: string,
-): Promise<{ created_at: Date; level: number } | null> {
-  const r = await c.query<{ created_at: Date; level: number | null }>(
+): Promise<{ created_at: Date; shiftDays: number } | null> {
+  const r = await c.query<{ created_at: Date; shift_days: number }>(
     `SELECT u.created_at,
-            (SELECT MAX(cp.level) FROM career_progress cp WHERE cp.user_id = u.id) AS level
+            (SELECT COUNT(DISTINCT (l.created_at AT TIME ZONE 'UTC')::date)::int
+               FROM ledger_entries l
+              WHERE l.user_id = u.id AND l.reason = 'shift_pay' AND l.ref_type = 'shift') AS shift_days
        FROM users u WHERE u.id = $1`,
     [userId],
   );
   const row = r.rows[0];
-  return row ? { created_at: row.created_at, level: row.level ?? 1 } : null;
+  return row ? { created_at: row.created_at, shiftDays: row.shift_days } : null;
 }
 
 /**
- * Both participants must meet `participants` (account age, level) to open or
- * accept: a brand-new alt cannot feed its main a win.
- * `403 FORBIDDEN {reason: too_new | level}`.
+ * Both participants must meet `participants` (account age, paid shift days)
+ * to open or accept: a brand-new alt cannot feed its main a win.
+ * `403 FORBIDDEN {reason: too_new | shift_days}`.
  */
 async function assertParticipantEligible(
   c: Tx,
@@ -265,8 +268,12 @@ async function assertParticipantEligible(
       minAccountAgeHours: cfg.participants.minAccountAgeHours,
     });
   }
-  if ((me.level ?? 1) < cfg.participants.minLevel) {
-    throw new ForbiddenError({ reason: 'level', minLevel: cfg.participants.minLevel });
+  if (me.shiftDays < cfg.participants.minShiftDays) {
+    throw new ForbiddenError({
+      reason: 'shift_days',
+      minShiftDays: cfg.participants.minShiftDays,
+      shiftDays: me.shiftDays,
+    });
   }
 }
 

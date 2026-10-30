@@ -49,19 +49,23 @@ let sub: Redis;
 const msgs: UserMessage[] = [];
 
 async function player(
-  opts: { ageHours?: number; level?: number; cash?: number } = {},
+  opts: { ageHours?: number; shiftDays?: number; cash?: number } = {},
 ): Promise<string> {
   const id = uuidv7();
-  const created = new Date(Date.now() - (opts.ageHours ?? 48) * 3_600_000);
+  const created = new Date(Date.now() - (opts.ageHours ?? 96) * 3_600_000);
   await pool.query(`INSERT INTO users (id, wallet, created_at) VALUES ($1, $2, $3)`, [
     id,
     `wpa6-${id}`,
     created.toISOString(),
   ]);
-  await pool.query(
-    `INSERT INTO career_progress (user_id, career_id, level) VALUES ($1, 'discord_mod', $2)`,
-    [id, opts.level ?? 3],
-  );
+  // Paid shifts on distinct past UTC days (the server-controlled eligibility signal).
+  for (let d = 1; d <= (opts.shiftDays ?? 2); d++) {
+    await pool.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, created_at)
+       VALUES ($1, 4000, 'cash', 'shift_pay', 'shift', $2, now() - make_interval(days => $3))`,
+      [id, uuidv7(), d],
+    );
+  }
   await pool.query(`INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, $2, 0)`, [
     id,
     opts.cash ?? 0,
@@ -79,7 +83,7 @@ async function cash(userId: string): Promise<number> {
 
 async function ledger(userId: string): Promise<Array<{ reason: string; delta: number }>> {
   const r = await pool.query<{ reason: string; delta_cents: string }>(
-    `SELECT reason, delta_cents FROM ledger_entries WHERE user_id = $1 ORDER BY id`,
+    `SELECT reason, delta_cents FROM ledger_entries WHERE user_id = $1 AND reason <> 'shift_pay' ORDER BY id`,
     [userId],
   );
   return r.rows.map((x) => ({ reason: x.reason, delta: Number(x.delta_cents) }));
@@ -272,8 +276,8 @@ describe('phases, votes and the result', () => {
     await expect(castVote(ctx, await player({ ageHours: 1 }), id, a, tv)).rejects.toMatchObject({
       details: { reason: 'too_new' },
     });
-    await expect(castVote(ctx, await player({ level: 1 }), id, a, tv)).rejects.toMatchObject({
-      details: { reason: 'level' },
+    await expect(castVote(ctx, await player({ shiftDays: 1 }), id, a, tv)).rejects.toMatchObject({
+      details: { reason: 'shift_days' },
     });
     const jailed = await player();
     await setSybilJailed(ctx, jailed);
@@ -507,24 +511,24 @@ describe('phases, votes and the result', () => {
 });
 
 describe('reward farming guards', () => {
-  it('both participants must be old enough and leveled to open or accept', async () => {
+  it('both participants need account age and paid shift days to open or accept', async () => {
     const t0 = new Date();
     const vet = await player();
     const young = await player({ ageHours: 1 });
-    const low = await player({ level: 1 });
+    const low = await player({ shiftDays: 1 });
     await expect(openMatch(ctx, young, { topicId: TOPIC }, t0)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       details: { reason: 'too_new' },
     });
     await expect(openMatch(ctx, low, { topicId: TOPIC }, t0)).rejects.toMatchObject({
-      details: { reason: 'level' },
+      details: { reason: 'shift_days' },
     });
     const m = await openMatch(ctx, vet, { topicId: TOPIC }, t0);
     await expect(acceptMatch(ctx, young, m.matchId, t0)).rejects.toMatchObject({
       details: { reason: 'too_new' },
     });
     await expect(acceptMatch(ctx, low, m.matchId, t0)).rejects.toMatchObject({
-      details: { reason: 'level' },
+      details: { reason: 'shift_days' },
     });
   });
 

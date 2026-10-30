@@ -16,7 +16,7 @@ export interface BeefConfig {
     minAccountAgeHours: number;
     minPlayerVotes: number;
   };
-  readonly participants: { minAccountAgeHours: number; minLevel: number };
+  readonly participants: { minAccountAgeHours: number; minShiftDays: number };
   readonly elo: { start: number; kFactor: number; maxRatedMatchesPerPairPerDay: number };
   readonly crowd: {
     npcVotes: number;
@@ -26,7 +26,7 @@ export interface BeefConfig {
     maxTalkSpanSeconds: number;
     maxScorePerParticipant: number;
   };
-  readonly voters: { minAccountAgeHours: number; minLevel: number };
+  readonly voters: { minAccountAgeHours: number; minShiftDays: number };
   readonly limits: { maxOpenPerChallenger: number };
 }
 

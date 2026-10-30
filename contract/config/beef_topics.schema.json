@@ -161,17 +161,17 @@
     },
     "voters": {
       "type": "object",
-      "required": ["minAccountAgeHours", "minLevel"],
+      "required": ["minAccountAgeHours", "minShiftDays"],
       "additionalProperties": false,
       "properties": {
         "minAccountAgeHours": {
           "type": "integer",
           "minimum": 0
         },
-        "minLevel": {
+        "minShiftDays": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 10
+          "minimum": 0,
+          "maximum": 30
         }
       }
     },
@@ -189,17 +189,17 @@
     },
     "participants": {
       "type": "object",
-      "required": ["minAccountAgeHours", "minLevel"],
+      "required": ["minAccountAgeHours", "minShiftDays"],
       "additionalProperties": false,
       "properties": {
         "minAccountAgeHours": {
           "type": "integer",
           "minimum": 0
         },
-        "minLevel": {
+        "minShiftDays": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 10
+          "minimum": 0,
+          "maximum": 30
         }
       }
     }
