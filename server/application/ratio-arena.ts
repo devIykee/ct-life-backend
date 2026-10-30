@@ -223,6 +223,28 @@ export async function refundStake(c: Tx, m: BeefMatchDbRow, userId: string): Pro
 }
 
 /**
+ * A player's account age and level for the beef gates. "Level" is the
+ * player's highest career level (`career_progress.level`, 1-5), which only
+ * rises through paid shifts (shifts.ts `addCareerXp`): one good shift in any
+ * career reaches level 2. It is server-earned, time-gated (shift length,
+ * daily caps) and cannot be bought, so an alt has to work for it.
+ * @returns null when the user does not exist.
+ */
+export async function playerStanding(
+  c: Tx,
+  userId: string,
+): Promise<{ created_at: Date; level: number } | null> {
+  const r = await c.query<{ created_at: Date; level: number | null }>(
+    `SELECT u.created_at,
+            (SELECT MAX(cp.level) FROM career_progress cp WHERE cp.user_id = u.id) AS level
+       FROM users u WHERE u.id = $1`,
+    [userId],
+  );
+  const row = r.rows[0];
+  return row ? { created_at: row.created_at, level: row.level ?? 1 } : null;
+}
+
+/**
  * Both participants must meet `participants` (account age, level) to open or
  * accept: a brand-new alt cannot feed its main a win.
  * `403 FORBIDDEN {reason: too_new | level}`.
@@ -233,13 +255,7 @@ async function assertParticipantEligible(
   userId: string,
   now: Date,
 ): Promise<void> {
-  const u = await c.query<{ created_at: Date; level: number | null }>(
-    `SELECT u.created_at,
-            GREATEST(s.clout, s.coding, s.trading, s.writing, s.design, s.security) AS level
-       FROM users u LEFT JOIN skills s ON s.user_id = u.id WHERE u.id = $1`,
-    [userId],
-  );
-  const me = u.rows[0];
+  const me = await playerStanding(c, userId);
   if (
     !me ||
     now.getTime() - me.created_at.getTime() < cfg.participants.minAccountAgeHours * 3_600_000

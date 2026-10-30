@@ -58,7 +58,10 @@ async function player(
     `wpa6-${id}`,
     created.toISOString(),
   ]);
-  await pool.query(`INSERT INTO skills (user_id, clout) VALUES ($1, $2)`, [id, opts.level ?? 3]);
+  await pool.query(
+    `INSERT INTO career_progress (user_id, career_id, level) VALUES ($1, 'discord_mod', $2)`,
+    [id, opts.level ?? 3],
+  );
   await pool.query(`INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, $2, 0)`, [
     id,
     opts.cash ?? 0,

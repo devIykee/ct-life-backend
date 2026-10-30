@@ -8809,8 +8809,8 @@ paths:
         the house, at most 3 rewarded wins a day and 1 per pair of players a day, for accounts at
         least 24 h old, and only when at least 3 real players voted and the winner leads on player
         votes alone; a match the NPC crowd decides moves Elo but pays nothing (config
-        `beef_topics.json`). Both participants need an account at least 24 h old and level 2 to
-        open or accept (`403 FORBIDDEN {reason: too_new | level}`). `stakeCents` may be omitted or 0; more is `400
+        `beef_topics.json`). Both participants need an account at least 24 h old and career level 2
+        (one good paid shift) to open or accept (`403 FORBIDDEN {reason: too_new | level}`). `stakeCents` may be omitted or 0; more is `400
         VALIDATION_FAILED {reason: stakes_disabled}`. `topicId` from the registry (`400
         {reason: unknown_topic}`). With `invitedUserId` only that player may accept or decline and
         they get `beef_challenge`: `404` unknown, `400` yourself, `403 BLOCKED`. At most 3 open
@@ -8974,7 +8974,8 @@ paths:
       summary: Vote for one participant while the match is in its voting window.
       description: >-
         One vote per player per match; tallies stay hidden until close. Not a participant, not in
-        the Barn, account at least 24 h old, level (highest skill) at least 2: else `403
+        the Barn, account at least 24 h old, career level (highest `career_progress` level, raised by
+        paid shifts) at least 2: else `403
         VOTE_NOT_ALLOWED {reason: participant | too_new | level}` or `403 SYBIL_JAILED`. `409
         ALREADY_VOTED`; `409 CONFLICT {reason: not_voting}` outside the 10-minute window; `400`
         when `votedUserId` is not a participant. At close an arena crowd of 5 NPC votes is split

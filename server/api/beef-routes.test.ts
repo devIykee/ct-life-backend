@@ -14,6 +14,7 @@ import { buildServer } from './main.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { _resetContextForTests } from '../application/context.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { _shifts } from '../application/shifts.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const savedCaps = process.env.CAPABILITIES_ON;
@@ -53,7 +54,8 @@ async function devUser(veteran = false): Promise<U> {
       b.id,
     ]);
     await pool.query(
-      `INSERT INTO skills (user_id, clout) VALUES ($1, 3) ON CONFLICT (user_id) DO UPDATE SET clout = 3`,
+      `INSERT INTO career_progress (user_id, career_id, level) VALUES ($1, 'discord_mod', 3)
+       ON CONFLICT (user_id, career_id) DO UPDATE SET level = 3`,
       [b.id],
     );
   }
@@ -209,5 +211,29 @@ describe('beef routes', () => {
     const view = await call(voter, 'GET', `/v1/beef/${id}`);
     expect(view.body.votes).toBeNull();
     expect(view.body.myVote).toBe(a.id);
+  }, 30_000);
+
+  it('a normal player reaches the gate: one good paid shift lifts career level to 2', async () => {
+    await boot('beef');
+    const p = await devUser();
+    // Old enough, but no shift yet: career level 1.
+    await pool.query(`UPDATE users SET created_at = now() - interval '3 days' WHERE id = $1`, [
+      p.id,
+    ]);
+    const before = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(before.status).toBe(403);
+    expect(before.body.error.details.reason).toBe('level');
+    // Work one shift the normal way (apply, start, complete a perfect mini-game).
+    expect((await call(p, 'POST', '/v1/careers/discord_mod/apply', {})).status).toBe(200);
+    const start = await call(p, 'POST', '/v1/shifts', { careerId: 'discord_mod' });
+    expect(start.status, JSON.stringify(start.body)).toBe(200);
+    const shiftId = start.body.shiftId as string;
+    _shifts.set(shiftId, { ..._shifts.get(shiftId)!, endsAt: 0 });
+    const done = await call(p, 'POST', `/v1/shifts/${shiftId}/complete`, {
+      results: [{ miniGameId: 'discord_mod_ban', score: 10 }],
+    });
+    expect(done.body).toMatchObject({ promoted: true });
+    const after = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(after.status, JSON.stringify(after.body)).toBe(201);
   }, 30_000);
 });

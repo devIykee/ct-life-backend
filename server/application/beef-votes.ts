@@ -6,7 +6,8 @@
  * stay hidden until the match closes (ratio-arena.ts `rowToMatch`), so nobody
  * bandwagons. Eligibility (contract/config/beef_topics.json `voters`, the B12
  * defaults): not a participant, not jailed (Barn), account at least
- * `minAccountAgeHours` old, level (the highest skill) at least `minLevel`.
+ * `minAccountAgeHours` old, career level (ratio-arena.ts `playerStanding`: the
+ * highest career level, raised by paid shifts) at least `minLevel`.
  */
 import { runInTransaction } from '../shared/db/uow.js';
 import {
@@ -18,7 +19,7 @@ import {
 } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
 import { beefConfig } from './beef-rules.js';
-import { lockMatch } from './ratio-arena.js';
+import { lockMatch, playerStanding } from './ratio-arena.js';
 import { isSybilJailed } from './sybil-jail.js';
 
 export interface BeefVoteReceipt {
@@ -57,14 +58,7 @@ export async function castVote(
       throw new VoteNotAllowedError({ reason: 'participant' });
     }
     if (await isSybilJailed(c, voterUserId, now)) throw new SybilJailedError({});
-    const u = await c.query<{ created_at: Date; level: number | null }>(
-      `SELECT u.created_at,
-              GREATEST(s.clout, s.coding, s.trading, s.writing, s.design, s.security) AS level
-         FROM users u LEFT JOIN skills s ON s.user_id = u.id
-        WHERE u.id = $1`,
-      [voterUserId],
-    );
-    const me = u.rows[0];
+    const me = await playerStanding(c, voterUserId);
     const ageMs = me ? now.getTime() - me.created_at.getTime() : 0;
     if (!me || ageMs < cfg.voters.minAccountAgeHours * 3_600_000) {
       throw new VoteNotAllowedError({ reason: 'too_new' });
