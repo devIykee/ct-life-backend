@@ -242,7 +242,10 @@ export class VehiclesRoom extends Room {
     const reject = (code: string): void => {
       createLogger()
         .child({ room: 'vehicles' })
-        .info({ code, vehicleId: parsed.data?.id, kind: parsed.data?.kind }, 'vehicle_enter rejected');
+        .info(
+          { code, vehicleId: parsed.data?.id, kind: parsed.data?.kind },
+          'vehicle_enter rejected',
+        );
       client.send('rejected', { type: 'vehicle_enter', code, id: parsed.data?.id });
     };
     if (!parsed.success) return reject('VALIDATION_FAILED');
