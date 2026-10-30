@@ -10,10 +10,14 @@
  *     hash is registered (`registerImage`) when holdings are listed, and the
  *     route serves nothing for an unknown hash.
  *   - https only (ipfs:// and ar:// are mapped to public gateways first).
- *     Every address the host resolves to must be public: loopback, private,
- *     link-local, CGNAT and ULA ranges are refused, and the connection is
- *     pinned to the checked address (no DNS rebinding). Up to 3 redirects,
- *     each checked the same way.
+ *     IP-literal hosts are refused. Every address a host resolves to must be
+ *     public: loopback, private, link-local, CGNAT, ULA, site-local, NAT64,
+ *     6to4, IPv4-compatible and IPv4-mapped IPv6 are refused; the connection
+ *     is pinned to the checked address and the peer address is checked again
+ *     on connect (no DNS rebinding). Up to 3 redirects, each checked the same
+ *     way. One 10 s deadline covers the whole fetch (slow sources included),
+ *     at most 4 fetches at once per process, and none once the cache holds
+ *     `maxStoredImageBytes`.
  *   - Source type must be PNG, JPEG, GIF, WebP or AVIF (no SVG); at most
  *     `maxSourceBytes`, 10 s; at most 40 MP decoded (no decompression bombs).
  *   - Re-encoded with sharp to a palette PNG no larger than `maxImagePx` on
@@ -37,7 +41,10 @@ const MAX_REDIRECTS = 3;
 const RETRY_FAILED_MS = 3_600_000;
 const MAX_INPUT_PIXELS = 40_000_000;
 
+// Two lists: Node's BlockList matches an IPv4 address against IPv4-mapped IPv6
+// subnets, so `::ffff:0:0/96` in a shared list would block every IPv4 address.
 const blocked = new BlockList();
+const blocked6 = new BlockList();
 for (const [net, bits] of [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],
@@ -53,13 +60,20 @@ for (const [net, bits] of [
   blocked.addSubnet(net, bits, 'ipv4');
 }
 for (const [net, bits] of [
-  ['::', 128],
-  ['::1', 128],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['ff00::', 8],
+  ['::', 96], // unspecified, loopback and IPv4-compatible ::a.b.c.d
+  ['::ffff:0:0', 96], // IPv4-mapped, any form
+  ['64:ff9b::', 96], // NAT64
+  ['64:ff9b:1::', 48], // local-use NAT64
+  ['100::', 64], // discard-only
+  ['2001::', 23], // IETF special-purpose (Teredo, ORCHID, benchmarking...)
+  ['2001:db8::', 32], // documentation
+  ['2002::', 16], // 6to4 (embeds an IPv4 address)
+  ['fc00::', 7], // ULA (e.g. Railway's private network)
+  ['fe80::', 10], // link-local
+  ['fec0::', 10], // site-local (deprecated)
+  ['ff00::', 8], // multicast
 ] as const) {
-  blocked.addSubnet(net, bits, 'ipv6');
+  blocked6.addSubnet(net, bits, 'ipv6');
 }
 
 /**
@@ -72,7 +86,7 @@ export function isPrivateAddress(ip: string): boolean {
   if (mapped) return isPrivateAddress(mapped[1]!);
   const fam = isIP(ip);
   if (fam === 4) return blocked.check(ip, 'ipv4');
-  if (fam === 6) return blocked.check(ip, 'ipv6');
+  if (fam === 6) return blocked6.check(ip, 'ipv6');
   return true;
 }
 
@@ -124,7 +138,13 @@ export interface FetchOptions {
   /** Test-only: allow http and private addresses (a local server). Never set from config. */
   readonly allowPrivateForTests?: boolean;
   readonly maxBytes: number;
+  /** Whole-request deadline, redirects included (default 10 s). */
+  readonly timeoutMs?: number;
 }
+
+/** Fetches in flight in this process; more than this and the proxy says "not now". */
+const MAX_CONCURRENT_FETCHES = 4;
+let inFlight = 0;
 
 type Lookup = (
   hostname: string,
@@ -149,28 +169,48 @@ const publicOnlyLookup: Lookup = (hostname, _options, cb) => {
   });
 };
 
+/** The host of a URL without IPv6 brackets. */
+function bareHost(u: URL): string {
+  return u.hostname.replace(/^\[|\]$/g, '');
+}
+
 /**
  * GET a URL under the proxy's rules.
+ *
+ * IP-literal hosts are refused outright (`https://[::1]/`, `https://10.0.0.1/`):
+ * Node skips the custom DNS lookup for them, and NFT images never need one.
+ * Named hosts resolve through `publicOnlyLookup`, and the socket's actual
+ * remote address is checked again on connect (DNS-rebinding safe). One
+ * deadline covers the whole request, redirects and slow bodies included.
  * @param url - The https URL.
- * @param opts - Size cap (and the test-only escape hatch).
+ * @param opts - Size cap, deadline (and the test-only escape hatch).
  * @returns The body and its content type.
  */
 export async function fetchSource(
   url: string,
   opts: FetchOptions,
-  redirects = 0,
+): Promise<{ body: Buffer; contentType: string }> {
+  const signal = AbortSignal.timeout(opts.timeoutMs ?? TIMEOUT_MS);
+  return fetchOnce(url, opts, signal, 0);
+}
+
+async function fetchOnce(
+  url: string,
+  opts: FetchOptions,
+  signal: AbortSignal,
+  redirects: number,
 ): Promise<{ body: Buffer; contentType: string }> {
   const u = new URL(url);
   const local = opts.allowPrivateForTests === true;
   if (u.protocol !== 'https:' && !(local && u.protocol === 'http:')) throw new Error('not_https');
-  if (!local && isIP(u.hostname) && isPrivateAddress(u.hostname))
-    throw new Error('blocked_address');
+  if (!local && isIP(bareHost(u)) !== 0) throw new Error('ip_literal');
   const req = u.protocol === 'https:' ? httpsRequest : httpRequest;
   return new Promise((resolve, reject) => {
     const r = req(
       u,
       {
         method: 'GET',
+        signal,
         timeout: TIMEOUT_MS,
         headers: { accept: SOURCE_TYPES.join(', '), 'user-agent': 'ct-life-img-proxy' },
         ...(local ? {} : { lookup: publicOnlyLookup }),
@@ -181,7 +221,7 @@ export async function fetchSource(
           res.resume();
           if (redirects >= MAX_REDIRECTS) return reject(new Error('too_many_redirects'));
           const next = new URL(res.headers.location, u).toString();
-          return resolve(fetchSource(next, opts, redirects + 1));
+          return resolve(fetchOnce(next, opts, signal, redirects + 1));
         }
         if (status !== 200) {
           res.resume();
@@ -215,8 +255,17 @@ export async function fetchSource(
         res.on('error', reject);
       },
     );
+    // Belt and braces: whatever the lookup said, refuse a private peer.
+    r.on('socket', (sock) => {
+      const check = (): void => {
+        const ip = sock.remoteAddress;
+        if (!local && ip && isPrivateAddress(ip)) r.destroy(new Error('blocked_address'));
+      };
+      sock.once('connect', check);
+      sock.once('secureConnect', check);
+    });
     r.on('timeout', () => r.destroy(new Error('timeout')));
-    r.on('error', reject);
+    r.on('error', (e) => reject(signal.aborted ? new Error('timeout') : e));
     r.end();
   });
 }
@@ -257,7 +306,7 @@ export interface ServedImage {
 export async function proxiedImage(
   ctx: AppContext,
   hash: string,
-  opts: Partial<FetchOptions> = {},
+  opts: Partial<FetchOptions> & { maxStoredBytes?: number } = {},
 ): Promise<ServedImage | null> {
   if (!/^[0-9a-f]{40}$/.test(hash)) return null;
   const r = await ctx.db.withConnection((c) =>
@@ -276,9 +325,17 @@ export async function proxiedImage(
   ) {
     return null;
   }
+  // Storage cap: past it, no new image is fetched (cached ones still serve).
+  const cap = opts.maxStoredBytes ?? nftGalleryConfig().maxStoredImageBytes;
+  const used = await ctx.db.withConnection((c) =>
+    c.query<{ n: string }>(`SELECT COALESCE(sum(octet_length(bytes)), 0) AS n FROM nft_images`),
+  );
+  if (BigInt(used.rows[0]?.n ?? '0') >= BigInt(cap)) return null;
+  if (inFlight >= MAX_CONCURRENT_FETCHES) return null;
   // One fetch per image at a time across replicas.
   const lock = await ctx.redis.main.set(`img:fetch:${hash}`, '1', 'EX', 30, 'NX');
   if (lock !== 'OK') return null;
+  inFlight++;
   try {
     const src = await fetchSource(row.source_url, {
       maxBytes: nftGalleryConfig().maxSourceBytes,
@@ -304,6 +361,7 @@ export async function proxiedImage(
     );
     return null;
   } finally {
+    inFlight--;
     await ctx.redis.main.del(`img:fetch:${hash}`);
   }
 }

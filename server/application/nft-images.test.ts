@@ -23,6 +23,7 @@ import {
   reencode,
   registerImage,
 } from './nft-images.js';
+import { registerImages } from './nft-gallery.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 _resetConfigForTests();
@@ -60,6 +61,13 @@ beforeAll(async () => {
     if (req.url === '/evil.svg')
       return res.writeHead(200, { 'content-type': 'image/svg+xml' }).end('<svg/>');
     if (req.url === '/hop') return res.writeHead(302, { location: '/art.png' }).end();
+    if (req.url === '/slow.png') {
+      // One byte every 300 ms: never idle long enough for a socket timeout.
+      res.writeHead(200, { 'content-type': 'image/png' });
+      const t = setInterval(() => res.write(Buffer.from([0])), 300);
+      res.on('close', () => clearInterval(t));
+      return;
+    }
     return res.writeHead(404).end();
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
@@ -109,10 +117,57 @@ describe('source rules', () => {
     }
   });
 
+  it('blocks every private IPv6 form', () => {
+    for (const ip of [
+      '::',
+      '::1',
+      '::7f00:1', // IPv4-compatible
+      '::ffff:7f00:1', // IPv4-mapped, hex form
+      '::ffff:127.0.0.1',
+      '64:ff9b::7f00:1', // NAT64
+      '2002:7f00:1::1', // 6to4
+      '2001:db8::1',
+      'fd12:3456::1', // ULA
+      'fe80::1',
+      'fec0::1',
+      '100::1',
+      'ff02::1',
+    ]) {
+      expect(isPrivateAddress(ip), ip).toBe(true);
+    }
+  });
+
+  it('refuses IP-literal hosts in every form, IPv6 included', async () => {
+    for (const url of [
+      'https://[::1]/x.png',
+      'https://[fd12:3456::1]/x.png',
+      'https://[fe80::1]/x.png',
+      'https://[::ffff:127.0.0.1]/x.png',
+      'https://[64:ff9b::7f00:1]/x.png',
+      'https://[2606:4700::1111]/x.png', // even a public literal: images never need one
+      'https://127.0.0.1/x.png',
+      'https://169.254.169.254/latest/meta-data',
+    ]) {
+      await expect(fetchSource(url, { maxBytes: 1e7 }), url).rejects.toThrow('ip_literal');
+    }
+  });
+
+  it('gives up on a slow source at the overall deadline', async () => {
+    const t0 = Date.now();
+    await expect(
+      fetchSource(`${base}/slow.png`, {
+        allowPrivateForTests: true,
+        maxBytes: 1e7,
+        timeoutMs: 1200,
+      }),
+    ).rejects.toThrow('timeout');
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
   it('refuses http, a private literal and a host that resolves to loopback by default', async () => {
     await expect(fetchSource(`${base}/art.png`, { maxBytes: 1e7 })).rejects.toThrow('not_https');
     await expect(fetchSource('https://127.0.0.1/x.png', { maxBytes: 1e7 })).rejects.toThrow(
-      'blocked_address',
+      'ip_literal',
     );
     await expect(fetchSource('https://localhost:1/x.png', { maxBytes: 1e7 })).rejects.toThrow(
       /blocked address/,
@@ -151,6 +206,40 @@ describe('proxiedImage', () => {
     const second = await proxiedImage(ctx, hash);
     expect(second?.png.equals(first!.png)).toBe(true);
     expect(hits - before).toBe(1);
+  });
+
+  it('fetches nothing new once the cache is at its storage cap', async () => {
+    const url = `${base}/art.png?cap=${Date.now()}`;
+    const hash = await registerImage(ctx, url);
+    hashes.push(hash);
+    const before = hits;
+    expect(
+      await proxiedImage(ctx, hash, { allowPrivateForTests: true, maxStoredBytes: 0 }),
+    ).toBeNull();
+    expect(hits).toBe(before);
+    const r = await pool.query(`SELECT status FROM nft_images WHERE hash = $1`, [hash]);
+    expect(r.rows[0]).toEqual({ status: 'pending' }); // not marked failed: retried later
+  });
+
+  it('caps new pending image URLs per wallet per day; allow-listed ones always register', async () => {
+    const wallet = `quota-${Date.now()}`;
+    const item = (i: number, moderation: 'ok' | 'pending') => {
+      const sourceUrl = `https://img.example/${wallet}/${i}.png`;
+      const h = imageHash(sourceUrl);
+      hashes.push(h);
+      return { imageHash: h, sourceUrl, moderation };
+    };
+    const first = [item(1, 'pending'), item(2, 'pending'), item(3, 'pending'), item(4, 'ok')];
+    expect(await registerImages(ctx, wallet, first, 2)).toBe(2);
+    expect(await registerImages(ctx, wallet, [item(5, 'pending'), item(6, 'ok')], 2)).toBe(0);
+    const r = await pool.query<{ hash: string }>(
+      `SELECT hash FROM nft_images WHERE hash = ANY($1::text[])`,
+      [hashes],
+    );
+    const have = new Set(r.rows.map((x) => x.hash));
+    expect(
+      [1, 2, 3, 4, 5, 6].map((i) => have.has(imageHash(`https://img.example/${wallet}/${i}.png`))),
+    ).toEqual([true, true, false, true, false, true]);
   });
 
   it('records a failed source and does not retry it within the hour', async () => {

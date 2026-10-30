@@ -43,9 +43,18 @@ lists that host (empty when `PUBLIC_API_BASE_URL` is unset, which the Factory al
 - fetches only URLs the server itself read from DAS (the hash is registered when holdings are read);
 - uses Helius `cdn_uri` first, then `links.image`, then `files[0].uri`; `ipfs://` and `ar://` go
   through `ipfs.io` and `arweave.net`;
-- https only, every resolved address must be public (loopback, private, link-local, CGNAT, ULA and
-  multicast refused), the connection is pinned to the checked address, at most 3 redirects, 10 s;
+- https only and **no IP-literal hosts** (`https://[::1]/`, `https://10.0.0.1/`): Node skips a custom
+  DNS lookup for literals, so they are refused outright (security review M1);
+- every resolved address must be public: loopback, private, link-local, CGNAT, ULA, site-local, NAT64
+  (`64:ff9b::/96`), 6to4 (`2002::/16`), IPv4-compatible (`::/96`), IPv4-mapped (`::ffff:0:0/96`),
+  documentation and multicast are refused; the connection is pinned to the checked address, and the
+  socket's real peer address is checked again on connect (DNS-rebinding safe);
+- at most 3 redirects, each checked the same way; **one 10 s deadline for the whole fetch**, so a source
+  trickling a byte at a time cannot hold a socket (L6); at most 4 fetches at once per process;
 - PNG, JPEG, GIF, WebP or AVIF only (no SVG), at most 8 MiB, at most 40 MP decoded;
+- no new fetch once the cache holds `maxStoredImageBytes` (1 GiB); new image URLs of non-allow-listed NFTs
+  (which anyone can mint) count against `maxNewImagesPerWalletPerDay` (200) per wallet, so one wallet cannot
+  grow the cache without bound (L6);
 - re-encodes to a palette PNG no larger than 512 px and 512 KiB (stepping down to 384 and 256 px if
   needed), and caches it in `nft_images`. A failed source is retried after an hour.
 

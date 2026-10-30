@@ -182,6 +182,54 @@ async function walletOf(ctx: AppContext, userId: string): Promise<string> {
   return w;
 }
 
+/**
+ * Register holdings' image URLs with the proxy (only URLs read from DAS are
+ * ever fetched). Allow-listed (`ok`) images always register; images of
+ * anything else anyone can mint count against a per-wallet daily quota of new
+ * URLs (`maxNewImagesPerWalletPerDay`), so one wallet cannot grow the cache
+ * without bound. Past the quota an item still lists, its image 404s.
+ * @param ctx - The app context.
+ * @param wallet - The owner's wallet.
+ * @param items - The holdings.
+ * @param limit - Quota override (tests).
+ * @returns How many new pending URLs were registered.
+ */
+export async function registerImages(
+  ctx: AppContext,
+  wallet: string,
+  items: ReadonlyArray<{ imageHash: string; sourceUrl: string; moderation: Moderation }>,
+  limit: number = nftGalleryConfig().maxNewImagesPerWalletPerDay,
+): Promise<number> {
+  if (items.length === 0) return 0;
+  const known = await ctx.db.withConnection((c) =>
+    c.query<{ hash: string }>(`SELECT hash FROM nft_images WHERE hash = ANY($1::text[])`, [
+      items.map((h) => h.imageHash),
+    ]),
+  );
+  const have = new Set(known.rows.map((r) => r.hash));
+  const fresh = items.filter((h) => !have.has(h.imageHash));
+  const ok = fresh.filter((h) => h.moderation === 'ok');
+  const pending = fresh.filter((h) => h.moderation !== 'ok');
+  const key = `img:quota:${wallet}:${new Date().toISOString().slice(0, 10)}`;
+  const used = Number((await ctx.redis.main.get(key)) ?? '0');
+  const take = pending.slice(0, Math.max(0, limit - used));
+  if (take.length > 0) {
+    await ctx.redis.main.incrby(key, take.length);
+    await ctx.redis.main.expire(key, 86_400);
+  }
+  const reg = [...ok, ...take];
+  if (reg.length > 0) {
+    await ctx.db.withConnection((c) =>
+      c.query(
+        `INSERT INTO nft_images (hash, source_url)
+         SELECT * FROM unnest($1::text[], $2::text[]) ON CONFLICT (hash) DO NOTHING`,
+        [reg.map((h) => h.imageHash), reg.map((h) => h.sourceUrl)],
+      ),
+    );
+  }
+  return take.length;
+}
+
 async function readHoldings(ctx: AppContext, wallet: string): Promise<Holding[]> {
   const cfg = nftGalleryConfig();
   const networks: Network[] =
@@ -198,16 +246,7 @@ async function readHoldings(ctx: AppContext, wallet: string): Promise<Holding[]>
       if (h) out.push(h);
     }
   }
-  // Only URLs read from DAS here are ever fetched by the image proxy.
-  if (out.length > 0) {
-    await ctx.db.withConnection((c) =>
-      c.query(
-        `INSERT INTO nft_images (hash, source_url)
-         SELECT * FROM unnest($1::text[], $2::text[]) ON CONFLICT (hash) DO NOTHING`,
-        [out.map((h) => h.imageHash), out.map((h) => h.sourceUrl)],
-      ),
-    );
-  }
+  await registerImages(ctx, wallet, out);
   return out.sort((x, y) => x.network.localeCompare(y.network) || x.name.localeCompare(y.name));
 }
 
