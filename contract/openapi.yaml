@@ -7819,7 +7819,9 @@ paths:
         The HQ is a `project_hq` Colyseus room per project (`hackathon_house`
         layout, max 12). Join with `joinOrCreate('project_hq', {projectId, token})`,
         or `joinById(roomId, {token})` once the room exists. Members always enter;
-        anyone else only while a member is inside. `expiresAt` is advisory
+        anyone else only while a member is inside. A refused join is a Colyseus
+        `ServerError {code, message}`: 4403 `members_only`, 4404 `not_found`,
+        4409 `wrong_status`, 4503 `capability_off`. `expiresAt` is advisory
         (`hq.ticketTtlSeconds`). Errors: 403 `FORBIDDEN {reason: 'members_only'}`;
         404; 409 `wrong_status` (rugged).
       parameters:

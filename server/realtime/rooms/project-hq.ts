@@ -8,22 +8,40 @@
  *
  * Join (`joinOrCreate('project_hq', {projectId, token})`, or `joinById(roomId)`
  * once it exists):
- *   - behind the `projectHq` capability (`CAPABILITY_OFF` otherwise);
+ *   - behind the `projectHq` capability (4503 `capability_off` otherwise);
  *   - members always enter; anyone else only while a member is inside
- *     (`members_only`); a rugged project's HQ is closed (`wrong_status`);
+ *     (4403 `members_only`); a rugged project's HQ is closed (4409
+ *     `wrong_status`); a bad project id is 4404 `not_found`;
  *   - when the last member leaves, visitors are shown out (4403 members_only).
  *
  * Every 30 s the room publishes the members inside to Redis (the API checks it
  * before issuing a visitor ticket) and logs an HQ shift (`project_work_log`,
  * `hq_shift`) for a non-founder member who has been in for `hq.shiftMinutes`.
  */
-import type { Client } from 'colyseus';
+import { ServerError, type Client } from 'colyseus';
 import { VenueRoom } from './venue.js';
 import { authenticateJoin } from '../player.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { isCapabilityOn } from '../../application/capabilities.js';
 
 const UUID = /^[0-9a-f-]{36}$/i;
+
+/**
+ * Join refusals the Colyseus client can read: `ServerError(code, reason)`
+ * reaches `joinOrCreate`/`joinById` as `{code, message}` (Colyseus keeps an
+ * error's numeric `code`). Codes mirror the HTTP status (44xx, like the 4403
+ * kick home.ts and this room use).
+ */
+export const HQ_JOIN_ERRORS = {
+  members_only: 4403,
+  not_found: 4404,
+  wrong_status: 4409,
+  capability_off: 4503,
+} as const;
+
+function refuse(reason: keyof typeof HQ_JOIN_ERRORS): ServerError {
+  return new ServerError(HQ_JOIN_ERRORS[reason], reason);
+}
 const TICK_MS = 30_000;
 
 interface Visitor {
@@ -43,9 +61,9 @@ export class ProjectHqRoom extends VenueRoom {
    * @param options - `projectId` (uuid) scopes the room.
    */
   override async onCreate(options: unknown): Promise<void> {
-    if (!isCapabilityOn({ config: loadConfig() }, 'projectHq')) throw new Error('CAPABILITY_OFF');
+    if (!isCapabilityOn({ config: loadConfig() }, 'projectHq')) throw refuse('capability_off');
     const projectId = String((options as { projectId?: string } | undefined)?.projectId ?? '');
-    if (!UUID.test(projectId)) throw new Error('NOT_FOUND');
+    if (!UUID.test(projectId)) throw refuse('not_found');
     this.projectId = projectId;
     const { hqRoomId } = await import('../../application/project-hq.js');
     // The roomId may only be replaced during onCreate (Colyseus Room docs).
@@ -68,10 +86,12 @@ export class ProjectHqRoom extends VenueRoom {
     const userId = await authenticateJoin(options);
     const { buildContext } = await import('../../application/context.js');
     const { hqAccess } = await import('../../application/project-hq.js');
-    const access = await hqAccess(buildContext(), this.projectId, userId);
-    if (access.status === 'rugged') throw new Error('wrong_status');
+    const access = await hqAccess(buildContext(), this.projectId, userId).catch((e: unknown) => {
+      throw (e as { code?: string }).code === 'NOT_FOUND' ? refuse('not_found') : e;
+    });
+    if (access.status === 'rugged') throw refuse('wrong_status');
     const member = access.role !== null;
-    if (!member && !this.hasMemberInside()) throw new Error('members_only');
+    if (!member && !this.hasMemberInside()) throw refuse('members_only');
     await super.onJoin(client, options);
     this.visitors.set(client.sessionId, {
       userId,

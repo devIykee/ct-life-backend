@@ -99,7 +99,10 @@ describe('ProjectHqRoom', () => {
     expect(room.maxClients).toBe(12);
 
     const v = fakeClient('s-visitor');
-    await expect(room.onJoin(v, { token: await token(visitor) })).rejects.toThrow('members_only');
+    await expect(room.onJoin(v, { token: await token(visitor) })).rejects.toMatchObject({
+      code: 4403,
+      message: 'members_only',
+    });
 
     const d = fakeClient('s-dev');
     room.clients.push(d);
@@ -133,7 +136,10 @@ describe('ProjectHqRoom', () => {
 
   it('refuses a bad project id', async () => {
     const room = await newRoom();
-    await expect(room.onCreate({ projectId: 'nope' })).rejects.toThrow('NOT_FOUND');
+    await expect(room.onCreate({ projectId: 'nope' })).rejects.toMatchObject({
+      code: 4404,
+      message: 'not_found',
+    });
   });
 
   it('is closed while the projectHq capability is off', async () => {
@@ -141,7 +147,10 @@ describe('ProjectHqRoom', () => {
     _resetConfigForTests();
     try {
       const room = await newRoom();
-      await expect(room.onCreate({ projectId })).rejects.toThrow('CAPABILITY_OFF');
+      await expect(room.onCreate({ projectId })).rejects.toMatchObject({
+        code: 4503,
+        message: 'capability_off',
+      });
     } finally {
       process.env.CAPABILITIES_ON = 'builder,projectHq';
       _resetConfigForTests();

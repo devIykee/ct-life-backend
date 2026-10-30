@@ -47,6 +47,7 @@ export interface ProjectsClientConfig {
   readonly version: string;
   readonly wages: ProjectsConfig['wages'];
   readonly taskMinutes: number;
+  readonly hqShiftMinutes: number;
   readonly maxRolesPerPlayer: number;
   readonly maxProjectsPerPlayer: number;
   readonly offerTtlHours: number;
@@ -65,6 +66,7 @@ export function projectsClientConfig(ctx: AppContext): ProjectsClientConfig | nu
     version: c.version,
     wages: c.wages,
     taskMinutes: c.task.durationMinutes,
+    hqShiftMinutes: c.hq.shiftMinutes,
     maxRolesPerPlayer: c.membership.maxRolesPerPlayer,
     maxProjectsPerPlayer: c.membership.maxProjectsPerPlayer,
     offerTtlHours: c.offers.ttlHours,

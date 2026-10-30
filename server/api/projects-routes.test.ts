@@ -344,6 +344,7 @@ describe('builder capability on', () => {
     const projects = (r.json() as { projects: Record<string, unknown> }).projects;
     expect(projects).toMatchObject({
       taskMinutes: 10,
+      hqShiftMinutes: 10,
       maxRolesPerPlayer: 1,
       maxProjectsPerPlayer: 2,
       offerTtlHours: 48,
