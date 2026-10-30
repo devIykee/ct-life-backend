@@ -339,8 +339,12 @@ export function registerCoreRoutes(app: FastifyInstance): void {
 }
 
 async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
+  // Its own transaction on another pooled connection: start it now instead of after the profile reads.
+  const firstSession = getFirstSession(req.ctx, userId);
+  firstSession.catch(() => undefined); // awaited below; never an unhandled rejection if the profile read throws first
   return req.ctx.db.withConnection(async (c: import('pg').PoolClient) => {
-    const u = await c.query<{
+    // One round trip: characters, needs, skills and balances are each at most one row per user.
+    const r = await c.query<{
       id: string;
       wallet: string;
       is_seeker: boolean;
@@ -349,15 +353,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       sybil_jailed_at: Date | null;
       lottery_rolled_at: Date | null;
       miner_tier: string;
-    }>(
-      `SELECT id, wallet, is_seeker, skr_name, is_sybil_jailed, sybil_jailed_at,
-              lottery_rolled_at, miner_tier
-         FROM users WHERE id = $1`,
-      [userId],
-    );
-    if (u.rowCount === 0) throw new NotFoundError({ kind: 'user', id: userId });
-    const uRow = u.rows[0]!;
-    const ch = await c.query<{
+      has_character: boolean;
       alias: string;
       look: unknown;
       tribe_id: string;
@@ -365,36 +361,90 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       dream_id: string;
       home_id: string;
       likeness_job_id: string | null;
-    }>(
-      `SELECT alias, look, tribe_id, trait_ids, dream_id, home_id,likeness_job_id
-       FROM characters WHERE user_id = $1`,
-      [userId],
-    );
-    const need = await c.query<{
+      has_needs: boolean;
       energy: number;
       hunger: number;
       fun: number;
       hygiene: number;
       sanity: number;
       last_action_at: Date;
-    }>(
-      'SELECT energy, hunger, fun, hygiene, sanity, last_action_at FROM needs WHERE user_id = $1',
-      [userId],
-    );
-    const sk = await c.query<{
+      has_skills: boolean;
       clout: number;
       coding: number;
       trading: number;
       writing: number;
       design: number;
       security: number;
-    }>('SELECT clout, coding, trading, writing, design, security FROM skills WHERE user_id = $1', [
-      userId,
-    ]);
-    const bal = await c.query<{ cash_cents: string; debt_cents: string }>(
-      'SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1',
+      has_balance: boolean;
+      cash_cents: string;
+      debt_cents: string;
+    }>(
+      `SELECT u.id, u.wallet, u.is_seeker, u.skr_name, u.is_sybil_jailed, u.sybil_jailed_at,
+              u.lottery_rolled_at, u.miner_tier,
+              ch.user_id IS NOT NULL AS has_character, ch.alias, ch.look, ch.tribe_id, ch.trait_ids,
+              ch.dream_id, ch.home_id, ch.likeness_job_id,
+              n.user_id IS NOT NULL AS has_needs, n.energy, n.hunger, n.fun, n.hygiene, n.sanity,
+              n.last_action_at,
+              s.user_id IS NOT NULL AS has_skills, s.clout, s.coding, s.trading, s.writing, s.design,
+              s.security,
+              b.user_id IS NOT NULL AS has_balance, b.cash_cents, b.debt_cents
+         FROM users u
+         LEFT JOIN characters ch ON ch.user_id = u.id
+         LEFT JOIN needs n ON n.user_id = u.id
+         LEFT JOIN skills s ON s.user_id = u.id
+         LEFT JOIN balances b ON b.user_id = u.id
+        WHERE u.id = $1`,
       [userId],
     );
+    if (r.rowCount === 0) throw new NotFoundError({ kind: 'user', id: userId });
+    const row = r.rows[0]!;
+    const uRow = row;
+    const ch = {
+      rows: row.has_character
+        ? [
+            {
+              alias: row.alias,
+              look: row.look,
+              tribe_id: row.tribe_id,
+              trait_ids: row.trait_ids,
+              dream_id: row.dream_id,
+              home_id: row.home_id,
+              likeness_job_id: row.likeness_job_id,
+            },
+          ]
+        : [],
+    };
+    const need = {
+      rows: row.has_needs
+        ? [
+            {
+              energy: row.energy,
+              hunger: row.hunger,
+              fun: row.fun,
+              hygiene: row.hygiene,
+              sanity: row.sanity,
+              last_action_at: row.last_action_at,
+            },
+          ]
+        : [],
+    };
+    const sk = {
+      rows: row.has_skills
+        ? [
+            {
+              clout: row.clout,
+              coding: row.coding,
+              trading: row.trading,
+              writing: row.writing,
+              design: row.design,
+              security: row.security,
+            },
+          ]
+        : [],
+    };
+    const bal = {
+      rows: row.has_balance ? [{ cash_cents: row.cash_cents, debt_cents: row.debt_cents }] : [],
+    };
     const chRow = ch.rows[0];
     const defaultNeeds = {
       energy: 50,
@@ -460,7 +510,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
       minerTier: uRow.miner_tier || 'none',
       flags: {
         // The first-session onboarding: new accounts start `active`, older ones read `done`.
-        firstSession: await getFirstSession(req.ctx, userId),
+        firstSession: await firstSession,
         lotteryRolled: uRow.lottery_rolled_at !== null,
         hasCharacter: chRow !== undefined,
         // Optional per the contract: omitted when the dream's metric has no
