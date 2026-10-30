@@ -16,6 +16,7 @@ import { CityState } from '../../../contract/realtime/states.js';
 import { createJwtIssuer } from '../../shared/auth/jwt.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { getMoodBps } from '../../application/world-pulse.js';
+import { recordWorldEventOnce } from '../../application/world-events.js';
 import {
   shouldDeliverBroadcast,
   subscribeUserMessages,
@@ -159,11 +160,10 @@ export class CityRoom extends Room {
       // read. 100 bps is a 1% move.
       if (Math.abs(mood - this.lastMoodSent) >= 100) {
         this.lastMoodSent = mood;
-        this.broadcast('event', {
-          eventId: 'evt_mood_change',
-          params: { bps: String(mood) },
-          at: Date.now(),
-        });
+        const event = { eventId: 'evt_mood_change', params: { bps: String(mood) }, at: Date.now() };
+        this.broadcast('event', event);
+        // Every city shard sees the same move; keep one copy in the recent list.
+        await recordWorldEventOnce(buildContext().redis.main, event, 'mood', MOOD_REFRESH_MS);
       }
     })().catch(() => {
       // Keep the last known mood.

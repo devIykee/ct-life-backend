@@ -74,6 +74,36 @@ Known oddities: `Config` includes an extra `vault` field from the original escro
 - Invalid rate (`InvalidRate`).
 - Fuzz the settle math with `proptest`.
 
+### Paid-call escrow on devnet (unlock C2)
+
+**Status 2026-10-30 (read-only devnet RPC):** program `FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz`
+is deployed (upgrade authority `7EqcBMHrJPDoKCjcwXUJEoY4hewBNtY2aHEgcqXgMwy8`, deployed at slot 507971312) but it is the **old build** from commit `2afe8fc` — the one `contract/idl/ct_escrow.json`
+describes, not the current `lib.rs`. Its binary carries the old error strings ("Caller is not the
+session creator", "Session is not pending") and none of the current ones. The old build has
+creator-signed `accept`, fan-only `refund`, a shared vault, and **no check that `settle` is signed
+by the settle authority**. The API's paid-call code targets the current `lib.rs` and refuses an old
+Config (`503 CAPABILITY_OFF {reason: escrow_wrong_version}`). The Config PDA does not exist yet (0
+program-owned accounts).
+
+Steps (operator, own machine, own keys; nothing in the API holds the admin or upgrade key):
+
+1. **Upgrade the program from the current source** with the upgrade authority above:
+   `cd programs/ct_escrow && anchor build -p ct_escrow`, then
+   `solana program deploy --url devnet --program-id FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz --upgrade-authority <upgrade-authority.json> target/deploy/ct_escrow.so`.
+   [Unverified] the new `.so` may be larger than the current ProgramData (299,024 bytes); if
+   the deploy says so, run `solana program extend <PROGRAM_ID> <extra bytes> --url devnet` first.
+   [Unverified] the SOL needed for the upgrade buffer (roughly the rent of the `.so` size,
+   refunded when the buffer closes).
+2. **Initialize the Config** with `tools/scripts/escrow-init-config.ts` (dry run by default;
+   it checks devnet, the build, and that no Config exists):
+   `pnpm exec tsx tools/scripts/escrow-init-config.ts --admin <admin.json> --settle-authority <the SETTLE_AUTHORITY_KEYPAIR_DEVNET key file> --treasury <TREASURY_PUBKEY_DEVNET>`,
+   check the simulation, then add `--send`. Fee 1000 bps, accept window 120 s.
+3. **Fund the settle authority** with ~0.5 devnet SOL: it pays the fees of `accept`, `settle`
+   and `refund`, and the rent of a creator's or the treasury's USDC account the first time
+   `settle` needs it.
+4. Turn on `paidCalls` and `creatorMode`, and point the LiveKit webhook at
+   `https://<api>/v1/webhooks/livekit`.
+
 ## Mints and addresses
 
 | Token / account            | Mainnet                                        | Devnet                                         | Notes                              |
