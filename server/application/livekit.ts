@@ -66,6 +66,15 @@ export interface LiveKitService {
     ctx: AppContext,
     args: { kind: RtcKind; id: string; identity: string; canPublish: boolean },
   ): Promise<void>;
+  /**
+   * Disconnect a participant from a LiveKit room (their token stops
+   * mattering: LiveKit only checks it on connect). Absent participant or
+   * room is a no-op.
+   */
+  removeParticipant(
+    ctx: AppContext,
+    args: { kind: RtcKind | 'proximity'; id: string; identity: string },
+  ): Promise<void>;
   /** End (delete) a LiveKit room. Idempotent — 404 from LiveKit is OK. */
   endRoom(ctx: AppContext, args: { kind: RtcKind; id: string }): Promise<void>;
   /** True if the LiveKit HTTP API is reachable; for /readyz. */
@@ -145,6 +154,18 @@ export function createLiveKitService(): LiveKitService {
         });
       } catch (e) {
         // Not in the room right now: their next token carries the role.
+        if (!isNotFound(e)) throw e;
+      }
+    },
+
+    async removeParticipant(ctx, args) {
+      const rs = client(ctx);
+      const name = canonicalRoomName(args.kind, args.id);
+      if (!name) throw new ValidationFailedError({ reason: 'invalid_room_id', kind: args.kind });
+      try {
+        await rs.removeParticipant(name, args.identity);
+      } catch (e) {
+        // Already gone (or the room is): that is the outcome we want.
         if (!isNotFound(e)) throw e;
       }
     },

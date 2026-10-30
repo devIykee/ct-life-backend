@@ -10,7 +10,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { Client } from 'pg';
 import { buildContext, _resetContextForTests } from './context.js';
 import { evaluateAlphaCalls, getTrustScore, placeAlphaCall } from './alpha.js';
-import { placePrediction } from './predictions.js';
+import { placeBet } from './predictions.js';
+import { NotFoundError } from '../shared/domain/errors.js';
 
 const databaseUrl = process.env.DATABASE_URL ?? 'postgres://ctlife:ctlife@localhost:5434/ctlife';
 
@@ -94,24 +95,16 @@ describe('Alpha call evaluation', () => {
   });
 });
 
-describe('Prediction horizon', () => {
-  it('rejects zero or negative stake', async () => {
+describe('Prediction bets', () => {
+  it('rejects a bet on a market the server never opened (no free-text outcomes)', async () => {
     const ctx = buildContext();
     await expect(
-      placePrediction(ctx, {
+      placeBet(ctx, {
         userId: testUserId,
-        outcomeId: 'btc-24h-up',
-        stakeCents: 0,
-        horizon: '5m',
+        marketId: 'btc-24h-up',
+        outcomeId: 'yes',
+        stakeCents: 100,
       }),
-    ).rejects.toThrow();
-    await expect(
-      placePrediction(ctx, {
-        userId: testUserId,
-        outcomeId: 'btc-24h-up',
-        stakeCents: -100,
-        horizon: '5m',
-      }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 });

@@ -308,6 +308,8 @@ ct-life-backend/
 | `LLM_ENABLED`                          | Enable LLM NPCs                                                                                         | `false` |
 | `ANTHROPIC_API_KEY`                    | Anthropic API key                                                                                       | -       |
 | `X_LINK_ENABLED`                       | Enable X account linking                                                                                | `false` |
+| `PREDICTIONS_SETTLEMENT_ENABLED`       | Schedule the prediction settlement sweep (workers); keep off in prod while the resolver is a dev stub   | `false` |
+| `PREDICTIONS_CRYPTO_SOURCE`            | Daily BTC/SOL prediction markets source: `off`, `binance`, `binance_vision` (terms not cleared)         | `off`   |
 | `TRIPO_API_KEY`                        | Server-only key for an explicitly authorized operator likeness trial; does not enable public generation | unset   |
 | `LIKENESS_PRICE_USDC_CENTS`            | Approved retail price in integer USDC cents; never a client-supplied price                              | 300     |
 | `LIKENESS_GENERATION_ENABLED`          | Allow configured generation; requires all other gates and owned entitlement                             | false   |
@@ -354,6 +356,9 @@ ct-life-backend/
 | `LIVE_PHASE`                      | Release phase the deployment has opened, 1 to 6 (default 1). Sent as `livePhase` in `GET /config`; the client opens the apps of every phase up to it. Set 6 to open all apps for private testers |
 | `CAPABILITIES_ON`                 | Comma list of finished-but-dark features to turn on (`GET /config` `capabilities`); empty = all off, unknown names ignored. See `.env.example`                                                   |
 | `ALLOW_MAINNET`                   | `1` lets `APP_ENV=prod` (Solana mainnet) boot; anything else refuses to start on mainnet                                                                                                         |
+| `DEVNET_DRIP_KEYPAIR`             | Throwaway devnet ops-treasury keypair (path or base58) for the daily devnet SOL drip; empty = drip unconfigured                                                                                  |
+| `DEVNET_DRIP_LAMPORTS`            | Lamports per devnet drip (default 20000000 = 0.02 SOL, max 0.1 SOL)                                                                                                                              |
+| `DEVNET_DRIP_DAILY_CAP_LAMPORTS`  | Global daily devnet drip budget (default 1000000000 = 1 SOL, max 10 SOL)                                                                                                                         |
 | `LLM_MODEL`                       | LLM model id for the AI NPCs                                                                                                                                                                     |
 | `X_CLIENT_ID`                     | X (Twitter) OAuth client id                                                                                                                                                                      |
 | `X_CLIENT_SECRET`                 | X OAuth client secret                                                                                                                                                                            |

@@ -1,0 +1,37 @@
+{
+  "title": "sybil_reasons.json",
+  "type": "object",
+  "required": [
+    "version",
+    "windowSeconds",
+    "bailYieldMultiplier",
+    "minBailCents",
+    "maxBailCents",
+    "tiers",
+    "adminReasonId"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "_note": { "type": "string" },
+    "windowSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+    "bailYieldMultiplier": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "minBailCents": { "type": "integer", "minimum": 1 },
+    "maxBailCents": { "type": "integer", "minimum": 1 },
+    "tiers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["reasonId", "minAttempts", "chanceBps", "jailMinutes"],
+        "additionalProperties": false,
+        "properties": {
+          "reasonId": { "type": "string", "pattern": "^sybil_[a-z0-9_]{1,56}$" },
+          "minAttempts": { "type": "integer", "minimum": 2 },
+          "chanceBps": { "type": "integer", "minimum": 0, "maximum": 10000 },
+          "jailMinutes": { "type": "integer", "minimum": 120, "maximum": 720 }
+        }
+      }
+    },
+    "adminReasonId": { "type": "string", "pattern": "^sybil_[a-z0-9_]{1,56}$" }
+  }
+}

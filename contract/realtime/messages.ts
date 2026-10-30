@@ -282,6 +282,8 @@ export type LiquidatedMessage = z.infer<typeof LiquidatedMessage>;
 export const PaymentConfirmedMessage = z.object({
   intentId: z.string().min(1),
   cashCents: z.number().int(),
+  /** Set for a season-pass purchase (cashCents 0); absent for a top-up. */
+  kind: z.enum(['season_pass']).optional(),
 });
 export type PaymentConfirmedMessage = z.infer<typeof PaymentConfirmedMessage>;
 
@@ -347,11 +349,25 @@ export const CallInviteMessage = z.object({
   callId: z.string().min(1),
   fromUserId: z.string().min(1),
   paid: z.boolean(),
+  /** Paid calls (unlock C2): 'paid', the terms, and when the creator must accept by. */
+  kind: z.enum(['paid']).optional(),
+  ratePerMinUsdc: z.string().optional(),
+  maxMinutes: z.number().int().optional(),
+  acceptBy: z.string().optional(),
 });
 export type CallInviteMessage = z.infer<typeof CallInviteMessage>;
 
 export const KickedMessage = z.object({ reasonId: z.string().min(1) });
 export type KickedMessage = z.infer<typeof KickedMessage>;
+
+/** Unlock D3: one of your Prediction Pit bets settled (toast; refetch history). */
+export const PredictionSettledMessage = z.object({
+  predictionId: z.string().min(1),
+  marketId: z.string().min(1).nullable(),
+  status: z.enum(['won', 'lost', 'cancelled']),
+  payoutCents: z.number().int().nonnegative(),
+});
+export type PredictionSettledMessage = z.infer<typeof PredictionSettledMessage>;
 
 // ---------------------------------------------------------------------------
 // Server -> client (market room)

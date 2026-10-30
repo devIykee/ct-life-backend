@@ -151,3 +151,20 @@ exceeds budget. See `docs/OPERATIONS.md` for the full list.
 
 Each service exposes `/metrics` in Prometheus text format
 (`GET /v1/metrics`). Railway's metrics dashboard pulls from these.
+
+## Devnet SOL drip (unlock WP-C)
+
+`POST /v1/devnet/drip` sends 0.02 devnet SOL a day to a player's wallet from an **ops
+treasury**: a throwaway devnet keypair that holds only devnet SOL and is used for nothing
+else. To turn it on:
+
+1. Make a fresh keypair on your own machine (`solana-keygen new -o drip.json`), fund its
+   public address with devnet SOL (faucet.solana.com with GitHub sign-in, or `devnet-pow`).
+   5 SOL covers about 250 drips.
+2. Set `DEVNET_DRIP_KEYPAIR` on the **api** service to the file's contents in base58 (or
+   mount the JSON file and give its path). Optional: `DEVNET_DRIP_LAMPORTS`,
+   `DEVNET_DRIP_DAILY_CAP_LAMPORTS`.
+3. Add `devnetDrip` to `CAPABILITIES_ON`.
+
+The drip refuses to send unless the RPC's genesis hash is devnet's, keeps 0.01 SOL in the
+treasury, and answers `503 CAPABILITY_OFF {reason: treasury_low}` when it needs a refill.

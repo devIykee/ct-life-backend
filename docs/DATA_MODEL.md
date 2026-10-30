@@ -173,6 +173,7 @@ Written by apply (creates the row, never resets it) and by shift completion, in 
 ### `reports` and `blocks` (M1/M2)
 
 - `report_id`, `reporter_user_id`, `target_type`, `target_id`, `reason_id`, `note`, `created_at`, `resolved_by`, `resolved_at`.
+- `target_type` is `user | message | space | call | post | ad | npc_reply` (migration 106 added `npc_reply`: an AI NPC chat reply, `target_id` = `llm_npc_interactions.interaction_id`).
 - `block_id`, `blocker_user_id`, `blocked_user_id`, `created_at`. `UNIQUE (blocker_user_id, blocked_user_id)`.
 
 ### `webhook_events` (M3)
@@ -191,7 +192,7 @@ Written by apply (creates the row, never resets it) and by shift completion, in 
 - `home_guests`: `(home_id, user_id)`, the people the owner lets through the door.
 - `home_visits`: append-only visit log, unchanged.
 
-Flow: `POST /homes` takes a free unit of the kind's tier (`409 NO_FREE_UNIT` when all are held; a tier with no units leases without a door). The rent worker moves a home `active` to `overdue` on a missed week and to `evicted` after 4 in a row, freeing the unit; `POST /homes/{homeId}/move-out` frees it by choice. `GET /units/{unitId}/access` and `POST /homes/{ownerId}/visit` allow the owner and guests of a live home and nobody else.
+Flow: `POST /homes` takes a free unit of the kind's tier (`409 NO_FREE_UNIT` when all are held; a tier with no units leases without a door). The rent worker (Monday 00:00 UTC) moves a home `active` to `overdue` on a missed week and to `evicted` after 4 in a row, freeing the unit. It charges each live home at most once per rent week: the week's ledger row has the key `home-rent-weekly:<homeId>:<monday>`, the cash debit when paid or a zero-delta `rent_missed` row when not; `POST /homes/{homeId}/move-out` frees it by choice. `GET /units/{unitId}/access` and `POST /homes/{ownerId}/visit` allow the owner and guests of a live home and nobody else.
 
 ## ER diagram
 
@@ -283,6 +284,27 @@ collisions. CI and Railway run with `--no-check-order`, so blocks may land out o
 
 Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 
+## Unlock D: homes, markets, NFT gallery (migrations 140-149)
+
+- `home_settings` (migration 140) — one row per player: `visitors` (`open | followers | closed`, default `open`), `updated_at`. Per player, not per lease, so it survives `POST /homes/move`. No row means `open`. Read by `POST /homes/{ownerId}/visit` and the `home` room before the door check.
+- `prediction_markets` (migration 141) — server-generated Prediction Pit markets: `kind` (`sim | crypto | event | mirror`), `question_key`, `params` (client strings), `outcomes`, `horizon`, `opens_at` / `closes_at` (bets) / `resolves_at`, `source`, `payout_bps`, stake limits, `status` (`open | closed | resolved | void`). Recorded at open: `strike_micros` (crypto) and `basis` (for sim and event markets the sealed draw's secret and its sha256 commitment; the secret is server-only until resolution). Recorded once at resolution: `resolved_value_micros`, `resolved_outcome_id`, `resolved_at` (a CHECK ties `resolved` to an outcome). See [Prediction Pit](PREDICTIONS.md).
+- `predictions` gains `market_id` (null on legacy bets), `payout_cents` and `resolved_at` (migration 141).
+
+## Cabal invite revoke (migration 110, unlock A3)
+
+`cabal_invites.revoked_at timestamptz` (null until the host revokes a pending invite with
+`POST /v1/cabal/invites/{id}/revoke`; set once, never cleared). `guest_user_id` is now also set at
+creation for a targeted invite, and only that player can accept it. The status the API reports is
+derived: `revoked` > `accepted` (`used_at`) > `expired` (`expires_at` passed) > `pending`. Partial index
+`cabal_invites_guest_pending_idx (guest_user_id, host_user_id) WHERE used_at IS NULL AND revoked_at IS
+NULL` serves the guest's list and the duplicate-pending check.
+
+## Chain (unlock WP-C)
+
+- `devnet_drips` (migration 130) — one row per devnet SOL drip from the ops treasury (`POST /v1/devnet/drip`). `wallet_hash` is sha256 of the wallet (no address stored); `UNIQUE (wallet_hash, day)` and `UNIQUE (user_id, day)` cap it at one drip per wallet and per account per UTC day; `signature` is filled after the send. A send the RPC refuses deletes the row. `user_id` is `ON DELETE CASCADE`.
+- `paid_calls` (migration 131) — one row per paid call on the ct_escrow program: fan and creator (user ids and the wallets that seed the Session PDA), `session_id` / `session_pda`, `rate_per_min`, `max_minutes`, `fee_bps`, `deposit` (USDC base units), `status` (`awaiting_payment`, `ringing`, `live`, `settling`, `settled`, `refunding`, `refunded`, `expired`, `closed_unknown`), the four signatures, `opened_at` / `accept_by` (from chain), `accepted_at`, `ended_at`, `end_reason`, and the settle split (`seconds_used`, `minutes_used`, `creator_amount`, `fee_amount`, `refund_amount`). Partial UNIQUE indexes allow one open call per fan and per creator. No Cash columns: the money is on chain. Replaces the cents-based `paid_call_escrow` path, which stays for history.
+- `creator_profiles` gains `enabled`, `rate_per_min_usdc` (250000..50000000), `max_minutes` (1..60), `payout_wallet` and `mode_updated_at` (migration 131; `PUT /v1/creator`).
+
 ## Builder projects (migration 1700000120000, unlock WP-B B1)
 
 - `projects` gains `coin_id` (launchpad coin once live), `launched_at`, `paused_at`. `cash_cents` is the treasury (`treasuryCents` on the wire).
@@ -292,6 +314,15 @@ Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 - `project_work_log` — PK `(project_id, user_id, week_start)`; `source` hq_shift | project_task. The only thing payroll counts as work for that project and week.
 - `project_tasks` — timed project tasks (`started_at`, `ends_at`, `completed_at`); one open task per member and project (partial unique index).
 - `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.
+
+## Sybil jail (migration 111, unlock A5)
+
+`sybil_jail`: one row per game-rolled stay in the Sybil Barn (`jail_id`, `user_id`, `reason_id` from
+`config/sybil_reasons.json`, `jailed_at`, `release_at`, `bail_cents_per_hour` = the player's farm yield at
+jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active while `released_at IS NULL
+AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
+over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
+idempotency ref `sybil-bail:<jail_id>`), a sink.
 
 ## VC Row (migration 1700000121000, unlock WP-B B2)
 

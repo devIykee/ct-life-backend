@@ -9,6 +9,14 @@
  * `SessionAccepted`, `SessionSettled`, and `SessionRefunded`
  * events and reconciles the in-game ledger.
  *
+ * ACCOUNT LISTS: the builders follow `programs/ct_escrow/programs/ct_escrow/src/lib.rs`
+ * as it is in this repo (Accounts structs, in field order). That source is NOT what is
+ * deployed on devnet as of 2026-10-30: the devnet binary is the earlier commit 2afe8fc
+ * (the one `contract/idl/ct_escrow.json` describes; creator-signed accept, no settle
+ * authority check). The program must be upgraded from the current lib.rs before paid
+ * calls are turned on; `tools/scripts/escrow-init-config.ts` refuses to run against the old
+ * binary. See docs/ONCHAIN.md "Paid-call escrow on devnet".
+ *
  * Spec key points (contract section 6):
  *   • Config PDA seeds ["config"]. Stores admin, settle_authority,
  *     treasury, usdc_mint, vault, fee_bps (default 1000),
@@ -123,6 +131,18 @@ export function sessionPda(fan: PublicKey, creator: PublicKey, sessionId: bigint
 }
 
 /**
+ * The session's vault: the Session PDA's associated token account for `usdcMint`
+ * (OpenSession `associated_token::authority = session`).
+ */
+export function sessionVault(session: PublicKey, usdcMint: PublicKey): PublicKey {
+  const [ata] = PublicKey.findProgramAddressSync(
+    [session.toBuffer(), TOKEN_PROGRAM_ID.toBuffer(), usdcMint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  );
+  return ata;
+}
+
+/**
  * Compute the on-chain deposit amount.
  *
  * Spec: rate × max_minutes × (1 + fee_bps/10000). The single
@@ -178,6 +198,8 @@ export interface OpenSessionArgs {
   fan: PublicKey;
   fanUsdcAta: PublicKey;
   creator: PublicKey;
+  /** The USDC mint (config.usdc_mint). */
+  usdcMint: PublicKey;
   /** Optional pre-computed deposit. If undefined, computed from
    *  rate × max_minutes × (1 + DEFAULT_FEE_BPS/10000). Pass the
    *  on-chain Config fee_bps in production via this arg. */
@@ -195,18 +217,22 @@ export function buildOpenSessionIx(args: OpenSessionArgs): TransactionInstructio
   const config = configPda();
   const session = sessionPda(args.fan, args.creator, args.sessionId);
   // Deposit amount is computed by the on-chain program from rate × max_minutes × fee
-  // Not passed in instruction data; this calculation is for reference only
+  // Not passed in instruction data; this calculation is for reference only.
+  // Accounts: OpenSession in lib.rs (the vault is the session PDA's USDC ATA).
   return new TransactionInstruction({
     programId: CT_ESCROW_PROGRAM_ID,
     keys: [
       { pubkey: session, isSigner: false, isWritable: true },
       { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: sessionVault(session, args.usdcMint), isSigner: false, isWritable: true },
+      { pubkey: args.usdcMint, isSigner: false, isWritable: false },
       { pubkey: args.fanUsdcAta, isSigner: false, isWritable: true },
       { pubkey: args.creator, isSigner: false, isWritable: false },
       { pubkey: args.fan, isSigner: true, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: ASSOCIATED_TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
     ],
     data: Buffer.from(
       concat([
@@ -249,6 +275,7 @@ export interface SettleArgs {
   sessionId: bigint;
   secondsUsed: bigint;
   vault: PublicKey;
+  usdcMint: PublicKey;
   creatorUsdcAta: PublicKey;
   fanUsdcAta: PublicKey;
   treasuryUsdcAta: PublicKey;
@@ -266,6 +293,7 @@ export function buildSettleIx(args: SettleArgs): TransactionInstruction {
       { pubkey: session, isSigner: false, isWritable: true },
       { pubkey: config, isSigner: false, isWritable: false },
       { pubkey: args.vault, isSigner: false, isWritable: true },
+      { pubkey: args.usdcMint, isSigner: false, isWritable: false },
       { pubkey: args.creatorUsdcAta, isSigner: false, isWritable: true },
       { pubkey: args.fanUsdcAta, isSigner: false, isWritable: true },
       { pubkey: args.treasuryUsdcAta, isSigner: false, isWritable: true },
@@ -282,6 +310,7 @@ export interface RefundArgs {
   creator: PublicKey;
   sessionId: bigint;
   vault: PublicKey;
+  usdcMint: PublicKey;
   fanUsdcAta: PublicKey;
   /** Either the fan or the settle_authority. */
   signer: PublicKey;
@@ -299,6 +328,7 @@ export function buildRefundIx(args: RefundArgs): TransactionInstruction {
       { pubkey: session, isSigner: false, isWritable: true },
       { pubkey: config, isSigner: false, isWritable: false },
       { pubkey: args.vault, isSigner: false, isWritable: true },
+      { pubkey: args.usdcMint, isSigner: false, isWritable: false },
       { pubkey: args.fanUsdcAta, isSigner: false, isWritable: true },
       { pubkey: args.signer, isSigner: true, isWritable: false },
       { pubkey: args.fan, isSigner: false, isWritable: true },
@@ -594,6 +624,158 @@ function eq(a: Uint8Array, b: Uint8Array): boolean {
   if (a.byteLength !== b.byteLength) return false;
   for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
   return true;
+}
+
+// --- Account decoders (current lib.rs layouts, Borsh) --------------------------
+
+const ACCOUNT_CONFIG_DISC = new Uint8Array(
+  createHash('sha256').update('account:Config').digest().slice(0, 8),
+);
+const ACCOUNT_SESSION_DISC = new Uint8Array(
+  createHash('sha256').update('account:Session').digest().slice(0, 8),
+);
+
+/** The Config account (lib.rs `Config`). */
+export interface EscrowConfig {
+  admin: string;
+  settleAuthority: string;
+  treasury: string;
+  usdcMint: string;
+  vault: string;
+  feeBps: number;
+  acceptWindowSecs: number;
+}
+
+/**
+ * Decode the Config PDA's data. Returns null for anything that is not the current
+ * layout (including a Config written by the old devnet binary, which is 107 bytes).
+ */
+export function decodeEscrowConfig(data: Uint8Array): EscrowConfig | null {
+  if (data.byteLength < 8 + 32 * 5 + 2 + 4 + 1) return null;
+  if (!eq(data.slice(0, 8), ACCOUNT_CONFIG_DISC)) return null;
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const key = (o: number): string => pubkeyFromBytes(data.slice(o, o + 32));
+  return {
+    admin: key(8),
+    settleAuthority: key(40),
+    treasury: key(72),
+    usdcMint: key(104),
+    vault: key(136),
+    feeBps: dv.getUint16(168, true),
+    acceptWindowSecs: dv.getUint32(170, true),
+  };
+}
+
+/** The Session account (lib.rs `Session`). status: 0 Open, 1 Accepted, 2 Settled, 3 Refunded. */
+export interface EscrowSession {
+  sessionId: bigint;
+  fan: string;
+  creator: string;
+  ratePerMin: bigint;
+  maxMinutes: number;
+  deposit: bigint;
+  feeBps: number;
+  openedAt: bigint;
+  acceptedAt: bigint;
+  settledAt: bigint;
+  status: number;
+}
+
+/** Decode a Session PDA's data, or null when it is not a current-layout Session. */
+export function decodeEscrowSession(data: Uint8Array): EscrowSession | null {
+  if (data.byteLength < 8 + 8 + 32 + 32 + 8 + 2 + 8 + 2 + 8 + 8 + 8 + 1) return null;
+  if (!eq(data.slice(0, 8), ACCOUNT_SESSION_DISC)) return null;
+  const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let o = 8;
+  const sessionId = dv.getBigUint64(o, true);
+  o += 8;
+  const fan = pubkeyFromBytes(data.slice(o, o + 32));
+  o += 32;
+  const creator = pubkeyFromBytes(data.slice(o, o + 32));
+  o += 32;
+  const ratePerMin = dv.getBigUint64(o, true);
+  o += 8;
+  const maxMinutes = dv.getUint16(o, true);
+  o += 2;
+  const deposit = dv.getBigUint64(o, true);
+  o += 8;
+  const feeBps = dv.getUint16(o, true);
+  o += 2;
+  const openedAt = dv.getBigInt64(o, true);
+  o += 8;
+  const acceptedAt = dv.getBigInt64(o, true);
+  o += 8;
+  const settledAt = dv.getBigInt64(o, true);
+  o += 8;
+  const status = dv.getUint8(o);
+  return {
+    sessionId,
+    fan,
+    creator,
+    ratePerMin,
+    maxMinutes,
+    deposit,
+    feeBps,
+    openedAt,
+    acceptedAt,
+    settledAt,
+    status,
+  };
+}
+
+/** Test helper: the 8-byte account discriminators. */
+export const ACCOUNT_DISCRIMINATORS = {
+  config: ACCOUNT_CONFIG_DISC,
+  session: ACCOUNT_SESSION_DISC,
+} as const;
+
+/**
+ * The split `settle(seconds_used)` makes on chain (lib.rs): minutes = ceil(seconds/60)
+ * capped at max; creator gets rate x minutes; the treasury fee is floor(gross x fee_bps
+ * / 10000) on top; the fan gets the rest of the deposit back.
+ */
+export function settlementSplit(args: {
+  ratePerMin: bigint;
+  maxMinutes: number;
+  feeBps: number;
+  deposit: bigint;
+  secondsUsed: bigint;
+}): { minutes: bigint; creatorAmount: bigint; fee: bigint; refund: bigint } {
+  const maxSecs = BigInt(args.maxMinutes) * 60n;
+  const secs = args.secondsUsed < maxSecs ? args.secondsUsed : maxSecs;
+  let minutes = (secs + 59n) / 60n;
+  if (minutes > BigInt(args.maxMinutes)) minutes = BigInt(args.maxMinutes);
+  const creatorAmount = args.ratePerMin * minutes;
+  const fee = (creatorAmount * BigInt(args.feeBps)) / FEE_BPS_DENOM;
+  return { minutes, creatorAmount, fee, refund: args.deposit - creatorAmount - fee };
+}
+
+/**
+ * Sign `ixs` with the server's settle authority (fee payer) and send, waiting for
+ * `confirmed`. Callers must run `assertDevnetRpc` first.
+ */
+export async function sendAuthorityTx(args: {
+  connection: Connection;
+  signer: Keypair;
+  instructions: TransactionInstruction[];
+}): Promise<string> {
+  const { connection } = args;
+  const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed');
+  const tx = new Transaction({
+    feePayer: args.signer.publicKey,
+    blockhash,
+    lastValidBlockHeight,
+  }).add(...args.instructions);
+  tx.sign(args.signer);
+  const sig = await connection.sendRawTransaction(tx.serialize(), {
+    skipPreflight: false,
+    maxRetries: 3,
+  });
+  await connection.confirmTransaction(
+    { signature: sig, blockhash, lastValidBlockHeight },
+    'confirmed',
+  );
+  return sig;
 }
 
 export { base58Decode, PublicKey };
