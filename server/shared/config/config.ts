@@ -27,6 +27,7 @@
  */
 import { config as loadDotenv } from 'dotenv';
 import { readFileSync } from 'node:fs';
+import { parseCapabilitiesOn, type CapabilityName } from '../domain/capabilities.js';
 
 loadDotenv();
 
@@ -110,6 +111,17 @@ export interface Config {
    * "Coming soon" for the rest.
    */
   readonly livePhase: number;
+
+  /**
+   * Finished-but-dark features this deployment has turned on (env `CAPABILITIES_ON`,
+   * comma list; no code defaults, unknown names ignored, empty = all off).
+   * See server/shared/domain/capabilities.ts.
+   */
+  readonly capabilities: {
+    readonly on: ReadonlySet<CapabilityName>;
+    /** Names in CAPABILITIES_ON this build does not know; logged once at boot. */
+    readonly ignored: readonly string[];
+  };
 
   readonly helius: {
     readonly apiKey: string;
@@ -319,6 +331,17 @@ export function loadConfig(): Config {
 
   const cluster: 'devnet' | 'mainnet' = appEnv === 'prod' ? 'mainnet' : 'devnet';
 
+  // Mainnet guard. APP_ENV=prod silently moves every on-chain feature (payments,
+  // paid calls, Factory launches, mints) to mainnet. Refuse to boot unless the
+  // operator also sets ALLOW_MAINNET=1, so that switch is never an accident.
+  if (cluster === 'mainnet' && process.env.ALLOW_MAINNET !== '1') {
+    throw new Error(
+      'FATAL: APP_ENV=prod selects the Solana mainnet cluster, and ALLOW_MAINNET is not 1. ' +
+        'Every on-chain feature would move real funds. Set ALLOW_MAINNET=1 only after the ' +
+        'mainnet legal review, or use APP_ENV=staging for devnet.',
+    );
+  }
+
   // Dev auth is only safe when APP_ENV=local or APP_ENV=mock.
   // Hard-fail at startup if enabled in staging/prod or when NODE_ENV=production.
   const devAuthEnabled = asBool('ENABLE_DEV_AUTH', appEnv === 'local' && nodeEnv === 'development');
@@ -437,6 +460,8 @@ export function loadConfig(): Config {
 
     // LIVE_PHASE 1 to 6, default 1 (nothing changes until it is set). Anything else fails the load.
     livePhase: asBoundedInt('LIVE_PHASE', 1, 1, 6),
+
+    capabilities: parseCapabilitiesOn(process.env.CAPABILITIES_ON),
 
     helius: {
       apiKey: requireEnv('HELIUS_API_KEY', 'Helius API key'),

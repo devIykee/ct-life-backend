@@ -727,6 +727,12 @@ paths:
         `degraded` field lists features currently in degraded mode (kill
         switches). Clients with `X-Client-Version` below `minClientVersion`
         receive `CLIENT_OUTDATED` and must update.
+
+        `capabilities` lists the finished-but-dark features this deployment has
+        turned on, and `competitionCapabilities` is derived from it. Both come only
+        from the server env `CAPABILITIES_ON`: anything not listed is `false`, so a
+        client treats a missing block or key as off. A route whose capability is off
+        answers `503 CAPABILITY_OFF`.
       x-phase: 1
       security: []
       parameters:
@@ -750,6 +756,30 @@ paths:
                 livePhase: 1
                 degraded: []
                 venues: { 'timeline_square': { 'name': 'Timeline Square', 'maxClients': 50 } }
+                capabilities:
+                  version: 2
+                  apps: { beef: false, builder: false, vc: false, predict: false }
+                  features:
+                    {
+                      beefVoting: false,
+                      districtStandings: false,
+                      seasonResults: false,
+                      sybilBail: false,
+                      sybilBarn: false,
+                      cabalRevoke: false,
+                      xUnlink: false,
+                      worldEvents: true,
+                      homeMove: false,
+                      visitorPolicy: false,
+                      nftGallery: false,
+                      paidCalls: false,
+                      creatorMode: false,
+                      seasonPassPurchase: false,
+                      factory: false,
+                      projectHq: false,
+                    }
+                competitionCapabilities:
+                  { version: 1, beefChallenges: false, targetedCabalInvites: false }
         '304': { description: Not modified; ETag matches. }
         '426':
           description: Client outdated
@@ -7406,6 +7436,23 @@ components:
                   details: {},
                 },
             }
+    CapabilityOff:
+      description: >-
+        The feature behind this route is not turned on on this deployment yet (its name is not in
+        `CAPABILITIES_ON`; see `capabilities` in `GET /config`). `details.capability` names it.
+        Not retryable until the config changes.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: CAPABILITY_OFF,
+                  message: 'This feature is not turned on on this server yet.',
+                  details: { capability: 'worldEvents' },
+                },
+            }
   schemas:
     FactoryToken:
       type: object
@@ -8218,7 +8265,8 @@ components:
         cooldownSec: { type: integer }
     ConfigResponse:
       type: object
-      required: [version, minClientVersion, livePhase, degraded]
+      required:
+        [version, minClientVersion, livePhase, degraded, capabilities, competitionCapabilities]
       properties:
         version: { type: string }
         minClientVersion: { type: string }
@@ -8262,6 +8310,76 @@ components:
         meta: { type: object, additionalProperties: true }
         characterPalettes:
           $ref: '#/components/schemas/CharacterPalettes'
+        capabilities:
+          type: object
+          description: >-
+            Finished-but-dark features this deployment has turned on. Set only by the server env
+            `CAPABILITIES_ON` (comma list of the key names below). There are no code defaults:
+            every key is always sent, `false` unless listed. Clients treat a missing block or key
+            as off (fail closed) and withhold the app or control. A route whose capability is off
+            answers `503 CAPABILITY_OFF`.
+          required: [version, apps, features]
+          properties:
+            version: { type: integer, const: 2 }
+            apps:
+              type: object
+              description: Phone apps; the client withholds the tile while false.
+              required: [beef, builder, vc, predict]
+              properties:
+                beef: { type: boolean }
+                builder: { type: boolean }
+                vc: { type: boolean }
+                predict: { type: boolean }
+            features:
+              type: object
+              description: Features inside apps.
+              required:
+                [
+                  beefVoting,
+                  districtStandings,
+                  seasonResults,
+                  sybilBail,
+                  sybilBarn,
+                  cabalRevoke,
+                  xUnlink,
+                  worldEvents,
+                  homeMove,
+                  visitorPolicy,
+                  nftGallery,
+                  paidCalls,
+                  creatorMode,
+                  seasonPassPurchase,
+                  factory,
+                  projectHq,
+                ]
+              properties:
+                beefVoting: { type: boolean }
+                districtStandings: { type: boolean }
+                seasonResults: { type: boolean }
+                sybilBail: { type: boolean }
+                sybilBarn: { type: boolean }
+                cabalRevoke: { type: boolean }
+                xUnlink: { type: boolean }
+                worldEvents: { type: boolean }
+                homeMove: { type: boolean }
+                visitorPolicy: { type: boolean }
+                nftGallery: { type: boolean }
+                paidCalls: { type: boolean }
+                creatorMode: { type: boolean }
+                seasonPassPurchase: { type: boolean }
+                factory: { type: boolean }
+                projectHq: { type: boolean }
+        competitionCapabilities:
+          type: object
+          description: >-
+            Read by v1.2 competition clients. Derived from `CAPABILITIES_ON`: `beefChallenges`
+            equals `capabilities.apps.beef`; `targetedCabalInvites` is true when `cabalInvites` is
+            in the list.
+          required: [version, beefChallenges, targetedCabalInvites]
+          properties:
+            version: { type: integer, const: 1 }
+            beefChallenges: { type: boolean }
+            targetedCabalInvites: { type: boolean }
     CharacterPalettes:
       type: object
       additionalProperties: false

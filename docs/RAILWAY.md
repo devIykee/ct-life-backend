@@ -82,6 +82,20 @@ alive. Without the workers service the market stays empty.
 The build **must hard-fail at startup** if `ENABLE_DEV_AUTH=true`
 while `APP_ENV` is `staging` or `prod`. See the `Config` loader.
 
+**Mainnet guard.** `APP_ENV=prod` selects the Solana mainnet cluster for
+every on-chain feature (payments, paid calls, Factory launches, mints).
+All three services refuse to boot on mainnet unless `ALLOW_MAINNET=1`
+is also set. Keep `APP_ENV=staging` (devnet) until the mainnet legal
+review is done.
+
+**Capabilities.** Finished features merge dark. Each one turns on when
+its name is added to `CAPABILITIES_ON` on `ctlife-api` (comma list, for
+example `worldEvents,districtStandings`; names and the derived
+`cabalInvites` are listed in `.env.example`). Empty means everything is
+off. Add a name only after its PR has deployed; a route whose capability
+is off answers `503 CAPABILITY_OFF`. Unknown names are ignored and
+logged at boot. Changing the list needs a redeploy (it is read once).
+
 ## Health and readiness
 
 Each service exposes `/healthz` (liveness) and `/readyz` (readiness).

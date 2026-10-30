@@ -443,6 +443,11 @@
       "code": "NFT_MINT_NOT_ALLOWED",
       "httpStatus": 403,
       "message": "This item cannot be minted as an NFT: it was not acquired on-chain."
+    },
+    {
+      "code": "CAPABILITY_OFF",
+      "httpStatus": 503,
+      "message": "This feature is not turned on on this server yet."
     }
   ]
 }

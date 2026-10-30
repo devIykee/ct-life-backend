@@ -268,3 +268,18 @@ See [Groups](GROUPS.md).
 - `ledger_entries_created_brin` — BRIN on `ledger_entries(created_at)` for day-range scans.
 
 See [Analytics](ANALYTICS.md).
+
+## Migration number blocks
+
+The unlock packages (ct-life-evidence `unlock/UNLOCK-PLAN.md`)
+build in parallel, so each takes its migration timestamps from its own block to avoid
+collisions. CI and Railway run with `--no-check-order`, so blocks may land out of order.
+
+| Package                                  | Block                         |
+| ---------------------------------------- | ----------------------------- |
+| A Arena (competition, city feed)         | `1700000110000-1700000119000` |
+| B Ventures (Builder, VC Row, HQ)         | `1700000120000-1700000129000` |
+| C Chain (payments, paid calls, Factory)  | `1700000130000-1700000139000` |
+| D Platform (markets, homes, NFT gallery) | `1700000140000-1700000149000` |
+
+Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).

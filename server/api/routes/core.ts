@@ -38,6 +38,8 @@ import { debtSchedule } from '../../application/bank.js';
 import { loadMeHome } from '../../application/homes.js';
 import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
+import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
+import { loadConfig } from '../../shared/config/config.js';
 
 /**
  * B34: Compare semver versions. Returns true if clientVersion < minVersion.
@@ -104,6 +106,16 @@ const NeedsActionBody = z.object({
  *
  */
 export function registerCoreRoutes(app: FastifyInstance): void {
+  // CAPABILITIES_ON names this build does not know stay off; say so once at boot so a
+  // typo is visible instead of silently leaving a feature dark.
+  app.addHook('onReady', async () => {
+    const { on, ignored } = loadConfig().capabilities;
+    if (ignored.length > 0) {
+      app.log.warn({ ignored }, 'CAPABILITIES_ON: unknown names ignored');
+    }
+    app.log.info({ on: [...on] }, 'CAPABILITIES_ON: capabilities on');
+  });
+
   // GET /v1/config
   app.get('/v1/config', async (req, reply) => {
     const cache = req.ctx.configCache;
@@ -118,6 +130,9 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       // Kill-switch list. Only `ore_reader` is wired: it is listed when
       // GET /v1/ore/board cannot serve a live board (ORE_READER_ENABLED off).
       degraded: oreReaderAvailable(req.ctx) ? [] : ['ore_reader'],
+      // Finished-but-dark features (env CAPABILITIES_ON only; missing = off) and the
+      // derived v1.2 `competitionCapabilities`. See shared/domain/capabilities.ts.
+      ...buildCapabilitiesPayload(req.ctx.config.capabilities.on),
       // Registries (subset for M2). Optional per the contract's
       // ConfigResponse, so a missing file yields null instead of failing
       // the whole response.
