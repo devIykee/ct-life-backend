@@ -360,6 +360,15 @@ export type CallInviteMessage = z.infer<typeof CallInviteMessage>;
 export const KickedMessage = z.object({ reasonId: z.string().min(1) });
 export type KickedMessage = z.infer<typeof KickedMessage>;
 
+/** Unlock D3: one of your Prediction Pit bets settled (toast; refetch history). */
+export const PredictionSettledMessage = z.object({
+  predictionId: z.string().min(1),
+  marketId: z.string().min(1).nullable(),
+  status: z.enum(['won', 'lost', 'cancelled']),
+  payoutCents: z.number().int().nonnegative(),
+});
+export type PredictionSettledMessage = z.infer<typeof PredictionSettledMessage>;
+
 // ---------------------------------------------------------------------------
 // Server -> client (market room)
 // ---------------------------------------------------------------------------
@@ -371,6 +380,48 @@ export const TapeMessage = z.object({
   name: z.string().min(1),
 });
 export type TapeMessage = z.infer<typeof TapeMessage>;
+
+// ---------------------------------------------------------------------------
+// Server -> client (city room, Builder: unlock WP-B)
+// ---------------------------------------------------------------------------
+
+/** To the invitee: same shape as the REST `HireOffer`. */
+export const HireOfferMessage = z.object({
+  offerId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  projectName: z.string().min(1),
+  fromUserId: z.string().uuid(),
+  toUserId: z.string().uuid(),
+  role: z.enum(['dev', 'mod', 'kol', 'auditor']),
+  salaryCentsPerWeek: z.number().int().positive(),
+  status: z.enum(['pending', 'accepted', 'declined', 'expired', 'withdrawn']),
+  expiresAt: z.string(),
+  createdAt: z.string(),
+});
+export type HireOfferMessage = z.infer<typeof HireOfferMessage>;
+
+/** To every project member: same shape as the REST `ProjectEvent`. */
+export const ProjectEventMessage = z.object({
+  eventId: z.string().regex(/^proj_[a-z_]+$/),
+  projectId: z.string().uuid(),
+  cashDeltaCents: z.number().int(),
+  params: z.record(z.string(), z.string()),
+  at: z.string(),
+});
+export type ProjectEventMessage = z.infer<typeof ProjectEventMessage>;
+
+/** To the founder: a VC Row NPC sent a term sheet (same shape as REST `VcOffer`). */
+export const VcOfferMessage = z.object({
+  offerId: z.string().uuid(),
+  projectId: z.string().uuid(),
+  vcArchetypeId: z.string().min(1),
+  investCents: z.number().int().positive(),
+  equityBps: z.number().int().min(1).max(10_000),
+  unlockAt: z.string(),
+  status: z.enum(['pending', 'accepted', 'declined', 'expired']),
+  expiresAt: z.string(),
+});
+export type VcOfferMessage = z.infer<typeof VcOfferMessage>;
 
 // ---------------------------------------------------------------------------
 // Limits (enforced in the room handler)

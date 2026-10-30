@@ -1,93 +1,135 @@
 /**
- * Ratio Arena (CT Beef) routes (M7 #5).
+ * CT Beef in the Debate Arena (unlock A6). Every player route needs the app
+ * capability `beef`; votes also need `beefVoting`. Settle stays admin-only as
+ * a manual override. Rules: server/application/ratio-arena.ts (lifecycle),
+ * beef-close.ts (phases, result, reward), beef-votes.ts (votes).
  *
- *   POST /v1/beef
- *   POST /v1/beef/:id/accept
- *   POST /v1/beef/:id/decline
- *   POST /v1/beef/:id/settle
- *   GET  /v1/beef
+ *   GET  /v1/beef?scope=all|mine|open|arena&status=&cursor=&limit=
+ *   POST /v1/beef                     {topicId, invitedUserId?, stakeCents?: 0}
+ *   GET  /v1/beef/elo?userId=
  *   GET  /v1/beef/:id
- *   GET  /v1/beef/elo
+ *   POST /v1/beef/:id/accept
+ *   POST /v1/beef/:id/decline        (the invited player)
+ *   POST /v1/beef/:id/cancel         (the challenger, while open)
+ *   POST /v1/beef/:id/votes          {votedUserId}   (beefVoting)
+ *   POST /v1/beef/:id/settle         {winnerUserId}  (admin)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireCapability } from '../middleware/capability.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   acceptMatch,
+  cancelMatch,
   declineMatch,
   getElo,
+  getMatch,
   listMatches,
   openMatch,
-  settleMatch,
 } from '../../application/ratio-arena.js';
+import { settleMatch } from '../../application/beef-close.js';
+import { castVote } from '../../application/beef-votes.js';
 
-const OpenBody = z.object({
-  stakeCents: z.number().int().positive(),
-});
+const OpenBody = z
+  .object({
+    topicId: z.string().min(1).max(64),
+    invitedUserId: z.string().uuid().nullable().optional(),
+    stakeCents: z.number().int().min(0).optional(),
+  })
+  .strict();
 
-const AcceptBody = z.object({}).optional();
-
-const DeclineBody = z.object({}).optional();
-
-const SettleBody = z.object({
-  winnerUserId: z.string().uuid(),
-});
+const IdParams = z.object({ id: z.string().uuid() });
+const SettleBody = z.object({ winnerUserId: z.string().uuid() });
+const VoteBody = z.object({ votedUserId: z.string().uuid() }).strict();
+const EloQuery = z.object({ userId: z.string().uuid().optional() });
 
 const BeefListQuery = z.object({
-  scope: z.enum(['all', 'mine']).default('all'),
+  scope: z.enum(['all', 'mine', 'open', 'arena']).default('all'),
   status: z
     .enum(['open', 'active', 'voting', 'closed', 'declined', 'cancelled', 'expired'])
     .optional(),
+  cursor: z.string().min(1).max(200).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
+const beef = requireCapability('beef');
+
+function id(params: unknown): string {
+  const p = IdParams.safeParse(params);
+  if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+  return p.data.id;
+}
+
 /**
- * Register the ratio-arena routes on the Fastify app.
+ * Register the beef routes on the Fastify app.
  */
 export function registerRatioArenaRoutes(app: FastifyInstance): void {
-  // GET /v1/beef - documented in this file's header but never registered,
-  // so the arena board and my-history both answered 404 "No route".
-  app.get('/v1/beef', { preHandler: requireAuth }, async (req, reply) => {
+  app.get('/v1/beef', { preHandler: [beef, requireAuth] }, async (req, reply) => {
     const q = BeefListQuery.safeParse(req.query);
     if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
-    const matches = await listMatches(
-      req.ctx,
-      req.user!.sub,
-      q.data.scope,
-      q.data.status ?? null,
-      q.data.limit,
+    return reply.send(
+      await listMatches(
+        req.ctx,
+        req.user!.sub,
+        q.data.scope,
+        q.data.status ?? null,
+        q.data.limit,
+        q.data.cursor ?? null,
+      ),
     );
-    return reply.send({ matches, nextCursor: null });
-  });
-
-  app.post('/v1/beef', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
-    const body = OpenBody.safeParse(req.body);
-    if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-    const out = await openMatch(req.ctx, req.user!.sub, body.data.stakeCents);
-    return reply.status(201).send(out);
   });
 
   app.post(
-    '/v1/beef/:id/accept',
-    { preHandler: [requireAuth, withIdempotency()] },
+    '/v1/beef',
+    { preHandler: [beef, requireAuth, withIdempotency()] },
     async (req, reply) => {
-      AcceptBody.safeParse(req.body ?? {});
-      const { id } = req.params as { id: string };
-      const out = await acceptMatch(req.ctx, req.user!.sub, id);
-      return reply.send(out);
+      const body = OpenBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      return reply.status(201).send(await openMatch(req.ctx, req.user!.sub, body.data));
     },
+  );
+
+  // Registered before /v1/beef/:id so `elo` is never read as a match id.
+  app.get('/v1/beef/elo', { preHandler: requireAuth }, async (req, reply) => {
+    const q = EloQuery.safeParse(req.query);
+    if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
+    return reply.send(await getElo(req.ctx, q.data.userId ?? req.user!.sub));
+  });
+
+  app.get('/v1/beef/:id', { preHandler: [beef, requireAuth] }, async (req, reply) =>
+    reply.send(await getMatch(req.ctx, req.user!.sub, id(req.params))),
+  );
+
+  app.post(
+    '/v1/beef/:id/accept',
+    { preHandler: [beef, requireAuth, withIdempotency()] },
+    async (req, reply) => reply.send(await acceptMatch(req.ctx, req.user!.sub, id(req.params))),
   );
 
   app.post(
     '/v1/beef/:id/decline',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [beef, requireAuth, withIdempotency()] },
+    async (req, reply) => reply.send(await declineMatch(req.ctx, req.user!.sub, id(req.params))),
+  );
+
+  app.post(
+    '/v1/beef/:id/cancel',
+    { preHandler: [beef, requireAuth, withIdempotency()] },
+    async (req, reply) => reply.send(await cancelMatch(req.ctx, req.user!.sub, id(req.params))),
+  );
+
+  app.post(
+    '/v1/beef/:id/votes',
+    {
+      preHandler: [beef, requireCapability('beefVoting'), requireAuth, withIdempotency()],
+    },
     async (req, reply) => {
-      DeclineBody.safeParse(req.body ?? {});
-      const { id } = req.params as { id: string };
-      const out = await declineMatch(req.ctx, req.user!.sub, id);
-      return reply.send(out);
+      const body = VoteBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const out = await castVote(req.ctx, req.user!.sub, id(req.params), body.data.votedUserId);
+      return reply.status(201).send(out);
     },
   );
 
@@ -97,14 +139,7 @@ export function registerRatioArenaRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const body = SettleBody.safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const { id } = req.params as { id: string };
-      const out = await settleMatch(req.ctx, id, body.data.winnerUserId);
-      return reply.send(out);
+      return reply.send(await settleMatch(req.ctx, id(req.params), body.data.winnerUserId));
     },
   );
-
-  app.get('/v1/beef/elo', { preHandler: requireAuth }, async (req, reply) => {
-    const out = await getElo(req.ctx, req.user!.sub);
-    return reply.send(out);
-  });
 }

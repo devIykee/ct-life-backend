@@ -2,23 +2,34 @@
  * Dubai Marina + Cabal Lounge routes (M7 #7).
  *
  *   POST /v1/homes/:id/marina/visit
- *   POST /v1/cabal/invites
+ *   POST /v1/cabal/invites               {guestUserId?} (targeted: capability cabalInvites)
  *   POST /v1/cabal/invites/:id/accept
+ *   POST /v1/cabal/invites/:id/revoke    (capability cabalRevoke)
  *   GET  /v1/cabal/invites
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireCapability } from '../middleware/capability.js';
+import { assertCapabilityOn } from '../../application/capabilities.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   acceptCabalInvite,
   createCabalInvite,
   listCabalInvites,
   marinaVisit,
+  revokeCabalInvite,
   getMyCabal,
   getVenueAccess,
 } from '../../application/venues-gating.js';
+
+const CreateInviteBody = z
+  .object({ guestUserId: z.string().uuid().nullable().optional() })
+  .strict()
+  .nullable()
+  .optional();
+const InviteParams = z.object({ id: z.string().uuid() });
 
 const CabalListQuery = z.object({
   hostId: z.string().uuid().optional(),
@@ -57,7 +68,12 @@ export function registerVenuesGatingRoutes(app: FastifyInstance): void {
     '/v1/cabal/invites',
     { preHandler: [requireAuth, withIdempotency()] },
     async (req, reply) => {
-      const out = await createCabalInvite(req.ctx, req.user!.sub);
+      const b = CreateInviteBody.safeParse(req.body ?? undefined);
+      if (!b.success) throw new ValidationFailedError({ issues: b.error.issues });
+      const guestUserId = b.data?.guestUserId ?? null;
+      // Open invites predate the unlock; inviting one player is the new capability.
+      if (guestUserId !== null) assertCapabilityOn(req.ctx, 'cabalInvites');
+      const out = await createCabalInvite(req.ctx, req.user!.sub, guestUserId);
       return reply.status(201).send(out);
     },
   );
@@ -69,6 +85,16 @@ export function registerVenuesGatingRoutes(app: FastifyInstance): void {
       const { id } = req.params as { id: string };
       const out = await acceptCabalInvite(req.ctx, req.user!.sub, id);
       return reply.send(out);
+    },
+  );
+
+  app.post(
+    '/v1/cabal/invites/:id/revoke',
+    { preHandler: [requireCapability('cabalRevoke'), requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const p = InviteParams.safeParse(req.params);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+      return reply.send(await revokeCabalInvite(req.ctx, req.user!.sub, p.data.id));
     },
   );
 

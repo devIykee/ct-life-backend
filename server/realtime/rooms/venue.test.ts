@@ -170,3 +170,45 @@ describe('venue room island coordinates', () => {
     }
   });
 });
+
+describe('venue room voice membership', () => {
+  it('counts a joined session in the shared member hash and forgets it on leave and dispose', async () => {
+    const { RedisPresence } = await import('colyseus');
+    const { createRedis } = await import('../../shared/redis/client.js');
+    const { venueMembersKey } = await import('../venue-presence.js');
+    const redis = createRedis().main;
+    const room = new VenueRoom();
+    const r = room as unknown as Record<string, unknown>;
+    r.setSimulationInterval = () => undefined;
+    await room.onCreate({ venueId: 'timeline_square' });
+    r.presence = new RedisPresence(redis);
+    const removeFromVoice = vi.fn(async () => undefined);
+    r.removeFromVoice = removeFromVoice;
+    const key = venueMembersKey(room.state.instanceId);
+    const client = { sessionId: 'voice-s1', send: () => undefined };
+    const second = { sessionId: 'voice-s2', send: () => undefined };
+    try {
+      await room.onJoin(client as never, {});
+      // Written before onJoin returns, so the client's first token request finds it.
+      expect(await redis.hget(key, 'u1')).toBe('1');
+      expect(await redis.ttl(key)).toBeGreaterThan(0);
+      // Two sessions: leaving one keeps the user in voice.
+      await room.onJoin(second as never, {});
+      room.onLeave(second as never);
+      await new Promise((done) => setTimeout(done, 50));
+      expect(await redis.hget(key, 'u1')).toBe('1');
+      expect(removeFromVoice).not.toHaveBeenCalled();
+      // The last session leaving takes them out of the LiveKit room too.
+      room.onLeave(client as never);
+      await new Promise((done) => setTimeout(done, 50));
+      expect(await redis.hget(key, 'u1')).toBe('0');
+      expect(removeFromVoice).toHaveBeenCalledWith(room.state.instanceId, 'u1');
+      await room.onJoin(client as never, {});
+      await room.onDispose();
+      await new Promise((done) => setTimeout(done, 50));
+      expect(await redis.exists(key)).toBe(0);
+    } finally {
+      await redis.del(key);
+    }
+  });
+});

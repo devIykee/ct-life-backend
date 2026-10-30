@@ -3,14 +3,20 @@
  *
  * Submit a report. The M2 moderation queue (M5) reads
  * `WHERE resolved_at IS NULL ORDER BY created_at ASC`.
+ *
+ * `npc_reply` reports an AI NPC chat reply: targetId is the `replyId` that
+ * `POST /v1/llm/chat` returned (an `llm_npc_interactions` row). Only the
+ * player the reply was written for can report it.
  */
 import { runInTransaction } from '../shared/db/uow.js';
 import { RateLimitedError, ValidationFailedError } from '../shared/domain/errors.js';
 import { perUserTokenBucket } from '../shared/infra/rate-limit.js';
 import type { AppContext } from './context.js';
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface ReportInput {
-  readonly targetType: 'user' | 'message' | 'space' | 'call' | 'post' | 'ad';
+  readonly targetType: 'user' | 'message' | 'space' | 'call' | 'post' | 'ad' | 'npc_reply';
   readonly targetId: string;
   readonly reasonId: string;
   readonly note?: string;
@@ -50,6 +56,17 @@ export class ReportsService {
       });
     }
     await runInTransaction(async (client) => {
+      if (input.targetType === 'npc_reply') {
+        const own = UUID.test(input.targetId)
+          ? await client.query(
+              `SELECT 1 FROM llm_npc_interactions WHERE interaction_id = $1 AND user_id = $2`,
+              [input.targetId, reporterId],
+            )
+          : null;
+        if (!own || own.rowCount === 0) {
+          throw new ValidationFailedError({ reason: 'unknown_reply', targetId: input.targetId });
+        }
+      }
       await client.query(
         `INSERT INTO reports (reporter_user_id, target_type, target_id, reason_id, note)
          VALUES ($1, $2, $3, $4, $5)

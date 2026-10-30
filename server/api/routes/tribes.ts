@@ -7,10 +7,13 @@
  *   GET /v1/districts
  *   GET /v1/districts/:id
  *   GET /v1/districts/:id/owner
+ *   GET /v1/districts/:id/standings   (capability districtStandings)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/capability.js';
+import { getDistrictStandings } from '../../application/district-standings.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
@@ -21,6 +24,8 @@ import {
   listDistricts,
   listTribes,
 } from '../../application/tribes.js';
+
+const DistrictParams = z.object({ id: z.string().min(1).max(64) });
 
 const ChangeTribeBody = z.object({
   tribeId: z.string().min(1).max(40),
@@ -63,6 +68,17 @@ export function registerTribeRoutes(app: FastifyInstance): void {
     const out = await getDistrictOwner(req.ctx, id);
     return reply.send({ districtId: id, owner: out });
   });
+
+  // Today's tribe scores in a district and the caller's contribution.
+  app.get(
+    '/v1/districts/:id/standings',
+    { preHandler: [requireCapability('districtStandings'), requireAuth] },
+    async (req, reply) => {
+      const p = DistrictParams.safeParse(req.params);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
+      return reply.send(await getDistrictStandings(req.ctx, req.user!.sub, p.data.id));
+    },
+  );
 
   // POST /v1/me/tribe — change the caller's tribe. Refused if the
   // caller already changed tribe in the current ISO-8601 week.
