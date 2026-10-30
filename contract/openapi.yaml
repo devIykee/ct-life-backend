@@ -7265,6 +7265,79 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /districts/{id}/standings:
+    get:
+      tags: [competition]
+      operationId: getDistrictStandings
+      summary: Today's tribe scores in a district and my contribution.
+      description: >-
+        Live for the current UTC day, with the same formula the daily rollover writes: the default
+        holder's `base_score_per_day` plus player posts and check-ins in the district by each
+        tribe's members, at most 3 per player. The rollover at 00:05 UTC (`rolloverAt`) gives the
+        district to the top tribe of the day that ended. `standings` is highest score first.
+        `myContribution` is my capped count today, null for the `anon` tribe (hidden) or without a
+        character. Capability `districtStandings`: `503 CAPABILITY_OFF` while it is off.
+      x-phase: 6
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Standings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DistrictStandings' }
+              example:
+                districtId: 'the_trenches'
+                dayDate: '2026-10-30'
+                rolloverAt: '2026-10-31T00:05:00.000Z'
+                standings:
+                  - { tribeId: 'trencher', score: 104 }
+                  - { tribeId: 'perp_degen', score: 12 }
+                myTribeId: 'perp_degen'
+                myContribution: 3
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /me/season-results:
+    get:
+      tags: [competition]
+      operationId: getMeSeasonResults
+      summary: How my last (or a given) finished season ended, for the share card.
+      description: >-
+        Seasons are ISO weeks (`2026-W43`). Without `seasonId`, the latest finished season I was
+        in. `outcome` compares my league with the next season's (written at the Monday rollover):
+        `promoted`/`relegated` with `toLeagueId`, or `stayed` (also when the next rollover has not
+        run yet) with `toLeagueId: null`. `finalRank` is my place in that league by net worth at
+        the end of the season (the start-of-season rank when no later row exists). `rewards` lists
+        what the ledger paid for that season (`reason: season_reward`); nothing pays one yet, so it
+        is `[]`. `404 NOT_FOUND` when I have no finished season (or `seasonId` is the current or a
+        future one). Capability `seasonResults`: `503 CAPABILITY_OFF` while it is off.
+      x-phase: 6
+      parameters:
+        - name: seasonId
+          in: query
+          required: false
+          schema: { type: string, pattern: '^\d{4}-W\d{2}$' }
+      responses:
+        '200':
+          description: Season result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonResult' }
+              example:
+                seasonId: '2026-W43'
+                leagueId: 'silver'
+                finalRank: 12
+                outcome: 'promoted'
+                toLeagueId: 'gold'
+                rewards: []
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
   /homes/move:
     post:
       tags: [player]
@@ -9881,6 +9954,42 @@ components:
         targetId: { type: string }
         reasonId: { type: string }
         createdAt: { type: string, format: date-time }
+    DistrictStandings:
+      type: object
+      required: [districtId, dayDate, rolloverAt, standings, myTribeId, myContribution]
+      properties:
+        districtId: { type: string }
+        dayDate: { type: string, format: date }
+        rolloverAt: { type: string, format: date-time }
+        standings:
+          type: array
+          items:
+            type: object
+            required: [tribeId, score]
+            properties:
+              tribeId: { type: string }
+              score: { type: integer }
+        myTribeId: { type: [string, 'null'] }
+        myContribution: { type: [integer, 'null'] }
+    SeasonResult:
+      type: object
+      required: [seasonId, leagueId, finalRank, outcome, toLeagueId, rewards]
+      properties:
+        seasonId: { type: string }
+        leagueId: { type: string }
+        finalRank: { type: integer, minimum: 1 }
+        outcome: { type: string, enum: [promoted, relegated, stayed] }
+        toLeagueId: { type: [string, 'null'] }
+        rewards:
+          type: array
+          items:
+            type: object
+            required: [kind, cashCents, itemId, badgeId]
+            properties:
+              kind: { type: string, enum: [cash, item, badge] }
+              cashCents: { type: [integer, 'null'] }
+              itemId: { type: [string, 'null'] }
+              badgeId: { type: [string, 'null'] }
     WorldEventList:
       type: object
       required: [events]
