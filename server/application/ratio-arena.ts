@@ -188,10 +188,21 @@ async function blockedPair(c: Tx, a: string, b: string): Promise<boolean> {
   return (r.rowCount ?? 0) > 0;
 }
 
-/** Give an old (pre-A6) stake back to its owner. No-op for stake-free matches. */
+/**
+ * Give an old (pre-A6) stake back to its owner: only what that player actually
+ * paid in for this match (`beef_stake` debits) minus what was already returned
+ * (`beef_stake_refund`). A stake that was never debited is never credited.
+ */
 export async function refundStake(c: Tx, m: BeefMatchDbRow, userId: string): Promise<void> {
-  const stake = Number(m.stake_cents);
-  if (stake <= 0) return;
+  if (Number(m.stake_cents) <= 0) return;
+  const r = await c.query<{ owed: string | null }>(
+    `SELECT -SUM(delta_cents)::bigint AS owed FROM ledger_entries
+      WHERE user_id = $1 AND ref_type = 'beef_match' AND ref_id = $2
+        AND reason IN ('beef_stake', 'beef_stake_refund')`,
+    [userId, m.match_id],
+  );
+  const owed = Number(r.rows[0]?.owed ?? 0);
+  if (owed <= 0) return;
   const ref = `beef-stake-refund:${m.match_id}:${userId}`;
   const done = await c.query(`SELECT 1 FROM ledger_entries WHERE idempotency_ref = $1`, [ref]);
   if ((done.rowCount ?? 0) > 0) return;
@@ -202,13 +213,45 @@ export async function refundStake(c: Tx, m: BeefMatchDbRow, userId: string): Pro
   );
   await c.query(
     `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now() WHERE user_id = $2`,
-    [stake, userId],
+    [owed, userId],
   );
   await c.query(
     `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
      VALUES ($1, $2, 'cash', 'beef_stake_refund', 'beef_match', $3, $4)`,
-    [userId, stake, m.match_id, ref],
+    [userId, owed, m.match_id, ref],
   );
+}
+
+/**
+ * Both participants must meet `participants` (account age, level) to open or
+ * accept: a brand-new alt cannot feed its main a win.
+ * `403 FORBIDDEN {reason: too_new | level}`.
+ */
+async function assertParticipantEligible(
+  c: Tx,
+  cfg: ReturnType<typeof beefConfig>,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  const u = await c.query<{ created_at: Date; level: number | null }>(
+    `SELECT u.created_at,
+            GREATEST(s.clout, s.coding, s.trading, s.writing, s.design, s.security) AS level
+       FROM users u LEFT JOIN skills s ON s.user_id = u.id WHERE u.id = $1`,
+    [userId],
+  );
+  const me = u.rows[0];
+  if (
+    !me ||
+    now.getTime() - me.created_at.getTime() < cfg.participants.minAccountAgeHours * 3_600_000
+  ) {
+    throw new ForbiddenError({
+      reason: 'too_new',
+      minAccountAgeHours: cfg.participants.minAccountAgeHours,
+    });
+  }
+  if ((me.level ?? 1) < cfg.participants.minLevel) {
+    throw new ForbiddenError({ reason: 'level', minLevel: cfg.participants.minLevel });
+  }
 }
 
 /**
@@ -234,6 +277,7 @@ export async function openMatch(
   const row = await runInTransaction(async (c) => {
     await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [challengerUserId]);
     if (await isSybilJailed(c, challengerUserId, now)) throw new SybilJailedError({});
+    await assertParticipantEligible(c, cfg, challengerUserId, now);
     if (invited !== null) {
       if (invited === challengerUserId) {
         throw new ValidationFailedError({ field: 'invitedUserId', reason: 'self' });
@@ -300,6 +344,8 @@ export async function acceptMatch(
     if (m.status !== 'open' || !m.phase_ends_at || m.phase_ends_at <= now) {
       throw new ConflictError({ reason: 'not_open', status: m.status });
     }
+    // A pre-A6 staked challenge can never go live: nobody stakes any more.
+    if (Number(m.stake_cents) > 0) throw new ConflictError({ reason: 'legacy_stake' });
     if (m.challenger_user_id === accepterUserId) {
       throw new ValidationFailedError({ reason: 'cannot accept your own match' });
     }
@@ -308,6 +354,8 @@ export async function acceptMatch(
     }
     if (await blockedPair(c, m.challenger_user_id, accepterUserId)) throw new BlockedError();
     if (await isSybilJailed(c, accepterUserId, now)) throw new SybilJailedError({});
+    await assertParticipantEligible(c, cfg, accepterUserId, now);
+    await assertParticipantEligible(c, cfg, m.challenger_user_id, now);
     const busy = await c.query(
       `SELECT 1 FROM beef_matches
         WHERE status = 'active' AND (challenger_user_id = ANY($1::uuid[]) OR accepter_user_id = ANY($1::uuid[]))

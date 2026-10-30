@@ -7391,7 +7391,10 @@ paths:
       description: >-
         Nobody stakes Cash (Cash never moves between players). The winner gets `rewardCents` from
         the house, at most 3 rewarded wins a day and 1 per pair of players a day, for accounts at
-        least 24 h old (config `beef_topics.json`). `stakeCents` may be omitted or 0; more is `400
+        least 24 h old, and only when at least 3 real players voted and the winner leads on player
+        votes alone; a match the NPC crowd decides moves Elo but pays nothing (config
+        `beef_topics.json`). Both participants need an account at least 24 h old and level 2 to
+        open or accept (`403 FORBIDDEN {reason: too_new | level}`). `stakeCents` may be omitted or 0; more is `400
         VALIDATION_FAILED {reason: stakes_disabled}`. `topicId` from the registry (`400
         {reason: unknown_topic}`). With `invitedUserId` only that player may accept or decline and
         they get `beef_challenge`: `404` unknown, `400` yourself, `403 BLOCKED`. At most 3 open
@@ -7475,7 +7478,8 @@ paths:
         Only the invited player may accept an aimed challenge (`403 FORBIDDEN {reason:
         not_invited}`); never your own (`400`). `409 CONFLICT {reason: not_open}` when it is no
         longer open or expired, `{reason: in_match}` when either player is already in a live
-        match. `403 BLOCKED`, `403 SYBIL_JAILED`. Capability `beef`.
+        match, `{reason: legacy_stake}` for a pre-A6 staked challenge. `403 BLOCKED`, `403
+        SYBIL_JAILED`, `403 FORBIDDEN {reason: too_new | level}` (either participant). Capability `beef`.
       x-phase: 6
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -7490,7 +7494,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: CONFLICT not_open or in_match
+          description: CONFLICT not_open, in_match or legacy_stake
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }

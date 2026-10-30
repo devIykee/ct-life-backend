@@ -1,22 +1,49 @@
 {
   "version": "1.0.0",
-  "_note": "CT Beef in the Debate Arena (unlock A6). Stake-free: nobody stakes Cash. The winner gets a house-paid reward (a faucet; Cash never moves between players), at most maxRewardedWinsPerDay per player and maxRewardedWinsPerPairPerDay per pair of players per UTC day, only for accounts at least minAccountAgeHours old. Elo moves for at most maxRatedMatchesPerPairPerDay matches between the same two players per UTC day (anti win-trading); a draw moves Elo as a draw and pays nothing. Phases: open (expires to expired) -> active (the debate) -> voting -> closed. At close an arena crowd of npcVotes is split by each participant's activity score during active (talk seconds x talkSecondWeight + emotes x emoteWeight + says x sayWeight, each talk span capped at maxTalkSpanSeconds, the score capped at maxScorePerParticipant); deterministic, no randomness. Player votes count 1 each. Voters: not a participant, not jailed, account at least minAccountAgeHours old, level (highest skill) at least minLevel.",
+  "_note": "CT Beef in the Debate Arena (unlock A6). Stake-free: nobody stakes Cash. The winner gets a house-paid reward (a faucet; Cash never moves between players), at most maxRewardedWinsPerDay per player and maxRewardedWinsPerPairPerDay per pair of players per UTC day, only for accounts at least minAccountAgeHours old, only when at least minPlayerVotes real players voted and the winner leads on player votes alone (a match the NPC crowd decides moves Elo but pays nothing). Both participants must meet `participants` (account age, level) to open or accept a challenge. Elo moves for at most maxRatedMatchesPerPairPerDay matches between the same two players per UTC day (anti win-trading); a draw moves Elo as a draw and pays nothing. Phases: open (expires to expired) -> active (the debate) -> voting -> closed. At close an arena crowd of npcVotes is split by each participant's activity score during active (talk seconds x talkSecondWeight + emotes x emoteWeight + says x sayWeight, each talk span capped at maxTalkSpanSeconds, the score capped at maxScorePerParticipant); deterministic, no randomness. Player votes count 1 each. Voters: not a participant, not jailed, account at least minAccountAgeHours old, level (highest skill) at least minLevel.",
   "topics": [
-    { "id": "beef_fast_chain_vs_l2", "label": "Fast chain vs the L2 crowd" },
-    { "id": "beef_memes_vs_utility", "label": "Memes vs utility" },
-    { "id": "beef_perps_vs_spot", "label": "Perps vs spot" },
-    { "id": "beef_farm_vs_trade", "label": "Farm points vs trade the chart" },
-    { "id": "beef_anon_vs_doxxed", "label": "Anon vs doxxed founders" },
-    { "id": "beef_cabal_is_real", "label": "Exposé vs denial: the cabal is real" }
+    {
+      "id": "beef_fast_chain_vs_l2",
+      "label": "Fast chain vs the L2 crowd"
+    },
+    {
+      "id": "beef_memes_vs_utility",
+      "label": "Memes vs utility"
+    },
+    {
+      "id": "beef_perps_vs_spot",
+      "label": "Perps vs spot"
+    },
+    {
+      "id": "beef_farm_vs_trade",
+      "label": "Farm points vs trade the chart"
+    },
+    {
+      "id": "beef_anon_vs_doxxed",
+      "label": "Anon vs doxxed founders"
+    },
+    {
+      "id": "beef_cabal_is_real",
+      "label": "Exposé vs denial: the cabal is real"
+    }
   ],
-  "phases": { "openSeconds": 600, "activeSeconds": 300, "votingSeconds": 600 },
+  "phases": {
+    "openSeconds": 600,
+    "activeSeconds": 300,
+    "votingSeconds": 600
+  },
   "reward": {
     "winnerCents": 10000,
     "maxRewardedWinsPerDay": 3,
     "maxRewardedWinsPerPairPerDay": 1,
-    "minAccountAgeHours": 24
+    "minAccountAgeHours": 24,
+    "minPlayerVotes": 3
   },
-  "elo": { "start": 1500, "kFactor": 32, "maxRatedMatchesPerPairPerDay": 3 },
+  "elo": {
+    "start": 1500,
+    "kFactor": 32,
+    "maxRatedMatchesPerPairPerDay": 3
+  },
   "crowd": {
     "npcVotes": 5,
     "talkSecondWeight": 1,
@@ -25,6 +52,15 @@
     "maxTalkSpanSeconds": 30,
     "maxScorePerParticipant": 600
   },
-  "voters": { "minAccountAgeHours": 24, "minLevel": 2 },
-  "limits": { "maxOpenPerChallenger": 3 }
+  "voters": {
+    "minAccountAgeHours": 24,
+    "minLevel": 2
+  },
+  "limits": {
+    "maxOpenPerChallenger": 3
+  },
+  "participants": {
+    "minAccountAgeHours": 24,
+    "minLevel": 2
+  }
 }

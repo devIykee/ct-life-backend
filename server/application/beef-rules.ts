@@ -14,7 +14,9 @@ export interface BeefConfig {
     maxRewardedWinsPerDay: number;
     maxRewardedWinsPerPairPerDay: number;
     minAccountAgeHours: number;
+    minPlayerVotes: number;
   };
+  readonly participants: { minAccountAgeHours: number; minLevel: number };
   readonly elo: { start: number; kFactor: number; maxRatedMatchesPerPairPerDay: number };
   readonly crowd: {
     npcVotes: number;

@@ -6,6 +6,7 @@
  * old staked matches refunded to their owners, and the Cash invariant: a
  * loser's Cash never moves.
  */
+import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Redis } from 'ioredis';
@@ -88,6 +89,17 @@ async function live(t0: Date): Promise<{ id: string; a: string; b: string }> {
   const m = await openMatch(ctx, a, { topicId: TOPIC }, t0);
   await acceptMatch(ctx, b, m.matchId, t0);
   return { id: m.matchId, a, b };
+}
+
+/** `n` player votes for `winner`, from fresh voters (eligibility is tested on castVote). */
+async function votes(matchId: string, winner: string, n: number): Promise<void> {
+  for (let i = 0; i < n; i++) {
+    const v = await player();
+    await pool.query(
+      `INSERT INTO beef_votes (match_id, voter_user_id, voted_user_id) VALUES ($1, $2, $3)`,
+      [matchId, v, winner],
+    );
+  }
 }
 
 const at = (t0: Date, sec: number): Date => new Date(t0.getTime() + sec * S);
@@ -267,6 +279,8 @@ describe('phases, votes and the result', () => {
       ValidationFailedError,
     );
     const receipt = await castVote(ctx, voter, id, b, tv);
+    await castVote(ctx, await player(), id, b, tv);
+    await castVote(ctx, await player(), id, b, tv);
     expect(receipt).toMatchObject({ matchId: id, votedUserId: b });
     await expect(castVote(ctx, voter, id, a, tv)).rejects.toBeInstanceOf(AlreadyVotedError);
     const mid = await getMatch(ctx, voter, id);
@@ -284,7 +298,7 @@ describe('phases, votes and the result', () => {
     expect(done).toMatchObject({
       status: 'closed',
       winnerUserId: b,
-      votes: { challenger: 0, accepter: 1, total: 1 },
+      votes: { challenger: 0, accepter: 3, total: 3 },
       crowdVotes: { challenger: 0, accepter: 0 },
       rewardPaidCents: cfg.reward.winnerCents,
       eloChallengerPost: 1484,
@@ -296,11 +310,13 @@ describe('phases, votes and the result', () => {
     expect(await ledger(a)).toEqual([]);
     expect(await ledger(b)).toEqual([{ reason: 'beef_reward', delta: cfg.reward.winnerCents }]);
     await new Promise((r) => setTimeout(r, 150));
-    const result = msgs.find((x) => x.type === 'beef_result');
+    const result = msgs.find(
+      (x) => x.type === 'beef_result' && (x.payload as { matchId?: string }).matchId === id,
+    );
     expect(result?.payload).toMatchObject({
       matchId: id,
       winnerUserId: b,
-      votesAccepter: 1,
+      votesAccepter: 3,
       payoutCents: cfg.reward.winnerCents,
       eloDeltaAccepter: 16,
     });
@@ -345,6 +361,7 @@ describe('phases, votes and the result', () => {
     const settleOnce = async (): Promise<string> => {
       const m = await openMatch(ctx, a, { topicId: TOPIC }, t0);
       await acceptMatch(ctx, b, m.matchId, t0);
+      await votes(m.matchId, a, cfg.reward.minPlayerVotes);
       return (await settleMatch(ctx, m.matchId, a, t0)).matchId;
     };
     const first = await getMatch(ctx, a, await settleOnce());
@@ -356,12 +373,6 @@ describe('phases, votes and the result', () => {
     // Past maxRatedMatchesPerPairPerDay the rating no longer moves.
     expect(fourth.eloChallengerPost).toBe(fourth.eloChallengerPre);
     expect(await ledger(b)).toEqual([]);
-
-    const young = await player({ ageHours: 1 });
-    const c = await player();
-    const m = await openMatch(ctx, young, { topicId: TOPIC }, t0);
-    await acceptMatch(ctx, c, m.matchId, t0);
-    expect((await settleMatch(ctx, m.matchId, young, t0)).rewardPaidCents).toBe(0);
   });
 
   it('caps rewarded wins per player per day', async () => {
@@ -370,6 +381,7 @@ describe('phases, votes and the result', () => {
     for (let i = 0; i < cfg.reward.maxRewardedWinsPerDay + 1; i++) {
       const m = await openMatch(ctx, a, { topicId: TOPIC }, t0);
       await acceptMatch(ctx, await player(), m.matchId, t0);
+      await votes(m.matchId, a, cfg.reward.minPlayerVotes);
       await settleMatch(ctx, m.matchId, a, t0);
     }
     const paid = (await ledger(a)).filter((l) => l.reason === 'beef_reward');
@@ -387,7 +399,7 @@ describe('phases, votes and the result', () => {
     await expect(settleMatch(ctx, uuidv7(), uuidv7(), t0)).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  it('an old staked match gives each stake back to its owner', async () => {
+  it('an old live staked match refunds only stakes the ledger shows were paid', async () => {
     const t0 = new Date();
     const a = await player({ cash: 0 });
     const b = await player({ cash: 0 });
@@ -398,13 +410,146 @@ describe('phases, votes and the result', () => {
        VALUES ($1, $2, $3, 700, 'active', 1500, 1500, $4, $4, $4)`,
       [id, a, b, t0.toISOString()],
     );
+    // Only a ever paid in (b never had a beef_stake debit for this match).
+    await pool.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id)
+       VALUES ($1, -700, 'cash', 'beef_stake', 'beef_match', $2)`,
+      [a, id],
+    );
     await settleMatch(ctx, id, a, t0);
-    expect((await ledger(b)).filter((l) => l.reason === 'beef_stake_refund')).toEqual([
-      { reason: 'beef_stake_refund', delta: 700 },
-    ]);
     expect((await ledger(a)).filter((l) => l.reason === 'beef_stake_refund')).toEqual([
       { reason: 'beef_stake_refund', delta: 700 },
     ]);
+    expect((await ledger(b)).filter((l) => l.reason === 'beef_stake_refund')).toEqual([]);
+    expect(await cash(b)).toBe(0);
+  });
+
+  it('an old open staked challenge can never be accepted', async () => {
+    const t0 = new Date();
+    const a = await player();
+    const b = await player();
+    const id = uuidv7();
+    await pool.query(
+      `INSERT INTO beef_matches (match_id, challenger_user_id, stake_cents, status, phase_ends_at, opened_at)
+       VALUES ($1, $2, 500, 'open', $3, $4)`,
+      [id, a, at(t0, 600).toISOString(), t0.toISOString()],
+    );
+    await expect(acceptMatch(ctx, b, id, t0)).rejects.toMatchObject({
+      code: 'CONFLICT',
+      details: { reason: 'legacy_stake' },
+    });
+    // Expiring it credits nothing: a never paid a stake for it.
+    await advanceBeefPhases(ctx, at(t0, 601));
+    expect((await getMatch(ctx, a, id)).status).toBe('expired');
+    expect(await ledger(a)).toEqual([]);
+    expect(await ledger(b)).toEqual([]);
+  });
+
+  it('migration 112 expires old staked open challenges, refunding real debits only', async () => {
+    const sql = readFileSync('db/migrations/1700000112000_beef_stake_free.sql', 'utf8');
+    const block = sql.slice(
+      sql.indexOf('CREATE TEMP TABLE beef_legacy_refunds'),
+      sql.indexOf('-- Old matches already live'),
+    );
+    const paid = await player({ cash: 0 });
+    const unpaid = await player({ cash: 0 });
+    const m1 = uuidv7();
+    const m2 = uuidv7();
+    const c = await pool.connect();
+    try {
+      await c.query('BEGIN');
+      // Other suites' rows must not be touched by this check.
+      await c.query(
+        `UPDATE beef_matches SET stake_cents = 0 WHERE status = 'open' AND stake_cents > 0`,
+      );
+      for (const [mid, uid] of [
+        [m1, paid],
+        [m2, unpaid],
+      ] as const) {
+        await c.query(
+          `INSERT INTO beef_matches (match_id, challenger_user_id, stake_cents, status, phase_ends_at)
+           VALUES ($1, $2, 900, 'open', now() + interval '5 minutes')`,
+          [mid, uid],
+        );
+      }
+      await c.query(
+        `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id)
+         VALUES ($1, -900, 'cash', 'beef_stake', 'beef_match', $2)`,
+        [paid, m1],
+      );
+      await c.query(block);
+      const st = await c.query<{ match_id: string; status: string }>(
+        `SELECT match_id, status FROM beef_matches WHERE match_id = ANY($1::uuid[])`,
+        [[m1, m2]],
+      );
+      expect(st.rows.every((r) => r.status === 'expired')).toBe(true);
+      const ref = await c.query<{ user_id: string; delta_cents: string }>(
+        `SELECT user_id, delta_cents FROM ledger_entries
+          WHERE reason = 'beef_stake_refund' AND ref_id = ANY($1::text[])`,
+        [[m1, m2]],
+      );
+      expect(ref.rows).toEqual([{ user_id: paid, delta_cents: '900' }]);
+      const bal = await c.query<{ user_id: string; cash_cents: string }>(
+        `SELECT user_id, cash_cents FROM balances WHERE user_id = ANY($1::uuid[]) ORDER BY user_id`,
+        [[paid, unpaid]],
+      );
+      const of = (u: string): number => Number(bal.rows.find((r) => r.user_id === u)?.cash_cents);
+      expect(of(paid)).toBe(900);
+      expect(of(unpaid)).toBe(0);
+    } finally {
+      await c.query('ROLLBACK');
+      c.release();
+    }
+  });
+});
+
+describe('reward farming guards', () => {
+  it('both participants must be old enough and leveled to open or accept', async () => {
+    const t0 = new Date();
+    const vet = await player();
+    const young = await player({ ageHours: 1 });
+    const low = await player({ level: 1 });
+    await expect(openMatch(ctx, young, { topicId: TOPIC }, t0)).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      details: { reason: 'too_new' },
+    });
+    await expect(openMatch(ctx, low, { topicId: TOPIC }, t0)).rejects.toMatchObject({
+      details: { reason: 'level' },
+    });
+    const m = await openMatch(ctx, vet, { topicId: TOPIC }, t0);
+    await expect(acceptMatch(ctx, young, m.matchId, t0)).rejects.toMatchObject({
+      details: { reason: 'too_new' },
+    });
+    await expect(acceptMatch(ctx, low, m.matchId, t0)).rejects.toMatchObject({
+      details: { reason: 'level' },
+    });
+  });
+
+  it('pays nothing below the minimum number of real player votes', async () => {
+    const t0 = new Date();
+    const { id, a } = await live(t0);
+    await votes(id, a, cfg.reward.minPlayerVotes - 1);
+    const done = await settleMatch(ctx, id, a, t0);
+    expect(done.winnerUserId).toBe(a);
+    expect(done.rewardPaidCents).toBe(0);
+    expect(await ledger(a)).toEqual([]);
+  });
+
+  it('a match the NPC crowd decides moves Elo but pays nothing', async () => {
+    const t0 = new Date();
+    const { id, a, b } = await live(t0);
+    await recordArenaActivity(ctx.redis.main, a, 'talk', 30);
+    await advanceBeefPhases(ctx, toVoting(t0));
+    // Players are split evenly; the crowd (all for a) breaks the tie.
+    await votes(id, a, 2);
+    await votes(id, b, 2);
+    await advanceBeefPhases(ctx, toClose(t0));
+    const done = await getMatch(ctx, a, id);
+    expect(done.winnerUserId).toBe(a);
+    expect(done.crowdVotes).toEqual({ challenger: 5, accepter: 0 });
+    expect(done.rewardPaidCents).toBe(0);
+    expect(done.eloChallengerPost).toBeGreaterThan(done.eloChallengerPre!);
+    expect(await ledger(a)).toEqual([]);
   });
 });
 

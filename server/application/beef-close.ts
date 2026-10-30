@@ -16,8 +16,10 @@
  * `crowdSplit` of activity) decide; equal totals are a draw. Elo moves (as a
  * draw on a tie) unless the pair already played `maxRatedMatchesPerPairPerDay`
  * rated matches today (anti win-trading). The winner gets `reward_cents` from
- * the house (ledger `beef_reward`, a faucet: no player pays it) unless a cap
- * holds: `maxRewardedWinsPerDay` for the player, `maxRewardedWinsPerPairPerDay`
+ * the house (ledger `beef_reward`, a faucet: no player pays it) only when at
+ * least `minPlayerVotes` real players voted and the winner leads on player
+ * votes alone (a crowd-decided match moves Elo but pays nothing), and unless a
+ * cap holds: `maxRewardedWinsPerDay` for the player, `maxRewardedWinsPerPairPerDay`
  * for the pair, an account younger than `minAccountAgeHours`, or a jail. Cash
  * never moves between players. `settleMatch` is the admin override (same close
  * with a forced winner).
@@ -204,7 +206,13 @@ async function closeMatch(
   await bumpElo(c, ch, post.challenger, winner === ch, winner === ac, winner === null);
   await bumpElo(c, ac, post.accepter, winner === ac, winner === ch, winner === null);
 
-  const paid = winner ? await payReward(c, cfg, m, winner, winner === ch ? ac : ch, now) : 0;
+  // The house only pays when real players decided it: enough player votes, and
+  // the winner ahead on player votes alone. A crowd-decided match is Elo only.
+  const players = count(ch) + count(ac);
+  const loser = winner === ch ? ac : ch;
+  const byPlayers =
+    winner !== null && players >= cfg.reward.minPlayerVotes && count(winner) > count(loser);
+  const paid = winner && byPlayers ? await payReward(c, cfg, m, winner, loser, now) : 0;
   await refundStake(c, m, ch);
   await refundStake(c, m, ac);
 

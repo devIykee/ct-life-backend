@@ -8,8 +8,10 @@
 -- contract/config/beef_topics.json.
 --
 --   stake_cents       now always 0 for new matches (CHECK relaxed to >= 0 so old
---                     staked rows stay valid; their stakes are refunded to their
---                     owners when they end)
+--                     staked rows stay valid). Old staked open challenges are
+--                     expired here; old live ones end through the worker. Either
+--                     way a player gets back only the stake the ledger shows
+--                     they paid (beef_stake debits), never stake_cents blindly.
 --   status            + 'voting', 'expired'; a 'closed' match may have no
 --                     winner (draw)
 --   topic_id          id from beef_topics.json (null on old rows)
@@ -42,10 +44,40 @@ ALTER TABLE beef_matches
   ADD COLUMN crowd_challenger int CHECK (crowd_challenger IS NULL OR crowd_challenger >= 0),
   ADD COLUMN crowd_accepter int CHECK (crowd_accepter IS NULL OR crowd_accepter >= 0);
 
--- Old matches still in play get a timer so the phase worker can end them
--- (their stakes go back to their owners).
+-- Old staked challenges that were never accepted end now: no staked match may
+-- go live. Each player gets back exactly what the ledger shows they paid in for
+-- that match (beef_stake debits minus any beef_stake_refund already made);
+-- nothing is credited that was never debited.
+CREATE TEMP TABLE beef_legacy_refunds ON COMMIT DROP AS
+  SELECT l.user_id, m.match_id, (-SUM(l.delta_cents))::bigint AS owed
+    FROM beef_matches m
+    JOIN ledger_entries l
+      ON l.ref_type = 'beef_match' AND l.ref_id = m.match_id::text
+     AND l.reason IN ('beef_stake', 'beef_stake_refund')
+   WHERE m.status = 'open' AND m.stake_cents > 0
+   GROUP BY l.user_id, m.match_id
+  HAVING -SUM(l.delta_cents) > 0;
+
+INSERT INTO balances (user_id, cash_cents, debt_cents)
+  SELECT DISTINCT user_id, 0, 0 FROM beef_legacy_refunds
+  ON CONFLICT (user_id) DO NOTHING;
+
+UPDATE balances b SET cash_cents = b.cash_cents + r.owed, updated_at = now()
+  FROM (SELECT user_id, SUM(owed) AS owed FROM beef_legacy_refunds GROUP BY user_id) r
+ WHERE b.user_id = r.user_id;
+
+INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+  SELECT user_id, owed, 'cash', 'beef_stake_refund', 'beef_match', match_id::text,
+         'beef-stake-refund:' || match_id::text || ':' || user_id::text
+    FROM beef_legacy_refunds;
+
+UPDATE beef_matches SET status = 'expired', settled_at = now()
+ WHERE status = 'open' AND stake_cents > 0;
+
+-- Old matches already live get a timer so the phase worker can end them; at
+-- close each player is refunded only their own recorded stake debits.
 UPDATE beef_matches SET phase_ends_at = now() + interval '10 minutes'
- WHERE status IN ('open', 'active') AND phase_ends_at IS NULL;
+ WHERE status = 'active' AND phase_ends_at IS NULL;
 
 CREATE INDEX beef_matches_phase_idx ON beef_matches (phase_ends_at)
   WHERE status IN ('open', 'active', 'voting');

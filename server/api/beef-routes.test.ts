@@ -38,7 +38,7 @@ async function boot(caps: string): Promise<void> {
   stop = handle.stop;
 }
 
-/** A dev-auth player; `veteran` makes them old enough and leveled to vote. */
+/** A dev-auth player; `veteran` makes them old enough and leveled to play and vote. */
 async function devUser(veteran = false): Promise<U> {
   const r = await app!.inject({
     method: 'POST',
@@ -107,9 +107,14 @@ describe('beef routes', () => {
 
   it('opens stake-free, echoes the terms, and runs accept / decline / cancel', async () => {
     await boot('beef');
-    const a = await devUser();
-    const b = await devUser();
-    const c = await devUser();
+    const a = await devUser(true);
+    const b = await devUser(true);
+    const c = await devUser(true);
+    // A brand-new account cannot open a beef (anti alt-farming).
+    const fresh = await devUser();
+    const tooNew = await call(fresh, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(tooNew.status).toBe(403);
+    expect(tooNew.body.error).toMatchObject({ code: 'FORBIDDEN', details: { reason: 'too_new' } });
     const staked = await call(a, 'POST', '/v1/beef', { topicId: TOPIC, stakeCents: 5000 });
     expect(staked.status).toBe(400);
     expect(staked.body.error.details.reason).toBe('stakes_disabled');
@@ -168,8 +173,8 @@ describe('beef routes', () => {
 
   it('votes during the voting phase only, once, never by a participant', async () => {
     await boot('beef,beefVoting');
-    const a = await devUser();
-    const b = await devUser();
+    const a = await devUser(true);
+    const b = await devUser(true);
     const voter = await devUser(true);
     const fresh = await devUser();
     const m = await call(a, 'POST', '/v1/beef', { topicId: TOPIC });

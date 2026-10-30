@@ -1,10 +1,24 @@
 {
   "title": "beef_topics.json",
   "type": "object",
-  "required": ["version", "topics", "phases", "reward", "elo", "crowd", "voters", "limits"],
+  "required": [
+    "version",
+    "topics",
+    "phases",
+    "reward",
+    "elo",
+    "crowd",
+    "voters",
+    "limits",
+    "participants"
+  ],
   "properties": {
-    "version": { "type": "string" },
-    "_note": { "type": "string" },
+    "version": {
+      "type": "string"
+    },
+    "_note": {
+      "type": "string"
+    },
     "topics": {
       "type": "array",
       "minItems": 1,
@@ -13,8 +27,15 @@
         "required": ["id", "label"],
         "additionalProperties": false,
         "properties": {
-          "id": { "type": "string", "pattern": "^beef_[a-z0-9_]{1,56}$" },
-          "label": { "type": "string", "minLength": 1, "maxLength": 60 }
+          "id": {
+            "type": "string",
+            "pattern": "^beef_[a-z0-9_]{1,56}$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
         }
       }
     },
@@ -23,9 +44,21 @@
       "required": ["openSeconds", "activeSeconds", "votingSeconds"],
       "additionalProperties": false,
       "properties": {
-        "openSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
-        "activeSeconds": { "type": "integer", "minimum": 60, "maximum": 3600 },
-        "votingSeconds": { "type": "integer", "minimum": 60, "maximum": 3600 }
+        "openSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400
+        },
+        "activeSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "votingSeconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        }
       }
     },
     "reward": {
@@ -34,14 +67,35 @@
         "winnerCents",
         "maxRewardedWinsPerDay",
         "maxRewardedWinsPerPairPerDay",
-        "minAccountAgeHours"
+        "minAccountAgeHours",
+        "minPlayerVotes"
       ],
       "additionalProperties": false,
       "properties": {
-        "winnerCents": { "type": "integer", "minimum": 0, "maximum": 1000000 },
-        "maxRewardedWinsPerDay": { "type": "integer", "minimum": 0, "maximum": 50 },
-        "maxRewardedWinsPerPairPerDay": { "type": "integer", "minimum": 0, "maximum": 50 },
-        "minAccountAgeHours": { "type": "integer", "minimum": 0 }
+        "winnerCents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000
+        },
+        "maxRewardedWinsPerDay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "maxRewardedWinsPerPairPerDay": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "minAccountAgeHours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minPlayerVotes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
     "elo": {
@@ -49,9 +103,20 @@
       "required": ["start", "kFactor", "maxRatedMatchesPerPairPerDay"],
       "additionalProperties": false,
       "properties": {
-        "start": { "type": "integer", "minimum": 0, "maximum": 3000 },
-        "kFactor": { "type": "integer", "minimum": 1, "maximum": 100 },
-        "maxRatedMatchesPerPairPerDay": { "type": "integer", "minimum": 0 }
+        "start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3000
+        },
+        "kFactor": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "maxRatedMatchesPerPairPerDay": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "crowd": {
@@ -66,12 +131,32 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "npcVotes": { "type": "integer", "minimum": 0, "maximum": 50 },
-        "talkSecondWeight": { "type": "integer", "minimum": 0 },
-        "emoteWeight": { "type": "integer", "minimum": 0 },
-        "sayWeight": { "type": "integer", "minimum": 0 },
-        "maxTalkSpanSeconds": { "type": "integer", "minimum": 1, "maximum": 300 },
-        "maxScorePerParticipant": { "type": "integer", "minimum": 1 }
+        "npcVotes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "talkSecondWeight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emoteWeight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sayWeight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxTalkSpanSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "maxScorePerParticipant": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "voters": {
@@ -79,15 +164,44 @@
       "required": ["minAccountAgeHours", "minLevel"],
       "additionalProperties": false,
       "properties": {
-        "minAccountAgeHours": { "type": "integer", "minimum": 0 },
-        "minLevel": { "type": "integer", "minimum": 1, "maximum": 10 }
+        "minAccountAgeHours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minLevel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
       }
     },
     "limits": {
       "type": "object",
       "required": ["maxOpenPerChallenger"],
       "additionalProperties": false,
-      "properties": { "maxOpenPerChallenger": { "type": "integer", "minimum": 1, "maximum": 20 } }
+      "properties": {
+        "maxOpenPerChallenger": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      }
+    },
+    "participants": {
+      "type": "object",
+      "required": ["minAccountAgeHours", "minLevel"],
+      "additionalProperties": false,
+      "properties": {
+        "minAccountAgeHours": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "minLevel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      }
     }
   }
 }
