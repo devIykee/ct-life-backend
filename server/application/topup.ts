@@ -52,7 +52,7 @@ import {
   Connection,
 } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { assertCapabilityOn } from './capabilities.js';
+import { assertCapabilityOn, isCapabilityOn } from './capabilities.js';
 import { assertDevnetChain, clusterRpc } from './chain-rpc.js';
 import { publishToUser } from './realtime-bus.js';
 import { grantSeasonPass, SEASON_PASS_PRICE_USDC_BASE } from './season-pass.js';
@@ -493,6 +493,14 @@ export async function reconcilePaymentIntent(
   if (!intent || !RECONCILED_KINDS.includes(intent.kind) || intent.status === 'confirmed') {
     return 'unchanged';
   }
+  if (intent.kind === 'season_pass') {
+    // A season_pass intent at any other price (e.g. one made before unlock C1, priced
+    // from a top-up pack) never grants a pass: it fails here and is refunded by hand.
+    if (!isSeasonPassPrice(intent.amount))
+      return failLegacySeasonPass(ctx, intent.intent_id, intent.amount);
+    // While the capability is off nothing is granted; the intent waits (pending).
+    if (!isCapabilityOn(ctx, 'seasonPassPurchase')) return 'pending';
+  }
 
   const candidates = new Set<string>();
   if (signatureHint) candidates.add(signatureHint);
@@ -552,6 +560,29 @@ export async function reconcilePaymentIntent(
   return 'pending';
 }
 
+function isSeasonPassPrice(amount: string): boolean {
+  return amount === SEASON_PASS_PRICE_USDC_BASE.toString();
+}
+
+async function failLegacySeasonPass(
+  ctx: AppContext,
+  intentId: string,
+  amount: string,
+): Promise<ReconcileOutcome> {
+  console.error(
+    `[payments] ALERT season_pass intent ${intentId} priced ${amount}, not ${SEASON_PASS_PRICE_USDC_BASE}: ` +
+      'no pass granted; refund any payment by hand',
+  );
+  await ctx.db.withConnection((c) =>
+    c.query(
+      `UPDATE payment_intents SET status = 'failed'
+        WHERE intent_id = $1 AND status IN ('pending', 'expired')`,
+      [intentId],
+    ),
+  );
+  return 'failed';
+}
+
 async function settleVerifiedIntent(
   ctx: AppContext,
   intentId: string,
@@ -566,8 +597,9 @@ async function settleVerifiedIntent(
       cash_cents: string;
       bonus_bps: number;
       created_at: Date;
+      amount: string;
     }>(
-      `SELECT user_id, kind, status, cash_cents, bonus_bps, created_at FROM payment_intents
+      `SELECT user_id, kind, status, cash_cents, bonus_bps, created_at, amount FROM payment_intents
        WHERE intent_id = $1 FOR UPDATE`,
       [intentId],
     );
@@ -580,6 +612,10 @@ async function settleVerifiedIntent(
       [signature, intentId],
     );
     if (intent.kind === 'season_pass') {
+      // Re-checked under the row lock: only a 5 USDC intent, only while the capability is on.
+      if (!isSeasonPassPrice(intent.amount) || !isCapabilityOn(ctx, 'seasonPassPurchase')) {
+        return 'unchanged';
+      }
       // The pass for the season the intent was bought in. No Cash moves.
       const season = currentSeason(intent.created_at);
       if (season !== null) {
