@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "_note": "Prediction Pit (unlock D3). Play-money Cash only, house-banked fixed odds. Sim (and, if enabled, event) markets are sealed commit-reveal draws: sha256 of the secret is public at open, the secret at resolution, each outcome 1/2. Crypto markets record the strike at open. See docs/PREDICTIONS.md.",
+  "payoutBps": 19000,
+  "minStakeCents": 100,
+  "maxStakeCents": 50000,
+  "dailyStakeCapCents": 200000,
+  "sim": {
+    "topCoins": 3,
+    "horizons": [
+      {
+        "horizon": "5m",
+        "everySec": 60,
+        "betWindowSec": 45
+      },
+      {
+        "horizon": "15m",
+        "everySec": 180,
+        "betWindowSec": 120
+      },
+      {
+        "horizon": "1h",
+        "everySec": 600,
+        "betWindowSec": 300
+      }
+    ]
+  },
+  "event": {
+    "everySec": 600,
+    "betWindowSec": 300,
+    "horizon": "1h",
+    "questions": []
+  },
+  "crypto": {
+    "symbols": ["BTCUSDT", "SOLUSDT"],
+    "everySec": 3600,
+    "betWindowSec": 1800,
+    "horizonSec": 86400
+  },
+  "resolveGraceSec": 1800,
+  "pruneAfterDays": 3
+}

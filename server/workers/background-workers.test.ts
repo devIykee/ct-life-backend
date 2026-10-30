@@ -104,12 +104,12 @@ describe('liquidation sweep', () => {
 });
 
 describe('prediction resolution', () => {
-  it('resolves closed predictions and pays a winner exactly once', async () => {
+  it('refunds legacy (marketless) bets once their closes_at passes, exactly once', async () => {
     const user = await newUser(0);
-    // 'btc-24h-up' is the canned market (the dev resolver flips it each
-    // minute); any other outcome id resolves as lost.
-    const won = uuidv7();
-    const lost = uuidv7();
+    // Unlock D3 removed the coin-flip resolver: a bet from the retired
+    // POST /v1/predictions has no market, so it is refunded, never "won".
+    const due = uuidv7();
+    const other = uuidv7();
     const open = uuidv7();
     const insert = (id: string, outcome: string, closes: string): Promise<unknown> =>
       pool.query(
@@ -117,8 +117,8 @@ describe('prediction resolution', () => {
          VALUES ($1, $2, $3, 500, 'open', '5m', now() + $4::interval, now() - interval '10 minutes')`,
         [id, user, outcome, closes],
       );
-    await insert(won, 'btc-24h-up', '-1 minute');
-    await insert(lost, 'no-such-market', '-1 minute');
+    await insert(due, 'btc-24h-up', '-1 minute');
+    await insert(other, 'no-such-market', '-1 minute');
     await insert(open, 'btc-24h-up', '10 minutes');
 
     const [a, b] = await Promise.all([handlePredictions(job, ctx), handlePredictions(job, ctx)]);
@@ -130,16 +130,15 @@ describe('prediction resolution', () => {
       [user],
     );
     const status = new Map(r.rows.map((x) => [x.prediction_id, x.status]));
-    expect(status.get(lost)).toBe('lost');
+    expect(status.get(due)).toBe('cancelled');
+    expect(status.get(other)).toBe('cancelled');
     expect(status.get(open)).toBe('open');
-    expect(['won', 'lost']).toContain(status.get(won));
-    const payouts = await pool.query(
-      `SELECT 1 FROM ledger_entries WHERE user_id = $1 AND reason = 'prediction_payout'`,
+    const refunds = await pool.query(
+      `SELECT 1 FROM ledger_entries WHERE user_id = $1 AND reason = 'prediction_refund'`,
       [user],
     );
-    const paid = status.get(won) === 'won' ? 1 : 0;
-    expect(payouts.rowCount).toBe(paid);
-    expect((await balance(user)).cash).toBe(paid * 1000);
+    expect(refunds.rowCount).toBe(2);
+    expect((await balance(user)).cash).toBe(1000);
   });
 });
 

@@ -50,7 +50,8 @@ export type UserMessageType =
   | 'released'
   | 'event'
   | 'x_link_update'
-  | 'cabal_invite';
+  | 'cabal_invite'
+  | 'prediction_settled';
 
 export interface UserMessage {
   readonly userId: string;

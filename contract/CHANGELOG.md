@@ -1,3 +1,14 @@
+## 2026-10-30 - Prediction Pit: real markets and a recorded-source resolver (unlock D3, app `predict`)
+
+Migration 141. Contract and rules in `docs/PREDICTIONS.md`. Routes dark until `predict` is in `CAPABILITIES_ON`; markets open and settle only with `PREDICTIONS_SETTLEMENT_ENABLED=1` (workers).
+
+- New `GET /predictions/markets?status=open|closed|resolved|void&cursor=` -> `{markets: [PredictionMarket], nextCursor}` and `POST /predictions/markets/{marketId}/bets {outcomeId, stakeCents}` (Idempotency-Key) -> `201 PredictionBet {predictionId, marketId, outcomeId, stakeCents, potentialPayoutCents, status, closesAt, createdAt}`. Errors: `400 VALIDATION_FAILED {reason: unknown_outcome | stake_out_of_range}`, `402 INSUFFICIENT_CASH`, `403 AGE_REQUIRED`, `404 NOT_FOUND`, `409 CONFLICT {reason: market_closed}`, `429 RATE_LIMITED {reason: daily_stake_cap, resetAt}`, `403 JAILED`.
+- `GET /predictions` (unwrapped array) gains `marketId, questionKey, params, resolvedOutcomeId, payoutCents`. `POST /predictions` -> `410 GONE {reason: use_market_bets}`; open legacy bets are refunded once their `closes_at` passes.
+- Markets: `sim` (`sim_call`, 5m/15m/1h) and `event` (off by default) are sealed commit-reveal draws (`fairness {commitment, seed}`: sha256 public at open, secret at resolution, each outcome 1/2) because house-coin trends are public; `crypto` (BTCUSDT/SOLUSDT 24 h, only with `PREDICTIONS_CRYPTO_SOURCE` = `binance` or `binance_vision`; default `off`). Strike recorded at open, short bet window, outcome decided once from a value recorded at `resolvesAt`; void (refund) when the source is missing past the grace period.
+- House-banked fixed odds: win = stake x `payoutBps` / 10000 (1.9x), daily stake cap per player. The coin-flip `resolveOutcome` stub is gone.
+- Realtime `prediction_settled {predictionId, marketId, status, payoutCents}` to the player.
+- New config `contract/config/predictions.json`; new env `PREDICTIONS_CRYPTO_SOURCE`.
+
 ## 2026-10-30 - Builder: role offers, treasury, launch, game-paid payroll (unlock WP-B B1, migration 1700000120000)
 
 Behind the `builder` capability (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`). Keeps the rule that Cash never moves between players.
@@ -90,6 +101,8 @@ Phase 0 of the unlock plan: the switchboard every hidden feature turns on throug
 - `ids/report_reasons.json`: new reason `voice` (the client sends it for voice-chat reports).
 - Migration number blocks for the parallel unlock packages (README, Database Migrations): A `1700000110000-1700000119000`, B `…120…129`, C `…130…139`, D `…140…149`.
 
+
+
 ## 2026-10-30 - Report an AI NPC chat reply
 
 Migration 106.
@@ -101,7 +114,6 @@ Migration 106.
 
 - `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
 - New error code `NOT_IN_VENUE` (403).
-
 ## 2026-10-30 - Alpha calls use the server price; background sweeps start
 
 - `POST /alpha-calls`: the stored `entryMicros` is now the coin's server price at placement (the body's value must still be positive but is ignored), and the call is refused unless `stopMicros < price < targetMicros`: `400 VALIDATION_FAILED` with `details.reason` `price_outside_band` (plus `details.priceMicros`), `unknown_coin` or `coin_dead`. The response's `entryMicros` is the stored server price.

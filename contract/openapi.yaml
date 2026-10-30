@@ -3254,33 +3254,106 @@ paths:
     get:
       tags: [markets]
       operationId: getPredictions
-      summary: Open prediction markets.
+      summary: My Prediction Pit bets, newest first (unwrapped array, up to 200).
       x-phase: 2
       parameters:
         - name: status
           in: query
           required: false
-          schema: { type: string, enum: [open, closed] }
+          schema: { type: string, enum: [open, won, lost, cancelled] }
       responses:
         '200':
-          description: Predictions
+          description: Bets
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/PredictionMarket' }
-
-  /predictions/{id}/bets:
+                items: { $ref: '#/components/schemas/PredictionBetRow' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
     post:
       tags: [markets]
-      operationId: postPredictionsIdBets
-      summary: Bet on a prediction market.
+      operationId: postPredictionsLegacy
+      summary: Retired. Bet on a market with POST /predictions/markets/{marketId}/bets.
+      description: >-
+        Always `410 GONE {reason: use_market_bets}` since unlock D3: the legacy route accepted
+        any outcome id and was settled by a dev stub. Open legacy bets are refunded by the
+        settlement worker once their `closesAt` passes.
+      x-phase: 2
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '410':
+          description: Retired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: GONE,
+                      message: 'This endpoint was removed; see details.use for its replacement.',
+                      details:
+                        {
+                          reason: 'use_market_bets',
+                          use: 'POST /v1/predictions/markets/{marketId}/bets',
+                        },
+                    },
+                }
+
+  /predictions/markets:
+    get:
+      tags: [markets]
+      operationId: getPredictionMarkets
+      summary: Prediction Pit markets (app capability `predict`, unlock D3).
+      description: >-
+        Server-generated, house-banked, play-money markets. `status=open` (default) lists markets
+        taking bets now, soonest `closesAt` first; `closed`, `resolved`, `void` list newest
+        `resolvesAt` first. Each market's strike is recorded when it opens and bets are taken only
+        until `closesAt` (a short window after `opensAt`); the outcome is decided once at
+        `resolvesAt`. Kinds: `sim` (`sim_call`: a sealed commit-reveal draw themed on an in-game
+        coin; params `coinId, ticker, commitment`), `event` (same draw, off by default), `crypto`
+        (BTCUSDT / SOLUSDT higher in 24 h than the open of the first minute; params `symbol,
+        strikeMicros`; only when the server has a reference source configured). For sealed draws
+        `fairness.commitment` = sha256(secret) is public from the start, `fairness.seed` (the
+        secret) once resolved; the outcome is `yes` iff the low bit of
+        HMAC-SHA256(secret, marketId)[0] is 1. Page size 50.
       x-phase: 2
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          required: false
+          schema: { type: string, enum: [open, closed, resolved, void], default: open }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Markets
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [markets, nextCursor]
+                properties:
+                  markets:
+                    type: array
+                    items: { $ref: '#/components/schemas/PredictionMarket' }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /predictions/markets/{marketId}/bets:
+    post:
+      tags: [markets]
+      operationId: postPredictionMarketBet
+      summary: Bet play-money Cash on one outcome of a market (app capability `predict`).
+      description: >-
+        Fixed odds: a win pays `stakeCents x payoutBps / 10000` from the house (1.9x today), a loss
+        pays nothing, a void market refunds the stake. Cash never moves between players and cannot
+        be withdrawn. 18+ (`AGE_REQUIRED`, the casino's confirmation). Daily stake cap per player
+        per UTC day (`predictions.json` `dailyStakeCapCents`).
+      x-phase: 2
+      parameters:
+        - { name: marketId, in: path, required: true, schema: { type: string } }
         - $ref: '#/components/parameters/IdempotencyKey'
       requestBody:
         required: true
@@ -3289,20 +3362,45 @@ paths:
             schema:
               type: object
               required: [outcomeId, stakeCents]
+              additionalProperties: false
               properties:
-                outcomeId: { type: string }
-                stakeCents: { type: integer, minimum: 0 }
+                outcomeId:
+                  { type: string, description: "One of the market's `outcomes[].outcomeId`." }
+                stakeCents: { type: integer, minimum: 1 }
       responses:
-        '200':
-          description: Bet
+        '201':
+          description: The bet
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Bet' }
-        '402':
-          description: Insufficient cash
+              schema: { $ref: '#/components/schemas/PredictionBet' }
+        '400':
+          description: '`VALIDATION_FAILED {reason: unknown_outcome}` or `{reason: stake_out_of_range, min, max}`'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Insufficient Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: '`AGE_REQUIRED` (confirm 18+ first) or `JAILED`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`CONFLICT {reason: market_closed, closesAt}`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: '`RATE_LIMITED {reason: daily_stake_cap, resetAt, capCents, usedCents, retryAfterMs}`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /alpha-calls:
     get:
@@ -9819,25 +9917,104 @@ components:
         at: { type: string, format: date-time }
     PredictionMarket:
       type: object
-      required: [id, question, outcomes, closesAt, status]
+      required:
+        [
+          marketId,
+          kind,
+          questionKey,
+          params,
+          outcomes,
+          horizon,
+          opensAt,
+          closesAt,
+          resolvesAt,
+          payoutBps,
+          minStakeCents,
+          maxStakeCents,
+          status,
+          resolvedOutcomeId,
+          source,
+        ]
       properties:
-        id: { type: string, format: uuid }
-        question: { type: string }
-        outcomes:
+        marketId: { type: string }
+        kind: { type: string, enum: [sim, crypto, event, mirror] }
+        questionKey:
           {
-            type: array,
-            items: { type: object, properties: { id: { type: string }, label: { type: string } } },
+            type: string,
+            description: 'Client copy key: sim_call, event_rug_1h, crypto_higher_24h.',
           }
-        closesAt: { type: string, format: date-time }
-        status: { type: string, enum: [open, closed] }
-    Bet:
+        params: { type: object, additionalProperties: { type: string } }
+        outcomes:
+          type: array
+          items:
+            type: object
+            required: [outcomeId, labelKey]
+            properties: { outcomeId: { type: string }, labelKey: { type: string } }
+        horizon: { type: string, enum: ['5m', '15m', '1h', daily] }
+        opensAt: { type: string, format: date-time }
+        closesAt: { type: string, format: date-time, description: Bets close here. }
+        resolvesAt: { type: string, format: date-time }
+        payoutBps:
+          { type: integer, description: 'Total return on a win per 10000 of stake (19000 = 1.9x).' }
+        minStakeCents: { type: integer }
+        maxStakeCents: { type: integer }
+        status: { type: string, enum: [open, closed, resolved, void] }
+        resolvedOutcomeId: { type: [string, 'null'] }
+        source:
+          type: object
+          required: [type, ref]
+          properties:
+            type: { type: string, enum: [sim, binance, polymarket] }
+            ref: { type: string }
+        fairness:
+          type: [object, 'null']
+          description: Commit-reveal proof for sealed draws (sim, event); null for crypto.
+          required: [commitment, seed]
+          properties:
+            commitment: { type: string, description: sha256 of the secret, hex. }
+            seed: { type: [string, 'null'], description: 'The secret, hex; null until resolved.' }
+    PredictionBet:
       type: object
-      required: [betId, predictionId, outcomeId, stakeCents]
+      required:
+        [
+          predictionId,
+          marketId,
+          outcomeId,
+          stakeCents,
+          potentialPayoutCents,
+          status,
+          closesAt,
+          createdAt,
+        ]
       properties:
-        betId: { type: string }
         predictionId: { type: string, format: uuid }
+        marketId: { type: string }
         outcomeId: { type: string }
         stakeCents: { type: integer }
+        potentialPayoutCents: { type: integer }
+        status: { type: string, enum: [open] }
+        closesAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    PredictionBetRow:
+      type: object
+      required: [predictionId, outcomeId, stakeCents, status, horizon, closesAt, createdAt]
+      properties:
+        predictionId: { type: string, format: uuid }
+        outcomeId: { type: string }
+        stakeCents: { type: string, description: Cents as a decimal string (legacy shape). }
+        status: { type: string, enum: [open, won, lost, cancelled] }
+        horizon: { type: string, enum: ['5m', '15m', '1h', daily] }
+        closesAt: { type: string, format: date-time, description: "The market's resolvesAt." }
+        createdAt: { type: string, format: date-time }
+        marketId: { type: [string, 'null'], description: Null on legacy bets. }
+        questionKey: { type: [string, 'null'] }
+        params: { type: [object, 'null'], additionalProperties: { type: string } }
+        resolvedOutcomeId: { type: [string, 'null'] }
+        payoutCents:
+          {
+            type: [integer, 'null'],
+            description: 'Credited on settlement: 0 on a loss, the stake on a void.',
+          }
     AlphaCall:
       type: object
       required: [callId, userId, coinId, entryMicros, targetMicros, stopMicros, at]
