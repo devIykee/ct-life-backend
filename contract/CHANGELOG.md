@@ -29,6 +29,8 @@ Migration 142. Rules in `docs/NFT_GALLERY.md`. Dark until `nftGallery` is in `CA
 - New `GET /homes/{ownerId}/gallery` (`me` allowed) and `PUT /homes/me/gallery {frames: [{slot, assetId}]}` (Idempotency-Key) -> `{frames, items}`. Errors: `403 FORBIDDEN {reason: not_owner}`, `400 {reason: slot_out_of_range | duplicate_slot | duplicate_asset}`; visitors see only `ok` frames and need visit access (`BLOCKED`, `HOME_CLOSED`, `followers_only`, `locked`); `404` without a live home.
 - New `GET /img/{hash}` -> `image/png` (<= 512 px, <= 512 KiB): an SSRF-safe proxy for image URLs read from DAS.
 - `GET /config` gains `nft {imageHosts, maxImageBytes, maxImagePx, maxSlots}` while the capability is on.
+- Framing needs an active, paid home: `403 FORBIDDEN {reason: home_required}` otherwise (clearing the wall always works). Framing a new non-allow-listed image past the per-wallet daily image quota is `429 RATE_LIMITED {reason: image_quota}`.
+- Image storage is bounded by construction: framed images count per owner (12 × 512 KiB) and against a global `maxFramedImageBytes` (1 GiB); unframed images sit in two LRU pools (`maxOkImageBytes`, `maxPendingImageBytes`).
 - Daily worker removes frames whose asset left the wallet. New config `contract/config/nft_gallery.json`.
 - Not included: minting CT Life devnet prints (needs WP-C's payments settlement and a funded devnet treasury).
 

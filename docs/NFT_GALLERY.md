@@ -55,9 +55,12 @@ lists that host (empty when `PUBLIC_API_BASE_URL` is unset, which the Factory al
 - storage is bounded by construction. Every stored image's bytes sit in exactly one pool, each with a
   running counter in `nft_image_usage`. The counters are locked in one global order and updated in the same
   transaction as the bytes:
-  - `framed`: referenced by at least one wall frame. It counts only against the owner: at most `maxSlots`
-    (12) frames × `maxImageBytes` (512 KiB) = 6 MiB per player, never evicted while framed, and outside every
-    shared budget;
+  - `framed`: referenced by at least one wall frame. Bounded per owner by construction: at most `maxSlots`
+    (12) frames × `maxImageBytes` (512 KiB) = 6 MiB per player, and framing needs an active, paid home. Also
+    bounded globally by `maxFramedImageBytes` (1 GiB), so many alt accounts cannot grow it without limit. It
+    is checked when an image is stored and when it is re-pooled, under the same counter lock; past the ceiling
+    a newly framed image keeps its frame but no bytes (its image 404s until there is room). Never evicted while
+    framed and outside every shared budget;
   - `ok`: unframed images of allow-listed collections, pure LRU within `maxOkImageBytes` (512 MiB);
   - `pending`: every other unframed image (anyone can mint one), pure LRU within `maxPendingImageBytes`
     (256 MiB). Nothing in a shared pool is pinned;
@@ -72,6 +75,9 @@ lists that host (empty when `PUBLIC_API_BASE_URL` is unset, which the Factory al
 
 ## Wall
 
+- Framing needs an active, paid home (`status: active`): with no home or an overdue one, `PUT /homes/me/gallery`
+  answers `403 FORBIDDEN {reason: home_required}`, so every wall costs real in-game rent. Clearing the wall
+  (`frames: []`) always works.
 - Per player, up to 12 slots (`maxSlots`), one asset per slot. The asset's name, collection, image and
   moderation are copied when framed, so a visitor costs no DAS call.
 - A visitor needs the same access as a visit: the visitor policy (`BLOCKED`, `HOME_CLOSED`,
