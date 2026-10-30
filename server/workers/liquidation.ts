@@ -1,69 +1,53 @@
 /**
- * Liquidation worker.
+ * Liquidation sweep (BullMQ, every 5 s; scheduled in main.ts).
  *
- * Runs every 5 s. For each open perp, reads the engine's
- * `coins.price_micros` and closes the perp with
- * status='liquidated' if the price crosses `liq_micros`.
+ * Finds open perps whose coin's `coins.price_micros` has crossed
+ * `liq_micros` and closes each with status='liquidated' through
+ * `liquidatePerp`, the only writer of the perps row and its 'liq_pay'
+ * ledger row. That function re-checks the cross under row locks and
+ * publishes the city room 'liquidated' event, so a second replica or an
+ * overlapping run closes nothing twice.
  *
- * The worker uses `liquidatePerp` (which is the only writer
- * of the perps row + the 'liq_pay' ledger row). The function
- * publishes a city room 'liquidated' event on Redis pub/sub
- * for the realtime layer to fan out to the user.
+ * The SQL pre-filter keeps the sweep from taking a coin row lock for every
+ * open perp every 5 s (the market engine writes those rows on each tick).
  */
-import { buildContext } from '../application/context.js';
+import type { Job } from 'bullmq';
+import type { AppContext } from '../application/context.js';
 import { liquidatePerp } from '../application/perp-pit.js';
 
-const POLL_INTERVAL_MS = 5_000;
+export const LIQUIDATION_QUEUE = 'jobs-liquidation';
 
-let timer: ReturnType<typeof setInterval> | null = null;
-let running = false;
+/** Most perps one sweep closes; the next sweep picks up the rest. */
+const BATCH = 500;
 
 /**
- * Start the liquidation worker. Returns a stop function.
+ * BullMQ handler.
+ * @param _job - The repeatable job (carries no data).
+ * @param ctx - The app context.
+ * @returns How many perps were liquidated.
  */
-export function startLiquidationWorker(): () => void {
-  if (timer !== null) return stopLiquidationWorker;
-  const ctx = buildContext();
-  const tick = async (): Promise<void> => {
-    if (running) return;
-    running = true;
+export async function handleLiquidation(_job: Job, ctx: AppContext): Promise<number> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{ perp_id: string }>(
+      `SELECT p.perp_id
+         FROM perps p JOIN coins c ON c.coin_id = p.coin_id
+        WHERE p.status = 'open'
+          AND ((p.side = 'long' AND c.price_micros <= p.liq_micros)
+            OR (p.side = 'short' AND c.price_micros >= p.liq_micros))
+        ORDER BY p.created_at
+        LIMIT $1`,
+      [BATCH],
+    ),
+  );
+  let liquidated = 0;
+  for (const row of r.rows) {
     try {
-      const r = await ctx.db.withConnection(async (c) => {
-        return c.query<{ perp_id: string; coin_id: string }>(
-          `SELECT perp_id, coin_id FROM perps WHERE status = 'open' LIMIT 500`,
-        );
-      });
-      for (const row of r.rows) {
-        await liquidatePerp(ctx, row.perp_id);
-      }
+      if (await liquidatePerp(ctx, row.perp_id)) liquidated += 1;
     } catch (e) {
-      console.error('[liquidation] error:', (e as Error).message);
-    } finally {
-      running = false;
+      // One bad perp must not stop the sweep; the next sweep retries it.
+      console.error(`[liquidation] perp ${row.perp_id} failed:`, (e as Error).message);
     }
-  };
-  timer = setInterval(() => {
-    void tick();
-  }, POLL_INTERVAL_MS);
-  return stopLiquidationWorker;
-}
-
-/** Stop the liquidation worker (idempotent). */
-export function stopLiquidationWorker(): void {
-  if (timer === null) return;
-  clearInterval(timer);
-  timer = null;
-}
-
-const isDirect = typeof process.argv[1] === 'string' && process.argv[1].endsWith('liquidation.ts');
-if (isDirect) {
-  startLiquidationWorker();
-  process.on('SIGINT', () => {
-    stopLiquidationWorker();
-    process.exit(0);
-  });
-  process.on('SIGTERM', () => {
-    stopLiquidationWorker();
-    process.exit(0);
-  });
+  }
+  if (liquidated > 0) console.info(`[liquidation] liquidated ${liquidated} perp(s)`);
+  return liquidated;
 }

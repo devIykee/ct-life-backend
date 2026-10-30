@@ -134,13 +134,14 @@ export async function evaluateAlphaCalls(ctx: AppContext): Promise<number> {
     else if (price <= stop) nextStatus = 'hit_stop';
     else if (Date.now() - row.created_at.getTime() > EXPIRY_MS) nextStatus = 'expired';
     if (nextStatus === null) continue;
-    await ctx.db.withConnection(async (c) => {
-      await c.query(`UPDATE alpha_calls SET status = $1 WHERE call_id = $2 AND status = 'open'`, [
+    const updated = await ctx.db.withConnection((c) =>
+      c.query(`UPDATE alpha_calls SET status = $1 WHERE call_id = $2 AND status = 'open'`, [
         nextStatus,
         row.call_id,
-      ]);
-    });
-    resolved++;
+      ]),
+    );
+    // Another run may have resolved it first; count only our own update.
+    resolved += updated.rowCount ?? 0;
   }
   return resolved;
 }
