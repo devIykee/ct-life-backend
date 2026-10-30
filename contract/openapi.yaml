@@ -3330,7 +3330,12 @@ paths:
       tags: [markets]
       operationId: postAlphaCalls
       summary: Post an alpha call.
-      description: Calls are immutable; there is no delete endpoint.
+      description: >-
+        Calls are immutable; there is no delete endpoint. The stored entry is the coin's server
+        price at placement (the body's `entryMicros` must be positive but is otherwise ignored).
+        The call is accepted only while stopMicros < price < targetMicros; otherwise
+        `VALIDATION_FAILED` with `details.reason` `price_outside_band` (and `details.priceMicros`),
+        `unknown_coin` or `coin_dead`.
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3432,7 +3437,8 @@ paths:
               type: object
               required: [targetType, targetId, reasonId]
               properties:
-                targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                targetType:
+                  { type: string, enum: [user, message, space, call, post, ad, npc_reply] }
                 targetId: { type: string }
                 reasonId: { type: string, enum: [spam, scam, harassment, impersonation, nsfw] }
                 note: { type: string, maxLength: 500 }
@@ -3444,6 +3450,9 @@ paths:
       description: |
         At most 10 an hour per player (burst of 5): beyond that `429 RATE_LIMITED`. Reporting a target
         that you already have an open report on is a no-op (204). Reporting yourself is `400`.
+        `npc_reply` reports an AI NPC chat reply: `targetId` is the `replyId` from `POST /llm/chat`,
+        and only the player the reply was written for may report it (otherwise `400`,
+        `details.reason: unknown_reply`).
       responses:
         '204': { description: Reported }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -3948,6 +3957,13 @@ paths:
         speakers, everyone else joins subscribe-only, and an ended, missing or
         blocked Space mints nothing (403/404). Space tokens last 10 minutes so
         each new token re-checks the role. Client permission flags are ignored.
+        For `venue`, `id` is the venue instanceId (the Colyseus room id from
+        `welcome`), and a token is minted only while the caller has a session
+        in that venue room; otherwise 403 `NOT_IN_VENUE`. Join the venue room
+        first, then ask for the token. Venue tokens last 10 minutes (needed only
+        to connect; LiveKit refreshes a connected participant's token itself).
+        Leaving the venue room with your last session disconnects you from its
+        LiveKit room; ask for a new token on the next visit.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3974,6 +3990,24 @@ paths:
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
                   canPublish: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >-
+            Not in that venue instance (`NOT_IN_VENUE`), or not a participant of the Space or
+            call (`FORBIDDEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOT_IN_VENUE,
+                      message: 'You are not in that venue. Join it before connecting to its voice.',
+                      details: { instanceId: 'a1B2c3D4e' },
+                    },
+                }
 
   /spaces:
     get:
@@ -5963,7 +5997,8 @@ paths:
                       properties:
                         reportId: { type: integer }
                         reporterUserId: { type: string, format: uuid }
-                        targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                        targetType:
+                          { type: string, enum: [user, message, space, call, post, ad, npc_reply] }
                         targetId: { type: string }
                         reasonId: { type: string }
                         note: { type: [string, 'null'] }
