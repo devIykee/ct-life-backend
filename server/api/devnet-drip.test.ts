@@ -1,8 +1,10 @@
 /**
  * Devnet SOL drip + "Get test tokens" (unlock WP-C, capability devnetDrip) over HTTP:
  * dark until on, one drip per wallet per UTC day, no drip for a funded wallet, the
- * treasury reserve, the global daily budget, the genesis-hash devnet check, and a failed
- * send that frees the slot. Real DB; the chain is a fake RPC that records what was sent.
+ * treasury reserve, the global daily budget, the genesis-hash devnet check, and what a
+ * failed send does to the day's slot (review L2: freed only when the send provably never
+ * reached the cluster; an unknown outcome keeps it). Real DB; the chain is a fake RPC that
+ * records what was sent.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
@@ -20,7 +22,8 @@ import {
   DEVNET_GENESIS_HASH,
 } from '../application/chain-rpc.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import type { HeliusClient } from '../shared/solana/helius.js';
+import { getBase58Decoder } from '@solana/kit';
+import { HeliusError, type HeliusClient } from '../shared/solana/helius.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -43,7 +46,14 @@ writeFileSync(treasuryPath, JSON.stringify(Array.from(treasury.secretKey)));
 let balances: Map<string, number>;
 let sent: Transaction[];
 let genesis: string;
-let sendFails: boolean;
+/**
+ * ok: accepted. rejected: a JSON-RPC error (failed preflight; nothing forwarded).
+ * timeout: no answer, never landed. landedThenTimeout: landed, then the answer was lost.
+ */
+let sendMode: 'ok' | 'rejected' | 'timeout' | 'landedThenTimeout';
+let statusFails: boolean;
+let landed: Set<string>;
+const b58 = getBase58Decoder();
 
 const fakeRpc = {
   async rpc<T>(method: string, params: unknown[]): Promise<T> {
@@ -57,10 +67,31 @@ const fakeRpc = {
           value: { blockhash: Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 9 },
         } as T;
       case 'sendTransaction': {
-        if (sendFails) throw new Error('Transaction simulation failed');
+        if (sendMode === 'rejected') {
+          throw new HeliusError('Transaction simulation failed', 'RPC_ERROR', 502, -32002);
+        }
+        if (sendMode === 'timeout') {
+          throw new HeliusError('sendTransaction timed out', 'TIMEOUT', 504);
+        }
         const tx = Transaction.from(Buffer.from(params[0] as string, 'base64'));
+        const sig = b58.decode(tx.signature!);
         sent.push(tx);
-        return `sig${sent.length}${uuidv7().replace(/-/g, '')}` as T;
+        landed.add(sig);
+        if (sendMode === 'landedThenTimeout') {
+          throw new HeliusError('sendTransaction timed out', 'TIMEOUT', 504);
+        }
+        return sig as T;
+      }
+      case 'getSignatureStatuses': {
+        if (statusFails) throw new HeliusError('getSignatureStatuses timed out', 'TIMEOUT', 504);
+        const sigs = params[0] as string[];
+        return {
+          value: sigs.map((x) =>
+            landed.has(x)
+              ? { slot: 1, confirmations: 0, err: null, confirmationStatus: 'processed' }
+              : null,
+          ),
+        } as T;
       }
       default:
         throw new Error(`unexpected rpc ${method}`);
@@ -103,14 +134,16 @@ async function devAuth(): Promise<Authed> {
   return { wallet, token: (r.json() as { accessToken: string }).accessToken };
 }
 
-async function call(u: Authed, method: 'GET' | 'POST', url: string) {
+async function call(u: Authed, method: 'GET' | 'POST', url: string, body?: string) {
   const r = await app.inject({
     method,
     url,
     headers: {
       authorization: `Bearer ${u.token}`,
       ...(method === 'POST' ? { 'idempotency-key': uuidv7() } : {}),
+      ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
     },
+    ...(body !== undefined ? { payload: body } : {}),
   });
   return { status: r.statusCode, body: r.json() as Record<string, unknown> };
 }
@@ -121,7 +154,9 @@ beforeEach(() => {
   balances = new Map([[treasury.publicKey.toBase58(), 5_000_000_000]]);
   sent = [];
   genesis = DEVNET_GENESIS_HASH;
-  sendFails = false;
+  sendMode = 'ok';
+  statusFails = false;
+  landed = new Set();
   _setClusterRpcForTests(fakeRpc);
   _resetDevnetRpcCheckForTests();
 });
@@ -258,19 +293,92 @@ describe('devnet drip', () => {
     expect(sent).toHaveLength(0);
   }, 30_000);
 
-  it('a send the RPC refuses frees the day slot', async () => {
+  async function dripRow(userId: string) {
+    const r = await pool.query<{ signature: string | null }>(
+      `SELECT signature FROM devnet_drips WHERE user_id = $1 AND day = $2`,
+      [userId, new Date().toISOString().slice(0, 10)],
+    );
+    return r.rows[0] ?? null;
+  }
+
+  async function userId(u: Authed): Promise<string> {
+    const r = await pool.query<{ id: string }>(`SELECT id FROM users WHERE wallet = $1`, [
+      u.wallet,
+    ]);
+    return r.rows[0]!.id;
+  }
+
+  it('a send the RPC refuses outright (and has no status) frees the day slot', async () => {
     await boot(ON);
     const u = await devAuth();
-    sendFails = true;
+    sendMode = 'rejected';
     const r = await call(u, 'POST', '/v1/devnet/drip');
     expect(r.status).toBe(503);
     expect(r.body.error).toMatchObject({
       code: 'SERVER_BUSY',
       details: { reason: 'drip_send_failed' },
     });
-    sendFails = false;
+    expect(await dripRow(await userId(u))).toBeNull();
+    sendMode = 'ok';
     const ok = await call(u, 'POST', '/v1/devnet/drip');
     expect(ok.status, JSON.stringify(ok.body)).toBe(200);
     expect(sent).toHaveLength(1);
+    expect((await dripRow(await userId(u)))?.signature).toBe(ok.body.signature);
+  }, 30_000);
+
+  it('a send with an unknown outcome (timeout) keeps the slot and says so', async () => {
+    await boot(ON);
+    const u = await devAuth();
+    sendMode = 'timeout';
+    const r = await call(u, 'POST', '/v1/devnet/drip');
+    expect(r.status).toBe(503);
+    expect(r.body.error).toMatchObject({
+      code: 'SERVER_BUSY',
+      details: { reason: 'drip_outcome_unknown' },
+    });
+    const sig = (r.body.error as { details: { signature: string } }).details.signature;
+    // The signature was stored before the send, so the drip can be looked up later.
+    expect((await dripRow(await userId(u)))?.signature).toBe(sig);
+    sendMode = 'ok';
+    const again = await call(u, 'POST', '/v1/devnet/drip');
+    expect(again.status).toBe(429);
+    expect(again.body.error).toMatchObject({ details: { reason: 'daily_drip' } });
+    const info = await call(u, 'GET', '/v1/devnet/test-tokens');
+    expect(info.body.sol).toMatchObject({ available: false, reason: 'claimed_today' });
+    expect(sent).toHaveLength(0);
+  }, 30_000);
+
+  it('a send that landed before the error is answered as sent, never paid twice', async () => {
+    await boot(ON);
+    const u = await devAuth();
+    sendMode = 'landedThenTimeout';
+    const r = await call(u, 'POST', '/v1/devnet/drip');
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(r.body.signature).toBe(b58.decode(sent[0]!.signature!));
+    sendMode = 'ok';
+    expect((await call(u, 'POST', '/v1/devnet/drip')).status).toBe(429);
+    expect(sent).toHaveLength(1);
+  }, 30_000);
+
+  it('a refused send whose status cannot be read keeps the slot', async () => {
+    await boot(ON);
+    const u = await devAuth();
+    sendMode = 'rejected';
+    statusFails = true;
+    const r = await call(u, 'POST', '/v1/devnet/drip');
+    expect(r.status).toBe(503);
+    expect(r.body.error).toMatchObject({ details: { reason: 'drip_outcome_unknown' } });
+    expect(await dripRow(await userId(u))).not.toBeNull();
+  }, 30_000);
+
+  it('accepts an empty JSON body ({}), an empty body with a JSON content type, and none', async () => {
+    await boot(ON);
+    for (const body of ['{}', '', undefined]) {
+      const u = await devAuth();
+      const r = await call(u, 'POST', '/v1/devnet/drip', body);
+      expect(r.status, `${JSON.stringify(body)}: ${JSON.stringify(r.body)}`).toBe(200);
+    }
+    expect(sent).toHaveLength(3);
   }, 30_000);
 });

@@ -50,7 +50,7 @@ await ctx.db.withConnection(async (c) => {
     [uuidv7(), userId, `e2e_${userId.slice(-8)}`],
   );
 });
-console.info('config', JSON.stringify(await getRealFactoryConfig(ctx)).slice(0, 300));
+console.info('config', JSON.stringify(await getRealFactoryConfig(ctx, userId)).slice(0, 300));
 const image = (
   await sharp({ create: { width: 64, height: 64, channels: 3, background: '#33cc66' } })
     .png()

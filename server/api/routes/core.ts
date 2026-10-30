@@ -40,6 +40,7 @@ import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
 import { projectsClientConfig } from '../../application/project-events.js';
+import { beefClientConfig } from '../../application/beef-eligibility.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { chainConfigPayload } from '../../application/chain-config.js';
 import { creatorCard } from '../../application/creator.js';
@@ -201,6 +202,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       boards: cache.load<unknown>('boards'),
       // Builder (unlock WP-B): wage bands, task length, limits; null while `builder` is off.
       projects: projectsClientConfig(req.ctx),
+      // CT Beef (unlock A6): topics, reward, eligibility gates; null while `beef` is off.
+      beef: beefClientConfig(req.ctx),
       // Unlock D4: where the client may load gallery images from (only while on).
       ...nftConfigPayload(req.ctx),
     };

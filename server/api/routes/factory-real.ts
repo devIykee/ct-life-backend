@@ -77,7 +77,7 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
  */
 export function registerFactoryRealRoutes(app: FastifyInstance): void {
   app.get('/v1/factory/config', { preHandler: requireAuth }, async (req, reply) =>
-    reply.send(await getRealFactoryConfig(req.ctx)),
+    reply.send(await getRealFactoryConfig(req.ctx, req.user!.sub)),
   );
 
   app.post(

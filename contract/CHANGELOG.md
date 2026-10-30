@@ -1,3 +1,12 @@
+## 2026-10-30 - Client contract gaps 2: beef config and eligibility, Factory allowance, drip L2
+
+No migration. Additive only; everything stays behind its existing capability.
+
+- `GET /config` gains `beef` (null while the `beef` capability is off): `{version, topics[{id, label}], winnerRewardCents, maxRewardedWinsPerDay, minAccountAgeHours, minShiftDays, voters {minAccountAgeHours, minShiftDays}}` from `beef_topics.json`. `minAccountAgeHours` / `minShiftDays` are the gate to open or accept a beef; `voters` is the gate to vote.
+- New `GET /beef/eligibility` (capability `beef`) -> `{eligible, accountAgeOk, minAccountAgeHours, accountAgeOkAt, shiftDays, requiredShiftDays, reasons}`: the same gate `POST /beef` and accept enforce. `reasons` uses the refusal strings `too_new`, `shift_days` (`403 FORBIDDEN`) and `sybil_jailed` (`403 SYBIL_JAILED`).
+- `GET /factory/config` gains `launchesLeftToday` (rolling 24 hours, the `LAUNCH_LIMIT_REACHED` window); `limits` keys are now in the contract: `nameMax`, `tickerMax`, `descriptionMax`, `imageMaxBytes`, `dailyLaunches`.
+- `POST /devnet/drip` (review L2): the day's slot is freed only when the send provably never reached the cluster (`503 SERVER_BUSY {reason: drip_send_failed}`, retry). A send with an unknown outcome (timeout, network error, HTTP 5xx) keeps the slot and answers `503 SERVER_BUSY {reason: drip_outcome_unknown, signature, nextAt}` (the SOL may still arrive; do not retry). A send that landed before the error answers `200` as usual. The body is ignored; none, an empty body and `{}` are accepted (already true, now tested and documented).
+
 ## 2026-10-30 - Client contract gaps: flat door knock, prediction proofs, ageConfirmed
 
 No migration. Additive only.

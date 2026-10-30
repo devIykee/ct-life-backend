@@ -136,3 +136,10 @@ For each of our mints:
 - Buying a Cash player coin (`POST /v1/market/trades`, `side: buy`) → `410 FACTORY_CASH_RETIRED`.
   Selling an old position still works, so nobody's Cash is stuck.
 - `GET /v1/factory/coins`, `/coins/:coinId` and `/me` stay readable (history).
+
+## Launch allowance in the config (client contract gaps 2)
+
+`GET /v1/factory/config` also returns `launchesLeftToday`: `limits.dailyLaunches` (3) minus the
+caller's launches in the last 24 hours (rolling, the same window `LAUNCH_LIMIT_REACHED` uses, not a UTC
+day). `limits` is now spelled out in the contract: `{nameMax, tickerMax, descriptionMax, imageMaxBytes,
+dailyLaunches}`. The client can disable the launch button at 0 instead of learning it from a `429`.

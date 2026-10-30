@@ -132,8 +132,32 @@ export function realFactoryEnabled(ctx: AppContext): boolean {
 
 // --- Config -----------------------------------------------------------------
 
-/** What the client shows before a launch (fees from the on-chain partner config). */
-export async function getRealFactoryConfig(ctx: AppContext): Promise<Record<string, unknown>> {
+/**
+ * Launches by this player in the rolling 24 hours before `now` (the window
+ * `prepareLaunch` checks against DAILY_REAL_LAUNCH_CAP).
+ */
+async function launchesInWindow(ctx: AppContext, userId: string, now: Date): Promise<number> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM factory_tokens
+        WHERE creator_user_id = $1 AND launched_at > $2`,
+      [userId, new Date(now.getTime() - 86_400_000)],
+    ),
+  );
+  return r.rows[0]?.n ?? 0;
+}
+
+/**
+ * What the client shows before a launch (fees from the on-chain partner config).
+ * @param ctx - The app context.
+ * @param userId - The caller; `launchesLeftToday` is theirs.
+ * @param now - Injectable clock.
+ */
+export async function getRealFactoryConfig(
+  ctx: AppContext,
+  userId: string,
+  now: Date = new Date(),
+): Promise<Record<string, unknown>> {
   const f = ctx.config.factory;
   const enabled = realFactoryEnabled(ctx);
   let onChain: Record<string, unknown> | null = null;
@@ -169,6 +193,12 @@ export async function getRealFactoryConfig(ctx: AppContext): Promise<Record<stri
       imageMaxBytes: IMAGE_MAX_BYTES,
       dailyLaunches: DAILY_REAL_LAUNCH_CAP,
     },
+    // How many more launches the caller may prepare now (rolling 24 hours, the same
+    // window and cap as LAUNCH_LIMIT_REACHED).
+    launchesLeftToday: Math.max(
+      0,
+      DAILY_REAL_LAUNCH_CAP - (await launchesInWindow(ctx, userId, now)),
+    ),
     /** [Inference] Measured on the DBC program (spike): rent + fees, before any first buy. */
     estimatedCostSol: 0.025,
   };

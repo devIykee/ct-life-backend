@@ -16,15 +16,22 @@ export class HeliusError extends Error {
   readonly code: string;
   readonly httpStatus: number;
   /**
+   * The JSON-RPC `error.code` when the node answered with an error object (the node
+   * handled the call and refused it); undefined for timeouts, network and HTTP errors.
+   */
+  readonly rpcCode: number | undefined;
+  /**
    * @param message - Human-readable description of the failure.
    * @param code - Short machine code (UNAUTHORIZED, RATE_LIMITED, ...).
    * @param httpStatus - Suggested HTTP status for the API response.
+   * @param rpcCode - The JSON-RPC error code, when the node returned one.
    */
-  constructor(message: string, code: string, httpStatus: number) {
+  constructor(message: string, code: string, httpStatus: number, rpcCode?: number) {
     super(message);
     this.name = 'HeliusError';
     this.code = code;
     this.httpStatus = httpStatus;
+    this.rpcCode = rpcCode;
   }
 }
 
@@ -92,7 +99,12 @@ export function createHeliusClient(opts: HeliusClientOptions): HeliusClient {
       }
       const body = (await res.json()) as { result?: T; error?: { code: number; message: string } };
       if (body.error) {
-        throw new HeliusError(`Helius RPC ${method}: ${body.error.message}`, 'RPC_ERROR', 502);
+        throw new HeliusError(
+          `Helius RPC ${method}: ${body.error.message}`,
+          'RPC_ERROR',
+          502,
+          body.error.code,
+        );
       }
       if (body.result === undefined) {
         throw new HeliusError(`Helius RPC ${method}: no result`, 'RPC_ERROR', 502);

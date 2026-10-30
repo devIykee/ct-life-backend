@@ -102,6 +102,7 @@ describe('beef routes', () => {
     const u = await devUser();
     for (const [method, url] of [
       ['GET', '/v1/beef'],
+      ['GET', '/v1/beef/eligibility'],
       ['POST', '/v1/beef'],
       ['GET', `/v1/beef/${uuidv7()}`],
       ['POST', `/v1/beef/${uuidv7()}/accept`],
@@ -112,6 +113,73 @@ describe('beef routes', () => {
       expect(r.status, `${method} ${url}`).toBe(503);
       expect(r.body.error.details).toEqual({ capability: 'beef' });
     }
+    const cfg = await app!.inject({ method: 'GET', url: '/v1/config' });
+    expect((cfg.json() as { beef: unknown }).beef).toBeNull();
+  }, 30_000);
+
+  it('GET /config serves the beef block while beef is on', async () => {
+    await boot('beef');
+    const cfg = (await app!.inject({ method: 'GET', url: '/v1/config' })).json() as {
+      beef: Record<string, unknown>;
+    };
+    expect(cfg.beef).toEqual({
+      version: '1.0.0',
+      topics: expect.arrayContaining([{ id: TOPIC, label: 'Memes vs utility' }]),
+      winnerRewardCents: 10000,
+      maxRewardedWinsPerDay: 3,
+      minAccountAgeHours: 48,
+      minShiftDays: 2,
+      voters: { minAccountAgeHours: 48, minShiftDays: 2 },
+    });
+    expect((cfg.beef.topics as unknown[]).length).toBe(6);
+  }, 30_000);
+
+  it('GET /beef/eligibility shows progress and agrees with POST /beef', async () => {
+    await boot('beef');
+    const fresh = await devUser();
+    const e = await call(fresh, 'GET', '/v1/beef/eligibility');
+    expect(e.status).toBe(200);
+    expect(e.body).toMatchObject({
+      eligible: false,
+      accountAgeOk: false,
+      minAccountAgeHours: 48,
+      shiftDays: 0,
+      requiredShiftDays: 2,
+      reasons: ['too_new', 'shift_days'],
+    });
+    expect(Date.parse(e.body.accountAgeOkAt)).toBeGreaterThan(Date.now());
+    expect((await call(fresh, 'POST', '/v1/beef', { topicId: TOPIC })).status).toBe(403);
+
+    // Old enough, one shift day: only shift_days left.
+    await pool.query(`UPDATE users SET created_at = now() - interval '3 days' WHERE id = $1`, [
+      fresh.id,
+    ]);
+    await shiftDays(fresh.id, 1);
+    const half = await call(fresh, 'GET', '/v1/beef/eligibility');
+    expect(half.body).toMatchObject({
+      eligible: false,
+      accountAgeOk: true,
+      shiftDays: 1,
+      reasons: ['shift_days'],
+    });
+
+    const vet = await devUser(true);
+    const ok = await call(vet, 'GET', '/v1/beef/eligibility');
+    expect(ok.body).toMatchObject({
+      eligible: true,
+      accountAgeOk: true,
+      shiftDays: 2,
+      reasons: [],
+    });
+    expect((await call(vet, 'POST', '/v1/beef', { topicId: TOPIC })).status).toBe(201);
+
+    // A sybil-jailed veteran is not eligible either.
+    const jailed = await devUser(true);
+    await pool.query(`UPDATE users SET is_sybil_jailed = true WHERE id = $1`, [jailed.id]);
+    const j = await call(jailed, 'GET', '/v1/beef/eligibility');
+    expect(j.body).toMatchObject({ eligible: false, reasons: ['sybil_jailed'] });
+    const refused = await call(jailed, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(refused.body.error.code).toBe('SYBIL_JAILED');
   }, 30_000);
 
   it('opens stake-free, echoes the terms, and runs accept / decline / cancel', async () => {

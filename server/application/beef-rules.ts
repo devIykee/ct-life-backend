@@ -7,6 +7,7 @@
 import type { AppContext } from './context.js';
 
 export interface BeefConfig {
+  readonly version?: string;
   readonly topics: ReadonlyArray<{ id: string; label: string }>;
   readonly phases: { openSeconds: number; activeSeconds: number; votingSeconds: number };
   readonly reward: {

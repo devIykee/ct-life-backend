@@ -2497,7 +2497,10 @@ paths:
         (launches then answer 503 FACTORY_UNAVAILABLE). `onChain` mirrors the partner config
         (fee claimer, creator fee share, pool creation fee, graduation threshold). Show
         `riskWarning.text` before every launch and send `riskAccepted: true`; 18+ only. See
-        docs/FACTORY-REAL.md.
+        docs/FACTORY-REAL.md. `limits` are the form limits the server enforces;
+        `launchesLeftToday` is how many more launches the caller may prepare now (the same
+        rolling 24 hours and cap as `429 LAUNCH_LIMIT_REACHED`), so the client can grey out
+        the button instead of learning it from a refusal.
       x-phase: 4
       responses:
         '200':
@@ -2506,6 +2509,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [real, enabled, cluster, riskWarning, ageGate, limits, launchesLeftToday]
                 properties:
                   real: { type: boolean }
                   enabled: { type: boolean }
@@ -2517,7 +2521,27 @@ paths:
                     type: object
                     properties: { version: { type: string }, text: { type: string } }
                   ageGate: { type: integer }
-                  limits: { type: object, additionalProperties: { type: integer } }
+                  limits:
+                    type: object
+                    required: [nameMax, tickerMax, descriptionMax, imageMaxBytes, dailyLaunches]
+                    additionalProperties: { type: integer }
+                    properties:
+                      nameMax: { type: integer, description: 'Token name, characters (24).' }
+                      tickerMax: { type: integer, description: 'Ticker, characters (6).' }
+                      descriptionMax:
+                        { type: integer, description: 'Description, characters (200).' }
+                      imageMaxBytes:
+                        { type: integer, description: 'Image upload, bytes before re-encoding.' }
+                      dailyLaunches:
+                        type: integer
+                        description: Launches per player per rolling 24 hours (3).
+                  launchesLeftToday:
+                    type: integer
+                    minimum: 0
+                    description: >-
+                      `limits.dailyLaunches` minus the caller's launches in the last 24 hours
+                      (rolling, not a UTC day). 0 means prepare answers `429
+                      LAUNCH_LIMIT_REACHED`.
                   estimatedCostSol: { type: number }
         '401': { $ref: '#/components/responses/Unauthorized' }
   /factory/me:
@@ -7994,11 +8018,21 @@ paths:
         the transfer (`signature`); confirmation follows in a few seconds. `409 CONFLICT
         {reason: balance_sufficient}`; `429 RATE_LIMITED {reason: daily_drip | drip_budget,
         nextAt}`; `503 CAPABILITY_OFF {reason: drip_unconfigured | treasury_low |
-        rpc_not_devnet | devnet_only}`; `503 SERVER_BUSY {reason: drip_send_failed}` (nothing
-        was sent; the day's slot is freed, retry).
+        rpc_not_devnet | devnet_only}`; `503 SERVER_BUSY {reason: drip_send_failed}` (the
+        transfer provably never reached the cluster; the day's slot is freed, retry);
+        `503 SERVER_BUSY {reason: drip_outcome_unknown, signature, nextAt}` (the send failed
+        in a way that does not prove it was not delivered, e.g. a timeout: the SOL may still
+        arrive, the day's slot is kept, do not retry before `nextAt`). The body is ignored:
+        none, an empty body, or `{}` are all accepted.
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, description: 'Ignored; send `{}` or nothing.' }
+            example: {}
       responses:
         '200':
           description: Sent
@@ -8887,6 +8921,36 @@ paths:
             application/json: { schema: { $ref: '#/components/schemas/BeefElo' } }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /beef/eligibility:
+    get:
+      tags: [competition]
+      operationId: getBeefEligibility
+      summary: May I open or accept a beef, and how far along am I.
+      description: >-
+        Capability `beef`. The same gate `POST /beef` and `POST /beef/{id}/accept` enforce
+        (account age, distinct UTC days with a paid server-timed shift, not sybil-jailed),
+        so the client can show progress instead of waiting for a 403. `reasons` uses the
+        refusal strings: `too_new` and `shift_days` (`403 FORBIDDEN {reason}`), `sybil_jailed`
+        (`403 SYBIL_JAILED`). Thresholds are also in `GET /config` `beef`.
+      x-phase: 6
+      responses:
+        '200':
+          description: Eligibility
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BeefEligibility' }
+              example:
+                eligible: false
+                accountAgeOk: true
+                minAccountAgeHours: 48
+                accountAgeOkAt: '2026-10-28T09:00:00.000Z'
+                shiftDays: 1
+                requiredShiftDays: 2
+                reasons: [shift_days]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /beef/{id}:
     get:
@@ -10405,6 +10469,47 @@ components:
             offerTtlHours: { type: integer }
             builderDiscountBps: { type: integer }
             minProjectAgeMinutes: { type: integer }
+        beef:
+          type: [object, 'null']
+          description: >-
+            CT Beef config the client must not hard-code (unlock A6), from
+            contract/config/beef_topics.json; null while the `beef` capability is off.
+            `minAccountAgeHours` / `minShiftDays` are the gate to open or accept a beef
+            (`GET /beef/eligibility` reports the caller's progress); `voters` is the gate to
+            vote.
+          required:
+            [
+              version,
+              topics,
+              winnerRewardCents,
+              maxRewardedWinsPerDay,
+              minAccountAgeHours,
+              minShiftDays,
+              voters,
+            ]
+          properties:
+            version: { type: string }
+            topics:
+              type: array
+              items:
+                type: object
+                required: [id, label]
+                properties:
+                  id: { type: string }
+                  label: { type: string }
+            winnerRewardCents:
+              { type: integer, description: 'House-paid reward for a rewarded win (Cash cents).' }
+            maxRewardedWinsPerDay:
+              { type: integer, description: Rewarded wins per player per UTC day. }
+            minAccountAgeHours: { type: integer }
+            minShiftDays:
+              { type: integer, description: Distinct UTC days with a paid server-timed shift. }
+            voters:
+              type: object
+              required: [minAccountAgeHours, minShiftDays]
+              properties:
+                minAccountAgeHours: { type: integer }
+                minShiftDays: { type: integer }
         capabilities:
           type: object
           description: >-
@@ -12456,6 +12561,33 @@ components:
         wins: { type: integer }
         losses: { type: integer }
         draws: { type: integer }
+    BeefEligibility:
+      type: object
+      required:
+        [
+          eligible,
+          accountAgeOk,
+          minAccountAgeHours,
+          accountAgeOkAt,
+          shiftDays,
+          requiredShiftDays,
+          reasons,
+        ]
+      properties:
+        eligible: { type: boolean, description: True when `reasons` is empty. }
+        accountAgeOk: { type: boolean }
+        minAccountAgeHours: { type: integer }
+        accountAgeOkAt:
+          type: string
+          format: date-time
+          description: When the account passes the age gate (in the past once it has).
+        shiftDays:
+          type: integer
+          description: Distinct UTC days with a paid server-timed shift (`shift_pay`).
+        requiredShiftDays: { type: integer }
+        reasons:
+          type: array
+          items: { type: string, enum: [too_new, shift_days, sybil_jailed] }
     NftItem:
       type: object
       required: [assetId, name, collection, imageUrl, mime, moderation, network]

@@ -6,6 +6,7 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { Keypair } from '@solana/web3.js';
+import { Pool } from 'pg';
 import { buildServer } from './main.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
@@ -136,4 +137,41 @@ it('real Factory routes: the Helius webhook needs its Authorization header; unkn
   // no DBC config it is FACTORY_UNAVAILABLE (server/api/factory-config-hook.test.ts).
   expect(prep.status).toBe(503);
   expect((prep.body.error as { code: string }).code).toBe('CAPABILITY_OFF');
+});
+
+it('GET /factory/config says how many launches the caller has left (rolling 24 hours)', async () => {
+  const u = await devAuth();
+  const first = await call(u, 'GET', '/v1/factory/config');
+  expect(first.status).toBe(200);
+  expect(first.body).toMatchObject({
+    launchesLeftToday: 3,
+    limits: { nameMax: 24, tickerMax: 6, descriptionMax: 200, dailyLaunches: 3 },
+  });
+  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  try {
+    // One launch in the window, one older than 24 hours (does not count).
+    for (const ago of ['1 hour', '25 hours']) {
+      const launchId = uuidv7();
+      const mint = Keypair.generate().publicKey.toBase58();
+      const poolKey = Keypair.generate().publicKey.toBase58();
+      await pool.query(
+        `INSERT INTO factory_launches (launch_id, user_id, wallet, cluster, dbc_config, mint, pool,
+                                       name, ticker, metadata_uri, image_uri, prepared_tx,
+                                       last_valid_block_height, risk_accepted_at, status, expires_at)
+         VALUES ($1, $2, 'w', 'devnet', 'cfg', $3, $4, 'N', 'T', 'm', 'i', 'tx', 1, now(),
+                 'confirmed', now())`,
+        [launchId, u.sub, mint, poolKey],
+      );
+      await pool.query(
+        `INSERT INTO factory_tokens (mint, launch_id, pool, cluster, creator_user_id, creator_wallet,
+                                     name, ticker, image_uri, metadata_uri, signature, launched_at)
+         VALUES ($1, $2, $3, 'devnet', $4, 'w', 'N', $5, 'i', 'm', $6, now() - $7::interval)`,
+        [mint, launchId, poolKey, u.sub, `T${launchId.slice(-5)}`, `sig-${launchId}`, ago],
+      );
+    }
+  } finally {
+    await pool.end();
+  }
+  const after = await call(u, 'GET', '/v1/factory/config');
+  expect(after.body.launchesLeftToday).toBe(2);
 });

@@ -510,3 +510,8 @@ the message and refetches on join.
 Currently produced: `call_invite` when a video call starts, and `event`
 (`evt_coin_launch`, `evt_mood_change`) from the launchpad and the market
 mood.
+
+### Added 2026-10-30 (client contract gaps 2)
+
+- **beef** - `GET /v1/beef/eligibility` (capability `beef`): `{eligible, accountAgeOk, minAccountAgeHours, accountAgeOkAt, shiftDays, requiredShiftDays, reasons[too_new|shift_days|sybil_jailed]}`. `GET /v1/config` gains `beef` (null while `beef` is off).
+- **factory** - `GET /v1/factory/config` gains `launchesLeftToday`.
