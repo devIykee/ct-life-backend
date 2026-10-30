@@ -7265,6 +7265,102 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /homes/move:
+    post:
+      tags: [player]
+      operationId: postHomesMove
+      summary: Move home (upgrade or downsize) in one step.
+      description: >-
+        Capability `homeMove` (unlock D1). Atomic: every live lease of the caller (active or
+        overdue) becomes `moved_out` (its unit frees and its guests are removed), a free unit of
+        the new kind's tier is taken, the first week of the new rent is debited and the new lease
+        starts. If any step fails nothing changes. Nothing of the old week is refunded and debt
+        from missed weeks stays. From the street (no home) it simply leases. Homes open at
+        release phase 4; before that the route answers `403 FORBIDDEN {reason: phase_locked}`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              additionalProperties: false
+              properties:
+                kind:
+                  type: string
+                  enum: [parents_basement, hacker_house, studio, penthouse, marina_villa]
+      responses:
+        '200':
+          description: The new lease and the lease that ended
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [home, movedOutHomeId]
+                properties:
+                  home: { $ref: '#/components/schemas/LeasedHome' }
+                  movedOutHomeId:
+                    type: [string, 'null']
+                    description: The home id that ended; null when the caller had no home.
+              example:
+                {
+                  home:
+                    {
+                      homeId: 'home:0192b3c4-0000-7000-8000-000000000001',
+                      ownerUserId: '0192a1c2-0000-7000-8000-000000000001',
+                      kind: 'studio',
+                      unitId: 'flat:bld_residences_02:1',
+                      tier: 'flat',
+                      roomType: 'studio_a',
+                      status: 'active',
+                      missedWeeks: 0,
+                      rentCentsPerWeek: 18000,
+                      decoratedAt: null,
+                      lastRentPaidAt: '2026-10-30T12:00:00.000Z',
+                      createdAt: '2026-10-30T12:00:00.000Z',
+                    },
+                  movedOutHomeId: 'home:0192a1c2-0000-7000-8000-0000000000aa',
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the first week of the new rent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '8000', need: '18000', shortfallCents: 10000 },
+                    },
+                }
+        '403':
+          description: '`FORBIDDEN {reason: phase_locked}` before homes open'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`CONFLICT {reason: same_home}` or `CONFLICT {reason: no_unit_free, tier}`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: 'no_unit_free', tier: 'flat' },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:

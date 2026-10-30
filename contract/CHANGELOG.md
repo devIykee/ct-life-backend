@@ -1,3 +1,11 @@
+## 2026-10-30 - Move home in one step (unlock D1, capability `homeMove`)
+
+No migration. Dark until `homeMove` is in `CAPABILITIES_ON` (`503 CAPABILITY_OFF` before that).
+
+- New `POST /homes/move {kind}` (Idempotency-Key) -> `200 {home: LeasedHome, movedOutHomeId: string|null}`. Atomic: the caller's live lease(s) end (`moved_out`, unit freed, guests removed), a unit of the new tier is taken, the first week of the new rent is debited, the new lease starts. Upgrade and downsize work the same way; no refund of the old week; debt stays.
+- Errors: `402 INSUFFICIENT_CASH {have, need, shortfallCents}`, `409 CONFLICT {reason: same_home}`, `409 CONFLICT {reason: no_unit_free, tier}`, `403 FORBIDDEN {reason: phase_locked}` (LIVE_PHASE < 4), `400 VALIDATION_FAILED`.
+- `POST /homes` (lease without moving) and `POST /homes/{homeId}/rent` are unchanged.
+
 ## 2026-10-30 - Recent world events: GET /events/active (unlock A1)
 
 No migration. Capability `worldEvents` (off until the operator adds it to `CAPABILITIES_ON`; `503 CAPABILITY_OFF` until then).
