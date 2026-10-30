@@ -8,8 +8,11 @@
  *   GET  /v1/smart-money?limit=50     — recent big trades from opted-in users
  *   POST /v1/me/smart-money           — toggle the opt-in flag
  *
- * Alpha calls are immutable. The worker evaluates each open
- * call every 30 s and resolves:
+ * Alpha calls are immutable. The entry is the coin's server price at
+ * placement (the client's `entryMicros` is ignored), and a call is only
+ * accepted while stop < price < target, so it cannot be placed already
+ * won or lost. The worker evaluates each open call every 30 s against the
+ * current price (moves after placement only) and resolves:
  *   - price_micros >= target_micros → 'hit_target'
  *   - price_micros <= stop_micros   → 'hit_stop'
  *   - older than 7 days unresolved  → 'expired'
@@ -69,29 +72,46 @@ export async function placeAlphaCall(
   ctx: AppContext,
   input: AlphaCallInput,
 ): Promise<AlphaCallRow> {
-  const entry = BigInt(input.entryMicros);
   const target = BigInt(input.targetMicros);
   const stop = BigInt(input.stopMicros);
-  if (entry <= 0n || target <= 0n || stop <= 0n) {
+  if (BigInt(input.entryMicros) <= 0n || target <= 0n || stop <= 0n) {
     throw new ValidationFailedError({ reason: 'amounts must be > 0' });
   }
   if (target <= stop) {
     throw new ValidationFailedError({ reason: 'target must be > stop' });
   }
   const callId = uuidv7();
-  await runInTransaction(async (client) => {
+  const entry = await runInTransaction(async (client) => {
+    // The entry is the server's price now, never the client's number, and
+    // the band must straddle it: a call already past its target (or stop)
+    // would be graded on a move that happened before it was made.
+    const coin = await client.query<{ price_micros: string; stage: string }>(
+      `SELECT price_micros, stage FROM coins WHERE coin_id = $1`,
+      [input.coinId],
+    );
+    const row = coin.rows[0];
+    if (!row) throw new ValidationFailedError({ reason: 'unknown_coin', coinId: input.coinId });
+    if (row.stage === 'dead') throw new ValidationFailedError({ reason: 'coin_dead' });
+    const price = BigInt(row.price_micros);
+    if (!(stop < price && price < target)) {
+      throw new ValidationFailedError({
+        reason: 'price_outside_band',
+        priceMicros: price.toString(),
+      });
+    }
     await client.query(
       `INSERT INTO alpha_calls (call_id, user_id, coin_id, entry_micros, target_micros, stop_micros, status)
        VALUES ($1, $2, $3, $4, $5, $6, 'open')`,
-      [callId, input.userId, input.coinId, input.entryMicros, input.targetMicros, input.stopMicros],
+      [callId, input.userId, input.coinId, price.toString(), input.targetMicros, input.stopMicros],
     );
+    return price.toString();
   });
   await recordQuestEvent(ctx, input.userId, 'alpha_call', callId);
   return {
     callId,
     userId: input.userId,
     coinId: input.coinId,
-    entryMicros: input.entryMicros,
+    entryMicros: entry,
     targetMicros: input.targetMicros,
     stopMicros: input.stopMicros,
     status: 'open',
@@ -134,13 +154,14 @@ export async function evaluateAlphaCalls(ctx: AppContext): Promise<number> {
     else if (price <= stop) nextStatus = 'hit_stop';
     else if (Date.now() - row.created_at.getTime() > EXPIRY_MS) nextStatus = 'expired';
     if (nextStatus === null) continue;
-    await ctx.db.withConnection(async (c) => {
-      await c.query(`UPDATE alpha_calls SET status = $1 WHERE call_id = $2 AND status = 'open'`, [
+    const updated = await ctx.db.withConnection((c) =>
+      c.query(`UPDATE alpha_calls SET status = $1 WHERE call_id = $2 AND status = 'open'`, [
         nextStatus,
         row.call_id,
-      ]);
-    });
-    resolved++;
+      ]),
+    );
+    // Another run may have resolved it first; count only our own update.
+    resolved += updated.rowCount ?? 0;
   }
   return resolved;
 }

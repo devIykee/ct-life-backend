@@ -286,7 +286,9 @@ describe('home units', () => {
     expect(row.rows[0]).toEqual({ status: 'overdue', missed_weeks: 1 });
     // Overdue still holds the door.
     expect((await unitAccess(ctx, UNIT_A, ids.late)).canEnter).toBe(true);
-    for (let i = 0; i < 3; i++) await runWeeklyRent(ctx.db);
+    // Rent is charged once per week, so each further run is a later week.
+    const WEEK_MS = 7 * 86_400_000;
+    for (let i = 1; i <= 3; i++) await runWeeklyRent(ctx.db, new Date(Date.now() + i * WEEK_MS));
     row = await pool.query(`SELECT status, missed_weeks FROM homes WHERE home_id = $1`, [h.homeId]);
     expect(row.rows[0]).toEqual({ status: 'evicted', missed_weeks: 4 });
     expect(await unitAccess(ctx, UNIT_A, ids.late)).toEqual({ canEnter: false, reason: 'evicted' });
