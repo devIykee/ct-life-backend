@@ -15,6 +15,7 @@ import { buildContext, _resetContextForTests, type AppContext } from '../applica
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { HeliusClient } from '../shared/solana/helius.js';
+import { _setClusterRpcForTests } from '../application/chain-rpc.js';
 import { handleLiquidation } from './liquidation.js';
 import { handlePredictions } from './predictions.js';
 import { handleAlphaGrading } from './alpha.js';
@@ -231,7 +232,13 @@ describe('payment poller', () => {
       },
     } as unknown as HeliusClient;
     const withFakeChain: AppContext = { ...ctx, helius };
-    await expect(handlePaymentPoller(job, withFakeChain)).resolves.toBeUndefined();
+    // Reconciliation reads the deployment's cluster RPC (chain-rpc.ts), not ctx.helius.
+    _setClusterRpcForTests(helius);
+    try {
+      await expect(handlePaymentPoller(job, withFakeChain)).resolves.toBeUndefined();
+    } finally {
+      _setClusterRpcForTests(null);
+    }
   });
 });
 

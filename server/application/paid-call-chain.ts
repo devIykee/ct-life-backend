@@ -117,6 +117,10 @@ export interface EscrowChain {
 export interface AuthoritySend {
   signature: string;
   rentLamports: bigint;
+  /** The part of the rent forced by the fan's account (missing / handed off). */
+  fanRentLamports: bigint;
+  /** The part forced by the creator's account. */
+  creatorRentLamports: bigint;
 }
 
 /** The canonical ATA of a wallet: usable, missing, or unusable (another owner / frozen). */
@@ -248,6 +252,8 @@ export interface PlannedTx {
   instructions: TransactionInstruction[];
   extraSigners: Keypair[];
   rentLamports: bigint;
+  fanRentLamports: bigint;
+  creatorRentLamports: bigint;
 }
 
 /**
@@ -289,6 +295,8 @@ export function settleInstructions(args: {
     ],
     extraSigners: [...f.signers, ...c.signers, ...t.signers],
     rentLamports: f.rentLamports + c.rentLamports + t.rentLamports,
+    fanRentLamports: f.rentLamports,
+    creatorRentLamports: c.rentLamports,
   };
 }
 
@@ -324,6 +332,8 @@ export function refundInstructions(args: {
     ],
     extraSigners: f.signers,
     rentLamports: f.rentLamports,
+    fanRentLamports: f.rentLamports,
+    creatorRentLamports: 0n,
   };
 }
 
@@ -594,7 +604,12 @@ const realChain: EscrowChain = {
       instructions: plan.instructions,
       extraSigners: plan.extraSigners,
     });
-    return { signature, rentLamports: plan.rentLamports };
+    return {
+      signature,
+      rentLamports: plan.rentLamports,
+      fanRentLamports: plan.fanRentLamports,
+      creatorRentLamports: plan.creatorRentLamports,
+    };
   },
 
   async refund(ctx, ref) {
@@ -615,6 +630,11 @@ const realChain: EscrowChain = {
       instructions: plan.instructions,
       extraSigners: plan.extraSigners,
     });
-    return { signature, rentLamports: plan.rentLamports };
+    return {
+      signature,
+      rentLamports: plan.rentLamports,
+      fanRentLamports: plan.fanRentLamports,
+      creatorRentLamports: plan.creatorRentLamports,
+    };
   },
 };

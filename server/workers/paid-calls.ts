@@ -22,7 +22,7 @@ export async function handlePaidCallSweep(ctx: AppContext): Promise<void> {
   if (!isCapabilityOn(ctx, 'paidCalls')) return;
   try {
     const c = await sweepPaidCalls(ctx);
-    if (c.expired + c.notAnswered + c.refunded + c.autoEnded + c.settled > 0) {
+    if (Object.values(c).some((n) => n > 0)) {
       console.info('[paid-calls] sweep', c);
     }
   } catch (e) {

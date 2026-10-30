@@ -4399,8 +4399,9 @@ paths:
         accounts must already exist and be usable (`400 VALIDATION_FAILED {reason:
         usdc_account_missing}` for the fan; `403 CREATOR_UNAVAILABLE {reason:
         creator_usdc_account_missing}`); per-user limits answer `429 RATE_LIMITED {reason:
-        paid_call_rate (6 an hour / 30 a day per fan) | creator_call_rate (40 a day) |
-        account_recreations (calls that made the server pay account rent, 2 a day)}`; `503
+        pair_call_rate (4 a day from one fan to one creator) | paid_call_rate (6 an hour / 30 a
+        day per fan) | creator_call_rate (40 funded calls a day) | account_recreations (calls
+        where the requester's own account made the server pay rent, 2 a day)}`; `503
         CAPABILITY_OFF {reason: authority_low}` while the server's settle key is under 0.02
         SOL.
       x-phase: 3

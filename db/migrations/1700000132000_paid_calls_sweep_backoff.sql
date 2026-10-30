@@ -3,20 +3,26 @@
 -- M3: the paid-call sweep retried the same failing rows forever and, with
 -- `ORDER BY created_at LIMIT 200`, a few hundred of them starved every newer call.
 -- Each row now carries `attempts`, `next_attempt_at` (exponential backoff) and
--- `last_error`; after too many failures it is parked as `stuck` (logged as an ALERT)
--- and leaves the sweep. The sweep reads each status in its own small batch, due rows
--- first.
+-- `last_error`. Only refund-path rows back off and, after too many failures, are parked
+-- as `stuck` (`stuck_from` keeps the status to requeue to; logged as an ALERT). Live and
+-- settling rows are retried every pass and never parked: a settle must land before the
+-- fan's refund window opens. A slow pass re-checks `stuck` rows and reconciles any whose
+-- session closed; `tools/scripts/paid-calls-requeue.ts` puts them back by hand.
 --
 -- M4: `authority_rent_lamports` is the account rent the settle authority paid for this
--- call's settle / refund (token accounts it had to create). Booking is refused for a
--- user whose recent calls made the authority pay rent too often.
+-- call's settle / refund (token accounts it had to create); `fan_rent_lamports` and
+-- `creator_rent_lamports` split it by whose account forced it. Booking is refused for a
+-- user who recently forced rent too often (as fan or as creator).
 
 -- Up Migration
 ALTER TABLE paid_calls
   ADD COLUMN attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   ADD COLUMN next_attempt_at timestamptz,
   ADD COLUMN last_error text,
-  ADD COLUMN authority_rent_lamports bigint NOT NULL DEFAULT 0 CHECK (authority_rent_lamports >= 0);
+  ADD COLUMN authority_rent_lamports bigint NOT NULL DEFAULT 0 CHECK (authority_rent_lamports >= 0),
+  ADD COLUMN fan_rent_lamports bigint NOT NULL DEFAULT 0 CHECK (fan_rent_lamports >= 0),
+  ADD COLUMN creator_rent_lamports bigint NOT NULL DEFAULT 0 CHECK (creator_rent_lamports >= 0),
+  ADD COLUMN stuck_from text;
 
 ALTER TABLE paid_calls DROP CONSTRAINT paid_calls_status_check;
 ALTER TABLE paid_calls ADD CONSTRAINT paid_calls_status_check
@@ -40,6 +46,9 @@ ALTER TABLE paid_calls ADD CONSTRAINT paid_calls_status_check
   CHECK (status IN ('awaiting_payment', 'ringing', 'live', 'settling', 'settled', 'refunding',
                     'refunded', 'expired', 'closed_unknown'));
 ALTER TABLE paid_calls
+  DROP COLUMN IF EXISTS stuck_from,
+  DROP COLUMN IF EXISTS creator_rent_lamports,
+  DROP COLUMN IF EXISTS fan_rent_lamports,
   DROP COLUMN IF EXISTS authority_rent_lamports,
   DROP COLUMN IF EXISTS last_error,
   DROP COLUMN IF EXISTS next_attempt_at,

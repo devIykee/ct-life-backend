@@ -122,6 +122,9 @@ interface DbRow {
   next_attempt_at: Date | null;
   last_error: string | null;
   authority_rent_lamports: string;
+  fan_rent_lamports: string;
+  creator_rent_lamports: string;
+  stuck_from: PaidCallStatus | null;
 }
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
@@ -197,7 +200,9 @@ function newSessionId(): bigint {
 export const FAN_BOOKINGS_PER_HOUR = 6;
 export const FAN_BOOKINGS_PER_DAY = 30;
 export const CREATOR_CALLS_PER_DAY = 40;
-/** Calls in 24 h (as fan or creator) that made the settle authority pay account rent. */
+/** Bookings one fan may make to the same creator per day (any status). */
+export const PAIR_CALLS_PER_DAY = 4;
+/** Calls in 24 h where the requester's own account made the settle authority pay rent. */
 export const RENT_CALLS_PER_DAY = 2;
 /** Below this the API stops booking (the authority could not settle or refund). */
 export const AUTHORITY_FLOOR_LAMPORTS = 20_000_000n; // 0.02 SOL
@@ -219,36 +224,55 @@ export function _resetAuthorityBalanceForTests(): void {
   balanceCache = null;
 }
 
-/** Per-user rate limits, the rent cap, and the authority's balance floor (review M4). */
+/**
+ * Per-user rate limits, the rent cap, and the authority's balance floor (review M4).
+ * Only the requesting fan is limited by what they did; a creator is never locked out by
+ * other people's unpaid bookings or by rent other fans forced.
+ */
 async function bookingGuards(ctx: AppContext, fanUserId: string, creatorId: string): Promise<void> {
   const r = await ctx.db.withConnection((c) =>
-    c.query<{ fan_hour: string; fan_day: string; creator_day: string; rent_calls: string }>(
+    c.query<{
+      fan_hour: string;
+      fan_day: string;
+      pair_day: string;
+      creator_day: string;
+      rent_calls: string;
+    }>(
       `SELECT
          (SELECT count(*) FROM paid_calls WHERE fan_user_id = $1
             AND created_at > now() - interval '1 hour')::text AS fan_hour,
          (SELECT count(*) FROM paid_calls WHERE fan_user_id = $1
             AND created_at > now() - interval '1 day')::text AS fan_day,
+         (SELECT count(*) FROM paid_calls WHERE fan_user_id = $1 AND creator_user_id = $2
+            AND created_at > now() - interval '1 day')::text AS pair_day,
+         -- Only funded calls (signature verified on chain) count against a creator.
          (SELECT count(*) FROM paid_calls WHERE creator_user_id = $2
+            AND open_signature IS NOT NULL
             AND created_at > now() - interval '1 day')::text AS creator_day,
+         -- Rent the requester forced with their own account, as fan or as creator.
          (SELECT count(*) FROM paid_calls
-           WHERE (fan_user_id = $1 OR creator_user_id = $1 OR fan_user_id = $2 OR creator_user_id = $2)
-             AND authority_rent_lamports > 0
+           WHERE ((fan_user_id = $1 AND fan_rent_lamports > 0)
+               OR (creator_user_id = $1 AND creator_rent_lamports > 0))
              AND created_at > now() - interval '1 day')::text AS rent_calls`,
       [fanUserId, creatorId],
     ),
   );
   const n = r.rows[0]!;
+  const day = 24 * 60 * 60_000;
+  if (Number(n.pair_day) >= PAIR_CALLS_PER_DAY) {
+    throw new RateLimitedError(day, { reason: 'pair_call_rate' });
+  }
   if (Number(n.fan_hour) >= FAN_BOOKINGS_PER_HOUR) {
     throw new RateLimitedError(60 * 60_000, { reason: 'paid_call_rate', window: 'hour' });
   }
   if (Number(n.fan_day) >= FAN_BOOKINGS_PER_DAY) {
-    throw new RateLimitedError(24 * 60 * 60_000, { reason: 'paid_call_rate', window: 'day' });
+    throw new RateLimitedError(day, { reason: 'paid_call_rate', window: 'day' });
   }
   if (Number(n.creator_day) >= CREATOR_CALLS_PER_DAY) {
-    throw new RateLimitedError(24 * 60 * 60_000, { reason: 'creator_call_rate' });
+    throw new RateLimitedError(day, { reason: 'creator_call_rate' });
   }
   if (Number(n.rent_calls) >= RENT_CALLS_PER_DAY) {
-    throw new RateLimitedError(24 * 60 * 60_000, { reason: 'account_recreations' });
+    throw new RateLimitedError(day, { reason: 'account_recreations' });
   }
   if ((await authorityBalance(ctx)) < AUTHORITY_FLOOR_LAMPORTS) {
     throw new CapabilityOffError({ capability: 'paidCalls', reason: 'authority_low' });
@@ -696,7 +720,7 @@ async function sendSettle(ctx: AppContext, row: DbRow, rethrow = false): Promise
       ...ref(row),
       secondsUsed: BigInt(row.seconds_used ?? 0),
     });
-    return (await markSettled(ctx, row.call_id, sent.signature, sent.rentLamports)) ?? row;
+    return (await markSettled(ctx, row.call_id, sent.signature, sent)) ?? row;
   } catch (e) {
     // The API request leaves it to the worker, which retries with backoff (and notices
     // a session already closed); the worker itself rethrows to count the failure.
@@ -710,15 +734,28 @@ async function markSettled(
   ctx: AppContext,
   callId: string,
   signature: string,
-  rentLamports = 0n,
+  rent: RentSplit = NO_RENT,
 ): Promise<DbRow | null> {
   return transition(
     ctx,
-    `UPDATE paid_calls SET status = 'settled', settle_signature = $2,
-            authority_rent_lamports = authority_rent_lamports + $3
+    `UPDATE paid_calls SET status = 'settled', settle_signature = $2, ${RENT_SQL}
       WHERE call_id = $1 AND status = 'settling' RETURNING *`,
-    [callId, signature, rentLamports.toString()],
+    [callId, signature, ...rentParams(rent)],
   );
+}
+
+interface RentSplit {
+  rentLamports: bigint;
+  fanRentLamports: bigint;
+  creatorRentLamports: bigint;
+}
+const NO_RENT: RentSplit = { rentLamports: 0n, fanRentLamports: 0n, creatorRentLamports: 0n };
+/** Adds a send's rent to the row ($3 total, $4 forced by the fan, $5 by the creator). */
+const RENT_SQL = `authority_rent_lamports = authority_rent_lamports + $3,
+            fan_rent_lamports = fan_rent_lamports + $4,
+            creator_rent_lamports = creator_rent_lamports + $5`;
+function rentParams(r: RentSplit): string[] {
+  return [r.rentLamports, r.fanRentLamports, r.creatorRentLamports].map(String);
 }
 
 /**
@@ -730,7 +767,7 @@ async function markSettled(
 async function reconcileClosed(
   ctx: AppContext,
   row: DbRow,
-  from: 'settling' | 'refunding',
+  from: 'settling' | 'refunding' | 'stuck',
 ): Promise<DbRow | null> {
   const c = await escrowChain().closure(ctx, ref(row));
   if (c?.kind === 'settled') {
@@ -815,6 +852,7 @@ export interface SweepCounts {
   settled: number;
   failed: number;
   stuck: number;
+  recovered: number;
 }
 
 /**
@@ -834,19 +872,25 @@ export async function sweepPaidCalls(
     settled: 0,
     failed: 0,
     stuck: 0,
+    recovered: 0,
   };
   await balanceAlarm(ctx, now);
-  // One small batch per status, due rows first (never-tried, then the longest waiting), so
-  // failing rows of one status cannot starve another and back off instead of being
-  // retried every pass (security review M3). Live calls come first: they must settle
-  // before the fan's refund window opens.
+  // One batch per status, so failing rows of one status cannot starve another (security
+  // review M3). Live and settling rows come first, nearest refund deadline first, and are
+  // tried EVERY pass with no backoff: a settle must land before the fan's refund window
+  // opens. The other statuses take due rows first and back off on failure.
   for (const status of SWEEP_STATUSES) {
+    const urgent = status === 'live' || status === 'settling';
     const rows = await ctx.db.withConnection((c) =>
       c.query<DbRow>(
-        `SELECT * FROM paid_calls
-          WHERE status = $1 AND (next_attempt_at IS NULL OR next_attempt_at <= $2)
-          ORDER BY next_attempt_at ASC NULLS FIRST, created_at ASC LIMIT $3`,
-        [status, now, SWEEP_BATCH],
+        urgent
+          ? `SELECT * FROM paid_calls WHERE status = $1
+              ORDER BY opened_at + make_interval(mins => max_minutes) ASC NULLS FIRST, created_at ASC
+              LIMIT $2`
+          : `SELECT * FROM paid_calls
+              WHERE status = $1 AND (next_attempt_at IS NULL OR next_attempt_at <= $3)
+              ORDER BY next_attempt_at ASC NULLS FIRST, created_at ASC LIMIT $2`,
+        urgent ? [status, URGENT_BATCH] : [status, SWEEP_BATCH, now],
       ),
     );
     for (const row of rows.rows) {
@@ -857,7 +901,78 @@ export async function sweepPaidCalls(
       }
     }
   }
+  await recheckStuck(ctx, now, counts);
   return counts;
+}
+
+/** How often a parked row is re-checked for a session that closed meanwhile. */
+const STUCK_RECHECK_MS = 10 * 60_000;
+
+/**
+ * Recovery for parked rows: a session that closed meanwhile (the fan refunded, or a
+ * manual settle) is reconciled from its closing transaction; the rest wait for the next
+ * check or for `requeueStuckCalls`.
+ */
+async function recheckStuck(ctx: AppContext, now: Date, counts: SweepCounts): Promise<void> {
+  const rows = await ctx.db.withConnection((c) =>
+    c.query<DbRow>(
+      `SELECT * FROM paid_calls
+        WHERE status = 'stuck' AND (next_attempt_at IS NULL OR next_attempt_at <= $1)
+        ORDER BY next_attempt_at ASC NULLS FIRST LIMIT 20`,
+      [now],
+    ),
+  );
+  for (const row of rows.rows) {
+    try {
+      if ((await escrowChain().session(ctx, ref(row))) === null) {
+        if (await reconcileClosed(ctx, row, 'stuck')) counts.recovered += 1;
+        continue;
+      }
+    } catch (e) {
+      console.error(`[paid-calls] stuck recheck ${row.call_id}:`, (e as Error).message);
+    }
+    await transition(
+      ctx,
+      `UPDATE paid_calls SET next_attempt_at = $2 WHERE call_id = $1 AND status = 'stuck' RETURNING *`,
+      [row.call_id, new Date(now.getTime() + STUCK_RECHECK_MS)],
+    );
+  }
+}
+
+/**
+ * Ops: put parked calls back into the status they were parked from (attempts reset), for
+ * the worker to retry. All `stuck` rows when `callIds` is omitted. A row whose return
+ * would clash with an open call (one-open-call indexes) is skipped and reported.
+ */
+export async function requeueStuckCalls(
+  ctx: AppContext,
+  callIds?: readonly string[],
+): Promise<{ requeued: string[]; skipped: string[] }> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{ call_id: string }>(
+      `SELECT call_id FROM paid_calls
+        WHERE status = 'stuck' AND stuck_from IS NOT NULL
+          AND ($1::uuid[] IS NULL OR call_id = ANY($1::uuid[]))`,
+      [callIds ? [...callIds] : null],
+    ),
+  );
+  const out = { requeued: [] as string[], skipped: [] as string[] };
+  for (const { call_id } of r.rows) {
+    try {
+      const done = await transition(
+        ctx,
+        `UPDATE paid_calls SET status = stuck_from, stuck_from = NULL, attempts = 0,
+                next_attempt_at = NULL
+          WHERE call_id = $1 AND status = 'stuck' RETURNING *`,
+        [call_id],
+      );
+      (done ? out.requeued : out.skipped).push(call_id);
+    } catch (e) {
+      if ((e as { code?: string }).code !== '23505') throw e;
+      out.skipped.push(call_id);
+    }
+  }
+  return out;
 }
 
 const SWEEP_STATUSES: readonly PaidCallStatus[] = [
@@ -868,10 +983,15 @@ const SWEEP_STATUSES: readonly PaidCallStatus[] = [
   'awaiting_payment',
 ];
 const SWEEP_BATCH = 50;
+const URGENT_BATCH = 200;
 /** After this many failed chain attempts a row is parked as `stuck`. */
 export const MAX_SWEEP_ATTEMPTS = 8;
 
-/** Back off a failed row (15 s x 2^n, at most 30 min); park it as `stuck` past the cap. */
+/**
+ * Record a failed pass. Live / settling: retried every pass, never parked (an ALERT past
+ * the cap). Other statuses: back off (15 s x 2^n, at most 30 min) and park as `stuck`
+ * past the cap.
+ */
 async function recordFailure(
   ctx: AppContext,
   row: DbRow,
@@ -881,15 +1001,39 @@ async function recordFailure(
 ): Promise<void> {
   const attempts = Number(row.attempts) + 1;
   const message = e.message.slice(0, 500);
+  if (row.status === 'live' || row.status === 'settling') {
+    // Never backed off or parked: retried next pass, until it lands or the session closes.
+    if (attempts >= MAX_SWEEP_ATTEMPTS) {
+      console.error(
+        `[paid-calls] ALERT ${row.call_id} ${row.status} failed ${attempts} times; fan refund possible from ` +
+          `${new Date(refundDeadline(row)).toISOString()}: ${message}`,
+      );
+    }
+    await transition(
+      ctx,
+      `UPDATE paid_calls SET attempts = $3, last_error = $4, next_attempt_at = NULL
+        WHERE call_id = $1 AND status = $2 RETURNING *`,
+      [row.call_id, row.status, attempts, message],
+    );
+    counts.failed += 1;
+    return;
+  }
   if (attempts >= MAX_SWEEP_ATTEMPTS) {
     console.error(
       `[paid-calls] ALERT ${row.call_id} parked as stuck after ${attempts} failures in ${row.status}: ${message}`,
     );
     await transition(
       ctx,
-      `UPDATE paid_calls SET status = 'stuck', attempts = $3, last_error = $4, next_attempt_at = NULL
+      `UPDATE paid_calls SET status = 'stuck', stuck_from = $2, attempts = $3, last_error = $4,
+              next_attempt_at = $5
         WHERE call_id = $1 AND status = $2 RETURNING *`,
-      [row.call_id, row.status, attempts, `${row.status}: ${message}`],
+      [
+        row.call_id,
+        row.status,
+        attempts,
+        `${row.status}: ${message}`,
+        new Date(now.getTime() + STUCK_RECHECK_MS),
+      ],
     );
     counts.stuck += 1;
     return;
@@ -992,10 +1136,9 @@ async function refundIfAllowed(ctx: AppContext, row: DbRow, t: number): Promise<
   const done = await transition(
     ctx,
     `UPDATE paid_calls SET status = 'refunded', refund_signature = $2, refund_amount = deposit,
-            creator_amount = 0, fee_amount = 0, minutes_used = 0,
-            authority_rent_lamports = authority_rent_lamports + $3
+            creator_amount = 0, fee_amount = 0, minutes_used = 0, ${RENT_SQL}
       WHERE call_id = $1 AND status = 'refunding' RETURNING *`,
-    [row.call_id, sent.signature, sent.rentLamports.toString()],
+    [row.call_id, sent.signature, ...rentParams(sent)],
   );
   return done !== null;
 }

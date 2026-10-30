@@ -110,6 +110,11 @@ Steps (operator, own machine, own keys; nothing in the API holds the admin or up
    rent only when someone closed or handed theirs off mid-call, which is capped per user. The
    worker logs `[paid-calls] ALERT` under 0.1 SOL and booking stops under 0.02 SOL.
 
+**Stuck calls.** A refund that keeps failing is parked as `stuck` (ALERT). The worker re-checks
+parked calls every 10 minutes and reconciles any whose session closed. After fixing the cause, run
+`pnpm exec tsx tools/scripts/paid-calls-requeue.ts --list`, then `--call <id>` or `--all-stuck`
+(database only; the worker does the chain work). Live and settling calls are never parked.
+
 **init_config race (review L5).** `init_config` accepts any payer as admin. Run the upgrade
 and `tools/scripts/escrow-init-config.ts --send` back to back; if someone else initializes
 first, the API refuses the config (`escrow_config_mismatch`) and the program needs another
