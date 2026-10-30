@@ -64,6 +64,8 @@ tags:
     description: Moderation, ad approval, force-price, skill overrides. Backend-only.
   - name: webhooks
     description: Helius and LiveKit signed webhooks. Backend-only.
+  - name: projects
+    description: Builder (player projects), VC Row and project HQ. Unlock WP-B.
 
 security:
   - bearerAuth: []
@@ -727,6 +729,12 @@ paths:
         `degraded` field lists features currently in degraded mode (kill
         switches). Clients with `X-Client-Version` below `minClientVersion`
         receive `CLIENT_OUTDATED` and must update.
+
+        `capabilities` lists the finished-but-dark features this deployment has
+        turned on, and `competitionCapabilities` is derived from it. Both come only
+        from the server env `CAPABILITIES_ON`: anything not listed is `false`, so a
+        client treats a missing block or key as off. A route whose capability is off
+        answers `503 CAPABILITY_OFF`.
       x-phase: 1
       security: []
       parameters:
@@ -750,6 +758,30 @@ paths:
                 livePhase: 1
                 degraded: []
                 venues: { 'timeline_square': { 'name': 'Timeline Square', 'maxClients': 50 } }
+                capabilities:
+                  version: 2
+                  apps: { beef: false, builder: false, vc: false, predict: false }
+                  features:
+                    {
+                      beefVoting: false,
+                      districtStandings: false,
+                      seasonResults: false,
+                      sybilBail: false,
+                      sybilBarn: false,
+                      cabalRevoke: false,
+                      xUnlink: false,
+                      worldEvents: true,
+                      homeMove: false,
+                      visitorPolicy: false,
+                      nftGallery: false,
+                      paidCalls: false,
+                      creatorMode: false,
+                      seasonPassPurchase: false,
+                      factory: false,
+                      projectHq: false,
+                    }
+                competitionCapabilities:
+                  { version: 1, beefChallenges: false, targetedCabalInvites: false }
         '304': { description: Not modified; ETag matches. }
         '426':
           description: Client outdated
@@ -3147,7 +3179,7 @@ paths:
     post:
       tags: [markets]
       operationId: postPerps
-      summary: Open a perp.
+      summary: Open a perp. `409 CONFLICT {reason: 'perp_entry_frozen'}` while a VC Row dump is due on that project coin (from 24 h before its unlock until the bleed ends).
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3521,10 +3553,10 @@ paths:
       tags: [social]
       operationId: postFeedPosts
       summary: Post to the in-game feed. (Not X; never awards real money for posting.)
+      x-phase: 3
       description: |
         `400 CONTENT_NOT_ALLOWED` (`details.field: post`) for a slur or strong profanity; `403 ACCOUNT_MUTED` while muted.
-      x-phase: 3
-      description: >-
+
         The server builds the action card: a coin card when the text names a real coin's `$TICKER`,
         otherwise a place card when `withPlace` is true and the server's position puts the author
         within 60 m of a venue door. The district the post counts for (tribe district rollover)
@@ -7187,6 +7219,594 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ---------------------------------------------------------------------------
+  # Builder (player projects). Unlock WP-B B1. Routes marked "capability
+  # builder" answer 503 CAPABILITY_OFF until `builder` is in CAPABILITIES_ON.
+  # Cash never moves between players: wages are game-paid from fixed bands
+  # (contract/config/projects.json), the treasury pays a matching operating cost.
+  # ---------------------------------------------------------------------------
+  /projects:
+    get:
+      tags: [projects]
+      operationId: getProjects
+      summary: Builder Hills boards. `mine` = founded or member of; `hiring` = founded/live with an open role; `all` = not rugged.
+      parameters:
+        - {
+            name: scope,
+            in: query,
+            schema: { type: string, enum: [mine, hiring, all], default: mine },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+          }
+      responses:
+        '200':
+          description: Projects
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [projects]
+      operationId: postProjects
+      summary: Found a project. The seed (memecoin $500 … l2 $10,000) moves from my Cash into the new treasury; I become its `founder` member.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind: { type: string, enum: [memecoin, dex, nft_studio, perps_venue, l2] }
+                name: { type: string, minLength: 1, maxLength: 40 }
+                ticker: { type: string, minLength: 1, maxLength: 12 }
+      responses:
+        '201':
+          description: Founded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: >-
+            `CONFLICT {reason: 'project_limit', max}`: I am already in `membership.maxProjectsPerPlayer` (2)
+            non-rugged projects, founder roles included.
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /projects/{id}:
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Project detail. `hires` (non-founder members in the first shape) is kept for older clients.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectDetail' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /projects/{id}/hire:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdHire
+      summary: Removed. Direct hiring paid the hire from the founder without consent; use `POST /projects/{id}/offers`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '410':
+          description: Gone
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: GONE
+                  message: 'This endpoint was removed; see details.use for its replacement.'
+                  details: { reason: use_offers, use: 'POST /v1/projects/{id}/offers' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /projects/{id}/offers:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdOffers
+      summary: Offer a role (capability builder). Founder only. The invitee must accept; the offer expires after `offers.ttlHours` (48). No Cash moves.
+      description: |
+        `salaryCentsPerWeek` must sit inside the role's band in
+        `contract/config/projects.json` `wages` (dev/auditor $150-$300, kol
+        $100-$200, mod $80-$150 a week). The game pays it (not the founder) every
+        Monday for a week the member finished a project task for this project
+        (`POST /projects/{id}/tasks`), prorated for a mid-week join, one paid role
+        per player, capped per project and per founder. The invitee gets
+        `hire_offer` on the city room.
+        Errors (`details.reason`): 400 `salary_out_of_band` (+`min`, `max`),
+        400 `self`; 403 `FORBIDDEN` `not_owner`; 403 `BLOCKED`; 404 (project or
+        user); 409 `CONFLICT` `already_member` | `role_filled` | `offer_pending` |
+        `too_many_offers` | `wrong_status`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, role, salaryCentsPerWeek]
+              properties:
+                userId: { type: string, format: uuid }
+                role: { type: string, enum: [dev, mod, kol, auditor] }
+                salaryCentsPerWeek: { type: integer, minimum: 1 }
+            example:
+              {
+                userId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e22',
+                role: dev,
+                salaryCentsPerWeek: 20000,
+              }
+      responses:
+        '201':
+          description: Offer sent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HireOffer' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  {
+                    code: CONFLICT,
+                    message: 'Resource conflict.',
+                    details: { reason: offer_pending },
+                  }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /me/project-offers:
+    get:
+      tags: [projects]
+      operationId: getMeProjectOffers
+      summary: Role offers sent to me, newest first. A pending offer past `expiresAt` reads as `expired`.
+      parameters:
+        - {
+            name: status,
+            in: query,
+            schema: { type: string, enum: [pending, accepted, declined, expired, withdrawn] },
+          }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 50 },
+          }
+      responses:
+        '200':
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [offers, nextCursor]
+                properties:
+                  offers: { type: array, items: { $ref: '#/components/schemas/HireOffer' } }
+                  nextCursor: { type: 'null' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /project-offers/{offerId}/accept:
+    post:
+      tags: [projects]
+      operationId: postProjectOffersOfferIdAccept
+      summary: Accept a role offer and join (capability builder). Invitee only. No Cash moves.
+      description: |
+        Errors: 403 `FORBIDDEN` `not_invitee`; 404; 409 `CONFLICT` `not_pending`
+        | `expired` | `already_member` | `role_filled` | `membership_limit` (a
+        player holds `membership.maxRolesPerPlayer` = 1 paid role across projects) |
+        `project_limit` (`maxProjectsPerPlayer` = 2, founder roles included) |
+        `wrong_status`. Members get `project_event` `proj_member_joined`.
+      parameters:
+        - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Joined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HireOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /project-offers/{offerId}/decline:
+    post:
+      tags: [projects]
+      operationId: postProjectOffersOfferIdDecline
+      summary: Decline a role offer (capability builder). Invitee only. 409 `not_pending` | `expired`.
+      parameters:
+        - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Declined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HireOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/fund:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdFund
+      summary: Move my own Cash into my project's treasury (capability builder). Founder only; one way (never withdrawable). Funding a paused project resumes it.
+      description: |
+        Errors: 400 `amount_out_of_range` (+`min`, `max` = `fund.maxCentsPerCall`);
+        402 `INSUFFICIENT_CASH` (`have`, `need`, `shortfallCents`); 403
+        `not_owner`; 404; 409 `wrong_status` (rugged).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cashCents]
+              properties: { cashCents: { type: integer, minimum: 1 } }
+      responses:
+        '200':
+          description: Funded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties: { project: { $ref: '#/components/schemas/ProjectSummary' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: INSUFFICIENT_CASH
+                  message: Cash balance is insufficient.
+                  details: { have: 100, need: 1000, shortfallCents: 900 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/members/{userId}:
+    delete:
+      tags: [projects]
+      operationId: deleteProjectsIdMembersUserId
+      summary: Fire a member (founder) or quit (the member themself) (capability builder). 409 `cannot_remove_founder`; 403 `not_owner`; 404 `not_member`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Removed }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/launch-quote:
+    get:
+      tags: [projects]
+      operationId: getProjectLaunchQuote
+      summary: What launching costs now and what blocks it (capability builder). Founder only.
+      description: |
+        `launchCostCents` = `launch.costCentsByKind[kind]` (memecoin $500 …
+        l2 $10,000), with `builderDiscountBps` (3000 = -30%) already applied
+        when the founder's tribe is `builder`. Blockers: `wrong_status` (not
+        `founded`), `no_dev_hired`, `cooldown` (project younger than
+        `launch.minProjectAgeMinutes` = 30), `insufficient_treasury`. The token
+        is a server-simulated coin on the in-game launchpad; nothing is minted on chain.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectLaunchQuote' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/launch:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdLaunch
+      summary: Launch the project's token on the in-game launchpad at the quoted cost (capability builder). Founder only.
+      description: |
+        Debits the treasury, lists a coin through the launchpad (`coinId`),
+        sets `status: live`, broadcasts `event {eventId: 'evt_project_launch',
+        params {projectId, name, ticker, coinId}}` and `evt_coin_launch`.
+        Errors (`details.reason`): 400 bad ticker; 402 `INSUFFICIENT_CASH`
+        (treasury `have`/`need`); 403 `not_owner`; 403 `JAILED` (founder in jail); 404; 409 `wrong_status` |
+        `quote_changed` (+`launchCostCents`, confirm again) | `no_dev_hired` |
+        `cooldown` (+`retryAt`) | `ticker_taken`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ticker, quotedCostCents]
+              properties:
+                ticker: { type: string, pattern: '^[A-Z0-9]{2,8}$' }
+                quotedCostCents:
+                  { type: integer, minimum: 0, description: '`launchCostCents` from the quote.' }
+            example: { ticker: FSWAP, quotedCostCents: 175000 }
+      responses:
+        '200':
+          description: Live
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectSummary' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: The treasury cannot cover the launch (`INSUFFICIENT_CASH`, treasury `have`/`need`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Wrong status, quote changed, blocker or ticker taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: CONFLICT
+                  message: Resource conflict.
+                  details: { reason: quote_changed, launchCostCents: 180000 }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/events:
+    get:
+      tags: [projects]
+      operationId: getProjectEvents
+      summary: Server-written project events, newest first (capability builder). Keyset paged.
+      description: |
+        `eventId` is one of `contract/config/projects.json` `eventIds`
+        (`proj_founded`, `proj_member_joined`, `proj_member_left`, `proj_funded`,
+        `proj_launched`, `proj_audit_passed`, `proj_exploit`,
+        `proj_rug_accusation`, `proj_payroll_paid`, `proj_payroll_missed`,
+        `proj_paused`, `proj_resumed`). `cashDeltaCents` is the treasury change.
+        Risks are rolled daily by the server for live projects (exploit,
+        rug accusation, audit passed; odds in `risk.events`).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 20 },
+          }
+      responses:
+        '200':
+          description: Events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, nextCursor]
+                properties:
+                  events: { type: array, items: { $ref: '#/components/schemas/ProjectEvent' } }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/tasks:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdTasks
+      summary: Start a timed project task (capability builder). Non-founder members only.
+      description: |
+        A finished task (`.../complete` after `endsAt`, `task.durationMinutes` =
+        10) is the only work that earns this week's wage: generic career shifts do
+        not count. One counted task per member, project and UTC week (Monday).
+        Errors: 403 `FORBIDDEN` `not_member` | `founder_no_wage` (the founder earns no
+        wage); 404; 409 `CONFLICT` `already_worked` (+`weekStart`) |
+        `task_in_progress` (+`taskId`, `endsAt`) | `wrong_status`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '201':
+          description: Started
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taskId, projectId, startedAt, endsAt]
+                properties:
+                  taskId: { type: string, format: uuid }
+                  projectId: { type: string, format: uuid }
+                  startedAt: { type: string, format: date-time }
+                  endsAt: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /projects/{id}/tasks/{taskId}/complete:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdTasksTaskIdComplete
+      summary: Finish a project task once its timer ran; this week counts as worked (capability builder).
+      description: |
+        Errors: 403 `not_member` (removed meanwhile); 404; 409 `task_not_finished`
+        (+`endsAt`) | `not_open`.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Done
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [taskId, projectId, completedAt, weekStart, worked]
+                properties:
+                  taskId: { type: string, format: uuid }
+                  projectId: { type: string, format: uuid }
+                  completedAt: { type: string, format: date-time }
+                  weekStart:
+                    {
+                      type: string,
+                      format: date,
+                      description: Monday (UTC) of the week it counts for.,
+                    }
+                  worked: { type: boolean, const: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  # --- VC Row (unlock WP-B B2). Capability `vc`. ---------------------------
+  /projects/{id}/vc-offers:
+    get:
+      tags: [projects]
+      operationId: getProjectVcOffers
+      summary: Term sheets from VC Row NPCs for my project, newest first (capability vc). Founder only.
+      description: |
+        A live project with a treasury under `vc.treasuryThresholdCents` ($5,000),
+        live for 24 h+, gets 1-3 term sheets a week (daily chance, guaranteed after
+        7 quiet days, never two open at once). Terms: the VC values the project at
+        50% of its coin's market cap and buys 8-18% (`equityBps`), cheque $200-$5,000.
+        `unlockAt` is 00:00 UTC of the unlock DAY only (7 days after acceptance;
+        for a pending offer, if accepted now). The exact time is never sent. A pending offer past `expiresAt` (24 h) reads as `expired`. The
+        founder also gets `vc_offer` on the city room. 403 `not_owner`; 404.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [offers]
+                properties:
+                  offers: { type: array, items: { $ref: '#/components/schemas/VcOffer' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /vc-offers/{offerId}/accept:
+    post:
+      tags: [projects]
+      operationId: postVcOffersOfferIdAccept
+      summary: Take the VC money (capability vc). Founder only.
+      description: |
+        `investCents` goes into the project treasury (an NPC faucet into the
+        treasury; never to a player). A deal opens that unlocks in 7 days. After
+        unlock the VC dumps 1.5x its stake (capped at -30%), starting at a hidden
+        random time within 72 h and bleeding out in 24 small steps over up to 12 h;
+        `proj_vc_dump` and world event `evt_vc_dump {projectId, name, coinId}` go
+        out when it ends. New perps on the coin are refused from 24 h before
+        unlock until the bleed ends (`POST /perps` 409 `perp_entry_frozen`).
+        Other open offers expire. Errors: 403 `not_owner`; 404; 409 `not_pending` |
+        `expired` | `wrong_status` (project not live).
+      parameters:
+        - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VcOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /vc-offers/{offerId}/decline:
+    post:
+      tags: [projects]
+      operationId: postVcOffersOfferIdDecline
+      summary: Turn the VC down (capability vc). Founder only. 409 `not_pending` | `expired`.
+      parameters:
+        - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Declined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VcOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /vc-row/deals:
+    get:
+      tags: [projects]
+      operationId: getVcRowDeals
+      summary: The VC Row board, newest first, keyset paged (capability vc).
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 20 },
+          }
+      responses:
+        '200':
+          description: Deals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deals, nextCursor]
+                properties:
+                  deals: { type: array, items: { $ref: '#/components/schemas/VcDeal' } }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -7369,6 +7989,23 @@ components:
                   code: 'SERVER_BUSY',
                   message: 'Server is at capacity. Retry-After header carries the wait time.',
                   details: {},
+                },
+            }
+    CapabilityOff:
+      description: >-
+        The feature behind this route is not turned on on this deployment yet (its name is not in
+        `CAPABILITIES_ON`; see `capabilities` in `GET /config`). `details.capability` names it.
+        Not retryable until the config changes.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: CAPABILITY_OFF,
+                  message: 'This feature is not turned on on this server yet.',
+                  details: { capability: 'worldEvents' },
                 },
             }
   schemas:
@@ -8183,7 +8820,8 @@ components:
         cooldownSec: { type: integer }
     ConfigResponse:
       type: object
-      required: [version, minClientVersion, livePhase, degraded]
+      required:
+        [version, minClientVersion, livePhase, degraded, capabilities, competitionCapabilities]
       properties:
         version: { type: string }
         minClientVersion: { type: string }
@@ -8227,6 +8865,99 @@ components:
         meta: { type: object, additionalProperties: true }
         characterPalettes:
           $ref: '#/components/schemas/CharacterPalettes'
+        projects:
+          type: [object, 'null']
+          description: >-
+            Builder config the client must not hard-code (unlock WP-B); null while `builder` is off.
+            `wages[role] {minCentsPerWeek, maxCentsPerWeek}` is the band an offer's
+            `salaryCentsPerWeek` must sit in.
+          properties:
+            version: { type: string }
+            wages:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  minCentsPerWeek: { type: integer }
+                  maxCentsPerWeek: { type: integer }
+            taskMinutes: { type: integer, description: Length of a project task. }
+            hqShiftMinutes:
+              { type: integer, description: 'Minutes in the HQ that log the week (B3).' }
+            maxRolesPerPlayer: { type: integer }
+            maxProjectsPerPlayer: { type: integer }
+            offerTtlHours: { type: integer }
+            builderDiscountBps: { type: integer }
+            minProjectAgeMinutes: { type: integer }
+        capabilities:
+          type: object
+          description: >-
+            Finished-but-dark features this deployment has turned on. Set only by the server env
+            `CAPABILITIES_ON` (comma list of the key names below). There are no code defaults:
+            every key is always sent, `false` unless listed. Clients treat a missing block or key
+            as off (fail closed) and withhold the app or control. A route whose capability is off
+            answers `503 CAPABILITY_OFF`.
+          required: [version, apps, features]
+          properties:
+            version: { type: integer, const: 2 }
+            apps:
+              type: object
+              description: Phone apps; the client withholds the tile while false.
+              required: [beef, builder, vc, predict]
+              properties:
+                beef: { type: boolean }
+                builder: { type: boolean }
+                vc: { type: boolean }
+                predict: { type: boolean }
+            features:
+              type: object
+              description: Features inside apps.
+              required:
+                [
+                  beefVoting,
+                  districtStandings,
+                  seasonResults,
+                  sybilBail,
+                  sybilBarn,
+                  cabalRevoke,
+                  xUnlink,
+                  worldEvents,
+                  homeMove,
+                  visitorPolicy,
+                  nftGallery,
+                  paidCalls,
+                  creatorMode,
+                  seasonPassPurchase,
+                  factory,
+                  projectHq,
+                ]
+              properties:
+                beefVoting: { type: boolean }
+                districtStandings: { type: boolean }
+                seasonResults: { type: boolean }
+                sybilBail: { type: boolean }
+                sybilBarn: { type: boolean }
+                cabalRevoke: { type: boolean }
+                xUnlink: { type: boolean }
+                worldEvents: { type: boolean }
+                homeMove: { type: boolean }
+                visitorPolicy: { type: boolean }
+                nftGallery: { type: boolean }
+                paidCalls: { type: boolean }
+                creatorMode: { type: boolean }
+                seasonPassPurchase: { type: boolean }
+                factory: { type: boolean }
+                projectHq: { type: boolean }
+        competitionCapabilities:
+          type: object
+          description: >-
+            Read by v1.2 competition clients. Derived from `CAPABILITIES_ON`: `beefChallenges`
+            equals `capabilities.apps.beef`; `targetedCabalInvites` is true when `cabalInvites` is
+            in the list.
+          required: [version, beefChallenges, targetedCabalInvites]
+          properties:
+            version: { type: integer, const: 1 }
+            beefChallenges: { type: boolean }
+            targetedCabalInvites: { type: boolean }
     CharacterPalettes:
       type: object
       additionalProperties: false
@@ -9619,3 +10350,186 @@ components:
         targetId: { type: string }
         reasonId: { type: string }
         createdAt: { type: string, format: date-time }
+    # --- Builder (unlock WP-B B1) -------------------------------------------
+    ProjectSummary:
+      type: object
+      required:
+        [
+          projectId,
+          name,
+          kind,
+          status,
+          ownerUserId,
+          ownerAlias,
+          memberCount,
+          treasuryCents,
+          coinId,
+          openRoles,
+          createdAt,
+        ]
+      properties:
+        projectId: { type: string, format: uuid }
+        name: { type: string }
+        ticker: { type: [string, 'null'] }
+        kind: { type: string, enum: [memecoin, dex, nft_studio, perps_venue, l2] }
+        status: { type: string, enum: [founded, launching, live, paused, rugged] }
+        ownerUserId: { type: string, format: uuid }
+        ownerAlias: { type: string }
+        memberCount: { type: integer, minimum: 0, description: Founder included. }
+        treasuryCents: { type: integer, description: Project treasury; never withdrawable. }
+        cashCents: { type: integer, description: Same as `treasuryCents` (first shape). }
+        coinId: { type: [string, 'null'], format: uuid, description: Launchpad coin once live. }
+        openRoles: { type: array, items: { type: string, enum: [dev, mod, kol, auditor] } }
+        createdAt: { type: string, format: date-time }
+    ProjectList:
+      type: object
+      required: [projects, nextCursor]
+      properties:
+        projects: { type: array, items: { $ref: '#/components/schemas/ProjectSummary' } }
+        nextCursor: { type: 'null' }
+    ProjectMember:
+      type: object
+      required: [userId, alias, role, salaryCentsPerWeek, joinedAt]
+      properties:
+        userId: { type: string, format: uuid }
+        alias: { type: string }
+        role: { type: string, enum: [founder, dev, mod, kol, auditor] }
+        salaryCentsPerWeek:
+          {
+            type: integer,
+            description: 'Game-paid weekly wage (clamped to the band); 0 for the founder.',
+          }
+        joinedAt: { type: string, format: date-time }
+    ProjectEvent:
+      type: object
+      required: [eventId, projectId, cashDeltaCents, params, at]
+      properties:
+        eventId: { type: string, description: 'An id from projects.json `eventIds`.' }
+        projectId: { type: string, format: uuid }
+        cashDeltaCents: { type: integer, description: Treasury change. }
+        params: { type: object, additionalProperties: { type: string } }
+        at: { type: string, format: date-time }
+    ProjectDetail:
+      type: object
+      required:
+        [
+          project,
+          members,
+          hires,
+          payrollCentsPerWeek,
+          nextPayrollAt,
+          vcStakes,
+          recentEvents,
+          myTask,
+          workedThisWeek,
+        ]
+      properties:
+        project: { $ref: '#/components/schemas/ProjectSummary' }
+        members: { type: array, items: { $ref: '#/components/schemas/ProjectMember' } }
+        hires:
+          type: array
+          description: Non-founder members in the first shape (`hireId`, `hiredAt`); prefer `members`.
+          items: { type: object }
+        payrollCentsPerWeek: { type: integer, description: Sum of members' weekly wages. }
+        nextPayrollAt:
+          {
+            type: [string, 'null'],
+            format: date-time,
+            description: 'Next Monday 00:00 UTC; null while launching or rugged.',
+          }
+        vcStakes: { type: array, items: { $ref: '#/components/schemas/VcStake' } }
+        recentEvents: { type: array, items: { $ref: '#/components/schemas/ProjectEvent' } }
+        myTask:
+          type: [object, 'null']
+          description: The caller's open project task (null for a non-member or none open).
+          properties:
+            taskId: { type: string, format: uuid }
+            startedAt: { type: string, format: date-time }
+            endsAt: { type: string, format: date-time }
+        workedThisWeek:
+          {
+            type: boolean,
+            description: "The caller's current UTC week already counts as worked here.",
+          }
+    HireOffer:
+      type: object
+      required:
+        [
+          offerId,
+          projectId,
+          projectName,
+          fromUserId,
+          toUserId,
+          role,
+          salaryCentsPerWeek,
+          status,
+          expiresAt,
+          createdAt,
+        ]
+      properties:
+        offerId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        projectName: { type: string }
+        fromUserId: { type: string, format: uuid }
+        toUserId: { type: string, format: uuid }
+        role: { type: string, enum: [dev, mod, kol, auditor] }
+        salaryCentsPerWeek: { type: integer }
+        status: { type: string, enum: [pending, accepted, declined, expired, withdrawn] }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+    ProjectLaunchQuote:
+      type: object
+      required:
+        [
+          projectId,
+          launchCostCents,
+          builderDiscountBps,
+          treasuryCents,
+          canLaunch,
+          blockers,
+          quotedAt,
+        ]
+      properties:
+        projectId: { type: string, format: uuid }
+        launchCostCents: { type: integer }
+        builderDiscountBps: { type: integer, minimum: 0, maximum: 10000 }
+        treasuryCents: { type: integer }
+        canLaunch: { type: boolean }
+        blockers:
+          type: array
+          items:
+            { type: string, enum: [insufficient_treasury, wrong_status, no_dev_hired, cooldown] }
+        quotedAt: { type: string, format: date-time }
+    # --- VC Row (unlock WP-B B2) ---------------------------------------------
+    VcOffer:
+      type: object
+      required:
+        [offerId, projectId, vcArchetypeId, investCents, equityBps, unlockAt, status, expiresAt]
+      properties:
+        offerId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        vcArchetypeId: { type: string, description: 'Id from ids/archetypes.json (`vc`).' }
+        investCents: { type: integer, minimum: 1 }
+        equityBps: { type: integer, minimum: 1, maximum: 10000 }
+        unlockAt: { type: string, format: date-time }
+        status: { type: string, enum: [pending, accepted, declined, expired] }
+        expiresAt: { type: string, format: date-time }
+    VcDeal:
+      type: object
+      required: [projectId, projectName, vcArchetypeId, investCents, equityBps, status, at]
+      properties:
+        projectId: { type: string, format: uuid }
+        projectName: { type: string }
+        vcArchetypeId: { type: string }
+        investCents: { type: integer }
+        equityBps: { type: integer, minimum: 1, maximum: 10000 }
+        status: { type: string, enum: [active, unlocked, dumped] }
+        at: { type: string, format: date-time }
+    VcStake:
+      type: object
+      required: [vcArchetypeId, equityBps, investedCents, unlockAt]
+      properties:
+        vcArchetypeId: { type: string }
+        equityBps: { type: integer, minimum: 1, maximum: 10000 }
+        investedCents: { type: integer }
+        unlockAt: { type: string, format: date-time }

@@ -39,7 +39,10 @@ import { loadMeHome } from '../../application/homes.js';
 import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
+import { projectsClientConfig } from '../../application/project-events.js';
 import { loadConfig } from '../../shared/config/config.js';
+import { chainConfigPayload } from '../../application/chain-config.js';
+import { creatorCard } from '../../application/creator.js';
 import type { AppContext } from '../../application/context.js';
 import { isCapabilityOn } from '../../application/capabilities.js';
 import { nftGalleryConfig } from '../../application/nft-gallery-config.js';
@@ -163,6 +166,9 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       // Finished-but-dark features (env CAPABILITIES_ON only; missing = off) and the
       // derived v1.2 `competitionCapabilities`. See shared/domain/capabilities.ts.
       ...buildCapabilitiesPayload(req.ctx.config.capabilities.on),
+      // Chain package blocks (seasonPass, ...): present only while their capability is on.
+      // See application/chain-config.ts.
+      ...chainConfigPayload(req.ctx),
       // Registries (subset for M2). Optional per the contract's
       // ConfigResponse, so a missing file yields null instead of failing
       // the whole response.
@@ -193,6 +199,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       careers: cache.load<unknown>('careers'),
       events: cache.load<unknown>('events'),
       boards: cache.load<unknown>('boards'),
+      // Builder (unlock WP-B): wage bands, task length, limits; null while `builder` is off.
+      projects: projectsClientConfig(req.ctx),
       // Unlock D4: where the client may load gallery images from (only while on).
       ...nftConfigPayload(req.ctx),
     };
@@ -325,7 +333,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const svc = new PublicProfileService(req.ctx);
     const profile = await svc.byId(id);
     if (profile === null) throw new NotFoundError({ kind: 'user', id });
-    return reply.send(profile);
+    // Paid-call terms (unlock C2): null unless creatorMode is on and a rate is set.
+    return reply.send({ ...profile, creator: await creatorCard(req.ctx, id) });
   });
 }
 

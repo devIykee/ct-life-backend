@@ -5,6 +5,22 @@ No migration. Gated with the visitor features: dark until `visitorPolicy` is in 
 - New `POST /homes/{ownerId}/knock` (Idempotency-Key) -> `204`; the owner gets realtime `home_knock {fromUserId, alias, homeId, at}`. Errors: `400 {reason: self_knock}`, `404` (no live home), `403 BLOCKED` (either side; the owner is not told), `403 HOME_CLOSED`, `429 RATE_LIMITED {reason: knock_cooldown | knock_limit}` (1 per door per minute, 10 an hour).
 - The rest of D5 (ORE stake hidden off-mainnet, dashboard tooltip, Rekt card share) is client-only.
 
+## 2026-10-30 - Factory config hook (unlock C3)
+
+No migration. Dark until the operator adds `factory` to `CAPABILITIES_ON`.
+
+- `GET /config` gains `factory {livePhase: 2, cluster: 'devnet'}`, present only while the `factory` capability is on, the cluster is devnet and real launches are configured (`FACTORY_DBC_CONFIG` and a metadata store).
+- `POST /factory/launch/prepare`, `/confirm` and `/submit` answer `503 CAPABILITY_OFF` while the capability is off (`JAILED` is still checked first). Reads, metadata and the webhook are unchanged.
+
+## 2026-10-30 - Project HQ: project_hq room (unlock WP-B B3, no migration)
+
+Behind the `projectHq` capability (`503 CAPABILITY_OFF {capability: 'projectHq'}` until it is in `CAPABILITIES_ON`).
+
+- New `POST /projects/{id}/hq/visit` → `{roomName: 'project_hq', roomId: 'hq_<projectId>', venueId: 'hackathon_house', projectId, expiresAt}`. 403 `FORBIDDEN {reason: 'members_only'}` for a non-member while no member is inside; 404; 409 `wrong_status` (rugged).
+- New realtime room `project_hq` (one per project, `filterBy(['projectId'])`, max 12): a `venue` room on the `hackathon_house` layout with the same messages and schema. Join with `joinOrCreate('project_hq', {projectId, token})`. Members always enter; visitors only while a member is inside, and they are shown out (4403 `members_only`) when the last member leaves. Join refusals are structured Colyseus `ServerError {code, message}`: 4403 `members_only`, 4404 `not_found`, 4409 `wrong_status`, 4503 `capability_off`. `GET /config` `projects` gains `hqShiftMinutes`.
+- HQ shift: a non-founder member who stays 10 minutes in one visit logs the week as worked for payroll (`project_work_log` source `hq_shift`), like a finished project task.
+- `projects.json` gains `hq {maxClients, shiftMinutes, ticketTtlSeconds}`.
+
 ## 2026-10-30 - Home NFT gallery, read-only (unlock D4, capability `nftGallery`)
 
 Migration 142. Rules in `docs/NFT_GALLERY.md`. Dark until `nftGallery` is in `CAPABILITIES_ON`.
@@ -15,6 +31,54 @@ Migration 142. Rules in `docs/NFT_GALLERY.md`. Dark until `nftGallery` is in `CA
 - `GET /config` gains `nft {imageHosts, maxImageBytes, maxImagePx, maxSlots}` while the capability is on.
 - Daily worker removes frames whose asset left the wallet. New config `contract/config/nft_gallery.json`.
 - Not included: minting CT Life devnet prints (needs WP-C's payments settlement and a funded devnet treasury).
+
+## 2026-10-30 - CT Beef: stake-free, topics, invites, phases, votes, the arena crowd (unlock A6)
+
+Migration 112. New config `config/beef_topics.json`. Capabilities `beef` (app; every player beef route and the phase worker) and `beefVoting`.
+
+- **Stake-free (economy rule: Cash never moves between players).** `POST /beef {topicId, invitedUserId?, stakeCents?: 0}`: `stakeCents > 0` is `400 VALIDATION_FAILED {reason: stakes_disabled}`; the response echoes `topicId`, `invitedUserId` and `stakeCents: 0`, with `rewardCents` (what the winner earns from the house: $100, at most 3 rewarded wins a day, 1 per pair of players a day, accounts at least 24 h old, and only when at least 3 real players voted and the winner leads on player votes alone; a crowd-decided match moves Elo but pays nothing). Ledger `beef_reward` (a faucet). Both participants need an account at least 24 h old and level 2 to open or accept (`403 FORBIDDEN {reason: too_new | level}`). The old `beef_stake` / `beef_payout` / `beef_fee` flow is gone: migration 112 expires old staked open challenges, an old staked challenge can never be accepted (`409 {reason: legacy_stake}`), and a player is refunded (`beef_stake_refund`) only the stake the ledger shows they paid for that match.
+- Six topics (`beef_fast_chain_vs_l2`, `beef_memes_vs_utility`, `beef_perps_vs_spot`, `beef_farm_vs_trade`, `beef_anon_vs_doxxed`, `beef_cabal_is_real`); unknown is `400 {reason: unknown_topic}`. At most 3 open challenges (`409 {reason: too_many_open}`).
+- Phases: `open` (10 min, then `expired`) -> `active` (5 min debate in the Debate Arena) -> `voting` (10 min) -> `closed`, moved by a worker every 15 s and re-checked on every action.
+- New `GET /beef/{id}`, `POST /beef/{id}/cancel` (challenger, while open), `POST /beef/{id}/votes {votedUserId}` -> `201 {matchId, votedUserId, at}` (`403 VOTE_NOT_ALLOWED {reason: participant | too_new | level}`, `403 SYBIL_JAILED`, `409 ALREADY_VOTED`, `409 CONFLICT {reason: not_voting}`). `decline` is now the invited player's (the challenger cancels). Accept: only the invited player for an aimed challenge (`403 FORBIDDEN {reason: not_invited}`), `409 {reason: not_open | in_match}`, `403 BLOCKED`.
+- `GET /beef` gains `scope=mine|open|arena` (mine covers invites) and a working `cursor`; `GET /beef/elo?userId=`.
+- `BeefMatch` gains `invitedUserId`, `topicId`, `rewardCents`, `rewardPaidCents`, `phaseEndsAt`, `votes` (null until closed), `crowdVotes` (null until closed), `myVote`; `feeBps` is 0.
+- Result: player votes plus an arena crowd of 5 NPC votes split by each participant's activity in the arena during the live phase (talk seconds, emotes, chat lines; capped; deterministic). Equal totals are a draw (Elo as a draw, no reward). Elo moves for at most 3 matches per pair per day.
+- Realtime: `beef_challenge` to the invited player; `beef_update` (every phase change) and `beef_result` (close) to the city and the Debate Arena venue rooms.
+- New error codes `VOTE_NOT_ALLOWED` (403) and `ALREADY_VOTED` (409). Settle stays admin-only (a manual override, same caps).
+
+## 2026-10-30 - VC Row: NPC term sheets, deals, dump at unlock (unlock WP-B B2, migration 1700000121000)
+
+Behind the `vc` capability (`503 CAPABILITY_OFF {capability: 'vc'}` until it is in `CAPABILITIES_ON`). No VC Cash ever reaches a player.
+
+- New: `GET /projects/{id}/vc-offers` (founder) → `{offers: [VcOffer]}`, `POST /vc-offers/{offerId}/accept|decline` → `VcOffer`. `VcOffer = {offerId, projectId, vcArchetypeId, investCents, equityBps, unlockAt, status, expiresAt}`. Errors: 403 `not_owner`; 409 `not_pending` | `expired` | `wrong_status`.
+- Changed: `GET /vc-row/deals` is now behind `vc`, takes `cursor` and `limit` (default 20), and pages with `nextCursor`; `status` is `active | unlocked | dumped`.
+- `GET /projects/{id}` `vcStakes` is filled: `[{vcArchetypeId, equityBps, investedCents, unlockAt}]` for deals not yet dumped.
+- Worker: a daily generator gives live projects under a $5,000 treasury 1-3 term sheets a week (value = 50% of the coin market cap, 8-18% equity, $200-$5,000, 24 h to answer). Accepting puts the money in the project treasury (an NPC faucet that only feeds sinks) and opens a deal that unlocks in 7 days. After unlock the VC dumps 1.5x its stake (capped at -30%) without being front-runnable (security review H2): only the unlock day is published (`unlockAt` is 00:00 UTC), the dump starts at a hidden random time within 72 h, bleeds out in 24 small steps over up to 12 h, and `proj_vc_dump` and world event `evt_vc_dump {projectId, name, coinId}` (new id in `ids/events.json`) go out only when it ends. `POST /perps` answers `409 CONFLICT {reason: 'perp_entry_frozen'}` on that coin from 24 h before unlock until the bleed ends. New event ids `proj_vc_invested`, `proj_vc_unlocked`, `proj_vc_dump`.
+- Realtime (city): `vc_offer` (founder).
+
+## 2026-10-30 - Paid calls on the ct_escrow program and creator mode (unlock C2)
+
+Migration 131 (`paid_calls`, `creator_profiles` mode columns). Dark until the operator adds `paidCalls` and `creatorMode` to `CAPABILITIES_ON`; devnet only; needs the escrow upgraded and initialized (docs/ONCHAIN.md "Paid-call escrow on devnet").
+
+- `PUT /creator {enabled, ratePerMinUsdc: '250000'..'50000000', maxMinutes: 1..60}` now works and answers `{enabled, ratePerMinUsdc, maxMinutes}` (was documented, not served). `400 VALIDATION_FAILED {reason: rate_out_of_range | max_minutes}`. Capability `creatorMode`.
+- `GET /users/{id}` gains `creator: {enabled, ratePerMinUsdc, maxMinutes} | null`.
+- `POST /paid-calls {creatorId, minutes}` answers `201 {callId, sessionPda, tx, amount, feeBps, ratePerMinUsdc, minutes, expiresAt}`: `tx` is the server-built unsigned v0 `open_session` (fan pays). Was `{payeeUserId, pricePerMinuteCents, maxMinutes}` with no transaction. New error `CREATOR_UNAVAILABLE` (403); `409 CONFLICT {reason: call_in_progress}`; `400 {reason: minutes_over_max | cannot_call_self}`; `403 BLOCKED`.
+- `POST /paid-calls/{id}/submitted {signature}` verifies the Session account and the reported transaction on chain (confirmed, successful, fan-signed `open_session` of this PDA) before storing it (`409 {reason: not_found_yet}`, `400 {reason: tx_mismatch}`, `409 {reason: call_in_progress, who: creator}` with the call refunded) and rings the creator: `call_invite` gains optional `kind: 'paid'`, `ratePerMinUsdc`, `maxMinutes`, `acceptBy`.
+- `accept` sends the escrow `accept` with the settle authority; then `POST /rtc/token {kind: 'paid_call'}` works for both players. `decline` answers `refunding` (the refund lands after the accept window). `POST /paid-calls/{id}/end` takes **no body**: the server times the call and settles on chain. `PaidCall` gains `settling`, `refunding`, `expired`, `closed_unknown` statuses, the terms, the split, `acceptBy`, `endReason` and the signatures.
+- New `POST /webhooks/livekit` (LiveKit signed webhook): a participant leaving or the room finishing ends a live paid call.
+- A 15-second worker refunds unanswered/declined calls, ends calls at their booked minutes and retries settles.
+
+## 2026-10-30 - Farm: Sybil jail, bail and the Sybil Barn (unlock A5)
+
+Migration 111 (`sybil_jail`). New config `config/sybil_reasons.json`. Capabilities `sybilBail` (bail, and the game roll itself) and `sybilBarn`.
+
+- Game-rolled jail: while `sybilBail` is on, every `POST /airdrop/claim` attempt that reaches the server is counted per player for an hour. At 5 / 10 / 20 attempts a CSPRNG roll at 20% / 50% / 100% jails for 2 / 6 / 12 h (`sybil_claim_spam`, `sybil_bot_pattern`, `sybil_clone_farm`). The attempt that is jailed is refused. Release is lazy (on read).
+- `POST /airdrop/claim` while jailed (admin or game) now answers `403 SYBIL_JAILED {releaseAt, reasonId}` (new error code; it was `403 FORBIDDEN {reason: sybil_jailed}`, which clients already map).
+- `GET /me/sybil-status` fills `releaseAt`, `reasonId`, `bailCents`, `bailable` and adds `source: game | admin | null`. Admin jails stay unbailable with `reasonId: sybil_admin_review`.
+- New `POST /me/sybil-status/bail` -> the status (`jailed: false`). Bail = farm yield per started hour still to serve, clamped to $5-$150; ledger `sybil_bail`, a sink (Cash never moves to another player). `402 INSUFFICIENT_CASH {have, need}`, `409 CONFLICT {reason: not_jailed | not_bailable}`.
+- New `GET /sybil-barn` -> `{count, inmates: [{userId, alias, reasonId, jailedAt, releaseAt}] (game stays, <= 50, no anon), nextCursor: null}`.
+- `GET /venues/sybil_barn/access` also admits game-jailed players.
+- New user message `sybil_status` (the status with `jailedAt`/`releaseAt` as epoch ms, plus `at`; `bailPaidCents` after a bail).
 
 ## 2026-10-30 - Prediction Pit: real markets and a recorded-source resolver (unlock D3, app `predict`)
 
@@ -27,6 +91,57 @@ Migration 141. Contract and rules in `docs/PREDICTIONS.md`. Routes dark until `p
 - Realtime `prediction_settled {predictionId, marketId, status, payoutCents}` to the player.
 - New config `contract/config/predictions.json`; new env `PREDICTIONS_CRYPTO_SOURCE`.
 
+## 2026-10-30 - Builder: role offers, treasury, launch, game-paid payroll (unlock WP-B B1, migration 1700000120000)
+
+Behind the `builder` capability (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`). Keeps the rule that Cash never moves between players.
+
+- New: `POST /projects/{id}/offers`, `POST /project-offers/{offerId}/accept|decline`, `POST /projects/{id}/fund` (`{project}`), `DELETE /projects/{id}/members/{userId}` (204), `GET /projects/{id}/launch-quote`, `GET /projects/{id}/events?cursor&limit`, `POST /projects/{id}/tasks` and `POST /projects/{id}/tasks/{taskId}/complete` (a 10-minute project task; the only work that earns a wage). Shapes and every `details.reason` in `openapi.yaml` (tag `projects`).
+- Changed: `POST /projects/{id}/launch` now takes `{ticker, quotedCostCents}`, debits the treasury, lists a coin on the in-game launchpad and returns `ProjectSummary` with `status: live` and `coinId` (was a `founded -> launching` flip). Broadcasts `evt_project_launch` (new id in `ids/events.json`).
+- Removed: `POST /projects/{id}/hire` answers `410 GONE {reason: 'use_offers'}` (it paid the hire from the founder without consent). Not gated: the old route breaks the Cash rule.
+- Additive: `ProjectSummary` (POST/GET `/projects`) gains `name`, `ticker`, `ownerAlias`, `memberCount`, `treasuryCents`, `coinId`, `openRoles`; `cashCents` stays. `GET /projects/{id}` gains `members`, `payrollCentsPerWeek`, `nextPayrollAt`, `vcStakes`, `recentEvents`; `hires` stays.
+- Wages: fixed weekly bands per role (`contract/config/projects.json`: dev/auditor $150-$300, kol $100-$200, mod $80-$150), paid by the game every Monday 00:00 UTC only for a week the member finished a project task for that project (generic career shifts do not count), prorated for a mid-week join, one paid role per player per week, capped at $600 a project and $900 a founder a week. Wages never depend on the treasury, so founder deposits cannot become anyone's wage. The treasury pays an operating cost equal to the wages (a pure sink); if it is short it pays what it has and the project is `paused` (funding resumes it). Per-account limit: 2 projects, founder roles included (`409 CONFLICT {reason: 'project_limit'}` on `POST /projects` and on accept). Legacy direct hires become pending offers the player must accept. Daily risk roll for live projects (exploit, rug accusation, audit passed) with a treasury loss and a launchpad price shock.
+- Realtime (city): `hire_offer` (invitee) and `project_event` (every member).
+- `GET /config` gains `projects` (null while `builder` is off): `{version, wages: {role: {minCentsPerWeek, maxCentsPerWeek}}, taskMinutes, maxRolesPerPlayer, maxProjectsPerPlayer, offerTtlHours, builderDiscountBps, minProjectAgeMinutes}`.
+- `GET /projects/{id}` gains `myTask: {taskId, startedAt, endsAt} | null` and `workedThisWeek` for the caller.
+- Reasons: a founder starting a task gets `403 {reason: 'founder_no_wage'}`; removing the founder gets `409 {reason: 'cannot_remove_founder'}`. `POST /projects/{id}/launch` answers `403 JAILED` for a jailed founder.
+
+## 2026-10-30 - Devnet test tokens: daily SOL drip and the "Get test tokens" card (unlock WP-C)
+
+Migration 130 (`devnet_drips`). Dark until the operator adds `devnetDrip` to `CAPABILITIES_ON` and sets `DEVNET_DRIP_KEYPAIR`; devnet only.
+
+- `GET /config` `capabilities.features` gains `devnetDrip` (appended).
+- New `GET /devnet/test-tokens` → `{cluster: 'devnet', wallet, usdc {faucetUrl: 'https://faucet.circle.com/', mint, perRequestBaseUnits: '20000000', everyHours: 2}, sol {dripLamports, available, reason: unconfigured | claimed_today | budget_spent | null, nextAt}}`.
+- New `POST /devnet/drip` (Idempotency-Key) → `{dripId, signature, lamports, wallet, nextAt}`: 0.02 SOL from the ops treasury, once per wallet and account per UTC day, never while the wallet holds 0.05 SOL, inside a global daily budget. `409 CONFLICT {reason: balance_sufficient}`, `429 RATE_LIMITED {reason: daily_drip | drip_budget, nextAt}`, `503 CAPABILITY_OFF {reason: drip_unconfigured | treasury_low | rpc_not_devnet | devnet_only}`, `503 SERVER_BUSY {reason: drip_send_failed}`.
+- New env: `DEVNET_DRIP_KEYPAIR`, `DEVNET_DRIP_LAMPORTS`, `DEVNET_DRIP_DAILY_CAP_LAMPORTS`.
+
+## 2026-10-30 - X: unlink (unlock A4)
+
+No migration. Capability `xUnlink` (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`).
+
+- New `DELETE /x/link` -> `204`: deletes the verified X link with its handle, avatar and token hashes (and any in-flight start). `404 NOT_FOUND` when nothing is linked. Works with X linking disabled. The X account can then be linked by another player.
+- New user message `x_link_update {status: 'unlinked', linked: false, at}` (city room) after an unlink; `status` is what the competition client parses.
+
+## 2026-10-30 - Cabal: targeted invites and revoke (unlock A3)
+
+Migration 110 (`cabal_invites.revoked_at`). Capabilities `cabalInvites` (targeted invites; also turns on `competitionCapabilities.targetedCabalInvites`) and `cabalRevoke`.
+
+- `POST /cabal/invites` takes an optional `{guestUserId}`: the invite is for that player only and the server echoes `guestUserId` (it used to ignore it). `404` unknown player, `400` yourself, `403 BLOCKED` block pair, `409 CONFLICT {reason: already_member | invite_pending}`. `503 CAPABILITY_OFF` while `cabalInvites` is off; open invites keep working.
+- Every new invite now checks the host: net worth at the Marina gate (`403 NET_WORTH_TOO_LOW {netWorthCents, requiredNetWorthCents}`, new error code) and at most 3 pending (`409 CONFLICT {reason: invites_exhausted}`). `GET /me/cabal` `invitesRemaining` and `hostGateCents` already described both; neither was enforced.
+- New `POST /cabal/invites/{id}/revoke` -> the invite with `status: revoked`. `403 FORBIDDEN {reason: not_host}`, `409 CONFLICT {reason: not_pending}`. `503 CAPABILITY_OFF` while `cabalRevoke` is off.
+- `CabalInvite` gains `status` (`pending | accepted | revoked | expired`) and `revokedAt`. `code` is only returned to the host (guests could see it in `GET /cabal/invites`).
+- New user message `cabal_invite {inviteId, fromUserId, expiresAt, at}` (epoch ms) to the guest of a targeted invite.
+- Fix: accepting checks that a targeted invite is yours (`403 FORBIDDEN {reason: not_guest}`) and refuses revoked invites and block pairs.
+
+## 2026-10-30 - Season pass bought with a payment intent (unlock C1)
+
+No migration. Dark until the operator adds `seasonPassPurchase` to `CAPABILITIES_ON`; devnet only.
+
+- `GET /config` gains `seasonPass {sku: 'season_pass', priceUsdc: '5000000', currency: 'USDC', seasonId, endsAt}`, present only while the capability is on, the deployment is on devnet and a season is running.
+- `POST /payments/intents {kind: 'season_pass', sku: 'season_pass', currency: 'USDC'}` returns the usual `PaymentIntent` for 5 USDC (`cashCents: 0`). The `sku` enum gains `season_pass`, valid only with that kind (`400 VALIDATION_FAILED {reason: 'sku_kind_mismatch'}`). `409 CONFLICT` with `reason` `already_active` (live pass), `intent_pending` (an earlier signed pass intent is still being reconciled; `intentId`) or `no_active_season`. `503 CAPABILITY_OFF` while off.
+- Settlement verifies the finalized transfer exactly like a top-up, then grants (or extends) the pass until the season's `endsAt`. No Cash moves; `payment_confirmed` carries `kind: 'season_pass'` and `cashCents: 0`.
+- `POST /season-pass/buy` (it debited $5 of Cash) now answers `410 GONE {reason: 'buy_with_intent'}`. `GET /season-pass/me` is unchanged.
+- Fix: payment reconciliation reads the deployment's own cluster RPC (`HELIUS_RPC_URL_DEVNET` on devnet) instead of the mainnet client.
+
 ## 2026-10-30 - Home visitor policy (unlock D2, capability `visitorPolicy`)
 
 Migration 140 (`home_settings`). The settings routes are dark until `visitorPolicy` is in `CAPABILITIES_ON`.
@@ -35,6 +150,14 @@ Migration 140 (`home_settings`). The settings routes are dark until `visitorPoli
 - Enforced in `POST /homes/{ownerId}/visit` and on `home` room join (and the room's re-check): `closed` -> `403 HOME_CLOSED` (everyone but the owner); `followers` -> `403 FORBIDDEN {reason: followers_only}` unless the visitor and the owner follow each other (mutual; a one-way follow is not enough) or the visitor is a guest. Under every policy, `open` included, a visitor the owner blocked or who blocked the owner gets `403 BLOCKED`. The policy only narrows access; the door rule still applies after it. Reading another player's home placements follows the same rule.
 - New error code `HOME_CLOSED` (403).
 
+## 2026-10-30 - League: district standings and season results (unlock A2)
+
+No migration. Capabilities `districtStandings` and `seasonResults` (`503 CAPABILITY_OFF` until each is in `CAPABILITIES_ON`).
+
+- New `GET /districts/{id}/standings` -> `{districtId, dayDate, rolloverAt, standings: [{tribeId, score}] (highest first), myTribeId, myContribution}`. Live for today with the rollover's own formula (default holder's base score + player posts/check-ins, at most 3 per player). `myContribution` is null for `anon`. `404 NOT_FOUND` for an unknown district.
+- New `GET /me/season-results?seasonId=` -> `{seasonId, leagueId, finalRank, outcome: promoted|relegated|stayed, toLeagueId, rewards: []}`. Latest finished season when `seasonId` is omitted. `404 NOT_FOUND` when there is none, `400` for a malformed id. `rewards` are read from the ledger (`season_reward`); nothing pays one yet.
+- Fix: the daily district rollover (00:05 UTC) now rolls the day that just ended. It used to roll the new day, which had five minutes of activity, so every district went back to its default holder.
+
 ## 2026-10-30 - Move home in one step (unlock D1, capability `homeMove`)
 
 No migration. Dark until `homeMove` is in `CAPABILITIES_ON` (`503 CAPABILITY_OFF` before that).
@@ -42,6 +165,13 @@ No migration. Dark until `homeMove` is in `CAPABILITIES_ON` (`503 CAPABILITY_OFF
 - New `POST /homes/move {kind}` (Idempotency-Key) -> `200 {home: LeasedHome, movedOutHomeId: string|null}`. Atomic: the caller's live lease(s) end (`moved_out`, unit freed, guests removed), a unit of the new tier is taken, the first week of the new rent is debited, the new lease starts. Upgrade and downsize work the same way; no refund of the old week; debt stays.
 - Errors: `402 INSUFFICIENT_CASH {have, need, shortfallCents}`, `409 CONFLICT {reason: same_home}`, `409 CONFLICT {reason: no_unit_free, tier}`, `403 FORBIDDEN {reason: phase_locked}` (LIVE_PHASE < 4), `400 VALIDATION_FAILED`.
 - `POST /homes` (lease without moving) and `POST /homes/{homeId}/rent` are unchanged.
+
+## 2026-10-30 - Recent world events: GET /events/active (unlock A1)
+
+No migration. Capability `worldEvents` (off until the operator adds it to `CAPABILITIES_ON`; `503 CAPABILITY_OFF` until then).
+
+- `GET /events/active` now answers `{events: [{eventId, at, params}]}`: the `evt_*` world events broadcast in the last 2 hours, newest first, at most 50; `at` is epoch ms (the same value as the realtime `event` message). It used to fall into `GET /events/{slug}` and answer 404. `401` without a token.
+- Every world event the server broadcasts is also kept in Redis (`world:events`, trimmed to 2 h and 50 on each write). Market-mood events are kept once per refresh even with several city shards.
 
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
@@ -53,6 +183,19 @@ Phase 0 of the unlock plan: the switchboard every hidden feature turns on throug
 - `ids/report_reasons.json`: new reason `voice` (the client sends it for voice-chat reports).
 - Migration number blocks for the parallel unlock packages (README, Database Migrations): A `1700000110000-1700000119000`, B `…120…129`, C `…130…139`, D `…140…149`.
 
+
+
+## 2026-10-30 - Report an AI NPC chat reply
+
+Migration 106.
+
+- `POST /llm/chat` now returns `replyId` (the stored interaction id) and `archetype` alongside `response`. The client already reads `replyId` and shows its Report button only when it is set.
+- `POST /reports` accepts `targetType: "npc_reply"` with `targetId` = that `replyId`. Only the player the reply was written for may report it; otherwise `400 VALIDATION_FAILED` with `details.reason: unknown_reply`. The admin queue shows the reply text as the preview, and `remove_content` blanks it.
+
+## 2026-10-30 - Venue voice tokens need presence in the venue
+
+- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
+- New error code `NOT_IN_VENUE` (403).
 ## 2026-10-30 - Alpha calls use the server price; background sweeps start
 
 - `POST /alpha-calls`: the stored `entryMicros` is now the coin's server price at placement (the body's value must still be positive but is ignored), and the call is refused unless `stopMicros < price < targetMicros`: `400 VALIDATION_FAILED` with `details.reason` `price_outside_band` (plus `details.priceMicros`), `unknown_coin` or `coin_dead`. The response's `entryMicros` is the stored server price.

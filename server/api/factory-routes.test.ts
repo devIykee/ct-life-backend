@@ -132,6 +132,8 @@ it('real Factory routes: the Helius webhook needs its Authorization header; unkn
     imageBase64: 'AA==',
     riskAccepted: true,
   });
+  // Launching is dark until the `factory` capability is on (unlock C3); with it on and
+  // no DBC config it is FACTORY_UNAVAILABLE (server/api/factory-config-hook.test.ts).
   expect(prep.status).toBe(503);
-  expect((prep.body.error as { code: string }).code).toBe('FACTORY_UNAVAILABLE');
+  expect((prep.body.error as { code: string }).code).toBe('CAPABILITY_OFF');
 });

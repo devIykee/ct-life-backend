@@ -64,6 +64,7 @@ import {
   buildOpenSessionIx,
   buildAcceptIx,
   buildSettleIx,
+  sessionVault,
   PublicKey as _PublicKeyUnused,
 } from '../../server/shared/solana/ct-escrow.js';
 void CT_ESCROW_PROGRAM_ID;
@@ -259,6 +260,7 @@ async function main(): Promise<void> {
           fan: fan.publicKey,
           fanUsdcAta,
           creator: creator.publicKey,
+          usdcMint,
           sessionId,
           rateBaseUnitsPerMin: rate,
           maxMinutes: minutes,
@@ -300,7 +302,9 @@ async function main(): Promise<void> {
           creator: creator.publicKey,
           sessionId,
           secondsUsed: BigInt(secondsUsed),
-          vault,
+          // The current program keeps each session's deposit in the session PDA's ATA.
+          vault: sessionVault(session, usdcMint),
+          usdcMint,
           creatorUsdcAta,
           fanUsdcAta,
           treasuryUsdcAta,

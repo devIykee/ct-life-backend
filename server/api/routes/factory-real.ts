@@ -1,6 +1,9 @@
 /**
  * Real Factory routes (Meteora DBC; docs/FACTORY-REAL.md).
  *
+ * Unlock C3: launching (prepare / confirm / submit) needs the `factory` capability
+ * (`503 CAPABILITY_OFF` while off); the reads, metadata and the webhook stay open.
+ *
  *   GET  /v1/factory/config                     fees, cluster, risk warning, limits
  *   POST /v1/factory/launch/prepare             {name, ticker, description?, imageBase64, riskAccepted}
  *   POST /v1/factory/launch/confirm             {launchId, signature}
@@ -17,6 +20,7 @@ import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { requireNotJailed } from '../middleware/jail.js';
+import { requireCapability } from '../middleware/capability.js';
 import {
   ForbiddenError,
   NotFoundError,
@@ -78,7 +82,11 @@ export function registerFactoryRealRoutes(app: FastifyInstance): void {
 
   app.post(
     '/v1/factory/launch/prepare',
-    { preHandler: [requireAuth, requireNotJailed, withIdempotency()], bodyLimit: 4 * 1024 * 1024 },
+    {
+      // Jail is answered before the capability (a jailed player always sees JAILED).
+      preHandler: [requireAuth, requireNotJailed, requireCapability('factory'), withIdempotency()],
+      bodyLimit: 4 * 1024 * 1024,
+    },
     async (req, reply) =>
       reply
         .status(201)
@@ -86,7 +94,7 @@ export function registerFactoryRealRoutes(app: FastifyInstance): void {
   );
   app.post(
     '/v1/factory/launch/confirm',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireCapability('factory'), withIdempotency()] },
     async (req, reply) => {
       const b = parse(ConfirmBody, req.body);
       return reply.send(await confirmLaunch(req.ctx, req.user!.sub, b.launchId, b.signature));
@@ -94,7 +102,7 @@ export function registerFactoryRealRoutes(app: FastifyInstance): void {
   );
   app.post(
     '/v1/factory/launch/submit',
-    { preHandler: [requireAuth, withIdempotency()] },
+    { preHandler: [requireAuth, requireCapability('factory'), withIdempotency()] },
     async (req, reply) => {
       const b = parse(SubmitBody, req.body);
       return reply.send(await submitLaunch(req.ctx, req.user!.sub, b.launchId, b.signedTxBase64));

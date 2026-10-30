@@ -1,103 +1,80 @@
 /**
- * Paid-calls routes (M4 #51).
+ * Paid-calls routes (unlock C2; capability `paidCalls`, devnet only). See
+ * server/application/paid-calls.ts for the flow and the money rules.
  *
- *   POST /v1/paid-calls
- *   POST /v1/paid-calls/:id/submitted
+ *   POST /v1/paid-calls                {creatorId, minutes}
+ *   POST /v1/paid-calls/:id/submitted  {signature}
  *   POST /v1/paid-calls/:id/accept
  *   POST /v1/paid-calls/:id/decline
- *   POST /v1/paid-calls/:id/end
+ *   POST /v1/paid-calls/:id/end        (no body: the server times the call)
  *   GET  /v1/paid-calls/:id
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/capability.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   acceptPaidCall,
   declinePaidCall,
   endPaidCall,
-  loadPaidCall,
+  getPaidCall,
   startPaidCall,
-  submitFundingSignature,
+  submitOpenSignature,
 } from '../../application/paid-calls.js';
 
-const StartBody = z.object({
-  payeeUserId: z.string().uuid(),
-  pricePerMinuteCents: z.number().int().min(25).max(5000),
-  maxMinutes: z.number().int().min(1).max(240),
-});
+const StartBody = z
+  .object({ creatorId: z.string().uuid(), minutes: z.number().int().min(1).max(60) })
+  .strict();
+const SubmittedBody = z.object({ signature: z.string().min(64).max(100) }).strict();
+const Params = z.object({ id: z.string().uuid() });
 
-const SubmittedBody = z.object({
-  signature: z.string().min(10).max(200),
-});
-
-const EndBody = z.object({
-  secondsUsed: z.number().int().min(0),
-});
+function parse<T>(schema: z.ZodType<T>, input: unknown): T {
+  const r = schema.safeParse(input);
+  if (!r.success) throw new ValidationFailedError({ issues: r.error.issues });
+  return r.data;
+}
 
 /**
- *
+ * Register the paid-call routes.
+ * @param app - The Fastify instance.
  */
 export function registerPaidCallRoutes(app: FastifyInstance): void {
-  app.post(
-    '/v1/paid-calls',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const body = StartBody.safeParse(req.body);
-      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const out = await startPaidCall(req.ctx, req.user!.sub, body.data);
-      return reply.status(201).send(out);
-    },
-  );
+  const write = { preHandler: [requireCapability('paidCalls'), requireAuth, withIdempotency()] };
 
-  app.post(
-    '/v1/paid-calls/:id/submitted',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const { id } = req.params as { id: string };
-      const body = SubmittedBody.safeParse(req.body);
-      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const out = await submitFundingSignature(req.ctx, id, req.user!.sub, body.data.signature);
-      return reply.send(out);
-    },
-  );
-
-  app.post(
-    '/v1/paid-calls/:id/accept',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const { id } = req.params as { id: string };
-      const out = await acceptPaidCall(req.ctx, id, req.user!.sub);
-      return reply.send(out);
-    },
-  );
-
-  app.post(
-    '/v1/paid-calls/:id/decline',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const { id } = req.params as { id: string };
-      const out = await declinePaidCall(req.ctx, id, req.user!.sub);
-      return reply.send(out);
-    },
-  );
-
-  app.post(
-    '/v1/paid-calls/:id/end',
-    { preHandler: [requireAuth, withIdempotency()] },
-    async (req, reply) => {
-      const { id } = req.params as { id: string };
-      const body = EndBody.safeParse(req.body);
-      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const out = await endPaidCall(req.ctx, id, req.user!.sub, body.data.secondsUsed);
-      return reply.send(out);
-    },
-  );
-
-  app.get('/v1/paid-calls/:id', { preHandler: requireAuth }, async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const out = await loadPaidCall(req.ctx, id);
-    return reply.send(out);
+  app.post('/v1/paid-calls', write, async (req, reply) => {
+    const body = parse(StartBody, req.body);
+    return reply.status(201).send(await startPaidCall(req.ctx, req.user!.sub, body));
   });
+
+  app.post('/v1/paid-calls/:id/submitted', write, async (req, reply) => {
+    const { id } = parse(Params, req.params);
+    const { signature } = parse(SubmittedBody, req.body);
+    return reply.send(await submitOpenSignature(req.ctx, id, req.user!.sub, signature));
+  });
+
+  app.post('/v1/paid-calls/:id/accept', write, async (req, reply) => {
+    const { id } = parse(Params, req.params);
+    return reply.send(await acceptPaidCall(req.ctx, id, req.user!.sub));
+  });
+
+  app.post('/v1/paid-calls/:id/decline', write, async (req, reply) => {
+    const { id } = parse(Params, req.params);
+    return reply.send(await declinePaidCall(req.ctx, id, req.user!.sub));
+  });
+
+  app.post('/v1/paid-calls/:id/end', write, async (req, reply) => {
+    const { id } = parse(Params, req.params);
+    return reply.send(await endPaidCall(req.ctx, id, req.user!.sub));
+  });
+
+  app.get(
+    '/v1/paid-calls/:id',
+    { preHandler: [requireCapability('paidCalls'), requireAuth] },
+    async (req, reply) => {
+      const { id } = parse(Params, req.params);
+      return reply.send(await getPaidCall(req.ctx, id, req.user!.sub));
+    },
+  );
 }

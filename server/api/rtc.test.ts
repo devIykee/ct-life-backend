@@ -1,12 +1,16 @@
 /**
  * POST /v1/rtc/token for Spaces: grants come from the stored Space and
- * role, never from the request body.
+ * role, never from the request body. For venues: a token only for someone
+ * the venue room has counted as in that instance (shared Redis presence).
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { buildServer, type ServerHandle } from './main.js';
 import { buildContext } from '../application/context.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { RedisPresence } from 'colyseus';
+import { createRedis } from '../shared/redis/client.js';
+import { clearVenueMembers, markVenueJoin, markVenueLeave } from '../realtime/venue-presence.js';
 
 let handle: ServerHandle;
 let pool: Pool;
@@ -88,5 +92,63 @@ describe('POST /v1/rtc/token (space)', () => {
       [spaceId],
     );
     expect((await tokenFor(hostId, { kind: 'space', id: spaceId })).statusCode).toBe(403);
+  });
+});
+
+describe('POST /v1/rtc/token (venue)', () => {
+  // The same presence the realtime process uses, on the test Redis.
+  const presence = new RedisPresence(createRedis().main);
+
+  it('refuses a user who is not in the instance with NOT_IN_VENUE', async () => {
+    const instanceId = `inst-${uuidv7()}`;
+    const res = await tokenFor(listenerId, { kind: 'venue', id: instanceId });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('NOT_IN_VENUE');
+    // The legacy proximity kind is no way around it.
+    const prox = await tokenFor(listenerId, { kind: 'proximity', id: instanceId });
+    expect(prox.statusCode).toBe(403);
+    expect(prox.json().error.code).toBe('NOT_IN_VENUE');
+  });
+
+  it('mints for a member only while a session of theirs is in that instance', async () => {
+    const instanceId = `inst-${uuidv7()}`;
+    await markVenueJoin(presence, instanceId, hostId);
+    const res = await tokenFor(hostId, { kind: 'venue', id: instanceId });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().roomName).toBe(`venue:${instanceId}`);
+    // Short-lived: about 10 minutes, not the 1 h default.
+    const ttl = (Date.parse(res.json().expiresAt) - Date.now()) / 1000;
+    expect(ttl).toBeGreaterThan(9 * 60);
+    expect(ttl).toBeLessThanOrEqual(10 * 60 + 1);
+    expect(grant(res.json().token)).toMatchObject({ room: `venue:${instanceId}` });
+    // A prefixed id names the same room.
+    expect((await tokenFor(hostId, { kind: 'venue', id: `venue:${instanceId}` })).statusCode).toBe(
+      200,
+    );
+    // Someone else, and the same user for a different instance, get nothing.
+    expect((await tokenFor(listenerId, { kind: 'venue', id: instanceId })).statusCode).toBe(403);
+    expect((await tokenFor(hostId, { kind: 'venue', id: `inst-${uuidv7()}` })).statusCode).toBe(
+      403,
+    );
+    // Two sessions: present until both have left.
+    await markVenueJoin(presence, instanceId, hostId);
+    await markVenueLeave(presence, instanceId, hostId);
+    expect((await tokenFor(hostId, { kind: 'venue', id: instanceId })).statusCode).toBe(200);
+    await markVenueLeave(presence, instanceId, hostId);
+    expect((await tokenFor(hostId, { kind: 'venue', id: instanceId })).statusCode).toBe(403);
+    // A leave that ran after the hash was lost does not cost a rejoin.
+    await markVenueLeave(presence, instanceId, hostId);
+    await markVenueJoin(presence, instanceId, hostId);
+    expect((await tokenFor(hostId, { kind: 'venue', id: instanceId })).statusCode).toBe(200);
+    // The room going away forgets everyone.
+    clearVenueMembers(presence, instanceId);
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await tokenFor(hostId, { kind: 'venue', id: instanceId })).statusCode).toBe(403);
+  });
+
+  it('rejects a venue id carrying the prefix of another kind', async () => {
+    expect((await tokenFor(hostId, { kind: 'venue', id: `space:${uuidv7()}` })).statusCode).toBe(
+      400,
+    );
   });
 });

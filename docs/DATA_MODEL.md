@@ -173,6 +173,7 @@ Written by apply (creates the row, never resets it) and by shift completion, in 
 ### `reports` and `blocks` (M1/M2)
 
 - `report_id`, `reporter_user_id`, `target_type`, `target_id`, `reason_id`, `note`, `created_at`, `resolved_by`, `resolved_at`.
+- `target_type` is `user | message | space | call | post | ad | npc_reply` (migration 106 added `npc_reply`: an AI NPC chat reply, `target_id` = `llm_npc_interactions.interaction_id`).
 - `block_id`, `blocker_user_id`, `blocked_user_id`, `created_at`. `UNIQUE (blocker_user_id, blocked_user_id)`.
 
 ### `webhook_events` (M3)
@@ -290,3 +291,53 @@ Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 - `predictions` gains `market_id` (null on legacy bets), `payout_cents` and `resolved_at` (migration 141).
 - `home_gallery_frames` (migration 142) — per player: `(owner_user_id, slot)` PK, `asset_id` (unique per owner), `network` (`devnet | mainnet`), and the asset's `name`, `collection`, `image_hash`, `moderation` copied at framing time; `checked_at` for the daily ownership re-check. See [NFT gallery](NFT_GALLERY.md).
 - `nft_images` (migration 142) — the image proxy: `hash` (40 hex of SHA-256 of the source URL) -> `source_url` read from DAS, `status` (`pending | ok | failed`), `class` (moderation: `ok` = allow-listed collection, `pending` = anything else), `pool` (which counter holds the bytes: `framed` = referenced by a frame, bounded per owner; else the class's LRU pool), `last_served_at` (LRU), and once fetched the re-encoded PNG `bytes`, `width`, `height`. `nft_image_usage` keeps the running byte total per pool, locked in pool order and updated in the same transaction.
+
+## Cabal invite revoke (migration 110, unlock A3)
+
+`cabal_invites.revoked_at timestamptz` (null until the host revokes a pending invite with
+`POST /v1/cabal/invites/{id}/revoke`; set once, never cleared). `guest_user_id` is now also set at
+creation for a targeted invite, and only that player can accept it. The status the API reports is
+derived: `revoked` > `accepted` (`used_at`) > `expired` (`expires_at` passed) > `pending`. Partial index
+`cabal_invites_guest_pending_idx (guest_user_id, host_user_id) WHERE used_at IS NULL AND revoked_at IS
+NULL` serves the guest's list and the duplicate-pending check.
+
+## Chain (unlock WP-C)
+
+- `devnet_drips` (migration 130) — one row per devnet SOL drip from the ops treasury (`POST /v1/devnet/drip`). `wallet_hash` is sha256 of the wallet (no address stored); `UNIQUE (wallet_hash, day)` and `UNIQUE (user_id, day)` cap it at one drip per wallet and per account per UTC day; `signature` is filled after the send. A send the RPC refuses deletes the row. `user_id` is `ON DELETE CASCADE`.
+- `paid_calls` (migration 131) — one row per paid call on the ct_escrow program: fan and creator (user ids and the wallets that seed the Session PDA), `session_id` / `session_pda`, `rate_per_min`, `max_minutes`, `fee_bps`, `deposit` (USDC base units), `status` (`awaiting_payment`, `ringing`, `live`, `settling`, `settled`, `refunding`, `refunded`, `expired`, `closed_unknown`), the four signatures, `opened_at` / `accept_by` (from chain), `accepted_at`, `ended_at`, `end_reason`, and the settle split (`seconds_used`, `minutes_used`, `creator_amount`, `fee_amount`, `refund_amount`). Partial UNIQUE indexes allow one open call per fan and per creator. No Cash columns: the money is on chain. Replaces the cents-based `paid_call_escrow` path, which stays for history.
+- `creator_profiles` gains `enabled`, `rate_per_min_usdc` (250000..50000000), `max_minutes` (1..60), `payout_wallet` and `mode_updated_at` (migration 131; `PUT /v1/creator`).
+
+## Builder projects (migration 1700000120000, unlock WP-B B1)
+
+- `projects` gains `coin_id` (launchpad coin once live), `launched_at`, `paused_at`. `cash_cents` is the treasury (`treasuryCents` on the wire).
+- `project_members` — PK `(project_id, user_id)`, `UNIQUE (project_id, role)`; `role` founder | dev | mod | kol | auditor; `salary_cents_per_week` (0 for the founder), `offer_id`. Replaces `project_hires` as the source of truth (`project_hires` is no longer written; its rows became pending `project_offers` with the same id, so the player consents and the role caps apply).
+- `project_offers` gains a partial unique index: one `pending` offer per `(project_id, to_user_id)`.
+- `project_events` — `event_id` (`proj_*`), `cash_delta_cents` (treasury change), `params` jsonb, `dedupe_key` UNIQUE (payroll week, daily risk roll).
+- `project_work_log` — PK `(project_id, user_id, week_start)`; `source` hq_shift | project_task. The only thing payroll counts as work for that project and week.
+- `project_tasks` — timed project tasks (`started_at`, `ends_at`, `completed_at`); one open task per member and project (partial unique index).
+- `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.
+
+## Sybil jail (migration 111, unlock A5)
+
+`sybil_jail`: one row per game-rolled stay in the Sybil Barn (`jail_id`, `user_id`, `reason_id` from
+`config/sybil_reasons.json`, `jailed_at`, `release_at`, `bail_cents_per_hour` = the player's farm yield at
+jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active while `released_at IS NULL
+AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
+over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
+idempotency ref `sybil-bail:<jail_id>`), a sink.
+
+## VC Row (migration 1700000121000, unlock WP-B B2)
+
+- `vc_offers` — an NPC term sheet: `vc_archetype_id`, `invest_cents`, `equity_bps`, `unlock_days`, `status` pending | accepted | declined | expired, `expires_at`; at most one `pending` per project (partial unique index).
+- `vc_deals` gains `offer_id`, `unlock_at`, `dumped_at`; `status` adds `unlocked` and `dumped` (the board maps legacy `exited` → `unlocked`, `written_off` → `dumped`).
+
+## CT Beef, stake-free (migration 112, unlock A6)
+
+`beef_matches` gains `topic_id` (`config/beef_topics.json`), `invited_user_id` (only that player may
+accept or decline), `phase_ends_at` (end of the current open / active / voting phase), `reward_cents`
+(shown at open), `reward_paid_cents` (paid at close: 0 for a draw or a cap), `votes_challenger` /
+`votes_accepter` (player votes) and `crowd_challenger` / `crowd_accepter` (the NPC arena crowd). Status
+adds `voting` and `expired`; a `closed` match may have no winner (draw); `stake_cents` is `>= 0` and 0 for
+new matches (older stakes are refunded to their owners when those matches end). `beef_votes` (one row per
+voter per match) and `beef_presence` (each participant's talk seconds, emotes and chat lines during the
+live phase, copied from Redis `beef:act:<matchId>` when the match moves to voting).

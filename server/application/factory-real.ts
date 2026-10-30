@@ -118,12 +118,21 @@ function requireEnabled(ctx: AppContext): { config: PublicKey; store: MetadataSt
   return { config: new PublicKey(f.dbcConfig), store };
 }
 
+/**
+ * True when real launches can be served: a DBC partner config and a metadata store are
+ * configured. `GET /config` adds `factory` only when this and the `factory` capability
+ * are both true (application/chain-config.ts).
+ */
+export function realFactoryEnabled(ctx: AppContext): boolean {
+  return Boolean(ctx.config.factory.dbcConfig) && storeOf(ctx) !== null;
+}
+
 // --- Config -----------------------------------------------------------------
 
 /** What the client shows before a launch (fees from the on-chain partner config). */
 export async function getRealFactoryConfig(ctx: AppContext): Promise<Record<string, unknown>> {
   const f = ctx.config.factory;
-  const enabled = Boolean(f.dbcConfig) && storeOf(ctx) !== null;
+  const enabled = realFactoryEnabled(ctx);
   let onChain: Record<string, unknown> | null = null;
   if (enabled) {
     const key = `factory:config:${f.dbcConfig}`;

@@ -30,12 +30,14 @@
  */
 import { runInTransaction } from '../shared/db/uow.js';
 import {
+  ConflictError,
   InsufficientCashError,
   LeverageNotAllowedError,
   NotFoundError,
   ValidationFailedError,
 } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { perpFreezeLeadHours, vcDumpFreezesPerps } from './vc-row.js';
 import { notifyLiquidated } from './push-delivery.js';
 import { recordQuestEvent } from './quests.js';
 import { recordOnboardingEvent } from './onboarding.js';
@@ -150,6 +152,12 @@ export async function openPerp(ctx: AppContext, input: OpenPerpInput): Promise<P
     // B38: reject dead coins
     if (coin.stage === 'dead') {
       throw new ValidationFailedError({ reason: 'coin is dead' });
+    }
+    // A VC Row dump is coming or bleeding on this project coin: no new
+    // positions, so nobody shorts a scheduled house price move (unlock WP-B,
+    // security review H2).
+    if (await vcDumpFreezesPerps(client, input.coinId, new Date(), perpFreezeLeadHours(ctx))) {
+      throw new ConflictError({ reason: 'perp_entry_frozen' });
     }
     const entry = BigInt(coin.price_micros);
     const lev = BigInt(input.leverage);

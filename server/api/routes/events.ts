@@ -1,6 +1,7 @@
 /**
  * Event calendar routes.
  *
+ *   GET  /v1/events/active             (capability worldEvents)
  *   GET  /v1/events/current
  *   GET  /v1/events/upcoming?limit=
  *   GET  /v1/events/:slug
@@ -14,6 +15,8 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
+import { requireCapability } from '../middleware/capability.js';
+import { listActiveWorldEvents } from '../../application/world-events.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import {
   checkIn,
@@ -109,6 +112,14 @@ export const PROGRESS_REFILL_PER_SEC = 0.5;
  * @param app - The Fastify instance.
  */
 export function registerEventRoutes(app: FastifyInstance): void {
+  // Recent world events (evt_*), newest first: last 2 h, at most 50. Registered
+  // before /v1/events/:slug so `active` is never read as a slug.
+  app.get(
+    '/v1/events/active',
+    { preHandler: [requireCapability('worldEvents'), requireAuth] },
+    async (req, reply) => reply.send({ events: await listActiveWorldEvents(req.ctx.redis.main) }),
+  );
+
   app.get('/v1/events/current', { preHandler: requireAuth }, async (req, reply) =>
     reply.send(await listCurrent(req.ctx)),
   );

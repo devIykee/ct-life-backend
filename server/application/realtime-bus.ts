@@ -18,6 +18,7 @@ import type { Redis } from 'ioredis';
 import type { AppContext } from './context.js';
 import { OUTFIT_CHANNEL } from '../realtime/movement.js';
 import { computeOutfit, outfitStateSql } from '../shared/domain/outfit.js';
+import { recordWorldEvent } from './world-events.js';
 
 /** Redis pub/sub channel carrying every targeted message. */
 export const USER_CHANNEL = 'rt:user';
@@ -37,6 +38,10 @@ export type UserMessageType =
   | 'quest_progress'
   | 'career_promoted'
   | 'job_unlocked'
+  // Builder and VC Row (unlock WP-B).
+  | 'hire_offer'
+  | 'project_event'
+  | 'vc_offer'
   | 'event_live'
   | 'event_ended'
   | 'irl_checkin'
@@ -45,7 +50,13 @@ export type UserMessageType =
   | 'jailed'
   | 'released'
   | 'event'
+  | 'x_link_update'
+  | 'cabal_invite'
   | 'prediction_settled'
+  | 'sybil_status'
+  | 'beef_challenge'
+  | 'beef_update'
+  | 'beef_result'
   | 'home_knock';
 
 export interface UserMessage {
@@ -165,7 +176,8 @@ export async function publishToUser(
 }
 
 /**
- * Broadcast a world event to everyone in the city.
+ * Broadcast a world event to everyone in the city, and keep it in the recent
+ * list (server/application/world-events.ts).
  * @param ctx - The application context.
  * @param eventId - One of the contract's evt_* ids.
  * @param params - Optional string params for the client's copy.
@@ -175,7 +187,10 @@ export async function publishWorldEvent(
   eventId: string,
   params: Record<string, string> = {},
 ): Promise<void> {
-  await publishToUser(ctx, '*', 'event', { eventId, params, at: Date.now() });
+  const at = Date.now();
+  await publishToUser(ctx, '*', 'event', { eventId, params, at });
+  // Kept for GET /v1/events/active (last 2 h, newest 50).
+  await recordWorldEvent(ctx.redis.main, { eventId, params, at });
 }
 
 /**

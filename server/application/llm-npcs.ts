@@ -40,6 +40,9 @@ export interface LlmChatInput {
 }
 
 export interface LlmChatResult {
+  /** The stored interaction id; the client reports a reply with it (`npc_reply`). */
+  readonly replyId: string;
+  readonly archetype: LlmArchetype;
   readonly response: string;
   readonly filtered: boolean;
   readonly refused: boolean;
@@ -194,6 +197,7 @@ export async function chatWithLlmNpc(
   });
   // Filter the model's output too.
   const filteredOutput = chatFilter(raw.text);
+  const replyId = uuidv7();
   return runInTransaction(async (dbClient) => {
     const r = await dbClient.query<LlmInteractionDbRow>(
       `INSERT INTO llm_npc_interactions
@@ -203,7 +207,7 @@ export async function chatWithLlmNpc(
        RETURNING interaction_id, user_id, archetype, model, prompt_tokens,
                  completion_tokens, filtered, refused, response_text, created_at`,
       [
-        uuidv7(),
+        replyId,
         input.userId,
         input.archetype,
         model,
@@ -216,6 +220,8 @@ export async function chatWithLlmNpc(
     );
     void r;
     return {
+      replyId,
+      archetype: input.archetype,
       response: filteredOutput.text,
       filtered: filteredOutput.filtered,
       refused: false,
@@ -233,15 +239,18 @@ async function persistRefusal(
   now: Date,
 ): Promise<LlmChatResult> {
   const model = ctx.config.llmModel;
+  const replyId = uuidv7();
   return runInTransaction(async (dbClient) => {
     await dbClient.query(
       `INSERT INTO llm_npc_interactions
          (interaction_id, user_id, archetype, model, prompt_tokens,
           completion_tokens, filtered, refused, response_text, created_at)
        VALUES ($1, $2, $3, $4, 0, 0, false, true, $5, $6)`,
-      [uuidv7(), input.userId, input.archetype, model, reason, now.toISOString()],
+      [replyId, input.userId, input.archetype, model, reason, now.toISOString()],
     );
     return {
+      replyId,
+      archetype: input.archetype,
       response: reason,
       filtered: false,
       refused: true,

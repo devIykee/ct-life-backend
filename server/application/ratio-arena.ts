@@ -1,61 +1,68 @@
 /**
- * Ratio Arena — CT Beef in the Ratio Arena (M7 #5).
+ * CT Beef in the Debate Arena (`ratio_arena`): the match lifecycle (unlock A6).
  *
- * Endpoints:
+ *   POST /v1/beef                 open (topic from beef_topics.json, optional
+ *                                 invited player). Stake-free: stakeCents > 0
+ *                                 is refused, the response says stakeCents 0
+ *                                 and the house-paid rewardCents.
+ *   POST /v1/beef/{id}/accept     the invited player (or anyone, if open)
+ *   POST /v1/beef/{id}/decline    the invited player turns it down
+ *   POST /v1/beef/{id}/cancel     the challenger withdraws while open
+ *   GET  /v1/beef, /v1/beef/{id}  board / my history / one match
+ *   GET  /v1/beef/elo             a player's Elo
+ *   POST /v1/beef/{id}/settle     admin override (beef-close.ts)
  *
- *   POST /v1/beef                        — open a match; posts
- *                                           the challenger's stake.
- *   POST /v1/beef/{id}/accept            — accepter joins; posts
- *                                           the same stake.
- *   POST /v1/beef/{id}/decline           — challenger cancels
- *                                           before accept; refunds
- *                                           the stake.
- *   POST /v1/beef/{id}/settle             — admin sets the winner;
- *                                           pays out (gross - 5%
- *                                           fee), bumps Elo, writes
- *                                           a beef_matches row.
- *   GET  /v1/beef?status=                — list the user's matches
- *                                           (challenger + accepter).
- *   GET  /v1/beef/{id}                   — read a single match.
- *   GET  /v1/beef/elo                    — read the caller's Elo.
+ * Phases: open -(openSeconds)-> expired; accept -> active -(activeSeconds)->
+ * voting -(votingSeconds)-> closed. The phase worker (server/workers/beef.ts,
+ * beef-close.ts) moves them; every action re-checks `phase_ends_at`, so a slow
+ * worker can never let a late accept or vote in.
  *
- * Money:
- *   - Both sides post their stake via a 'beef_stake' ledger row
- *     inside the same SERIALIZABLE UoW that updates the match row.
- *   - On settlement, the winner is credited via 'beef_payout' and
- *     a 5% protocol fee is debited via 'beef_fee' (the loser
- *     keeps 0 net). The 'beef_stake' rows remain; the ledger is
- *     append-only so they don't disappear.
- *   - On decline (status='declined' before accept), the
- *     challenger's stake is refunded via 'beef_stake_refund'.
+ * Money: nobody stakes Cash and Cash never moves between players
+ * (docs/ECONOMY.md). The winner may get a capped reward from the house
+ * (beef-close.ts). Matches opened before this change keep their stake rows;
+ * each stake goes back to its owner when the match ends.
  *
- * Elo:
- *   - Each player has a beef_elo row; starting Elo is 1500
- *     (the standard chess default).
- *   - On settlement: expected = 1 / (1 + 10^((opp - me) / 400));
- *     delta = K * (actual - expected) where K=32; the row's
- *     elo is updated in the same UoW as the match row.
- *   - On a draw (winner_user_id = NULL, but status='closed' is
- *     not used here; draws are not part of M7 #5's MVP, but the
- *     schema supports them).
+ * Over the 300-line soft limit on purpose: it is the one owner of the
+ * beef_matches row shape (columns, API mapping, locking) that beef-close.ts
+ * and beef-votes.ts reuse; splitting it would scatter that contract.
  */
+import type { PoolClient } from 'pg';
 import { runInTransaction } from '../shared/db/uow.js';
-import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import {
+  BlockedError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  SybilJailedError,
+  ValidationFailedError,
+} from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
+import { beefConfig } from './beef-rules.js';
+import { markLive } from './beef-activity.js';
+import { publishBeef, publishBeefChallenge } from './beef-events.js';
+import { isSybilJailed } from './sybil-jail.js';
 
-const STARTING_ELO = 1500;
-const K_FACTOR = 32;
-const FEE_BPS = 500; // 5%
-
-export type BeefStatus = 'open' | 'active' | 'closed' | 'declined' | 'cancelled';
+export type BeefStatus =
+  'open' | 'active' | 'voting' | 'closed' | 'declined' | 'cancelled' | 'expired';
 
 export interface BeefMatchRow {
   readonly matchId: string;
   readonly challengerUserId: string;
+  readonly invitedUserId: string | null;
   readonly accepterUserId: string | null;
+  readonly topicId: string | null;
   readonly stakeCents: number;
+  readonly feeBps: number;
+  readonly rewardCents: number;
+  readonly rewardPaidCents: number | null;
   readonly status: BeefStatus;
+  readonly phaseEndsAt: string | null;
+  /** Player votes; null until closed, so nobody bandwagons. */
+  readonly votes: { challenger: number; accepter: number; total: number } | null;
+  /** The NPC arena crowd; null until closed. */
+  readonly crowdVotes: { challenger: number; accepter: number } | null;
+  readonly myVote: string | null;
   readonly winnerUserId: string | null;
   readonly eloChallengerPre: number | null;
   readonly eloAccepterPre: number | null;
@@ -75,10 +82,12 @@ export interface BeefEloRow {
   readonly draws: number;
 }
 
-interface BeefMatchDbRow {
+export interface BeefMatchDbRow {
   match_id: string;
   challenger_user_id: string;
+  invited_user_id: string | null;
   accepter_user_id: string | null;
+  topic_id: string | null;
   stake_cents: string;
   status: BeefStatus;
   winner_user_id: string | null;
@@ -86,364 +95,53 @@ interface BeefMatchDbRow {
   elo_accepter_pre: number | null;
   elo_challenger_post: number | null;
   elo_accepter_post: number | null;
+  phase_ends_at: Date | null;
+  reward_cents: string;
+  reward_paid_cents: string | null;
+  votes_challenger: number | null;
+  votes_accepter: number | null;
+  crowd_challenger: number | null;
+  crowd_accepter: number | null;
   opened_at: Date;
   accepted_at: Date | null;
   settled_at: Date | null;
 }
 
-interface BeefEloDbRow {
-  user_id: string;
-  elo: number;
-  matches_played: number;
-  wins: number;
-  losses: number;
-  draws: number;
+export const MATCH_COLS = `match_id, challenger_user_id, invited_user_id, accepter_user_id, topic_id,
+  stake_cents, status, winner_user_id, elo_challenger_pre, elo_accepter_pre, elo_challenger_post,
+  elo_accepter_post, phase_ends_at, reward_cents, reward_paid_cents, votes_challenger,
+  votes_accepter, crowd_challenger, crowd_accepter, opened_at, accepted_at, settled_at`;
+
+export type Tx = Pick<PoolClient, 'query'>;
+
+export interface OpenBeefInput {
+  readonly topicId: string;
+  readonly invitedUserId?: string | null;
+  readonly stakeCents?: number;
 }
 
-/**
- * Open a match. The challenger posts the stake; the match is
- * 'open' until the accepter joins.
- */
-export async function openMatch(
-  _ctx: AppContext,
-  challengerUserId: string,
-  stakeCents: number,
-): Promise<BeefMatchRow> {
-  if (!Number.isInteger(stakeCents) || stakeCents <= 0) {
-    throw new ValidationFailedError({ reason: 'stakeCents must be > 0' });
-  }
-  const matchId = uuidv7();
-  const row = await runInTransaction(async (client) => {
-    // Ensure balance row exists, lock it, debit the stake.
-    await client.query(
-      `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 0, 0)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [challengerUserId],
-    );
-    const b = await client.query<{ cash_cents: string }>(
-      `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
-      [challengerUserId],
-    );
-    const cash = BigInt(b.rows[0]?.cash_cents ?? '0');
-    if (cash < BigInt(stakeCents)) {
-      throw new ForbiddenError({ reason: 'insufficient_cash_for_stake' });
-    }
-    await client.query(
-      `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now()
-       WHERE user_id = $2`,
-      [stakeCents, challengerUserId],
-    );
-    await client.query(
-      `INSERT INTO ledger_entries
-         (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-       VALUES ($1, $2, 'cash', 'beef_stake', 'beef_match', $3, $4)`,
-      [challengerUserId, -stakeCents, matchId, `beef-stake:${matchId}:${uuidv7()}`],
-    );
-    const r = await client.query<BeefMatchDbRow>(
-      `INSERT INTO beef_matches (match_id, challenger_user_id, stake_cents, status)
-       VALUES ($1, $2, $3, 'open')
-       RETURNING match_id, challenger_user_id, accepter_user_id, stake_cents,
-                 status, winner_user_id, elo_challenger_pre, elo_accepter_pre,
-                 elo_challenger_post, elo_accepter_post, opened_at, accepted_at,
-                 settled_at`,
-      [matchId, challengerUserId, stakeCents],
-    );
-    return r.rows[0]!;
-  });
-  return rowToMatch(row);
-}
-
-/** Accepter joins; posts the same stake. */
-export async function acceptMatch(
-  _ctx: AppContext,
-  accepterUserId: string,
-  matchId: string,
-): Promise<BeefMatchRow> {
-  return runInTransaction(async (client) => {
-    const r = await client.query<BeefMatchDbRow>(
-      `SELECT match_id, challenger_user_id, accepter_user_id, stake_cents, status,
-              winner_user_id, elo_challenger_pre, elo_accepter_pre,
-              elo_challenger_post, elo_accepter_post, opened_at, accepted_at, settled_at
-       FROM beef_matches WHERE match_id = $1 FOR UPDATE`,
-      [matchId],
-    );
-    const m = r.rows[0];
-    if (!m) throw new NotFoundError({ kind: 'beef_match', id: matchId });
-    if (m.status !== 'open') {
-      throw new ValidationFailedError({ reason: 'match not open' });
-    }
-    if (m.challenger_user_id === accepterUserId) {
-      throw new ValidationFailedError({ reason: 'cannot accept your own match' });
-    }
-    // Ensure balance, lock, debit the accepter's stake.
-    await client.query(
-      `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 0, 0)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [accepterUserId],
-    );
-    const b = await client.query<{ cash_cents: string }>(
-      `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
-      [accepterUserId],
-    );
-    const cash = BigInt(b.rows[0]?.cash_cents ?? '0');
-    const stake = Number(m.stake_cents);
-    if (cash < BigInt(stake)) {
-      throw new ForbiddenError({ reason: 'insufficient_cash_for_stake' });
-    }
-    await client.query(
-      `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now()
-       WHERE user_id = $2`,
-      [stake, accepterUserId],
-    );
-    await client.query(
-      `INSERT INTO ledger_entries
-         (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-       VALUES ($1, $2, 'cash', 'beef_stake', 'beef_match', $3, $4)`,
-      [accepterUserId, -stake, matchId, `beef-stake:${matchId}:${uuidv7()}`],
-    );
-    // Capture pre-match Elo.
-    const challengerElo = await getOrCreateElo(client, m.challenger_user_id);
-    const accepterElo = await getOrCreateElo(client, accepterUserId);
-    const upd = await client.query<BeefMatchDbRow>(
-      `UPDATE beef_matches
-       SET accepter_user_id = $1, status = 'active', accepted_at = now(),
-           elo_challenger_pre = $2, elo_accepter_pre = $3
-       WHERE match_id = $4
-       RETURNING match_id, challenger_user_id, accepter_user_id, stake_cents,
-                 status, winner_user_id, elo_challenger_pre, elo_accepter_pre,
-                 elo_challenger_post, elo_accepter_post, opened_at, accepted_at,
-                 settled_at`,
-      [accepterUserId, challengerElo, accepterElo, matchId],
-    );
-    return rowToMatch(upd.rows[0]!);
-  });
-}
-
-/** Challenger cancels before accept; refunds the stake. */
-export async function declineMatch(
-  _ctx: AppContext,
-  challengerUserId: string,
-  matchId: string,
-): Promise<BeefMatchRow> {
-  return runInTransaction(async (client) => {
-    const r = await client.query<BeefMatchDbRow>(
-      `SELECT match_id, challenger_user_id, accepter_user_id, stake_cents, status,
-              winner_user_id, elo_challenger_pre, elo_accepter_pre,
-              elo_challenger_post, elo_accepter_post, opened_at, accepted_at, settled_at
-       FROM beef_matches WHERE match_id = $1 FOR UPDATE`,
-      [matchId],
-    );
-    const m = r.rows[0];
-    if (!m) throw new NotFoundError({ kind: 'beef_match', id: matchId });
-    if (m.challenger_user_id !== challengerUserId) {
-      throw new ForbiddenError({ reason: 'not the challenger' });
-    }
-    if (m.status !== 'open') {
-      throw new ValidationFailedError({ reason: 'match not open' });
-    }
-    const stake = Number(m.stake_cents);
-    await client.query(
-      `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now()
-       WHERE user_id = $2`,
-      [stake, challengerUserId],
-    );
-    await client.query(
-      `INSERT INTO ledger_entries
-         (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-       VALUES ($1, $2, 'cash', 'beef_stake_refund', 'beef_match', $3, $4)`,
-      [challengerUserId, stake, matchId, `beef-stake-refund:${matchId}:${uuidv7()}`],
-    );
-    const upd = await client.query<BeefMatchDbRow>(
-      `UPDATE beef_matches SET status = 'declined', settled_at = now()
-       WHERE match_id = $1
-       RETURNING match_id, challenger_user_id, accepter_user_id, stake_cents,
-                 status, winner_user_id, elo_challenger_pre, elo_accepter_pre,
-                 elo_challenger_post, elo_accepter_post, opened_at, accepted_at,
-                 settled_at`,
-      [matchId],
-    );
-    return rowToMatch(upd.rows[0]!);
-  });
-}
-
-/**
- * Settle a match. The admin/result endpoint sets the winner and
- * pays out: the winner gets both stakes minus a 5% protocol fee;
- * the loser keeps 0 net. Elo updates per the standard formula
- * with K=32.
- */
-export async function settleMatch(
-  _ctx: AppContext,
-  matchId: string,
-  winnerUserId: string,
-): Promise<BeefMatchRow> {
-  return runInTransaction(async (client) => {
-    const r = await client.query<BeefMatchDbRow>(
-      `SELECT match_id, challenger_user_id, accepter_user_id, stake_cents, status,
-              winner_user_id, elo_challenger_pre, elo_accepter_pre,
-              elo_challenger_post, elo_accepter_post, opened_at, accepted_at, settled_at
-       FROM beef_matches WHERE match_id = $1 FOR UPDATE`,
-      [matchId],
-    );
-    const m = r.rows[0];
-    if (!m) throw new NotFoundError({ kind: 'beef_match', id: matchId });
-    if (m.status !== 'active') {
-      throw new ValidationFailedError({ reason: 'match not active' });
-    }
-    if (m.accepter_user_id === null) {
-      throw new ValidationFailedError({ reason: 'no accepter' });
-    }
-    if (winnerUserId !== m.challenger_user_id && winnerUserId !== m.accepter_user_id) {
-      throw new ValidationFailedError({ reason: 'winner is not a participant' });
-    }
-    const stake = Number(m.stake_cents);
-    const challengerElo = m.elo_challenger_pre ?? STARTING_ELO;
-    const accepterElo = m.elo_accepter_pre ?? STARTING_ELO;
-    const challengerWon = winnerUserId === m.challenger_user_id;
-    // Elo update.
-    const expectedChallenger = 1 / (1 + Math.pow(10, (accepterElo - challengerElo) / 400));
-    const actualChallenger = challengerWon ? 1 : 0;
-    const deltaChallenger = Math.round(K_FACTOR * (actualChallenger - expectedChallenger));
-    const deltaAccepter = -deltaChallenger;
-    const challengerPost = clampElo(challengerElo + deltaChallenger);
-    const accepterPost = clampElo(accepterElo + deltaAccepter);
-    // Payout: gross = 2 * stake, fee = 5% of gross, winner gets
-    // gross - fee. Loser keeps 0 net.
-    const gross = 2 * stake;
-    const fee = Math.floor((gross * FEE_BPS) / 10_000);
-    const payout = gross - fee;
-    // Credit the winner.
-    await client.query(
-      `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 0, 0)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [winnerUserId],
-    );
-    await client.query(
-      `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now()
-       WHERE user_id = $2`,
-      [payout, winnerUserId],
-    );
-    await client.query(
-      `INSERT INTO ledger_entries
-         (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-       VALUES ($1, $2, 'cash', 'beef_payout', 'beef_match', $3, $4)`,
-      [winnerUserId, payout, matchId, `beef-payout:${matchId}:${uuidv7()}`],
-    );
-    // Debit the protocol fee from the winner (5% of gross).
-    if (fee > 0) {
-      await client.query(
-        `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now()
-         WHERE user_id = $2`,
-        [fee, winnerUserId],
-      );
-      await client.query(
-        `INSERT INTO ledger_entries
-           (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-         VALUES ($1, $2, 'cash', 'beef_fee', 'beef_match', $3, $4)`,
-        [winnerUserId, -fee, matchId, `beef-fee:${matchId}:${uuidv7()}`],
-      );
-    }
-    // Update Elo rows.
-    await client.query(
-      `INSERT INTO beef_elo (user_id, elo, matches_played, wins, losses, draws, updated_at)
-       VALUES ($1, $2, 1, $3, $4, 0, now())
-       ON CONFLICT (user_id) DO UPDATE
-         SET elo = EXCLUDED.elo,
-             matches_played = beef_elo.matches_played + 1,
-             wins = beef_elo.wins + $3,
-             losses = beef_elo.losses + $4,
-             updated_at = now()`,
-      [
-        winnerUserId,
-        challengerWon ? challengerPost : accepterPost,
-        challengerWon ? 1 : 0,
-        challengerWon ? 0 : 1,
-      ],
-    );
-    const loserId = challengerWon ? m.accepter_user_id : m.challenger_user_id;
-    await client.query(
-      `INSERT INTO beef_elo (user_id, elo, matches_played, wins, losses, draws, updated_at)
-       VALUES ($1, $2, 1, $3, $4, 0, now())
-       ON CONFLICT (user_id) DO UPDATE
-         SET elo = EXCLUDED.elo,
-             matches_played = beef_elo.matches_played + 1,
-             wins = beef_elo.wins + $3,
-             losses = beef_elo.losses + $4,
-             updated_at = now()`,
-      [
-        loserId,
-        challengerWon ? accepterPost : challengerPost,
-        challengerWon ? 0 : 1,
-        challengerWon ? 1 : 0,
-      ],
-    );
-    // Update match row.
-    const upd = await client.query<BeefMatchDbRow>(
-      `UPDATE beef_matches
-       SET status = 'closed', winner_user_id = $1, settled_at = now(),
-           elo_challenger_post = $2, elo_accepter_post = $3
-       WHERE match_id = $4
-       RETURNING match_id, challenger_user_id, accepter_user_id, stake_cents,
-                 status, winner_user_id, elo_challenger_pre, elo_accepter_pre,
-                 elo_challenger_post, elo_accepter_post, opened_at, accepted_at,
-                 settled_at`,
-      [winnerUserId, challengerPost, accepterPost, matchId],
-    );
-    return rowToMatch(upd.rows[0]!);
-  });
-}
-
-/** Read the caller's Elo (creates the row at 1500 if missing). */
-export async function getElo(_ctx: AppContext, userId: string): Promise<BeefEloRow> {
-  return runInTransaction(async (client) => {
-    const elo = await getOrCreateElo(client, userId);
-    const r = await client.query<BeefEloDbRow>(
-      `SELECT user_id, elo, matches_played, wins, losses, draws FROM beef_elo WHERE user_id = $1`,
-      [userId],
-    );
-    const row = r.rows[0]!;
-    void elo;
-    return {
-      userId: row.user_id,
-      elo: row.elo,
-      matchesPlayed: row.matches_played,
-      wins: row.wins,
-      losses: row.losses,
-      draws: row.draws,
-    };
-  });
-}
-
-async function getOrCreateElo(
-  client: {
-    query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
-  },
-  userId: string,
-): Promise<number> {
-  await client.query(
-    `INSERT INTO beef_elo (user_id, elo, matches_played, wins, losses, draws)
-     VALUES ($1, $2, 0, 0, 0, 0)
-     ON CONFLICT (user_id) DO NOTHING`,
-    [userId, STARTING_ELO],
-  );
-  const r = await client.query(`SELECT elo FROM beef_elo WHERE user_id = $1`, [userId]);
-  const elo = (r.rows[0] as { elo: number } | undefined)?.elo;
-  return elo ?? STARTING_ELO;
-}
-
-function clampElo(elo: number): number {
-  if (elo < 0) return 0;
-  if (elo > 3000) return 3000;
-  return elo;
-}
-
-function rowToMatch(r: BeefMatchDbRow): BeefMatchRow {
+/** @returns The API shape. `myVote` is the viewer's vote, if any. */
+export function rowToMatch(r: BeefMatchDbRow, myVote: string | null = null): BeefMatchRow {
+  const closed = r.status === 'closed';
+  const vc = r.votes_challenger ?? 0;
+  const va = r.votes_accepter ?? 0;
   return {
     matchId: r.match_id,
     challengerUserId: r.challenger_user_id,
+    invitedUserId: r.invited_user_id,
     accepterUserId: r.accepter_user_id,
+    topicId: r.topic_id,
     stakeCents: Number(r.stake_cents),
+    feeBps: 0,
+    rewardCents: Number(r.reward_cents),
+    rewardPaidCents: r.reward_paid_cents === null ? null : Number(r.reward_paid_cents),
     status: r.status,
+    phaseEndsAt: r.phase_ends_at ? r.phase_ends_at.toISOString() : null,
+    votes: closed ? { challenger: vc, accepter: va, total: vc + va } : null,
+    crowdVotes: closed
+      ? { challenger: r.crowd_challenger ?? 0, accepter: r.crowd_accepter ?? 0 }
+      : null,
+    myVote,
     winnerUserId: r.winner_user_id,
     eloChallengerPre: r.elo_challenger_pre,
     eloAccepterPre: r.elo_accepter_pre,
@@ -455,70 +153,404 @@ function rowToMatch(r: BeefMatchDbRow): BeefMatchRow {
   };
 }
 
-export interface BeefMatchListRow {
-  readonly matchId: string;
-  readonly challengerUserId: string;
-  readonly accepterUserId: string | null;
-  readonly winnerUserId: string | null;
-  readonly stakeCents: number;
-  readonly status: string;
-  readonly openedAt: string;
-  readonly acceptedAt: string | null;
-  readonly settledAt: string | null;
+/** The `beef_update` body for a row. */
+export function updatePayload(r: BeefMatchDbRow, now: Date): Record<string, unknown> {
+  return {
+    matchId: r.match_id,
+    status: r.status,
+    challengerUserId: r.challenger_user_id,
+    accepterUserId: r.accepter_user_id,
+    invitedUserId: r.invited_user_id,
+    topicId: r.topic_id,
+    phaseEndsAt: r.phase_ends_at ? r.phase_ends_at.getTime() : null,
+    at: now.getTime(),
+  };
+}
+
+/** Lock and read a match, or 404. */
+export async function lockMatch(c: Tx, matchId: string): Promise<BeefMatchDbRow> {
+  const r = await c.query<BeefMatchDbRow>(
+    `SELECT ${MATCH_COLS} FROM beef_matches WHERE match_id = $1 FOR UPDATE`,
+    [matchId],
+  );
+  if (!r.rows[0]) throw new NotFoundError({ kind: 'beef_match', id: matchId });
+  return r.rows[0];
+}
+
+/** Whether two players are in a block pair (either direction). */
+async function blockedPair(c: Tx, a: string, b: string): Promise<boolean> {
+  const r = await c.query(
+    `SELECT 1 FROM blocks
+      WHERE (blocker_user_id = $1 AND blocked_user_id = $2)
+         OR (blocker_user_id = $2 AND blocked_user_id = $1) LIMIT 1`,
+    [a, b],
+  );
+  return (r.rowCount ?? 0) > 0;
 }
 
 /**
- * List beef matches for the arena board or my own history.
+ * Give an old (pre-A6) stake back to its owner: only what that player actually
+ * paid in for this match (`beef_stake` debits) minus what was already returned
+ * (`beef_stake_refund`). A stake that was never debited is never credited.
+ */
+export async function refundStake(c: Tx, m: BeefMatchDbRow, userId: string): Promise<void> {
+  if (Number(m.stake_cents) <= 0) return;
+  const r = await c.query<{ owed: string | null }>(
+    `SELECT -SUM(delta_cents)::bigint AS owed FROM ledger_entries
+      WHERE user_id = $1 AND ref_type = 'beef_match' AND ref_id = $2
+        AND reason IN ('beef_stake', 'beef_stake_refund')`,
+    [userId, m.match_id],
+  );
+  const owed = Number(r.rows[0]?.owed ?? 0);
+  if (owed <= 0) return;
+  const ref = `beef-stake-refund:${m.match_id}:${userId}`;
+  const done = await c.query(`SELECT 1 FROM ledger_entries WHERE idempotency_ref = $1`, [ref]);
+  if ((done.rowCount ?? 0) > 0) return;
+  await c.query(
+    `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 0, 0)
+     ON CONFLICT (user_id) DO NOTHING`,
+    [userId],
+  );
+  await c.query(
+    `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now() WHERE user_id = $2`,
+    [owed, userId],
+  );
+  await c.query(
+    `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+     VALUES ($1, $2, 'cash', 'beef_stake_refund', 'beef_match', $3, $4)`,
+    [userId, owed, m.match_id, ref],
+  );
+}
+
+/**
+ * Both participants must meet `participants` (account age, level) to open or
+ * accept: a brand-new alt cannot feed its main a win.
+ * `403 FORBIDDEN {reason: too_new | level}`.
+ */
+async function assertParticipantEligible(
+  c: Tx,
+  cfg: ReturnType<typeof beefConfig>,
+  userId: string,
+  now: Date,
+): Promise<void> {
+  const u = await c.query<{ created_at: Date; level: number | null }>(
+    `SELECT u.created_at,
+            GREATEST(s.clout, s.coding, s.trading, s.writing, s.design, s.security) AS level
+       FROM users u LEFT JOIN skills s ON s.user_id = u.id WHERE u.id = $1`,
+    [userId],
+  );
+  const me = u.rows[0];
+  if (
+    !me ||
+    now.getTime() - me.created_at.getTime() < cfg.participants.minAccountAgeHours * 3_600_000
+  ) {
+    throw new ForbiddenError({
+      reason: 'too_new',
+      minAccountAgeHours: cfg.participants.minAccountAgeHours,
+    });
+  }
+  if ((me.level ?? 1) < cfg.participants.minLevel) {
+    throw new ForbiddenError({ reason: 'level', minLevel: cfg.participants.minLevel });
+  }
+}
+
+/**
+ * Open a stake-free match.
+ * @param ctx - The app context.
+ * @param challengerUserId - The caller.
+ * @param input - Topic, optional invited player, optional stakeCents (must be 0).
+ * @param now - Injectable clock.
+ * @returns The new match.
+ */
+export async function openMatch(
+  ctx: AppContext,
+  challengerUserId: string,
+  input: OpenBeefInput,
+  now: Date = new Date(),
+): Promise<BeefMatchRow> {
+  const cfg = beefConfig(ctx);
+  if ((input.stakeCents ?? 0) > 0) throw new ValidationFailedError({ reason: 'stakes_disabled' });
+  if (!cfg.topics.some((t) => t.id === input.topicId)) {
+    throw new ValidationFailedError({ field: 'topicId', reason: 'unknown_topic' });
+  }
+  const invited = input.invitedUserId ?? null;
+  const row = await runInTransaction(async (c) => {
+    await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [challengerUserId]);
+    if (await isSybilJailed(c, challengerUserId, now)) throw new SybilJailedError({});
+    await assertParticipantEligible(c, cfg, challengerUserId, now);
+    if (invited !== null) {
+      if (invited === challengerUserId) {
+        throw new ValidationFailedError({ field: 'invitedUserId', reason: 'self' });
+      }
+      const u = await c.query(`SELECT 1 FROM users WHERE id = $1`, [invited]);
+      if ((u.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'user', id: invited });
+      if (await blockedPair(c, challengerUserId, invited)) throw new BlockedError();
+    }
+    const open = await c.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n FROM beef_matches
+        WHERE challenger_user_id = $1 AND status = 'open' AND phase_ends_at > $2`,
+      [challengerUserId, now.toISOString()],
+    );
+    if ((open.rows[0]?.n ?? 0) >= cfg.limits.maxOpenPerChallenger) {
+      throw new ConflictError({ reason: 'too_many_open', limit: cfg.limits.maxOpenPerChallenger });
+    }
+    const ends = new Date(now.getTime() + cfg.phases.openSeconds * 1000);
+    const r = await c.query<BeefMatchDbRow>(
+      `INSERT INTO beef_matches (match_id, challenger_user_id, invited_user_id, topic_id,
+                                 stake_cents, status, phase_ends_at, reward_cents, opened_at)
+       VALUES ($1, $2, $3, $4, 0, 'open', $5, $6, $7)
+       RETURNING ${MATCH_COLS}`,
+      [
+        uuidv7(),
+        challengerUserId,
+        invited,
+        input.topicId,
+        ends.toISOString(),
+        cfg.reward.winnerCents,
+        now.toISOString(),
+      ],
+    );
+    return r.rows[0]!;
+  });
+  if (invited !== null) {
+    await publishBeefChallenge(ctx, invited, {
+      matchId: row.match_id,
+      fromUserId: challengerUserId,
+      topicId: row.topic_id,
+      stakeCents: 0,
+      rewardCents: Number(row.reward_cents),
+      expiresAt: row.phase_ends_at!.getTime(),
+      at: now.getTime(),
+    });
+  }
+  await publishBeef(ctx, 'beef_update', updatePayload(row, now));
+  return rowToMatch(row);
+}
+
+/**
+ * Accept: the debate goes live. Only the invited player may accept an aimed
+ * challenge; never the challenger, a block pair, a jailed player, or someone
+ * already in a live match.
+ */
+export async function acceptMatch(
+  ctx: AppContext,
+  accepterUserId: string,
+  matchId: string,
+  now: Date = new Date(),
+): Promise<BeefMatchRow> {
+  const cfg = beefConfig(ctx);
+  const row = await runInTransaction(async (c) => {
+    const m = await lockMatch(c, matchId);
+    if (m.status !== 'open' || !m.phase_ends_at || m.phase_ends_at <= now) {
+      throw new ConflictError({ reason: 'not_open', status: m.status });
+    }
+    // A pre-A6 staked challenge can never go live: nobody stakes any more.
+    if (Number(m.stake_cents) > 0) throw new ConflictError({ reason: 'legacy_stake' });
+    if (m.challenger_user_id === accepterUserId) {
+      throw new ValidationFailedError({ reason: 'cannot accept your own match' });
+    }
+    if (m.invited_user_id !== null && m.invited_user_id !== accepterUserId) {
+      throw new ForbiddenError({ reason: 'not_invited' });
+    }
+    if (await blockedPair(c, m.challenger_user_id, accepterUserId)) throw new BlockedError();
+    if (await isSybilJailed(c, accepterUserId, now)) throw new SybilJailedError({});
+    await assertParticipantEligible(c, cfg, accepterUserId, now);
+    await assertParticipantEligible(c, cfg, m.challenger_user_id, now);
+    const busy = await c.query(
+      `SELECT 1 FROM beef_matches
+        WHERE status = 'active' AND (challenger_user_id = ANY($1::uuid[]) OR accepter_user_id = ANY($1::uuid[]))
+        LIMIT 1`,
+      [[m.challenger_user_id, accepterUserId]],
+    );
+    if ((busy.rowCount ?? 0) > 0) throw new ConflictError({ reason: 'in_match' });
+    const challengerElo = await getOrCreateElo(c, m.challenger_user_id, cfg.elo.start);
+    const accepterElo = await getOrCreateElo(c, accepterUserId, cfg.elo.start);
+    const ends = new Date(now.getTime() + cfg.phases.activeSeconds * 1000);
+    const upd = await c.query<BeefMatchDbRow>(
+      `UPDATE beef_matches
+          SET accepter_user_id = $1, status = 'active', accepted_at = $2, phase_ends_at = $3,
+              elo_challenger_pre = $4, elo_accepter_pre = $5
+        WHERE match_id = $6
+        RETURNING ${MATCH_COLS}`,
+      [accepterUserId, now.toISOString(), ends.toISOString(), challengerElo, accepterElo, matchId],
+    );
+    return upd.rows[0]!;
+  });
+  await markLive(
+    ctx.redis.main,
+    row.match_id,
+    [row.challenger_user_id, accepterUserId],
+    cfg.phases.activeSeconds + 60,
+  );
+  await publishBeef(ctx, 'beef_update', updatePayload(row, now));
+  return rowToMatch(row);
+}
+
+/** End an open match as `declined` (the invited player) or `cancelled` (the challenger). */
+async function endOpen(
+  ctx: AppContext,
+  userId: string,
+  matchId: string,
+  to: 'declined' | 'cancelled',
+  now: Date,
+): Promise<BeefMatchRow> {
+  const row = await runInTransaction(async (c) => {
+    const m = await lockMatch(c, matchId);
+    if (to === 'declined' && m.invited_user_id !== userId) {
+      throw new ForbiddenError({ reason: 'not_invited' });
+    }
+    if (to === 'cancelled' && m.challenger_user_id !== userId) {
+      throw new ForbiddenError({ reason: 'not_challenger' });
+    }
+    if (m.status !== 'open' || !m.phase_ends_at || m.phase_ends_at <= now) {
+      throw new ConflictError({ reason: 'not_open', status: m.status });
+    }
+    await refundStake(c, m, m.challenger_user_id);
+    const upd = await c.query<BeefMatchDbRow>(
+      `UPDATE beef_matches SET status = $2, settled_at = $3, phase_ends_at = NULL
+        WHERE match_id = $1 RETURNING ${MATCH_COLS}`,
+      [matchId, to, now.toISOString()],
+    );
+    return upd.rows[0]!;
+  });
+  await publishBeef(ctx, 'beef_update', updatePayload(row, now));
+  return rowToMatch(row);
+}
+
+/** The invited player turns the challenge down. */
+export function declineMatch(
+  ctx: AppContext,
+  userId: string,
+  matchId: string,
+  now: Date = new Date(),
+): Promise<BeefMatchRow> {
+  return endOpen(ctx, userId, matchId, 'declined', now);
+}
+
+/** The challenger withdraws an open challenge. */
+export function cancelMatch(
+  ctx: AppContext,
+  userId: string,
+  matchId: string,
+  now: Date = new Date(),
+): Promise<BeefMatchRow> {
+  return endOpen(ctx, userId, matchId, 'cancelled', now);
+}
+
+/** One match, with the viewer's own vote. */
+export async function getMatch(
+  ctx: AppContext,
+  viewerId: string,
+  matchId: string,
+): Promise<BeefMatchRow> {
+  return ctx.db.withConnection(async (c) => {
+    const r = await c.query<BeefMatchDbRow & { my_vote: string | null }>(
+      `SELECT ${MATCH_COLS},
+              (SELECT voted_user_id FROM beef_votes v WHERE v.match_id = m.match_id
+                 AND v.voter_user_id = $2) AS my_vote
+         FROM beef_matches m WHERE match_id = $1`,
+      [matchId, viewerId],
+    );
+    const row = r.rows[0];
+    if (!row) throw new NotFoundError({ kind: 'beef_match', id: matchId });
+    return rowToMatch(row, row.my_vote);
+  });
+}
+
+export type BeefScope = 'all' | 'mine' | 'open' | 'arena';
+
+/**
+ * The board or my history, newest first, keyset-paged.
  *
- * The spec's invitedUserId and topicId are not columns on beef_matches
- * yet, so they are left out rather than invented.
- * @param ctx - The application context.
- * @param userId - The calling user, used by scope=mine.
- * @param scope - all for the public board, mine for matches I am part of.
- * @param status - Optional status filter.
- * @param limit - Page size.
- * @returns Matches, newest first.
+ *   all    every match
+ *   mine   matches I opened, accepted or am invited to
+ *   open   open, unexpired challenges I could accept (open to all, or aimed at me)
+ *   arena  live and voting matches
+ * @returns `{matches, nextCursor}`; the cursor is opaque.
  */
 export async function listMatches(
   ctx: AppContext,
   userId: string,
-  scope: 'all' | 'mine',
-  status: string | null,
+  scope: BeefScope,
+  status: BeefStatus | null,
   limit: number,
-): Promise<BeefMatchListRow[]> {
-  const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{
-      match_id: string;
-      challenger_user_id: string;
-      accepter_user_id: string | null;
-      winner_user_id: string | null;
-      stake_cents: string;
-      status: string;
-      opened_at: Date;
-      accepted_at: Date | null;
-      settled_at: Date | null;
+  cursor: string | null = null,
+  now: Date = new Date(),
+): Promise<{ matches: BeefMatchRow[]; nextCursor: string | null }> {
+  const after = decodeCursor(cursor);
+  const r = await ctx.db.withConnection((c) =>
+    c.query<BeefMatchDbRow & { my_vote: string | null }>(
+      `SELECT ${MATCH_COLS},
+              (SELECT voted_user_id FROM beef_votes v WHERE v.match_id = m.match_id
+                 AND v.voter_user_id = $1) AS my_vote
+         FROM beef_matches m
+        WHERE ($2::text IS NULL OR status = $2)
+          AND ($3 <> 'mine' OR challenger_user_id = $1 OR accepter_user_id = $1 OR invited_user_id = $1)
+          AND ($3 <> 'open' OR (status = 'open' AND phase_ends_at > $4
+                                AND challenger_user_id <> $1
+                                AND (invited_user_id IS NULL OR invited_user_id = $1)))
+          AND ($3 <> 'arena' OR status IN ('active', 'voting'))
+          AND ($5::timestamptz IS NULL OR (opened_at, match_id) < ($5::timestamptz, $6::uuid))
+        ORDER BY opened_at DESC, match_id DESC
+        LIMIT $7`,
+      [userId, status, scope, now.toISOString(), after?.at ?? null, after?.id ?? null, limit + 1],
+    ),
+  );
+  const rows = r.rows.slice(0, limit);
+  const last = rows[rows.length - 1];
+  return {
+    matches: rows.map((row) => rowToMatch(row, row.my_vote)),
+    nextCursor:
+      r.rows.length > limit && last
+        ? Buffer.from(`${last.opened_at.toISOString()}|${last.match_id}`).toString('base64url')
+        : null,
+  };
+}
+
+function decodeCursor(cursor: string | null): { at: string; id: string } | null {
+  if (!cursor) return null;
+  const [at, id] = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+  if (!at || !id || Number.isNaN(Date.parse(at)) || !/^[0-9a-f-]{36}$/.test(id)) {
+    throw new ValidationFailedError({ field: 'cursor' });
+  }
+  return { at, id };
+}
+
+/** A player's Elo (creates the row at the start rating on first read). */
+export async function getElo(ctx: AppContext, userId: string): Promise<BeefEloRow> {
+  const start = beefConfig(ctx).elo.start;
+  return runInTransaction(async (c) => {
+    await getOrCreateElo(c, userId, start);
+    const r = await c.query<{
+      user_id: string;
+      elo: number;
+      matches_played: number;
+      wins: number;
+      losses: number;
+      draws: number;
     }>(
-      `SELECT match_id, challenger_user_id, accepter_user_id, winner_user_id,
-              stake_cents, status, opened_at, accepted_at, settled_at
-         FROM beef_matches
-        WHERE ($3::text IS NULL OR status = $3)
-          AND ($2::boolean IS FALSE
-               OR challenger_user_id = $1
-               OR accepter_user_id = $1)
-        ORDER BY opened_at DESC
-        LIMIT $4`,
-      [userId, scope === 'mine', status, limit],
+      `SELECT user_id, elo, matches_played, wins, losses, draws FROM beef_elo WHERE user_id = $1`,
+      [userId],
     );
+    const row = r.rows[0]!;
+    return {
+      userId: row.user_id,
+      elo: row.elo,
+      matchesPlayed: row.matches_played,
+      wins: row.wins,
+      losses: row.losses,
+      draws: row.draws,
+    };
   });
-  return r.rows.map((row) => ({
-    matchId: row.match_id,
-    challengerUserId: row.challenger_user_id,
-    accepterUserId: row.accepter_user_id,
-    winnerUserId: row.winner_user_id,
-    stakeCents: Number(row.stake_cents),
-    status: row.status,
-    openedAt: row.opened_at.toISOString(),
-    acceptedAt: row.accepted_at ? row.accepted_at.toISOString() : null,
-    settledAt: row.settled_at ? row.settled_at.toISOString() : null,
-  }));
+}
+
+/** @returns The player's Elo, creating the row at `start`. */
+export async function getOrCreateElo(c: Tx, userId: string, start: number): Promise<number> {
+  await c.query(
+    `INSERT INTO beef_elo (user_id, elo, matches_played, wins, losses, draws)
+     VALUES ($1, $2, 0, 0, 0, 0) ON CONFLICT (user_id) DO NOTHING`,
+    [userId, start],
+  );
+  const r = await c.query<{ elo: number }>(`SELECT elo FROM beef_elo WHERE user_id = $1`, [userId]);
+  return r.rows[0]?.elo ?? start;
 }
