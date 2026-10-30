@@ -1,3 +1,10 @@
+## 2026-10-30 - Factory config hook (unlock C3)
+
+No migration. Dark until the operator adds `factory` to `CAPABILITIES_ON`.
+
+- `GET /config` gains `factory {livePhase: 2, cluster: 'devnet'}`, present only while the `factory` capability is on, the cluster is devnet and real launches are configured (`FACTORY_DBC_CONFIG` and a metadata store).
+- `POST /factory/launch/prepare`, `/confirm` and `/submit` answer `503 CAPABILITY_OFF` while the capability is off (`JAILED` is still checked first). Reads, metadata and the webhook are unchanged.
+
 ## 2026-10-30 - Project HQ: project_hq room (unlock WP-B B3, no migration)
 
 Behind the `projectHq` capability (`503 CAPABILITY_OFF {capability: 'projectHq'}` until it is in `CAPABILITIES_ON`).
