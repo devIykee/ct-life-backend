@@ -12,6 +12,7 @@ import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from '@solana/spl-tok
 import { buildContext, _resetContextForTests, type AppContext } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import type { HeliusClient } from '../shared/solana/helius.js';
+import { _setClusterRpcForTests } from './chain-rpc.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import {
   getPaymentIntent,
@@ -46,6 +47,9 @@ const helius = {
     throw new Error(`unexpected rpc ${method}`);
   },
 } as unknown as HeliusClient;
+
+// Reconciliation reads the deployment's cluster RPC (chain-rpc.ts), not ctx.helius.
+_setClusterRpcForTests(helius);
 
 function ctx(): AppContext {
   return { ...buildContext(), helius };

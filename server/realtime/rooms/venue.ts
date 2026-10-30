@@ -30,6 +30,11 @@
  * Spot sit/stand: spots are looked up from spots.json. SPOT_TAKEN
  * if another player already occupies the spot.
  *
+ * Membership for voice: every joined session is counted in the shared
+ * `ctl:venue:members:<instanceId>` hash (see ../venue-presence.ts), and
+ * `POST /v1/rtc/token {kind: 'venue', id: instanceId}` mints a LiveKit
+ * token only for a user counted there.
+ *
  * NPC brain: each venue runs at 1 Hz. The brain is fed the
  * `VenueCtx` (mood, richest players, recent events) and the room
  * applies the `BrainOutput` to the NpcState for that NPC.
@@ -75,6 +80,13 @@ import {
   type VenuePlacement,
 } from '../movement.js';
 import { BanGuard } from '../ban-guard.js';
+import {
+  clearVenueMembers,
+  markVenueJoin,
+  markVenueLeave,
+  touchVenueMembers,
+  VENUE_MEMBERS_TOUCH_MS,
+} from '../venue-presence.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -164,6 +176,8 @@ export class VenueRoom extends Room {
   private placement: VenuePlacement | null = null;
   /** sessionId -> last presence write; only set once the player has moved here. */
   private posWrittenAt = new Map<string, number>();
+  /** sessionId -> userId, for sessions counted in the voice member hash. */
+  private members = new Map<string, string>();
   private brainClock: SimulatedClock = new SimulatedClock();
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
@@ -175,6 +189,7 @@ export class VenueRoom extends Room {
   override async onDispose(): Promise<void> {
     await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
     await this.ban.detach();
+    if (this.presence) clearVenueMembers(this.presence, this.state.instanceId);
   }
 
   /**
@@ -212,6 +227,10 @@ export class VenueRoom extends Room {
     // 1 Hz NPC tick.
     this.brainClock.set(Date.now());
     this.setSimulationInterval((dt) => this.tickNpcs(dt), 1000);
+    // Keep the voice member hash from expiring under a long-lived room.
+    this.clock.setInterval(() => {
+      if (this.presence) touchVenueMembers(this.presence, this.state.instanceId);
+    }, VENUE_MEMBERS_TOUCH_MS);
   }
 
   /**
@@ -249,6 +268,17 @@ export class VenueRoom extends Room {
     this.syncIsland(player);
 
     this.state.players.set(client.sessionId, player);
+    // Count the session for voice before the client hears it joined, so its
+    // first POST /v1/rtc/token already finds it. Best effort: a Redis error
+    // costs this player venue voice, never the join.
+    if (this.presence) {
+      try {
+        await markVenueJoin(this.presence, this.state.instanceId, userId);
+        this.members.set(client.sessionId, userId);
+      } catch {
+        // Presence is best effort.
+      }
+    }
     // Welcome the joiner.
     const p = this.placement;
     client.send('welcome', {
@@ -270,11 +300,38 @@ export class VenueRoom extends Room {
     // Hand the street rooms the spot the player walked out from.
     if (player && this.posWrittenAt.has(client.sessionId)) this.writePos(player, Date.now());
     this.posWrittenAt.delete(client.sessionId);
+    const member = this.members.get(client.sessionId);
+    if (member !== undefined && this.presence) {
+      this.members.delete(client.sessionId);
+      const instanceId = this.state.instanceId;
+      void markVenueLeave(this.presence, instanceId, member)
+        .then((left) => (left === 0 ? this.removeFromVoice(instanceId, member) : undefined))
+        .catch(() => {
+          // Best effort; the hash expires on its own and the token is short.
+        });
+    }
     this.state.players.delete(client.sessionId);
     this.anchors.delete(client.sessionId);
     this.moveBuckets.delete(client.sessionId);
     this.lastEmoteAt.delete(client.sessionId);
     this.lastSayAt.delete(client.sessionId);
+  }
+
+  /**
+   * Disconnect a user who has left this instance from its LiveKit rooms, so
+   * leaving (or being banned out) also ends what they hear. LiveKit checks a
+   * token only on connect, so without this a connected listener would stay.
+   * @param instanceId - The venue room id.
+   * @param userId - The LiveKit identity.
+   */
+  protected async removeFromVoice(instanceId: string, userId: string): Promise<void> {
+    const { buildContext } = await import('../../application/context.js');
+    const ctx = buildContext();
+    await Promise.all(
+      (['venue', 'proximity'] as const).map((kind) =>
+        ctx.livekit.removeParticipant(ctx, { kind, id: instanceId, identity: userId }),
+      ),
+    );
   }
 
   // --- Message handlers -------------------------------------------

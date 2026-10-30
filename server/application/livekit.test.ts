@@ -238,6 +238,30 @@ describe('livekit room service client', () => {
       proto.updateParticipant = original;
     }
   });
+
+  it('removeParticipant disconnects from the venue room and swallows 404', async () => {
+    const { RoomServiceClient } = await import('livekit-server-sdk');
+    const proto = RoomServiceClient.prototype as unknown as {
+      removeParticipant: (...args: unknown[]) => Promise<void>;
+    };
+    const original = proto.removeParticipant;
+    const spy = vi.fn(async () => undefined);
+    proto.removeParticipant = spy;
+    try {
+      const ctx = makeContext();
+      const svc = createLiveKitService();
+      await svc.removeParticipant(ctx, { kind: 'venue', id: 'inst-1', identity: 'u-1' });
+      expect(spy.mock.calls[0]).toEqual(['venue:inst-1', 'u-1']);
+      proto.removeParticipant = vi.fn(async () => {
+        throw new Error('participant not found');
+      });
+      await expect(
+        svc.removeParticipant(ctx, { kind: 'proximity', id: 'inst-1', identity: 'u-1' }),
+      ).resolves.toBeUndefined();
+    } finally {
+      proto.removeParticipant = original;
+    }
+  });
 });
 
 describe('canonicalRoomName', () => {

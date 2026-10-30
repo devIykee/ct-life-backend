@@ -24,6 +24,11 @@
       "id": "evt_ore_motherlode",
       "label": "ORE Motherlode",
       "effect": "city event; News Reader shouts the number"
+    },
+    {
+      "id": "evt_project_launch",
+      "label": "Project Launch",
+      "effect": "a player project's token lists on the in-game launchpad; params {projectId, name, ticker, coinId}"
     }
   ]
 }

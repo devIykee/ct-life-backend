@@ -17,6 +17,7 @@ import { buildContext, _resetContextForTests, type AppContext } from './context.
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { HeliusClient } from '../shared/solana/helius.js';
+import { _setClusterRpcForTests } from './chain-rpc.js';
 import type { S3 } from '../shared/s3/client.js';
 import type { IntentResult } from './topup.js';
 import {
@@ -72,6 +73,9 @@ const helius = {
     throw new Error(`unexpected rpc ${method}`);
   },
 } as unknown as HeliusClient;
+
+// Reconciliation reads the deployment's cluster RPC (chain-rpc.ts), not ctx.helius.
+_setClusterRpcForTests(helius);
 
 function ctx(): AppContext {
   return { ...buildContext(), s3, helius };
