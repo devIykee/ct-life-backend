@@ -287,6 +287,8 @@ Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 ## Unlock D: homes, markets, NFT gallery (migrations 140-149)
 
 - `home_settings` (migration 140) — one row per player: `visitors` (`open | followers | closed`, default `open`), `updated_at`. Per player, not per lease, so it survives `POST /homes/move`. No row means `open`. Read by `POST /homes/{ownerId}/visit` and the `home` room before the door check.
+- `prediction_markets` (migration 141) — server-generated Prediction Pit markets: `kind` (`sim | crypto | event | mirror`), `question_key`, `params` (client strings), `outcomes`, `horizon`, `opens_at` / `closes_at` (bets) / `resolves_at`, `source`, `payout_bps`, stake limits, `status` (`open | closed | resolved | void`). Recorded at open: `strike_micros` (crypto) and `basis` (for sim and event markets the sealed draw's secret and its sha256 commitment; the secret is server-only until resolution). Recorded once at resolution: `resolved_value_micros`, `resolved_outcome_id`, `resolved_at` (a CHECK ties `resolved` to an outcome). See [Prediction Pit](PREDICTIONS.md).
+- `predictions` gains `market_id` (null on legacy bets), `payout_cents` and `resolved_at` (migration 141).
 
 ## Cabal invite revoke (migration 110, unlock A3)
 
@@ -300,6 +302,8 @@ NULL` serves the guest's list and the duplicate-pending check.
 ## Chain (unlock WP-C)
 
 - `devnet_drips` (migration 130) — one row per devnet SOL drip from the ops treasury (`POST /v1/devnet/drip`). `wallet_hash` is sha256 of the wallet (no address stored); `UNIQUE (wallet_hash, day)` and `UNIQUE (user_id, day)` cap it at one drip per wallet and per account per UTC day; `signature` is filled after the send. A send the RPC refuses deletes the row. `user_id` is `ON DELETE CASCADE`.
+- `paid_calls` (migration 131) — one row per paid call on the ct_escrow program: fan and creator (user ids and the wallets that seed the Session PDA), `session_id` / `session_pda`, `rate_per_min`, `max_minutes`, `fee_bps`, `deposit` (USDC base units), `status` (`awaiting_payment`, `ringing`, `live`, `settling`, `settled`, `refunding`, `refunded`, `expired`, `closed_unknown`), the four signatures, `opened_at` / `accept_by` (from chain), `accepted_at`, `ended_at`, `end_reason`, and the settle split (`seconds_used`, `minutes_used`, `creator_amount`, `fee_amount`, `refund_amount`). Partial UNIQUE indexes allow one open call per fan and per creator. No Cash columns: the money is on chain. Replaces the cents-based `paid_call_escrow` path, which stays for history.
+- `creator_profiles` gains `enabled`, `rate_per_min_usdc` (250000..50000000), `max_minutes` (1..60), `payout_wallet` and `mode_updated_at` (migration 131; `PUT /v1/creator`).
 
 ## Builder projects (migration 1700000120000, unlock WP-B B1)
 
@@ -310,8 +314,6 @@ NULL` serves the guest's list and the duplicate-pending check.
 - `project_work_log` — PK `(project_id, user_id, week_start)`; `source` hq_shift | project_task. The only thing payroll counts as work for that project and week.
 - `project_tasks` — timed project tasks (`started_at`, `ends_at`, `completed_at`); one open task per member and project (partial unique index).
 - `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.
-- `prediction_markets` (migration 141) — server-generated Prediction Pit markets: `kind` (`sim | crypto | event | mirror`), `question_key`, `params` (client strings), `outcomes`, `horizon`, `opens_at` / `closes_at` (bets) / `resolves_at`, `source`, `payout_bps`, stake limits, `status` (`open | closed | resolved | void`). Recorded at open: `strike_micros` (crypto) and `basis` (for sim and event markets the sealed draw's secret and its sha256 commitment; the secret is server-only until resolution). Recorded once at resolution: `resolved_value_micros`, `resolved_outcome_id`, `resolved_at` (a CHECK ties `resolved` to an outcome). See [Prediction Pit](PREDICTIONS.md).
-- `predictions` gains `market_id` (null on legacy bets), `payout_cents` and `resolved_at` (migration 141).
 
 ## Sybil jail (migration 111, unlock A5)
 
@@ -321,6 +323,3 @@ jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active wh
 AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
 over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
 idempotency ref `sybil-bail:<jail_id>`), a sink.
-
-- `paid_calls` (migration 131) — one row per paid call on the ct_escrow program: fan and creator (user ids and the wallets that seed the Session PDA), `session_id` / `session_pda`, `rate_per_min`, `max_minutes`, `fee_bps`, `deposit` (USDC base units), `status` (`awaiting_payment`, `ringing`, `live`, `settling`, `settled`, `refunding`, `refunded`, `expired`, `closed_unknown`), the four signatures, `opened_at` / `accept_by` (from chain), `accepted_at`, `ended_at`, `end_reason`, and the settle split (`seconds_used`, `minutes_used`, `creator_amount`, `fee_amount`, `refund_amount`). Partial UNIQUE indexes allow one open call per fan and per creator. No Cash columns: the money is on chain. Replaces the cents-based `paid_call_escrow` path, which stays for history.
-- `creator_profiles` gains `enabled`, `rate_per_min_usdc` (250000..50000000), `max_minutes` (1..60), `payout_wallet` and `mode_updated_at` (migration 131; `PUT /v1/creator`).
