@@ -1,9 +1,11 @@
 /**
  * District rollover worker (M7 #1).
  *
- * Runs daily at 00:05 UTC. The worker rolls the day's district
- * scores and flips ownership when a new tribe outscores the
- * current one. `rollDistrictRollover(ctx, dayDate, now)` is
+ * Runs daily at 00:05 UTC. The worker rolls the scores of the day
+ * that just ended (`dayToRoll`) and flips ownership when a new tribe
+ * outscores the current one. The activity query lives in
+ * server/application/district-standings.ts, so
+ * `GET /districts/:id/standings` shows live the numbers this writes. `rollDistrictRollover(ctx, dayDate, now)` is
  * exported so tests can drive the rollover without spinning up
  * BullMQ. The BullMQ handler (`handleDistrictRollover`) wires it
  * to the `jobs:district-rollover` queue.
@@ -22,45 +24,13 @@
  */
 import type { AppContext } from '../application/context.js';
 import { rollDailyDistrict } from '../application/tribes.js';
+import { districtActivity } from '../application/district-standings.js';
 
-export interface ActivityRow {
-  district_id: string;
-  tribe_id: string;
-  post_count: number;
-}
-
-/** Most posts one player can add to a district's score per day. */
-export const MAX_POSTS_PER_PLAYER_PER_DAY = 3;
-
-/**
- * The day's activity per district and tribe: player posts and check-ins (not
- * server-written career posts or NPC authors), each player counting at most
- * MAX_POSTS_PER_PLAYER_PER_DAY times per district, so one spammer cannot carry
- * a tribe. feed_posts.district_slug is set from the server's position hash
- * when a player posts (migration 102).
- * @param ctx - The app context.
- * @param dayDate - The UTC day, YYYY-MM-DD.
- * @returns One row per district and tribe with activity.
- */
-export async function districtActivity(ctx: AppContext, dayDate: string): Promise<ActivityRow[]> {
-  const r = await ctx.db.withConnection((c) =>
-    c.query<ActivityRow>(
-      `SELECT d.district_id, ch.tribe_id, SUM(LEAST(per_user.n, $2))::int AS post_count
-         FROM (SELECT p.user_id, p.district_slug, COUNT(*) AS n
-                 FROM feed_posts p
-                WHERE p.district_slug IS NOT NULL
-                  AND (p.kind IS NULL OR p.kind IN ('player', 'checkin'))
-                  AND p.created_at >= $1::timestamptz
-                  AND p.created_at < $1::timestamptz + interval '1 day'
-                GROUP BY p.user_id, p.district_slug) per_user
-         JOIN districts d ON d.slug = per_user.district_slug
-         JOIN characters ch ON ch.user_id = per_user.user_id
-        GROUP BY d.district_id, ch.tribe_id`,
-      [`${dayDate}T00:00:00Z`, MAX_POSTS_PER_PLAYER_PER_DAY],
-    ),
-  );
-  return r.rows;
-}
+export {
+  MAX_POSTS_PER_PLAYER_PER_DAY,
+  districtActivity,
+  type ActivityRow,
+} from '../application/district-standings.js';
 
 /**
  * Roll the daily district scores + flip ownership.
@@ -97,6 +67,19 @@ export async function rollDistrictRollover(
 }
 
 /**
+ * The day a run at `now` should roll: the day that just ended. The job fires at
+ * 00:05 UTC, so rolling "today" would score only five minutes of activity and
+ * hand every district to its default holder.
+ * @param now - When the job runs.
+ * @returns YYYY-MM-DD (UTC) of the previous day.
+ */
+export function dayToRoll(now: Date): string {
+  const d = new Date(now.getTime());
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
  * BullMQ handler wrapper. The worker's main.ts wires this to the
  * `jobs:district-rollover` queue (cron `5 0 * * *`).
  */
@@ -104,6 +87,5 @@ export async function handleDistrictRollover(
   job: { data: { dayDate?: string } },
   ctx: AppContext,
 ): Promise<{ changed: number }> {
-  const dayDate = job.data.dayDate ?? new Date().toISOString().slice(0, 10);
-  return rollDistrictRollover(ctx, dayDate);
+  return rollDistrictRollover(ctx, job.data.dayDate ?? dayToRoll(new Date()));
 }

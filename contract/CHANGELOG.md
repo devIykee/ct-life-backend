@@ -1,3 +1,11 @@
+## 2026-10-30 - League: district standings and season results (unlock A2)
+
+No migration. Capabilities `districtStandings` and `seasonResults` (`503 CAPABILITY_OFF` until each is in `CAPABILITIES_ON`).
+
+- New `GET /districts/{id}/standings` -> `{districtId, dayDate, rolloverAt, standings: [{tribeId, score}] (highest first), myTribeId, myContribution}`. Live for today with the rollover's own formula (default holder's base score + player posts/check-ins, at most 3 per player). `myContribution` is null for `anon`. `404 NOT_FOUND` for an unknown district.
+- New `GET /me/season-results?seasonId=` -> `{seasonId, leagueId, finalRank, outcome: promoted|relegated|stayed, toLeagueId, rewards: []}`. Latest finished season when `seasonId` is omitted. `404 NOT_FOUND` when there is none, `400` for a malformed id. `rewards` are read from the ledger (`season_reward`); nothing pays one yet.
+- Fix: the daily district rollover (00:05 UTC) now rolls the day that just ended. It used to roll the new day, which had five minutes of activity, so every district went back to its default holder.
+
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
 Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.
