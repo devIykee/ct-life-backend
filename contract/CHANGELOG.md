@@ -1,3 +1,10 @@
+## 2026-10-30 - Recent world events: GET /events/active (unlock A1)
+
+No migration. Capability `worldEvents` (off until the operator adds it to `CAPABILITIES_ON`; `503 CAPABILITY_OFF` until then).
+
+- `GET /events/active` now answers `{events: [{eventId, at, params}]}`: the `evt_*` world events broadcast in the last 2 hours, newest first, at most 50; `at` is epoch ms (the same value as the realtime `event` message). It used to fall into `GET /events/{slug}` and answer 404. `401` without a token.
+- Every world event the server broadcasts is also kept in Redis (`world:events`, trimmed to 2 h and 50 on each write). Market-mood events are kept once per refresh even with several city shards.
+
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
 Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.

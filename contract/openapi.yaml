@@ -5337,16 +5337,29 @@ paths:
     get:
       tags: [liveops]
       operationId: getEventsActive
-      summary: Server events currently active.
+      summary: Recent world events (rugs, launches, liquidations, mood swings).
+      description: >-
+        The `evt_*` world events the server broadcast (realtime `event`) in the last 2 hours,
+        newest first, at most 50. `at` is epoch ms. Unknown `eventId`s may appear as the
+        registry grows; render them generically. Capability `worldEvents`: `503 CAPABILITY_OFF`
+        while it is off.
       x-phase: 1
       responses:
         '200':
           description: Events
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/ServerEvent' }
+              schema: { $ref: '#/components/schemas/WorldEventList' }
+              example:
+                events:
+                  - { eventId: evt_coin_launch, at: 1761795600000, params: { ticker: 'MOON' } }
+                  - {
+                      eventId: evt_rug,
+                      at: 1761795000000,
+                      params: { coinId: 'c1', ticker: 'FROG' },
+                    }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /meta/current:
     get:
@@ -9737,3 +9750,18 @@ components:
         targetId: { type: string }
         reasonId: { type: string }
         createdAt: { type: string, format: date-time }
+    WorldEventList:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/WorldEvent' }
+    WorldEvent:
+      type: object
+      required: [eventId, at, params]
+      properties:
+        eventId: { type: string, pattern: '^evt_[a-z0-9_]+$', description: 'From ids/events.json.' }
+        at: { type: integer, description: Epoch ms when the server broadcast it. }
+        params: { type: object, additionalProperties: { type: string } }
