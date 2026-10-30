@@ -128,5 +128,11 @@
     "dumpStepChanceBps": 4000,
     "maxBleedHours": 12,
     "perpFreezeLeadHours": 24
+  },
+  "hq": {
+    "_note": "Project HQ (B3): a project_hq room per project with the hackathon_house layout. Members always enter; visitors only while a member is inside. A member who stays shiftMinutes in one visit logs that week as worked (hq_shift).",
+    "maxClients": 12,
+    "shiftMinutes": 10,
+    "ticketTtlSeconds": 300
   }
 }

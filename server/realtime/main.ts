@@ -22,6 +22,7 @@ import { VideoCallRoom } from './rooms/video-call.js';
 import { HomeRoom } from './rooms/home.js';
 import { StreetRoom } from './rooms/street.js';
 import { VehiclesRoom } from './rooms/vehicles.js';
+import { ProjectHqRoom } from './rooms/project-hq.js';
 import { createRedis } from '../shared/redis/client.js';
 import { buildContext } from '../application/context.js';
 import { renderProcessMetrics, startEventLoopMonitor } from '../shared/infra/process-metrics.js';
@@ -95,6 +96,8 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
     maxClients: 8,
     filterBy: () => true,
   });
+  // One HQ per Builder project (hackathon_house layout; roomId hq_<projectId>).
+  gameServer.define('project_hq', ProjectHqRoom).filterBy(['projectId']);
   await gameServer.listen(port);
   answerOpsPaths(httpServer, () => buildContext().db.pool);
   return {

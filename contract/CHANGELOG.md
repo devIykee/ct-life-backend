@@ -1,3 +1,12 @@
+## 2026-10-30 - Project HQ: project_hq room (unlock WP-B B3, no migration)
+
+Behind the `projectHq` capability (`503 CAPABILITY_OFF {capability: 'projectHq'}` until it is in `CAPABILITIES_ON`).
+
+- New `POST /projects/{id}/hq/visit` → `{roomName: 'project_hq', roomId: 'hq_<projectId>', venueId: 'hackathon_house', projectId, expiresAt}`. 403 `FORBIDDEN {reason: 'members_only'}` for a non-member while no member is inside; 404; 409 `wrong_status` (rugged).
+- New realtime room `project_hq` (one per project, `filterBy(['projectId'])`, max 12): a `venue` room on the `hackathon_house` layout with the same messages and schema. Join with `joinOrCreate('project_hq', {projectId, token})`. Members always enter; visitors only while a member is inside, and they are shown out (4403 `members_only`) when the last member leaves.
+- HQ shift: a non-founder member who stays 10 minutes in one visit logs the week as worked for payroll (`project_work_log` source `hq_shift`), like a finished project task.
+- `projects.json` gains `hq {maxClients, shiftMinutes, ticketTtlSeconds}`.
+
 ## 2026-10-30 - VC Row: NPC term sheets, deals, dump at unlock (unlock WP-B B2, migration 1700000121000)
 
 Behind the `vc` capability (`503 CAPABILITY_OFF {capability: 'vc'}` until it is in `CAPABILITIES_ON`). No VC Cash ever reaches a player.
