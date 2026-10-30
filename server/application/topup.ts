@@ -39,6 +39,7 @@ import {
   NotFoundError,
   ValidationFailedError,
   PaymentExpiredError,
+  ConflictError,
 } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
 import { runInTransaction } from '../shared/db/uow.js';
@@ -51,9 +52,14 @@ import {
   Connection,
 } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { assertCapabilityOn } from './capabilities.js';
+import { assertDevnetChain, clusterRpc } from './chain-rpc.js';
+import { publishToUser } from './realtime-bus.js';
+import { grantSeasonPass, SEASON_PASS_PRICE_USDC_BASE } from './season-pass.js';
+import { currentSeason, hasLivePass } from './season-tracks.js';
 
 export type Currency = 'USDC' | 'SOL' | 'SKR' | 'ORE';
-export type TopupSku = 'ramen' | 'bag' | 'whale' | 'cabal' | 'custom';
+export type TopupSku = 'ramen' | 'bag' | 'whale' | 'cabal' | 'custom' | 'season_pass';
 export type TopupKind = 'topup' | 'cosmetic' | 'ad' | 'season_pass';
 
 interface TopupPack {
@@ -122,6 +128,17 @@ export async function createTopupIntent(
   input: CreateIntentInput,
 ): Promise<IntentResult> {
   const cfg = ctx.configCache.load<EconomyConfig>('economy');
+
+  // The season pass has its own sku, price and settlement (no Cash).
+  if (input.kind === 'season_pass' || input.sku === 'season_pass') {
+    if (input.kind !== 'season_pass' || input.sku !== 'season_pass') {
+      throw new ValidationFailedError({ reason: 'sku_kind_mismatch' });
+    }
+    if (input.currency !== 'USDC') {
+      throw new ValidationFailedError({ reason: 'season_pass_usdc_only' });
+    }
+    return createSeasonPassIntent(ctx, input.userId);
+  }
 
   // B19 fix: Reject 'custom' until pricing rules are defined
   if (input.sku === 'custom') {
@@ -422,8 +439,11 @@ export async function markSubmitted(
 
 export type ReconcileOutcome = 'confirmed' | 'pending' | 'expired' | 'failed' | 'unchanged';
 
-/** Intent kinds settled from chain data: top-ups credit Cash, ads advance a booking. */
-const RECONCILED_KINDS: readonly string[] = ['topup', 'ad'];
+/**
+ * Intent kinds settled from chain data: top-ups credit Cash, ads advance a booking,
+ * season passes grant the pass (no Cash).
+ */
+const RECONCILED_KINDS: readonly string[] = ['topup', 'ad', 'season_pass'];
 
 /** How long a reported-but-unfinalized payment keeps being reconciled. */
 const RECONCILE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
@@ -477,7 +497,8 @@ export async function reconcilePaymentIntent(
   const candidates = new Set<string>();
   if (signatureHint) candidates.add(signatureHint);
   if (intent.signature) candidates.add(intent.signature);
-  const history = await ctx.helius.rpc<Array<{ signature: string; err: unknown }> | null>(
+  const rpc = clusterRpc(ctx);
+  const history = await rpc.rpc<Array<{ signature: string; err: unknown }> | null>(
     'getSignaturesForAddress',
     [intent.reference, { commitment: 'finalized', limit: 20 }],
   );
@@ -485,7 +506,7 @@ export async function reconcilePaymentIntent(
 
   let reportedFailed = false;
   for (const signature of candidates) {
-    const raw = await ctx.helius.rpc<unknown>('getTransaction', [
+    const raw = await rpc.rpc<unknown>('getTransaction', [
       signature,
       { encoding: 'jsonParsed', commitment: 'finalized', maxSupportedTransactionVersion: 0 },
     ]);
@@ -498,7 +519,7 @@ export async function reconcilePaymentIntent(
       memo: intent.memo,
       amount_base_units: intent.amount,
     });
-    if (error === null) return settleVerifiedIntent(intent.intent_id, signature);
+    if (error === null) return settleVerifiedIntent(ctx, intent.intent_id, signature);
     if (signature === intent.signature && error === 'transaction_failed') reportedFailed = true;
   }
 
@@ -532,18 +553,21 @@ export async function reconcilePaymentIntent(
 }
 
 async function settleVerifiedIntent(
+  ctx: AppContext,
   intentId: string,
   signature: string,
 ): Promise<ReconcileOutcome> {
-  return runInTransaction(async (client) => {
+  let passFor: string | null = null;
+  const outcome = await runInTransaction(async (client): Promise<ReconcileOutcome> => {
     const r = await client.query<{
       user_id: string;
       kind: string;
       status: string;
       cash_cents: string;
       bonus_bps: number;
+      created_at: Date;
     }>(
-      `SELECT user_id, kind, status, cash_cents, bonus_bps FROM payment_intents
+      `SELECT user_id, kind, status, cash_cents, bonus_bps, created_at FROM payment_intents
        WHERE intent_id = $1 FOR UPDATE`,
       [intentId],
     );
@@ -555,7 +579,14 @@ async function settleVerifiedIntent(
        WHERE signature = $1 AND intent_id <> $2 AND status <> 'confirmed'`,
       [signature, intentId],
     );
-    if (intent.kind === 'ad') {
+    if (intent.kind === 'season_pass') {
+      // The pass for the season the intent was bought in. No Cash moves.
+      const season = currentSeason(intent.created_at);
+      if (season !== null) {
+        await grantSeasonPass(client, intent.user_id, season);
+        passFor = intent.user_id;
+      }
+    } else if (intent.kind === 'ad') {
       // Paid in time: on to review. Paid after the hold lapsed or the owner
       // cancelled: the money is owed back.
       await client.query(
@@ -590,10 +621,63 @@ async function settleVerifiedIntent(
     );
     return 'confirmed';
   });
+  if (passFor !== null) {
+    await publishToUser(ctx, passFor, 'payment_confirmed', {
+      intentId,
+      cashCents: 0,
+      kind: 'season_pass',
+    });
+  }
+  return outcome;
 }
 
 /**
- * Poller pass: reconcile open top-up and ad intents (pending, or expired within the
+ * Create a season-pass payment intent (unlock C1): 5 USDC to the treasury, same
+ * Solana Pay shape as a top-up. Settlement grants the pass for the current season and
+ * never credits Cash.
+ *
+ * @param ctx - The app context.
+ * @param userId - The buyer.
+ * @returns The intent (amount '5000000', unsigned v0 `tx`, `solanaPayUrl`).
+ * @throws CapabilityOffError while `seasonPassPurchase` is off or off devnet.
+ * @throws ConflictError `already_active` with a live pass, `no_active_season`, or
+ *   `intent_pending` while an earlier signed intent is still being reconciled.
+ */
+export async function createSeasonPassIntent(
+  ctx: AppContext,
+  userId: string,
+): Promise<IntentResult> {
+  assertCapabilityOn(ctx, 'seasonPassPurchase');
+  assertDevnetChain(ctx, 'seasonPassPurchase');
+  const now = new Date();
+  const season = currentSeason(now);
+  if (season === null) throw new ConflictError({ reason: 'no_active_season' });
+  const blocked = await ctx.db.withConnection(async (c) => {
+    if (await hasLivePass(c, userId, now)) return { reason: 'already_active' };
+    const p = await c.query<{ intent_id: string }>(
+      `SELECT intent_id FROM payment_intents
+       WHERE user_id = $1 AND kind = 'season_pass' AND status = 'pending' AND signature IS NOT NULL
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId],
+    );
+    const pending = p.rows[0];
+    return pending ? { reason: 'intent_pending', intentId: pending.intent_id } : null;
+  });
+  if (blocked !== null) throw new ConflictError(blocked);
+  const prepared = await prepareUsdcIntent(ctx, {
+    userId,
+    kind: 'season_pass',
+    amountBaseUnits: SEASON_PASS_PRICE_USDC_BASE,
+    cashCents: 0,
+    bonusBps: 0,
+    message: `CT Life ${season.name} pass`,
+  });
+  await ctx.db.withConnection((c) => insertPreparedIntent(c, prepared));
+  return prepared.result;
+}
+
+/**
+ * Poller pass: reconcile open top-up, ad and season-pass intents (pending, or expired within the
  * reconcile window in case a payment landed late) and expire the rest.
  * Returns per-outcome counts.
  */
@@ -604,7 +688,7 @@ export async function reconcileOpenIntents(
   const r = await ctx.db.withConnection((c) =>
     c.query<{ intent_id: string }>(
       `SELECT intent_id FROM payment_intents
-       WHERE kind IN ('topup', 'ad')
+       WHERE kind IN ('topup', 'ad', 'season_pass')
          AND (status = 'pending' OR (status = 'expired' AND expires_at > $1))
        ORDER BY created_at ASC LIMIT $2`,
       [new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString(), limit],
@@ -628,8 +712,8 @@ export async function reconcileOpenIntents(
 }
 
 /**
- * Expire unsigned intents of other kinds past their expires_at. Top-up and
- * ad intents expire only in reconcileOpenIntents, after a chain check.
+ * Expire unsigned intents of other kinds past their expires_at. Top-up, ad and
+ * season-pass intents expire only in reconcileOpenIntents, after a chain check.
  */
 export async function expirePendingIntents(ctx: AppContext): Promise<number> {
   return ctx.db.withConnection(async (c) => {
@@ -637,7 +721,7 @@ export async function expirePendingIntents(ctx: AppContext): Promise<number> {
       `WITH expired AS (
          UPDATE payment_intents
          SET status = 'expired'
-         WHERE status = 'pending' AND kind NOT IN ('topup', 'ad') AND signature IS NULL
+         WHERE status = 'pending' AND kind NOT IN ('topup', 'ad', 'season_pass') AND signature IS NULL
            AND expires_at < now()
          RETURNING intent_id
        )

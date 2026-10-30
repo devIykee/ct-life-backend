@@ -3330,7 +3330,12 @@ paths:
       tags: [markets]
       operationId: postAlphaCalls
       summary: Post an alpha call.
-      description: Calls are immutable; there is no delete endpoint.
+      description: >-
+        Calls are immutable; there is no delete endpoint. The stored entry is the coin's server
+        price at placement (the body's `entryMicros` must be positive but is otherwise ignored).
+        The call is accepted only while stopMicros < price < targetMicros; otherwise
+        `VALIDATION_FAILED` with `details.reason` `price_outside_band` (and `details.priceMicros`),
+        `unknown_coin` or `coin_dead`.
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3432,7 +3437,8 @@ paths:
               type: object
               required: [targetType, targetId, reasonId]
               properties:
-                targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                targetType:
+                  { type: string, enum: [user, message, space, call, post, ad, npc_reply] }
                 targetId: { type: string }
                 reasonId: { type: string, enum: [spam, scam, harassment, impersonation, nsfw] }
                 note: { type: string, maxLength: 500 }
@@ -3444,6 +3450,9 @@ paths:
       description: |
         At most 10 an hour per player (burst of 5): beyond that `429 RATE_LIMITED`. Reporting a target
         that you already have an open report on is a no-op (204). Reporting yourself is `400`.
+        `npc_reply` reports an AI NPC chat reply: `targetId` is the `replyId` from `POST /llm/chat`,
+        and only the player the reply was written for may report it (otherwise `400`,
+        `details.reason: unknown_reply`).
       responses:
         '204': { description: Reported }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -3948,6 +3957,13 @@ paths:
         speakers, everyone else joins subscribe-only, and an ended, missing or
         blocked Space mints nothing (403/404). Space tokens last 10 minutes so
         each new token re-checks the role. Client permission flags are ignored.
+        For `venue`, `id` is the venue instanceId (the Colyseus room id from
+        `welcome`), and a token is minted only while the caller has a session
+        in that venue room; otherwise 403 `NOT_IN_VENUE`. Join the venue room
+        first, then ask for the token. Venue tokens last 10 minutes (needed only
+        to connect; LiveKit refreshes a connected participant's token itself).
+        Leaving the venue room with your last session disconnects you from its
+        LiveKit room; ask for a new token on the next visit.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3974,6 +3990,24 @@ paths:
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
                   canPublish: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >-
+            Not in that venue instance (`NOT_IN_VENUE`), or not a participant of the Space or
+            call (`FORBIDDEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOT_IN_VENUE,
+                      message: 'You are not in that venue. Join it before connecting to its voice.',
+                      details: { instanceId: 'a1B2c3D4e' },
+                    },
+                }
 
   /spaces:
     get:
@@ -4380,6 +4414,18 @@ paths:
         of creation. The client signs `tx` with MWA, polls
         `GET /payments/intents/{id}`, and the city room emits
         `payment_confirmed` once the on-chain transfer is verified.
+
+        **Season pass (unlock C1).** `{kind: season_pass, sku: season_pass, currency: USDC}`
+        buys the current season's pass for `amount: '5000000'` (5 USDC, base units; the
+        price and season are in `GET /config` `seasonPass`). Settlement grants the pass until
+        the season's `endsAt` and never credits Cash (`cashCents: 0`); `payment_confirmed`
+        carries `kind: season_pass`. Only on devnet and while capability `seasonPassPurchase`
+        is on (`503 CAPABILITY_OFF` otherwise). `sku: season_pass` with another kind, or
+        another sku with `kind: season_pass`, is `400 VALIDATION_FAILED {reason:
+        sku_kind_mismatch}`. A live pass is `409 CONFLICT {reason: already_active}`; an
+        earlier signed pass intent still being reconciled is `409 CONFLICT {reason:
+        intent_pending, intentId}`; no season running is `409 CONFLICT {reason:
+        no_active_season}`.
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4392,7 +4438,10 @@ paths:
               required: [kind, sku, currency]
               properties:
                 kind: { type: string, enum: [topup, cosmetic, ad, season_pass] }
-                sku: { type: string }
+                sku:
+                  type: string
+                  enum: [ramen, bag, whale, cabal, custom, season_pass]
+                  description: '`season_pass` only with `kind: season_pass`.'
                 currency: { type: string, enum: [USDC, SOL, SKR, ORE] }
             example:
               kind: 'topup'
@@ -4417,6 +4466,34 @@ paths:
                 tx: 'base64...'
                 solanaPayUrl: 'solana:...'
                 expiresAt: '2026-10-05T12:10:00.000Z'
+        '400':
+          description: Bad body, or a season_pass sku/kind mismatch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: VALIDATION_FAILED,
+                      message: 'Request body or parameters failed validation.',
+                      details: { reason: 'sku_kind_mismatch' },
+                    },
+                }
+        '409':
+          description: Season pass already active, a pass intent pending, or no season running
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: 'already_active' },
+                    },
+                }
         '429':
           description: Top-up cap reached
           content:
@@ -4824,6 +4901,35 @@ paths:
                       code: TIER_LOCKED,
                       message: 'Not enough Season XP for this tier yet.',
                       details: { tier: 1, track: free, xp: 249, xpRequired: 250 },
+                    },
+                }
+
+  /season-pass/buy:
+    post:
+      tags: [season]
+      operationId: postSeasonPassBuy
+      summary: 'Retired: answers 410 GONE. Buy the pass with POST /payments/intents.'
+      description: >-
+        The season pass is a real-money product bought through a payment intent
+        (`{kind: season_pass, sku: season_pass, currency: USDC}`); it is never bought with
+        Cash. Always `410 GONE {reason: buy_with_intent, use: 'POST /v1/payments/intents'}`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '410':
+          description: Retired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: GONE,
+                      message: 'This endpoint was removed; see details.use for its replacement.',
+                      details: { reason: buy_with_intent, use: 'POST /v1/payments/intents' },
                     },
                 }
 
@@ -5337,16 +5443,29 @@ paths:
     get:
       tags: [liveops]
       operationId: getEventsActive
-      summary: Server events currently active.
+      summary: Recent world events (rugs, launches, liquidations, mood swings).
+      description: >-
+        The `evt_*` world events the server broadcast (realtime `event`) in the last 2 hours,
+        newest first, at most 50. `at` is epoch ms. Unknown `eventId`s may appear as the
+        registry grows; render them generically. Capability `worldEvents`: `503 CAPABILITY_OFF`
+        while it is off.
       x-phase: 1
       responses:
         '200':
           description: Events
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: '#/components/schemas/ServerEvent' }
+              schema: { $ref: '#/components/schemas/WorldEventList' }
+              example:
+                events:
+                  - { eventId: evt_coin_launch, at: 1761795600000, params: { ticker: 'MOON' } }
+                  - {
+                      eventId: evt_rug,
+                      at: 1761795000000,
+                      params: { coinId: 'c1', ticker: 'FROG' },
+                    }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /meta/current:
     get:
@@ -5950,7 +6069,8 @@ paths:
                       properties:
                         reportId: { type: integer }
                         reporterUserId: { type: string, format: uuid }
-                        targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                        targetType:
+                          { type: string, enum: [user, message, space, call, post, ad, npc_reply] }
                         targetId: { type: string }
                         reasonId: { type: string }
                         note: { type: [string, 'null'] }
@@ -7217,6 +7337,383 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /districts/{id}/standings:
+    get:
+      tags: [competition]
+      operationId: getDistrictStandings
+      summary: Today's tribe scores in a district and my contribution.
+      description: >-
+        Live for the current UTC day, with the same formula the daily rollover writes: the default
+        holder's `base_score_per_day` plus player posts and check-ins in the district by each
+        tribe's members, at most 3 per player. The rollover at 00:05 UTC (`rolloverAt`) gives the
+        district to the top tribe of the day that ended. `standings` is highest score first.
+        `myContribution` is my capped count today, null for the `anon` tribe (hidden) or without a
+        character. Capability `districtStandings`: `503 CAPABILITY_OFF` while it is off.
+      x-phase: 6
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Standings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DistrictStandings' }
+              example:
+                districtId: 'the_trenches'
+                dayDate: '2026-10-30'
+                rolloverAt: '2026-10-31T00:05:00.000Z'
+                standings:
+                  - { tribeId: 'trencher', score: 104 }
+                  - { tribeId: 'perp_degen', score: 12 }
+                myTribeId: 'perp_degen'
+                myContribution: 3
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /me/season-results:
+    get:
+      tags: [competition]
+      operationId: getMeSeasonResults
+      summary: How my last (or a given) finished season ended, for the share card.
+      description: >-
+        Seasons are ISO weeks (`2026-W43`). Without `seasonId`, the latest finished season I was
+        in. `outcome` compares my league with the next season's (written at the Monday rollover):
+        `promoted`/`relegated` with `toLeagueId`, or `stayed` (also when the next rollover has not
+        run yet) with `toLeagueId: null`. `finalRank` is my place in that league by net worth at
+        the end of the season (the start-of-season rank when no later row exists). `rewards` lists
+        what the ledger paid for that season (`reason: season_reward`); nothing pays one yet, so it
+        is `[]`. `404 NOT_FOUND` when I have no finished season (or `seasonId` is the current or a
+        future one). Capability `seasonResults`: `503 CAPABILITY_OFF` while it is off.
+      x-phase: 6
+      parameters:
+        - name: seasonId
+          in: query
+          required: false
+          schema: { type: string, pattern: '^\d{4}-W\d{2}$' }
+      responses:
+        '200':
+          description: Season result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SeasonResult' }
+              example:
+                seasonId: '2026-W43'
+                leagueId: 'silver'
+                finalRank: 12
+                outcome: 'promoted'
+                toLeagueId: 'gold'
+                rewards: []
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /homes/move:
+    post:
+      tags: [player]
+      operationId: postHomesMove
+      summary: Move home (upgrade or downsize) in one step.
+      description: >-
+        Capability `homeMove` (unlock D1). Atomic: every live lease of the caller (active or
+        overdue) becomes `moved_out` (its unit frees and its guests are removed), a free unit of
+        the new kind's tier is taken, the first week of the new rent is debited and the new lease
+        starts. If any step fails nothing changes. Nothing of the old week is refunded and debt
+        from missed weeks stays. From the street (no home) it simply leases. Homes open at
+        release phase 4; before that the route answers `403 FORBIDDEN {reason: phase_locked}`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              additionalProperties: false
+              properties:
+                kind:
+                  type: string
+                  enum: [parents_basement, hacker_house, studio, penthouse, marina_villa]
+      responses:
+        '200':
+          description: The new lease and the lease that ended
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [home, movedOutHomeId]
+                properties:
+                  home: { $ref: '#/components/schemas/LeasedHome' }
+                  movedOutHomeId:
+                    type: [string, 'null']
+                    description: The home id that ended; null when the caller had no home.
+              example:
+                {
+                  home:
+                    {
+                      homeId: 'home:0192b3c4-0000-7000-8000-000000000001',
+                      ownerUserId: '0192a1c2-0000-7000-8000-000000000001',
+                      kind: 'studio',
+                      unitId: 'flat:bld_residences_02:1',
+                      tier: 'flat',
+                      roomType: 'studio_a',
+                      status: 'active',
+                      missedWeeks: 0,
+                      rentCentsPerWeek: 18000,
+                      decoratedAt: null,
+                      lastRentPaidAt: '2026-10-30T12:00:00.000Z',
+                      createdAt: '2026-10-30T12:00:00.000Z',
+                    },
+                  movedOutHomeId: 'home:0192a1c2-0000-7000-8000-0000000000aa',
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the first week of the new rent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '8000', need: '18000', shortfallCents: 10000 },
+                    },
+                }
+        '403':
+          description: '`FORBIDDEN {reason: phase_locked}` before homes open'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: '`CONFLICT {reason: same_home}` or `CONFLICT {reason: no_unit_free, tier}`'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: 'no_unit_free', tier: 'flat' },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /homes/me/settings:
+    get:
+      tags: [player]
+      operationId: getHomesMeSettings
+      summary: Who may visit my home.
+      description: >-
+        Capability `visitorPolicy` (unlock D2). `open` (default): the door rules alone decide.
+        `followers`: only mutual followers (you follow each other) and your guests. `closed`: nobody
+        but you. Under every policy a player either of you blocked is refused with `BLOCKED`. The
+        policy is per player, so it survives a move, and it narrows access only: a home with a door
+        still needs the owner or a guest to open it.
+      x-phase: 4
+      responses:
+        '200':
+          description: Settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeSettings' }
+              example: { visitors: 'followers' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+    put:
+      tags: [player]
+      operationId: putHomesMeSettings
+      summary: Set who may visit my home.
+      description: >-
+        Capability `visitorPolicy` (unlock D2). Enforced in `POST /homes/{ownerId}/visit` and when
+        joining the `home` room: `closed` refuses with `403 HOME_CLOSED`, `followers` with
+        `403 FORBIDDEN {reason: followers_only}` (unless mutual follower or guest), and a block in
+        either direction with `403 BLOCKED` under every policy. Visitors already inside who no longer qualify are
+        shown out of the room.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HomeSettings' }
+      responses:
+        '200':
+          description: The stored settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeSettings' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >-
+            Not returned by this route; listed for the visit route and the home room, which refuse
+            a visitor with `HOME_CLOSED` (closed home) or `FORBIDDEN {reason: followers_only}`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    { code: HOME_CLOSED, message: 'This home is closed to visitors.', details: {} },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /cabal/invites:
+    post:
+      tags: [competition]
+      operationId: postCabalInvite
+      summary: Create a VIP Lounge (Cabal) invite, open or for one player.
+      description: >-
+        The host needs net worth at the Marina gate (`hostGateCents` in `GET /me/cabal`, $100,000),
+        else `403 NET_WORTH_TOO_LOW {netWorthCents, requiredNetWorthCents}`, and may have 3 pending
+        invites at once (`409 CONFLICT {reason: invites_exhausted}`). With `guestUserId` the invite
+        is for that player only (capability `cabalInvites`, `503 CAPABILITY_OFF` while off): `404`
+        unknown player, `400` yourself, `403 BLOCKED` for a block pair, `409 CONFLICT {reason:
+        already_member | invite_pending}`. The server echoes `guestUserId`; `code` is only ever
+        returned to the host. Expires after 7 days.
+      x-phase: 6
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                guestUserId: { type: [string, 'null'], format: uuid }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CabalInvite' }
+              example:
+                inviteId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e01'
+                hostUserId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e00'
+                guestUserId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e02'
+                code: 'q8Zr3x0T1kq2v9mH0dFzQ7bN4cY6pL1a'
+                status: pending
+                usedAt: null
+                revokedAt: null
+                expiresAt: '2026-11-06T12:00:00.000Z'
+                createdAt: '2026-10-30T12:00:00.000Z'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: NET_WORTH_TOO_LOW (host gate) or BLOCKED (block pair with the guest)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: NET_WORTH_TOO_LOW
+                  message: 'Your net worth is below what this needs.'
+                  details: { netWorthCents: 250000, requiredNetWorthCents: 10000000 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT with details.reason invites_exhausted, already_member or invite_pending
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+    get:
+      tags: [competition]
+      operationId: getCabalInvites
+      summary: My Cabal invites, as host or guest.
+      description: >-
+        Only invites where I am the host or the guest. Filters `hostId`, `guestId` (a targeted
+        invite shows up for its guest while pending), `used`, `limit` (1..100). `code` is present
+        only on invites I host.
+      x-phase: 6
+      parameters:
+        - { name: hostId, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: guestId, in: query, required: false, schema: { type: string, format: uuid } }
+        - {
+            name: used,
+            in: query,
+            required: false,
+            schema: { type: string, enum: ['true', 'false'] },
+          }
+        - {
+            name: limit,
+            in: query,
+            required: false,
+            schema: { type: integer, minimum: 1, maximum: 100 },
+          }
+      responses:
+        '200':
+          description: Invites, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invites]
+                properties:
+                  invites: { type: array, items: { $ref: '#/components/schemas/CabalInvite' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /cabal/invites/{id}/accept:
+    post:
+      tags: [competition]
+      operationId: postCabalInviteAccept
+      summary: Accept a Cabal invite (become a member).
+      description: >-
+        A targeted invite can only be accepted by its guest (`403 FORBIDDEN {reason: not_guest}`).
+        Revoked, used or expired invites answer `403 FORBIDDEN`; a block pair with the host `403
+        BLOCKED`; the host's own invite `400`.
+      x-phase: 6
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/CabalInvite' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /cabal/invites/{id}/revoke:
+    post:
+      tags: [competition]
+      operationId: postCabalInviteRevoke
+      summary: Revoke a pending Cabal invite (host only).
+      description: >-
+        `200` with `status: revoked`. Not the host: `403 FORBIDDEN {reason: not_host}`. Accepted,
+        expired or already revoked: `409 CONFLICT {reason: not_pending, status}`. A revoked invite
+        frees one of the host's 3 slots. Capability `cabalRevoke`: `503 CAPABILITY_OFF` while off.
+      x-phase: 6
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/CabalInvite' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT with details.reason not_pending
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
   /x/link:
     delete:
       tags: [competition]
@@ -8365,6 +8862,20 @@ components:
             version: { type: integer, const: 1 }
             beefChallenges: { type: boolean }
             targetedCabalInvites: { type: boolean }
+        seasonPass:
+          type: object
+          description: >-
+            The season pass on sale (unlock C1). Present only while capability
+            `seasonPassPurchase` is on, the deployment is on devnet and a season is running;
+            a missing key means "unavailable". Buy with `POST /payments/intents {kind:
+            season_pass, sku, currency}`.
+          required: [sku, priceUsdc, currency, seasonId, endsAt]
+          properties:
+            sku: { type: string, const: season_pass }
+            priceUsdc: { type: string, description: 'USDC base units (6 decimals), e.g. 5000000.' }
+            currency: { type: string, const: USDC }
+            seasonId: { type: string }
+            endsAt: { type: string, format: date-time }
     CharacterPalettes:
       type: object
       additionalProperties: false
@@ -9756,4 +10267,80 @@ components:
         targetType: { type: string }
         targetId: { type: string }
         reasonId: { type: string }
+        createdAt: { type: string, format: date-time }
+    HomeSettings:
+      type: object
+      required: [visitors]
+      additionalProperties: false
+      properties:
+        visitors:
+          type: string
+          enum: [open, followers, closed]
+          description: '`open` (default), `followers` (mutual followers and guests only) or `closed` (owner only).'
+    DistrictStandings:
+      type: object
+      required: [districtId, dayDate, rolloverAt, standings, myTribeId, myContribution]
+      properties:
+        districtId: { type: string }
+        dayDate: { type: string, format: date }
+        rolloverAt: { type: string, format: date-time }
+        standings:
+          type: array
+          items:
+            type: object
+            required: [tribeId, score]
+            properties:
+              tribeId: { type: string }
+              score: { type: integer }
+        myTribeId: { type: [string, 'null'] }
+        myContribution: { type: [integer, 'null'] }
+    SeasonResult:
+      type: object
+      required: [seasonId, leagueId, finalRank, outcome, toLeagueId, rewards]
+      properties:
+        seasonId: { type: string }
+        leagueId: { type: string }
+        finalRank: { type: integer, minimum: 1 }
+        outcome: { type: string, enum: [promoted, relegated, stayed] }
+        toLeagueId: { type: [string, 'null'] }
+        rewards:
+          type: array
+          items:
+            type: object
+            required: [kind, cashCents, itemId, badgeId]
+            properties:
+              kind: { type: string, enum: [cash, item, badge] }
+              cashCents: { type: [integer, 'null'] }
+              itemId: { type: [string, 'null'] }
+              badgeId: { type: [string, 'null'] }
+    WorldEventList:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/WorldEvent' }
+    WorldEvent:
+      type: object
+      required: [eventId, at, params]
+      properties:
+        eventId: { type: string, pattern: '^evt_[a-z0-9_]+$', description: 'From ids/events.json.' }
+        at: { type: integer, description: Epoch ms when the server broadcast it. }
+        params: { type: object, additionalProperties: { type: string } }
+    CabalInvite:
+      type: object
+      required: [inviteId, hostUserId, guestUserId, status, usedAt, revokedAt, expiresAt, createdAt]
+      properties:
+        inviteId: { type: string, format: uuid }
+        hostUserId: { type: string, format: uuid }
+        guestUserId:
+          type: [string, 'null']
+          format: uuid
+          description: The invited player (targeted), or the player who accepted an open invite.
+        code: { type: string, description: Bearer code. Only present when the caller is the host. }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        usedAt: { type: [string, 'null'], format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time }
+        expiresAt: { type: string, format: date-time }
         createdAt: { type: string, format: date-time }

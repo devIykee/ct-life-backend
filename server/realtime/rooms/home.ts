@@ -144,10 +144,12 @@ export class HomeRoom extends Room {
     // The door's rule applies to the room too: without this, anyone who knew
     // a home id could join past a locked door. A home without a door stays open.
     const { buildContext } = await import('../../application/context.js');
-    const { canEnterHome } = await import('../../application/homes.js');
-    if (!(await canEnterHome(buildContext(), this.state.homeId, userId))) {
-      throw new Error('FORBIDDEN');
-    }
+    // The owner's visitor policy applies too: a block either way refuses with
+    // BLOCKED, a closed home with HOME_CLOSED, a followers-only home with
+    // FORBIDDEN (the REST codes).
+    const { homeEntryRefusal } = await import('../../application/homes.js');
+    const refusal = await homeEntryRefusal(buildContext(), this.state.homeId, userId);
+    if (refusal !== null) throw new Error(refusal === 'NOT_FOUND' ? 'FORBIDDEN' : refusal);
 
     const profile = await this.fetchProfile(userId);
     const player = new PlayerState();

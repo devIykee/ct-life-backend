@@ -264,6 +264,14 @@ async function targetOf(
     );
     return { userId: r.rows[0]?.user_id ?? null, preview: r.rows[0]?.text ?? null };
   }
+  if (type === 'npc_reply') {
+    // Written by the model, not a player: nobody to mute or ban.
+    const r = await db.query<{ response_text: string }>(
+      'SELECT response_text FROM llm_npc_interactions WHERE interaction_id = $1',
+      [id],
+    );
+    return { userId: null, preview: r.rows[0]?.response_text ?? null };
+  }
   return { userId: null, preview: null };
 }
 
@@ -355,6 +363,11 @@ export async function resolveReport(
       } else if (r.target_type === 'post') {
         await client.query(
           "UPDATE feed_posts SET text = '[removed]', meta = NULL WHERE post_id = $1",
+          [r.target_id],
+        );
+      } else if (r.target_type === 'npc_reply') {
+        await client.query(
+          "UPDATE llm_npc_interactions SET response_text = '[removed]' WHERE interaction_id = $1",
           [r.target_id],
         );
       } else {

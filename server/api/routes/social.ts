@@ -24,7 +24,7 @@ const LeaderboardQuery = z.object({
 });
 
 const ReportBody = z.object({
-  targetType: z.enum(['user', 'message', 'space', 'call', 'post', 'ad']),
+  targetType: z.enum(['user', 'message', 'space', 'call', 'post', 'ad', 'npc_reply']),
   targetId: z.string().min(1),
   reasonId: z.string().min(1),
   note: z.string().max(500).optional(),

@@ -49,6 +49,7 @@ import {
   type VehicleKind,
 } from '../../../contract/realtime/messages.js';
 import { authenticateJoin } from '../player.js';
+import { createLogger } from '../../shared/logger/logger.js';
 import {
   POS_HASH,
   VEHICLE_EXIT_CHANNEL,
@@ -67,7 +68,8 @@ import { BanGuard } from '../ban-guard.js';
 
 export const INTEREST_ADD_M = 250;
 export const INTEREST_DROP_M = 300;
-const ENTER_RADIUS_M = 4;
+/** Matches the client offer range: a car whose centre is up to ~4.4 m away is offered, plus door walk-up. */
+const ENTER_RADIUS_M = 6;
 const EXIT_RADIUS_M = 6;
 const MIN_Y_M = -20;
 /** How far over the water past the island outline a vehicle may go. */
@@ -237,8 +239,15 @@ export class VehiclesRoom extends Room {
 
   private async handleEnter(client: Client, msg: unknown): Promise<void> {
     const parsed = VehicleEnterMessage.safeParse(msg);
-    const reject = (code: string): void =>
+    const reject = (code: string): void => {
+      createLogger()
+        .child({ room: 'vehicles' })
+        .info(
+          { code, vehicleId: parsed.data?.id, kind: parsed.data?.kind },
+          'vehicle_enter rejected',
+        );
       client.send('rejected', { type: 'vehicle_enter', code, id: parsed.data?.id });
+    };
     if (!parsed.success) return reject('VALIDATION_FAILED');
     const s = this.sessions.get(client.sessionId);
     if (!s) return;

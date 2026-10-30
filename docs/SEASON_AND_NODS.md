@@ -7,7 +7,7 @@ Retention items #4 and #5. Code: `server/application/season-tracks.ts`, `nods.ts
 - Definitions: `contract/config/season_tracks.json` (validated by `pnpm contract:check`). A season has a window, `xpPerTier`, `nodXp` and a free and a paid track of at least 10 tiers. Tier `n` needs `n * xpPerTier` Season XP earned inside `[startsAt, endsAt)`.
 - A tier reward is one of `cashCents`, `cosmeticId` or `furnitureItemId`. All are off-chain and never tradable; none is an NFT. Cash is ledger reason `season_reward`; a cosmetic is a `cosmetic_inventory` row (source `grant`); furniture is a `player_items` row (no order).
 - A claim is a row in `season_tier_claims` (PK `user, season, track, tier`). The row and the reward commit in one transaction, so a tier pays once however many times, or how concurrently, it is claimed.
-- The paid track needs a live `season_pass` row (`tier = 'season'`, not expired). The pass is bought with real money through the payment intent flow (`kind: season_pass`: SOL, USDC or SKR); this feature only reads it. The pass is checked when a tier is claimed.
+- The paid track needs a live `season_pass` row (`tier = 'season'`, not expired). The pass is bought with real money through the payment intent flow (`{kind: season_pass, sku: season_pass, currency: USDC}`, 5 USDC on devnet, unlock C1; settlement grants the pass until the season's `endsAt` and never credits Cash; `POST /season-pass/buy` is `410 GONE`); this feature only reads it. The pass is checked when a tier is claimed.
 - The client never sends XP or a reward.
 
 ## Season XP sources and the PR #9 reconciliation
