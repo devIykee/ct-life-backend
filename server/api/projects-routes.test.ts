@@ -110,6 +110,8 @@ describe('builder capability off', () => {
           details: { capability: 'builder' },
         });
       }
+      const cfg = await app.inject({ method: 'GET', url: '/v1/config' });
+      expect((cfg.json() as { projects: unknown }).projects).toBeNull();
       const h = await call(app, u, 'POST', `/v1/projects/${id}/hire`, {});
       expect(h.status).toBe(410);
       expect(err(h.body)).toMatchObject({ code: 'GONE', details: { reason: 'use_offers' } });
@@ -337,6 +339,20 @@ describe('builder capability on', () => {
     expect(missing.status).toBe(404);
   });
 
+  it('GET /config sends the projects block while builder is on', async () => {
+    const r = await app.inject({ method: 'GET', url: '/v1/config' });
+    const projects = (r.json() as { projects: Record<string, unknown> }).projects;
+    expect(projects).toMatchObject({
+      taskMinutes: 10,
+      maxRolesPerPlayer: 1,
+      maxProjectsPerPlayer: 2,
+      offerTtlHours: 48,
+      builderDiscountBps: 3000,
+      minProjectAgeMinutes: 30,
+      wages: { dev: { minCentsPerWeek: 15000, maxCentsPerWeek: 30000 } },
+    });
+  });
+
   it('fire and quit: DELETE members -> 204; founder cannot be removed', async () => {
     const p = await call(app, founder, 'POST', '/v1/projects', { kind: 'memecoin' });
     const projectId = p.body.projectId as string;
@@ -354,7 +370,7 @@ describe('builder capability on', () => {
       `/v1/projects/${projectId}/members/${founder.sub}`,
     );
     expect(self.status).toBe(409);
-    expect(err(self.body).details.reason).toBe('founder');
+    expect(err(self.body).details.reason).toBe('cannot_remove_founder');
     const nope = await call(
       app,
       stranger,
@@ -393,10 +409,16 @@ describe('builder capability on', () => {
     await call(app, member, 'POST', `/v1/project-offers/${o.body.offerId as string}/accept`);
     const f = await call(app, boss, 'POST', `/v1/projects/${projectId}/tasks`);
     expect(f.status).toBe(403);
-    expect(err(f.body).details.reason).toBe('founder');
+    expect(err(f.body).details.reason).toBe('founder_no_wage');
     const t = await call(app, member, 'POST', `/v1/projects/${projectId}/tasks`);
     expect(t.status).toBe(201);
     expect(Object.keys(t.body).sort()).toEqual(['endsAt', 'projectId', 'startedAt', 'taskId']);
+    const mid = await call(app, member, 'GET', `/v1/projects/${projectId}`);
+    expect(mid.body).toMatchObject({
+      myTask: { taskId: t.body.taskId, startedAt: t.body.startedAt, endsAt: t.body.endsAt },
+      workedThisWeek: false,
+    });
+    expect((await call(app, boss, 'GET', `/v1/projects/${projectId}`)).body.myTask).toBeNull();
     const early = await call(
       app,
       member,
@@ -418,6 +440,8 @@ describe('builder capability on', () => {
     );
     expect(done.status).toBe(200);
     expect(done.body).toMatchObject({ worked: true, taskId: t.body.taskId });
+    const after = await call(app, member, 'GET', `/v1/projects/${projectId}`);
+    expect(after.body).toMatchObject({ myTask: null, workedThisWeek: true });
     expect(done.body.weekStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     // The limit (2) counts founder roles.
     expect((await call(app, boss, 'POST', '/v1/projects', { kind: 'memecoin' })).status).toBe(201);

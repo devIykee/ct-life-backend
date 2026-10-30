@@ -17,7 +17,6 @@ import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import {
   BlockedError,
-  ConflictError,
   ForbiddenError,
   InsufficientCashError,
   NotFoundError,
@@ -326,9 +325,9 @@ describe('fund and members', () => {
     await expect(removeMember(ctx, mod, p.projectId, dev)).rejects.toBeInstanceOf(ForbiddenError);
     await removeMember(ctx, founder, p.projectId, dev);
     await removeMember(ctx, mod, p.projectId, mod);
-    await expect(removeMember(ctx, founder, p.projectId, founder)).rejects.toBeInstanceOf(
-      ConflictError,
-    );
+    await expect(removeMember(ctx, founder, p.projectId, founder)).rejects.toMatchObject({
+      details: { reason: 'cannot_remove_founder' },
+    });
     await expect(removeMember(ctx, founder, p.projectId, other)).rejects.toBeInstanceOf(
       NotFoundError,
     );
@@ -401,7 +400,7 @@ describe('project tasks (the only work that earns a wage)', () => {
     const p = await foundProject(ctx, founder, 'memecoin');
     await hire(p.projectId, dev, 'dev', 20_000);
     await expect(startProjectTask(ctx, founder, p.projectId)).rejects.toMatchObject({
-      details: { reason: 'founder' },
+      details: { reason: 'founder_no_wage' },
     });
     await expect(startProjectTask(ctx, other, p.projectId)).rejects.toMatchObject({
       details: { reason: 'not_member' },

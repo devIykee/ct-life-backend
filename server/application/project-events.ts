@@ -10,6 +10,7 @@ import type { PoolClient } from 'pg';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { publishToUser } from './realtime-bus.js';
 import type { AppContext } from './context.js';
+import { isCapabilityOn } from './capabilities.js';
 import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import type { ProjectsConfig } from '../shared/domain/projects.js';
 
@@ -38,6 +39,37 @@ function toEvent(r: EventDbRow): ProjectEventRow {
     cashDeltaCents: Number(r.cash_delta_cents),
     params: r.params ?? {},
     at: r.at.toISOString(),
+  };
+}
+
+/** The `projects` block of `GET /config` (what the Builder client must not hard-code). */
+export interface ProjectsClientConfig {
+  readonly version: string;
+  readonly wages: ProjectsConfig['wages'];
+  readonly taskMinutes: number;
+  readonly maxRolesPerPlayer: number;
+  readonly maxProjectsPerPlayer: number;
+  readonly offerTtlHours: number;
+  readonly builderDiscountBps: number;
+  readonly minProjectAgeMinutes: number;
+}
+
+/**
+ * @param ctx - The application context.
+ * @returns The `projects` block for `GET /config`, or null while `builder` is off.
+ */
+export function projectsClientConfig(ctx: AppContext): ProjectsClientConfig | null {
+  if (!isCapabilityOn(ctx, 'builder')) return null;
+  const c = projectsConfig(ctx);
+  return {
+    version: c.version,
+    wages: c.wages,
+    taskMinutes: c.task.durationMinutes,
+    maxRolesPerPlayer: c.membership.maxRolesPerPlayer,
+    maxProjectsPerPlayer: c.membership.maxProjectsPerPlayer,
+    offerTtlHours: c.offers.ttlHours,
+    builderDiscountBps: c.launch.builderDiscountBps,
+    minProjectAgeMinutes: c.launch.minProjectAgeMinutes,
   };
 }
 

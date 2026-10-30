@@ -7499,7 +7499,7 @@ paths:
     delete:
       tags: [projects]
       operationId: deleteProjectsIdMembersUserId
-      summary: Fire a member (founder) or quit (the member themself) (capability builder). 409 `founder` for the founder; 403 `not_owner`; 404 `not_member`.
+      summary: Fire a member (founder) or quit (the member themself) (capability builder). 409 `cannot_remove_founder`; 403 `not_owner`; 404 `not_member`.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
         - { name: userId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -7634,7 +7634,7 @@ paths:
         A finished task (`.../complete` after `endsAt`, `task.durationMinutes` =
         10) is the only work that earns this week's wage: generic career shifts do
         not count. One counted task per member, project and UTC week (Monday).
-        Errors: 403 `FORBIDDEN` `not_member` | `founder` (the founder earns no
+        Errors: 403 `FORBIDDEN` `not_member` | `founder_no_wage` (the founder earns no
         wage); 404; 409 `CONFLICT` `already_worked` (+`weekStart`) |
         `task_in_progress` (+`taskId`, `endsAt`) | `wrong_status`.
       parameters:
@@ -8757,6 +8757,29 @@ components:
         meta: { type: object, additionalProperties: true }
         characterPalettes:
           $ref: '#/components/schemas/CharacterPalettes'
+        projects:
+          type: [object, 'null']
+          description: >-
+            Builder config the client must not hard-code (unlock WP-B); null while `builder` is off.
+            `wages[role] {minCentsPerWeek, maxCentsPerWeek}` is the band an offer's
+            `salaryCentsPerWeek` must sit in.
+          properties:
+            version: { type: string }
+            wages:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  minCentsPerWeek: { type: integer }
+                  maxCentsPerWeek: { type: integer }
+            taskMinutes: { type: integer, description: Length of a project task. }
+            hqShiftMinutes:
+              { type: integer, description: 'Minutes in the HQ that log the week (B3).' }
+            maxRolesPerPlayer: { type: integer }
+            maxProjectsPerPlayer: { type: integer }
+            offerTtlHours: { type: integer }
+            builderDiscountBps: { type: integer }
+            minProjectAgeMinutes: { type: integer }
         capabilities:
           type: object
           description: >-
@@ -10281,7 +10304,17 @@ components:
     ProjectDetail:
       type: object
       required:
-        [project, members, hires, payrollCentsPerWeek, nextPayrollAt, vcStakes, recentEvents]
+        [
+          project,
+          members,
+          hires,
+          payrollCentsPerWeek,
+          nextPayrollAt,
+          vcStakes,
+          recentEvents,
+          myTask,
+          workedThisWeek,
+        ]
       properties:
         project: { $ref: '#/components/schemas/ProjectSummary' }
         members: { type: array, items: { $ref: '#/components/schemas/ProjectMember' } }
@@ -10298,6 +10331,18 @@ components:
           }
         vcStakes: { type: array, items: { type: object } }
         recentEvents: { type: array, items: { $ref: '#/components/schemas/ProjectEvent' } }
+        myTask:
+          type: [object, 'null']
+          description: The caller's open project task (null for a non-member or none open).
+          properties:
+            taskId: { type: string, format: uuid }
+            startedAt: { type: string, format: date-time }
+            endsAt: { type: string, format: date-time }
+        workedThisWeek:
+          {
+            type: boolean,
+            description: "The caller's current UTC week already counts as worked here.",
+          }
     HireOffer:
       type: object
       required:

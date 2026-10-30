@@ -62,7 +62,7 @@ export async function startProjectTask(
     );
     const role = m.rows[0]?.role;
     if (role === undefined) throw new ForbiddenError({ reason: 'not_member' });
-    if (role === 'founder') throw new ForbiddenError({ reason: 'founder' });
+    if (role === 'founder') throw new ForbiddenError({ reason: 'founder_no_wage' });
     const done = await c.query(
       `SELECT 1 FROM project_work_log WHERE project_id = $1 AND user_id = $2 AND week_start = $3::date`,
       [projectId, userId, week],

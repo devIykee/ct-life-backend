@@ -39,6 +39,7 @@ import { loadMeHome } from '../../application/homes.js';
 import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
+import { projectsClientConfig } from '../../application/project-events.js';
 import { loadConfig } from '../../shared/config/config.js';
 
 /**
@@ -163,6 +164,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       careers: cache.load<unknown>('careers'),
       events: cache.load<unknown>('events'),
       boards: cache.load<unknown>('boards'),
+      // Builder (unlock WP-B): wage bands, task length, limits; null while `builder` is off.
+      projects: projectsClientConfig(req.ctx),
     };
 
     // B34 fix: ETag support for caching.

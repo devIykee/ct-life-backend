@@ -222,6 +222,6 @@ export function registerProjectRoutes(app: FastifyInstance): void {
 
   app.get('/v1/projects/:id', { preHandler: requireAuth }, async (req, reply) => {
     const { id } = req.params as { id: string };
-    return reply.send(await getProject(req.ctx, id));
+    return reply.send(await getProject(req.ctx, id, req.user!.sub));
   });
 }

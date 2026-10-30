@@ -33,7 +33,9 @@ import {
 import { uuidv7 } from '../shared/domain/uuid.js';
 import {
   HIRE_ROLES,
+  isoDate,
   nextPayrollAt,
+  weekStartUtc,
   payableWage,
   type HireRole,
   type MemberRole,
@@ -106,6 +108,10 @@ export interface ProjectDetail {
   readonly nextPayrollAt: string | null;
   readonly vcStakes: unknown[];
   readonly recentEvents: ProjectEventRow[];
+  /** The caller's open project task, or null (not a member, or none open). */
+  readonly myTask: { taskId: string; startedAt: string; endsAt: string } | null;
+  /** Whether the caller's week (Monday 00:00 UTC) already counts as worked here. */
+  readonly workedThisWeek: boolean;
 }
 
 interface SummaryDbRow {
@@ -330,7 +336,11 @@ export async function foundProject(
  * @param projectId - The project.
  * @returns The detail; 404 when missing.
  */
-export async function getProject(ctx: AppContext, projectId: string): Promise<ProjectDetail> {
+export async function getProject(
+  ctx: AppContext,
+  projectId: string,
+  callerId: string | null = null,
+): Promise<ProjectDetail> {
   if (!/^[0-9a-f-]{36}$/i.test(projectId)) throw new NotFoundError({ kind: 'project' });
   const cfg = projectsConfig(ctx);
   return ctx.db.withConnection(async (c) => {
@@ -378,6 +388,22 @@ export async function getProject(ctx: AppContext, projectId: string): Promise<Pr
         WHERE project_id = $1 ORDER BY id DESC LIMIT 10`,
       [projectId],
     );
+    const caller = callerId !== null && /^[0-9a-f-]{36}$/i.test(callerId) ? callerId : null;
+    const mine = await c.query<{
+      task_id: string | null;
+      started_at: Date | null;
+      ends_at: Date | null;
+      worked: boolean;
+    }>(
+      `SELECT t.task_id, t.started_at, t.ends_at,
+              EXISTS (SELECT 1 FROM project_work_log w
+                       WHERE w.project_id = $1 AND w.user_id = $2 AND w.week_start = $3::date) AS worked
+         FROM (SELECT 1) one
+         LEFT JOIN project_tasks t
+           ON t.project_id = $1 AND t.user_id = $2 AND t.completed_at IS NULL`,
+      [projectId, caller, isoDate(weekStartUtc(Date.now()))],
+    );
+    const me = mine.rows[0];
     const payroll = hires.reduce((s, h) => s + h.salaryCentsPerWeek, 0);
     const paying = project.status !== 'rugged' && project.status !== 'launching';
     return {
@@ -387,6 +413,15 @@ export async function getProject(ctx: AppContext, projectId: string): Promise<Pr
       payrollCentsPerWeek: payroll,
       nextPayrollAt: paying ? new Date(nextPayrollAt(Date.now())).toISOString() : null,
       vcStakes: [],
+      myTask:
+        me?.task_id && me.started_at && me.ends_at
+          ? {
+              taskId: me.task_id,
+              startedAt: me.started_at.toISOString(),
+              endsAt: me.ends_at.toISOString(),
+            }
+          : null,
+      workedThisWeek: me?.worked === true,
       recentEvents: ev.rows.map((r) => ({
         eventId: r.event_id,
         projectId: r.project_id,
@@ -499,7 +534,7 @@ export async function removeMember(
     const self = callerId === targetUserId;
     if (!self && p.ownerUserId !== callerId) throw new ForbiddenError({ reason: 'not_owner' });
     if (role === undefined) throw new NotFoundError({ kind: 'member', reason: 'not_member' });
-    if (role === 'founder') throw new ConflictError({ reason: 'founder' });
+    if (role === 'founder') throw new ConflictError({ reason: 'cannot_remove_founder' });
     await client.query(`DELETE FROM project_members WHERE project_id = $1 AND user_id = $2`, [
       projectId,
       targetUserId,
