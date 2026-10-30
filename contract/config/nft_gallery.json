@@ -1,0 +1,18 @@
+{
+  "version": "1.0.0",
+  "_note": "Home NFT gallery (unlock D4). Read-only: holdings come from Helius DAS. Devnet shows every NFT the wallet holds (moderation 'ok' only for devnetCollections); mainnet shows only mainnetCollections. Collection addresses must be checked against a primary source before they are added. See docs/NFT_GALLERY.md.",
+  "maxSlots": 12,
+  "holdingsCacheSec": 600,
+  "dasRequestsPerSecond": 2,
+  "maxImageBytes": 524288,
+  "maxImagePx": 512,
+  "maxSourceBytes": 8388608,
+  "devnetCollections": [],
+  "mainnetCollections": [
+    {
+      "address": "J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w",
+      "name": "Mad Lads",
+      "_source": "group_value of Mad Lads #8420 in Helius's getAsset example (helius.dev/docs/api-reference/das/getasset); [Inference] not confirmed on a project page"
+    }
+  ]
+}

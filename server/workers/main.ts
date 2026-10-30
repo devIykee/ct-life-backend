@@ -44,6 +44,8 @@
  *
  *   - Prediction market generator (every minute, unlock D3), with the same
  *     flag and the `predict` capability. See prediction-markets.ts.
+ *   - NFT gallery ownership re-check (daily 04:30 UTC, unlock D4), only with
+ *     the `nftGallery` capability. See nft-gallery.ts.
  *
  * Multiple replicas: every repeatable job above is a BullMQ job scheduler,
  * so each tick is one job that one worker takes, whichever replica it runs
@@ -79,6 +81,7 @@ import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
 import { PAYMENT_POLLER_QUEUE, handlePaymentPoller } from './payment-poller.js';
 import { RENT_QUEUE, handleWeeklyRent } from './rent.js';
 import { PREDICTION_MARKETS_QUEUE, handlePredictionMarkets } from './prediction-markets.js';
+import { NFT_GALLERY_QUEUE, handleNftGalleryRecheck } from './nft-gallery.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -169,6 +172,7 @@ export async function buildWorkers(likeness?: {
   const paymentQueue = new Queue(PAYMENT_POLLER_QUEUE, { connection: conn });
   const rentQueue = new Queue(RENT_QUEUE, { connection: conn });
   const marketsQueue = new Queue(PREDICTION_MARKETS_QUEUE, { connection: conn });
+  const nftGalleryQueue = new Queue(NFT_GALLERY_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -331,6 +335,15 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'prediction-markets failed'),
   );
 
+  const nftGalleryWorker = new Worker(
+    NFT_GALLERY_QUEUE,
+    async (job) => handleNftGalleryRecheck(job, ctx),
+    { connection: newClient(redis) },
+  );
+  nftGalleryWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'nft-gallery failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
   const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
@@ -458,6 +471,12 @@ export async function buildWorkers(likeness?: {
   } else {
     await marketsQueue.removeJobScheduler('prediction-markets');
   }
+  // NFT gallery (unlock D4): daily ownership re-check; a no-op while nftGallery is off.
+  await nftGalleryQueue.upsertJobScheduler(
+    'nft-gallery-recheck',
+    { pattern: '30 4 * * *', tz: 'UTC' },
+    { name: 'recheck', data: {} },
+  );
 
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
@@ -496,6 +515,7 @@ export async function buildWorkers(likeness?: {
   void paymentWorker;
   void rentWorker;
   void marketsWorker;
+  void nftGalleryWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -535,6 +555,7 @@ export async function buildWorkers(likeness?: {
       await paymentWorker.close();
       await rentWorker.close();
       await marketsWorker.close();
+      await nftGalleryWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -554,6 +575,7 @@ export async function buildWorkers(likeness?: {
       await paymentQueue.close();
       await rentQueue.close();
       await marketsQueue.close();
+      await nftGalleryQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

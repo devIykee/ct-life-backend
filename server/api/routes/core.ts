@@ -40,6 +40,9 @@ import { oreReaderAvailable } from '../../application/refinery.js';
 import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
 import { loadConfig } from '../../shared/config/config.js';
+import type { AppContext } from '../../application/context.js';
+import { isCapabilityOn } from '../../application/capabilities.js';
+import { nftGalleryConfig } from '../../application/nft-gallery-config.js';
 
 /**
  * B34: Compare semver versions. Returns true if clientVersion < minVersion.
@@ -103,6 +106,33 @@ const NeedsActionBody = z.object({
 });
 
 /**
+ * The `nft` config block (unlock D4), only while `nftGallery` is on. Image
+ * hosts: the API host from PUBLIC_API_BASE_URL (the proxy serves every
+ * gallery image); empty when that is unset.
+ * @param ctx - The app context.
+ * @returns `{nft}` or nothing.
+ */
+function nftConfigPayload(ctx: AppContext): Record<string, unknown> {
+  if (!isCapabilityOn(ctx, 'nftGallery')) return {};
+  const cfg = nftGalleryConfig();
+  const base = ctx.config.factory.publicBaseUrl;
+  let host: string | null = null;
+  try {
+    host = base ? new URL(base).host : null;
+  } catch {
+    host = null;
+  }
+  return {
+    nft: {
+      imageHosts: host ? [host] : [],
+      maxImageBytes: cfg.maxImageBytes,
+      maxImagePx: cfg.maxImagePx,
+      maxSlots: cfg.maxSlots,
+    },
+  };
+}
+
+/**
  *
  */
 export function registerCoreRoutes(app: FastifyInstance): void {
@@ -163,6 +193,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       careers: cache.load<unknown>('careers'),
       events: cache.load<unknown>('events'),
       boards: cache.load<unknown>('boards'),
+      // Unlock D4: where the client may load gallery images from (only while on).
+      ...nftConfigPayload(req.ctx),
     };
 
     // B34 fix: ETag support for caching.

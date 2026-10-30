@@ -7477,6 +7477,128 @@ paths:
                 }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /nfts/me:
+    get:
+      tags: [player]
+      operationId: getNftsMe
+      summary: My NFTs that can hang on the home gallery wall (capability `nftGallery`, unlock D4).
+      description: >-
+        Read-only, from Helius DAS `getAssetsByOwner` on the caller's wallet, cached 10 min.
+        Devnet: every NFT (`moderation: ok` only for allow-listed collections, else `pending`,
+        which only the owner sees on the wall). Mainnet: only NFTs in allow-listed collections
+        (`contract/config/nft_gallery.json`). Fungibles, burnt assets and assets without an
+        https/ipfs/ar image are left out. `imageUrl` is the API's own image proxy.
+      parameters:
+        - {
+            name: limit,
+            in: query,
+            required: false,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 100 },
+          }
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A page of NFTs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [wallet, items, cursor]
+                properties:
+                  wallet: { type: string }
+                  items: { type: array, items: { $ref: '#/components/schemas/NftItem' } }
+                  cursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /homes/{ownerId}/gallery:
+    get:
+      tags: [player]
+      operationId: getHomeGallery
+      summary: A home's NFT gallery wall (capability `nftGallery`).
+      description: >-
+        `ownerId` may be `me`. The owner sees every frame. A visitor needs the same access as a
+        visit (visitor policy: `BLOCKED`, `HOME_CLOSED`, `FORBIDDEN {reason: followers_only}`; then
+        the door: `FORBIDDEN {reason: locked}`) and sees only `moderation: ok` frames. `404` when
+        the owner has no live home.
+      parameters:
+        - { name: ownerId, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: The wall
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeGallery' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /homes/me/gallery:
+    put:
+      tags: [player]
+      operationId: putHomeGallery
+      summary: Replace my gallery frames (capability `nftGallery`).
+      description: >-
+        Every `assetId` must be in the caller's current holdings (`GET /nfts/me`), else
+        `403 FORBIDDEN {reason: not_owner, assetId}`. Slots 1..`nft.maxSlots` (12),
+        `400 {reason: slot_out_of_range}`; `400 {reason: duplicate_slot | duplicate_asset}`. An
+        empty list clears the wall. A daily job removes a frame whose asset left the wallet.
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [frames]
+              additionalProperties: false
+              properties:
+                frames:
+                  type: array
+                  maxItems: 64
+                  items: { $ref: '#/components/schemas/GalleryFrame' }
+      responses:
+        '200':
+          description: The wall, as the owner sees it
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HomeGallery' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /img/{hash}:
+    get:
+      tags: [player]
+      operationId: getImgProxy
+      summary: Proxied NFT image (capability `nftGallery`). PNG, <= 512 px, <= 512 KiB.
+      description: >-
+        No auth. Only images whose URL the server read from DAS can be fetched; the source must be
+        https on a public address, PNG/JPEG/GIF/WebP/AVIF, <= 8 MiB. Re-encoded and cached; the
+        bytes for a hash never change (`cache-control: public, max-age=86400, immutable`).
+      security: []
+      parameters:
+        - {
+            name: hash,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: '^[0-9a-f]{40}$' },
+          }
+      responses:
+        '200':
+          description: The image
+          content:
+            image/png:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -8605,6 +8727,18 @@ components:
             version: { type: integer, const: 1 }
             beefChallenges: { type: boolean }
             targetedCabalInvites: { type: boolean }
+        nft:
+          type: object
+          description: >-
+            Unlock D4, sent only while `nftGallery` is on. The client loads gallery images only
+            from `imageHosts` (the API host serving `/img/{hash}`; empty when PUBLIC_API_BASE_URL is
+            unset), PNG, at most `maxImageBytes` and `maxImagePx`.
+          required: [imageHosts, maxImageBytes, maxImagePx, maxSlots]
+          properties:
+            imageHosts: { type: array, items: { type: string } }
+            maxImageBytes: { type: integer }
+            maxImagePx: { type: integer }
+            maxSlots: { type: integer }
     CharacterPalettes:
       type: object
       additionalProperties: false
@@ -10085,3 +10219,27 @@ components:
           type: string
           enum: [open, followers, closed]
           description: '`open` (default), `followers` (mutual followers and guests only) or `closed` (owner only).'
+    NftItem:
+      type: object
+      required: [assetId, name, collection, imageUrl, mime, moderation, network]
+      properties:
+        assetId: { type: string }
+        name: { type: string }
+        collection: { type: [string, 'null'], description: Verified collection address, if any. }
+        imageUrl: { type: string, description: 'The API image proxy, `<api>/v1/img/<hash>`.' }
+        mime: { type: string, enum: [image/png] }
+        moderation: { type: string, enum: [ok, pending, nsfw, blocked] }
+        network: { type: string, enum: [devnet, mainnet] }
+    GalleryFrame:
+      type: object
+      required: [slot, assetId]
+      additionalProperties: false
+      properties:
+        slot: { type: integer, minimum: 1 }
+        assetId: { type: string }
+    HomeGallery:
+      type: object
+      required: [frames, items]
+      properties:
+        frames: { type: array, items: { $ref: '#/components/schemas/GalleryFrame' } }
+        items: { type: array, items: { $ref: '#/components/schemas/NftItem' } }
