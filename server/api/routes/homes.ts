@@ -11,6 +11,8 @@
  *   GET  /v1/homes/:id
  *   GET  /v1/units/:unitId/access
  *   POST /v1/homes/move                 (capability homeMove)
+ *   GET  /v1/homes/me/settings          (capability visitorPolicy)
+ *   PUT  /v1/homes/me/settings          (capability visitorPolicy)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -30,6 +32,11 @@ import {
 } from '../../application/homes.js';
 import { unitAccess } from '../../application/home-units.js';
 import { moveHome } from '../../application/home-move.js';
+import {
+  VisitorPolicySchema,
+  getHomeSettings,
+  putHomeSettings,
+} from '../../application/home-settings.js';
 
 const HomeKind = z.enum([
   'parents_basement',
@@ -40,6 +47,7 @@ const HomeKind = z.enum([
 ]);
 
 const CreateBody = z.object({ kind: HomeKind });
+const SettingsBody = z.object({ visitors: VisitorPolicySchema }).strict();
 const GuestParams = z.object({ homeId: z.string().min(1), userId: z.string().uuid() });
 
 /**
@@ -62,6 +70,23 @@ export function registerHomeRoutes(app: FastifyInstance): void {
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       const out = await moveHome(req.ctx, req.user!.sub, body.data.kind);
       return reply.send(out);
+    },
+  );
+
+  // Unlock D2: who may visit (open | followers | closed).
+  app.get(
+    '/v1/homes/me/settings',
+    { preHandler: [requireCapability('visitorPolicy'), requireAuth] },
+    async (req, reply) => reply.send(await getHomeSettings(req.ctx, req.user!.sub)),
+  );
+
+  app.put(
+    '/v1/homes/me/settings',
+    { preHandler: [requireCapability('visitorPolicy'), requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const body = SettingsBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      return reply.send(await putHomeSettings(req.ctx, req.user!.sub, body.data.visitors));
     },
   );
 

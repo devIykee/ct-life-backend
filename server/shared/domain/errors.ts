@@ -718,3 +718,11 @@ export class CapabilityOffError extends DomainError {
     this.httpStatus = 503;
   }
 }
+
+export class HomeClosedError extends DomainError {
+  readonly code = 'HOME_CLOSED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This home is closed to visitors.', details);
+    this.httpStatus = 403;
+  }
+}

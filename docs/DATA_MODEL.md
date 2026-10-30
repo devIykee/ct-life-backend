@@ -282,3 +282,7 @@ collisions. CI and Railway run with `--no-check-order`, so blocks may land out o
 | D Platform (markets, homes, NFT gallery) | `1700000140000-1700000149000` |
 
 Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
+
+## Unlock D: homes, markets, NFT gallery (migrations 140-149)
+
+- `home_settings` (migration 140) — one row per player: `visitors` (`open | followers | closed`, default `open`), `updated_at`. Per player, not per lease, so it survives `POST /homes/move`. No row means `open`. Read by `POST /homes/{ownerId}/visit` and the `home` room before the door check.
