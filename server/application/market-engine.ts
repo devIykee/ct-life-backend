@@ -64,7 +64,8 @@ export interface CoinState {
   change5mBps: number;
   holders: number;
   readonly launchedAt: number;
-  readonly hiddenArc: HiddenArc;
+  /** Turned at the price ceiling (slope flips negative), so not readonly. */
+  hiddenArc: HiddenArc;
   readonly seed: bigint;
   readonly rng: Rng;
   readonly priceHistory: Array<{ at: number; priceMicros: bigint }>;
@@ -98,6 +99,15 @@ export interface MarketConfig {
 const DEFAULT_TICK_LENGTH_SEC = 2;
 const LOCK_TTL_MS = 1500;
 const SNAPSHOT_TTL_SEC = 30;
+
+/**
+ * The ceiling for a simulated coin: a $1T market cap. A positive slope compounds every tick and nothing else
+ * stops a rising coin, so without a top the price grew until mcap_cents overflowed bigint (every UPDATE then
+ * failed, the coin froze and logged an error each tick). At the top the run turns: the slope flips negative.
+ */
+export const MAX_MCAP_CENTS = 100_000_000_000_000n;
+/** Price matching {@link MAX_MCAP_CENTS} (mcap_cents = price_micros * 1000). */
+export const MAX_PRICE_MICROS = MAX_MCAP_CENTS / 1_000n;
 
 /** True once `price` is `drawdownBps` or more below `peak`. A 0 drawdown never trips. */
 export function isDrawnDown(peak: bigint, price: bigint, drawdownBps: number): boolean {
@@ -343,10 +353,19 @@ export class MarketEngine {
     }
     state.priceMicros = BigInt(row.price_micros);
     state.stage = row.stage;
+    // Rows that ran past the ceiling before it existed come back under it (and keep a peak they can fall from).
+    if (state.priceMicros > MAX_PRICE_MICROS) state.priceMicros = MAX_PRICE_MICROS;
+    if (state.peakMicros > MAX_PRICE_MICROS) state.peakMicros = MAX_PRICE_MICROS;
     const noiseBps = (state.rng.float() * 2 - 1) * state.hiddenArc.noiseBps;
     const driftBps = state.hiddenArc.slopeBps + noiseBps;
     const newPriceMicros = this.applyDrift(state.priceMicros, driftBps);
     state.priceMicros = newPriceMicros < 1n ? 1n : newPriceMicros;
+    if (state.priceMicros >= MAX_PRICE_MICROS) {
+      state.priceMicros = MAX_PRICE_MICROS;
+      if (state.hiddenArc.slopeBps > 0) {
+        state.hiddenArc = { ...state.hiddenArc, slopeBps: -state.hiddenArc.slopeBps };
+      }
+    }
     state.mcapCents = (state.priceMicros * 1_000_000_000n) / 1_000_000n;
     state.priceHistory.push({ at: this.clock.now(), priceMicros: state.priceMicros });
     if (state.priceHistory.length > 60) state.priceHistory.shift();

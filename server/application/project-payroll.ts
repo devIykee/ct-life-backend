@@ -315,7 +315,7 @@ export async function rollProjectRisk(
     }
     if (out.def.priceShockBps !== 0) {
       await c.query(
-        `UPDATE coins SET price_micros = GREATEST(1, price_micros * (10000 + $2::bigint) / 10000)
+        `UPDATE coins SET price_micros = LEAST(100000000000, GREATEST(1, price_micros * (10000 + $2::bigint) / 10000))
           WHERE coin_id = $1 AND stage <> 'dead'`,
         [proj.coin_id, out.def.priceShockBps],
       );
