@@ -100,6 +100,11 @@
       "message": "All venue instances are at capacity; try again shortly."
     },
     {
+      "code": "NOT_IN_VENUE",
+      "httpStatus": 403,
+      "message": "You are not in that venue. Join it before connecting to its voice."
+    },
+    {
       "code": "SPOT_TAKEN",
       "httpStatus": 409,
       "message": "Spot is taken."
@@ -443,6 +448,36 @@
       "code": "CAPABILITY_OFF",
       "httpStatus": 503,
       "message": "This feature is not turned on on this server yet."
+    },
+    {
+      "code": "HOME_CLOSED",
+      "httpStatus": 403,
+      "message": "This home is closed to visitors."
+    },
+    {
+      "code": "NET_WORTH_TOO_LOW",
+      "httpStatus": 403,
+      "message": "Your net worth is below what this needs."
+    },
+    {
+      "code": "SYBIL_JAILED",
+      "httpStatus": 403,
+      "message": "You are in the Barn."
+    },
+    {
+      "code": "CREATOR_UNAVAILABLE",
+      "httpStatus": 403,
+      "message": "This creator is not taking paid calls right now."
+    },
+    {
+      "code": "VOTE_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "You cannot vote in this match."
+    },
+    {
+      "code": "ALREADY_VOTED",
+      "httpStatus": 409,
+      "message": "You already voted in this match."
     }
   ]
 }

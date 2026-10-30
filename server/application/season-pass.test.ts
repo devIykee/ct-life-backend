@@ -1,9 +1,8 @@
 /**
  * Season pass service tests.
  *
- * Covers: tiered pricing (free vs season), expiring pass
- * behavior, double-buy idempotency, insufficient-cash refusal,
- * the /me endpoint, and the /claim endpoint's source-of-truth
+ * Covers: the pass grant a verified payment intent makes (no
+ * Cash), a repeat grant, the /me endpoint, and the /claim endpoint's source-of-truth
  * (the Sunday Unlock worker writes the ledger row; claim
  * reads it).
  */
@@ -50,46 +49,31 @@ beforeEach(async () => {
 });
 
 describe('season pass service', () => {
-  it('buy debits $5, writes a season_pass row with tier=season', async () => {
+  it('grantSeasonPass writes tier=season until the season end, and never touches Cash', async () => {
     const ctx = buildContext();
-    const { buy } = await import('./season-pass.js');
-    const out = await buy(ctx, userId);
+    const { grantSeasonPass, SEASON_PASS_PRICE_CENTS } = await import('./season-pass.js');
+    const endsAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const out = await grantSeasonPass(pool, userId, { endsAt });
     expect(out.tier).toBe('season');
-    expect(out.pricePaidCents).toBe(500);
-    expect(new Date(out.expiresAt).getTime()).toBeGreaterThan(Date.now());
+    expect(out.pricePaidCents).toBe(SEASON_PASS_PRICE_CENTS);
+    expect(out.expiresAt).toBe(endsAt);
     const bal = await pool.query<{ cash_cents: string }>(
       `SELECT cash_cents FROM balances WHERE user_id = $1`,
       [userId],
     );
-    expect(Number(bal.rows[0]?.cash_cents)).toBe(1_000_000 - 500);
-    const led = await pool.query<{ reason: string }>(
-      `SELECT reason FROM ledger_entries WHERE user_id = $1 AND reason = 'season_pass_buy'`,
-      [userId],
-    );
-    expect(led.rows.length).toBe(1);
+    expect(Number(bal.rows[0]?.cash_cents)).toBe(1_000_000);
+    const { getByUser } = await import('./season-pass.js');
+    expect((await getByUser(ctx, userId))?.tier).toBe('season');
   });
 
-  it('re-buy extends expires_at and accumulates price_paid_cents (idempotent)', async () => {
-    const ctx = buildContext();
-    const { buy, getByUser } = await import('./season-pass.js');
-    const first = await buy(ctx, userId);
-    const second = await buy(ctx, userId);
-    expect(second.tier).toBe('season');
+  it('a second grant keeps the later expiry and adds the price', async () => {
+    const { grantSeasonPass } = await import('./season-pass.js');
+    const later = new Date(Date.now() + 60 * 86_400_000).toISOString();
+    const sooner = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    await grantSeasonPass(pool, userId, { endsAt: later });
+    const second = await grantSeasonPass(pool, userId, { endsAt: sooner });
+    expect(second.expiresAt).toBe(later);
     expect(second.pricePaidCents).toBe(1000);
-    const after = await getByUser(ctx, userId);
-    expect(after!.tier).toBe('season');
-    expect(after!.pricePaidCents).toBe(1000);
-    // expires_at moved forward.
-    expect(new Date(after!.expiresAt).getTime()).toBeGreaterThanOrEqual(
-      new Date(first.expiresAt).getTime(),
-    );
-  });
-
-  it('insufficient cash refuses the buy', async () => {
-    const ctx = buildContext();
-    const { buy } = await import('./season-pass.js');
-    await pool.query(`UPDATE balances SET cash_cents = 100 WHERE user_id = $1`, [userId]);
-    await expect(buy(ctx, userId)).rejects.toBeInstanceOf(ValidationFailedError);
   });
 
   it('getByUser returns null for a user with no pass', async () => {
@@ -113,8 +97,10 @@ describe('season pass service', () => {
 
   it('claim surfaces the weekly_perk ledger row written by the Sunday Unlock worker', async () => {
     const ctx = buildContext();
-    const { buy, claim } = await import('./season-pass.js');
-    await buy(ctx, userId);
+    const { grantSeasonPass, claim } = await import('./season-pass.js');
+    await grantSeasonPass(pool, userId, {
+      endsAt: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    });
     // Insert a winning daily_clue_attempts inside the prior week window.
     const clueId = uuidv7();
     const { createHash } = await import('node:crypto');

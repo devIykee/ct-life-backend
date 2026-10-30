@@ -13,7 +13,7 @@ import { config as loadDotenv } from 'dotenv';
 import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { ForbiddenError, NotFoundError } from '../shared/domain/errors.js';
+import { NotFoundError, SybilJailedError } from '../shared/domain/errors.js';
 import {
   claimAirdrop,
   clearSybilJailed,
@@ -108,11 +108,11 @@ describe('airdrop farm + sybil jail', () => {
     expect(r.amountCents).toBe(750);
   });
 
-  it('claimAirdrop refuses sybil-jailed user with ForbiddenError', async () => {
+  it('claimAirdrop refuses sybil-jailed user with SYBIL_JAILED', async () => {
     const ctx = buildContext();
     const u = await newUser('jailed');
     await setSybilJailed(ctx, u);
-    await expect(claimAirdrop(ctx, u)).rejects.toBeInstanceOf(ForbiddenError);
+    await expect(claimAirdrop(ctx, u)).rejects.toBeInstanceOf(SybilJailedError);
   });
 
   it('setSybilJailed / clearSybilJailed admin path', async () => {

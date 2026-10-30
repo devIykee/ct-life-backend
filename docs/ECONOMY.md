@@ -52,22 +52,24 @@ The full content lives in M2 onward. This is the table of contents and the rules
 | Rent rebates / promotions | spec 4       | TBD                                                  |
 | Cash top-ups (real money) | spec 4       | USDC, SOL, SKR, ORE; ORE 15% bonus, SKR 10%          |
 | Project wages (Builder)   | unlock B1    | game-paid band; project task; capped per project     |
+| CT Beef win reward        | unlock A6    | house-paid, capped (`beef_topics.json`); no stakes   |
 
 ## Sinks (Cash out)
 
-| Sink                              | Spec section | Notes                                    |
-| --------------------------------- | ------------ | ---------------------------------------- |
-| Rent                              | spec 4       | per `homes.json`; weekly; 4 misses evict |
-| Gas bill                          | spec 4       | per city district                        |
-| Food                              | spec 4       | per `needs.json`; need action `eat`      |
-| Tax                               | spec 4       | brackets in `economy.json`; weekly reset |
-| Gear                              | spec 4       | items from `items.json`                  |
-| Business costs                    | spec 4       | per `businesses.json`                    |
-| Rug losses                        | spec 4       | fictional coin losses                    |
-| Bail                              | spec 4       | after moderation                         |
-| Cosmetics (Cash items)            | spec 4       | shop purchases                           |
-| Trade fees                        | spec 4       | per trade                                |
-| Project treasury (player-founded) | unlock B1    | seed, fund, launch, matching op cost     |
+| Sink                              | Spec section | Notes                                     |
+| --------------------------------- | ------------ | ----------------------------------------- |
+| Rent                              | spec 4       | per `homes.json`; weekly; 4 misses evict  |
+| Gas bill                          | spec 4       | per city district                         |
+| Food                              | spec 4       | per `needs.json`; need action `eat`       |
+| Tax                               | spec 4       | brackets in `economy.json`; weekly reset  |
+| Gear                              | spec 4       | items from `items.json`                   |
+| Business costs                    | spec 4       | per `businesses.json`                     |
+| Rug losses                        | spec 4       | fictional coin losses                     |
+| Bail                              | spec 4       | after moderation                          |
+| Cosmetics (Cash items)            | spec 4       | shop purchases                            |
+| Trade fees                        | spec 4       | per trade                                 |
+| Project treasury (player-founded) | unlock B1    | seed, fund, launch, matching op cost      |
+| Sybil bail                        | unlock A5    | ledger `sybil_bail`; `sybil_reasons.json` |
 
 ## Tax brackets (weekly, resets Mon 00:00 UTC)
 
