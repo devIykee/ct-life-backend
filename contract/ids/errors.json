@@ -448,6 +448,16 @@
       "code": "SYBIL_JAILED",
       "httpStatus": 403,
       "message": "You are in the Barn."
+    },
+    {
+      "code": "VOTE_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "You cannot vote in this match."
+    },
+    {
+      "code": "ALREADY_VOTED",
+      "httpStatus": 409,
+      "message": "You already voted in this match."
     }
   ]
 }

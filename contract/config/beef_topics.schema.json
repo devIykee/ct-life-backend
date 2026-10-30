@@ -1,0 +1,93 @@
+{
+  "title": "beef_topics.json",
+  "type": "object",
+  "required": ["version", "topics", "phases", "reward", "elo", "crowd", "voters", "limits"],
+  "properties": {
+    "version": { "type": "string" },
+    "_note": { "type": "string" },
+    "topics": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "label"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^beef_[a-z0-9_]{1,56}$" },
+          "label": { "type": "string", "minLength": 1, "maxLength": 60 }
+        }
+      }
+    },
+    "phases": {
+      "type": "object",
+      "required": ["openSeconds", "activeSeconds", "votingSeconds"],
+      "additionalProperties": false,
+      "properties": {
+        "openSeconds": { "type": "integer", "minimum": 60, "maximum": 86400 },
+        "activeSeconds": { "type": "integer", "minimum": 60, "maximum": 3600 },
+        "votingSeconds": { "type": "integer", "minimum": 60, "maximum": 3600 }
+      }
+    },
+    "reward": {
+      "type": "object",
+      "required": [
+        "winnerCents",
+        "maxRewardedWinsPerDay",
+        "maxRewardedWinsPerPairPerDay",
+        "minAccountAgeHours"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "winnerCents": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "maxRewardedWinsPerDay": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "maxRewardedWinsPerPairPerDay": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "minAccountAgeHours": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "elo": {
+      "type": "object",
+      "required": ["start", "kFactor", "maxRatedMatchesPerPairPerDay"],
+      "additionalProperties": false,
+      "properties": {
+        "start": { "type": "integer", "minimum": 0, "maximum": 3000 },
+        "kFactor": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "maxRatedMatchesPerPairPerDay": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "crowd": {
+      "type": "object",
+      "required": [
+        "npcVotes",
+        "talkSecondWeight",
+        "emoteWeight",
+        "sayWeight",
+        "maxTalkSpanSeconds",
+        "maxScorePerParticipant"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "npcVotes": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "talkSecondWeight": { "type": "integer", "minimum": 0 },
+        "emoteWeight": { "type": "integer", "minimum": 0 },
+        "sayWeight": { "type": "integer", "minimum": 0 },
+        "maxTalkSpanSeconds": { "type": "integer", "minimum": 1, "maximum": 300 },
+        "maxScorePerParticipant": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "voters": {
+      "type": "object",
+      "required": ["minAccountAgeHours", "minLevel"],
+      "additionalProperties": false,
+      "properties": {
+        "minAccountAgeHours": { "type": "integer", "minimum": 0 },
+        "minLevel": { "type": "integer", "minimum": 1, "maximum": 10 }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "required": ["maxOpenPerChallenger"],
+      "additionalProperties": false,
+      "properties": { "maxOpenPerChallenger": { "type": "integer", "minimum": 1, "maximum": 20 } }
+    }
+  }
+}

@@ -726,3 +726,19 @@ export class SybilJailedError extends DomainError {
     this.httpStatus = 403;
   }
 }
+
+export class VoteNotAllowedError extends DomainError {
+  readonly code = 'VOTE_NOT_ALLOWED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You cannot vote in this match.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class AlreadyVotedError extends DomainError {
+  readonly code = 'ALREADY_VOTED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You already voted in this match.', details);
+    this.httpStatus = 409;
+  }
+}

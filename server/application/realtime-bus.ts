@@ -45,7 +45,10 @@ export type UserMessageType =
   | 'jailed'
   | 'released'
   | 'event'
-  | 'sybil_status';
+  | 'sybil_status'
+  | 'beef_challenge'
+  | 'beef_update'
+  | 'beef_result';
 
 export interface UserMessage {
   readonly userId: string;

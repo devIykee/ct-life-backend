@@ -51,6 +51,7 @@ import { SimulatedClock } from '../../../packages/npc-brain/src/clock.js';
 import { VenueState, NpcState, type PlayerState } from '../../../contract/realtime/states.js';
 import { z } from 'zod';
 import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
+import { BEEF_CHANNEL } from '../../application/beef-events.js';
 import {
   applyOutfitMessage,
   authenticateJoin,
@@ -112,6 +113,8 @@ const NpcTapMessage = z.object({
 
 /** How often the venue re-reads the world pulse. */
 const PULSE_REFRESH_MS = 15_000;
+/** The Debate Arena venue, where CT Beef matches are argued (unlock A6). */
+const ARENA_VENUE_ID = 'ratio_arena';
 
 interface VenueSpots {
   readonly walkable: ReadonlyArray<{
@@ -168,12 +171,22 @@ export class VenueRoom extends Room {
   private rng = new SeededRng(0xc0ffee ^ (Date.now() & 0xffffffff));
 
   private onOutfit = (data: unknown): void => applyOutfitMessage(this.state.players, data);
+  /** Debate Arena only: sessionId -> when the current talking span started (unlock A6). */
+  private talkSince = new Map<string, number>();
+  /** Debate Arena only: relays beef_update / beef_result to the room. */
+  private onBeef = (data: unknown): void => {
+    const m = data as { type?: unknown; payload?: unknown } | null;
+    if (m && (m.type === 'beef_update' || m.type === 'beef_result') && m.payload) {
+      this.broadcast(m.type, m.payload);
+    }
+  };
 
   /**
    * Stop listening for outfit changes and bans.
    */
   override async onDispose(): Promise<void> {
     await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
+    if (this.isArena()) await this.presence?.unsubscribe(BEEF_CHANNEL, this.onBeef);
     await this.ban.detach();
   }
 
@@ -207,6 +220,8 @@ export class VenueRoom extends Room {
     this.onMessage('npc_tap', (client, msg) => this.handleNpcTap(client, msg));
     // The api tells every room when a player's outfit changes (shift start/end, uniform equip).
     await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
+    // Debate Arena: beef phase changes and results for spectators (unlock A6).
+    if (this.isArena()) await this.presence?.subscribe(BEEF_CHANNEL, this.onBeef);
     // Spawn NPC brains per venue archetype.
     this.spawnNpcBrains();
     // 1 Hz NPC tick.
@@ -275,6 +290,7 @@ export class VenueRoom extends Room {
     this.moveBuckets.delete(client.sessionId);
     this.lastEmoteAt.delete(client.sessionId);
     this.lastSayAt.delete(client.sessionId);
+    if (player) this.endTalkSpan(client.sessionId, player.userId);
   }
 
   // --- Message handlers -------------------------------------------
@@ -447,6 +463,7 @@ export class VenueRoom extends Room {
     if (!player) return;
     player.emoteId = parsed.data.emoteId;
     player.emoteAt = now;
+    if (this.isArena()) this.reportArena(player.userId, 'emote', 1);
   }
 
   private handleSay(client: Client, msg: unknown): void {
@@ -491,6 +508,7 @@ export class VenueRoom extends Room {
         client.send('rejected', { type: 'say', code: 'ACCOUNT_MUTED' });
         return;
       }
+      if (this.isArena()) this.reportArena(userId, 'say', 1);
       for (const c of this.clients) {
         if (c.sessionId === client.sessionId) continue;
         const other = this.state.players.get(c.sessionId)?.userId;
@@ -508,6 +526,47 @@ export class VenueRoom extends Room {
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
     player.talking = parsed.data.on;
+    if (!this.isArena()) return;
+    if (parsed.data.on) {
+      if (!this.talkSince.has(client.sessionId)) this.talkSince.set(client.sessionId, Date.now());
+    } else {
+      this.endTalkSpan(client.sessionId, player.userId);
+    }
+  }
+
+  // --- Debate Arena activity (unlock A6) ---------------------------
+
+  private isArena(): boolean {
+    return this.state.venueId === ARENA_VENUE_ID;
+  }
+
+  /** Close a talking span and report its seconds (capped per span server-side). */
+  private endTalkSpan(sessionId: string, userId: string): void {
+    const since = this.talkSince.get(sessionId);
+    if (since === undefined) return;
+    this.talkSince.delete(sessionId);
+    const seconds = Math.floor((Date.now() - since) / 1000);
+    if (seconds > 0) this.reportArena(userId, 'talk', seconds);
+  }
+
+  /**
+   * Count talk seconds, emotes and chat lines for a player in a live beef
+   * match (a no-op otherwise). Fire and forget.
+   */
+  private reportArena(userId: string, kind: 'talk' | 'emote' | 'say', amount: number): void {
+    void (async (): Promise<void> => {
+      const [{ buildContext }, { recordArenaActivity }, { beefConfig }] = await Promise.all([
+        import('../../application/context.js'),
+        import('../../application/beef-activity.js'),
+        import('../../application/beef-rules.js'),
+      ]);
+      const ctx = buildContext();
+      const n =
+        kind === 'talk' ? Math.min(amount, beefConfig(ctx).crowd.maxTalkSpanSeconds) : amount;
+      await recordArenaActivity(ctx.redis.main, userId, kind, n);
+    })().catch(() => {
+      // Activity is best effort.
+    });
   }
 
   private handleNpcTap(client: Client, msg: unknown): void {

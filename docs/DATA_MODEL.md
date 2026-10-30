@@ -291,3 +291,14 @@ jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active wh
 AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
 over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
 idempotency ref `sybil-bail:<jail_id>`), a sink.
+
+## CT Beef, stake-free (migration 112, unlock A6)
+
+`beef_matches` gains `topic_id` (`config/beef_topics.json`), `invited_user_id` (only that player may
+accept or decline), `phase_ends_at` (end of the current open / active / voting phase), `reward_cents`
+(shown at open), `reward_paid_cents` (paid at close: 0 for a draw or a cap), `votes_challenger` /
+`votes_accepter` (player votes) and `crowd_challenger` / `crowd_accepter` (the NPC arena crowd). Status
+adds `voting` and `expired`; a `closed` match may have no winner (draw); `stake_cents` is `>= 0` and 0 for
+new matches (older stakes are refunded to their owners when those matches end). `beef_votes` (one row per
+voter per match) and `beef_presence` (each participant's talk seconds, emotes and chat lines during the
+live phase, copied from Redis `beef:act:<matchId>` when the match moves to voting).

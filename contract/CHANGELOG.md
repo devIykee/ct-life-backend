@@ -1,3 +1,17 @@
+## 2026-10-30 - CT Beef: stake-free, topics, invites, phases, votes, the arena crowd (unlock A6)
+
+Migration 112. New config `config/beef_topics.json`. Capabilities `beef` (app; every player beef route and the phase worker) and `beefVoting`.
+
+- **Stake-free (economy rule: Cash never moves between players).** `POST /beef {topicId, invitedUserId?, stakeCents?: 0}`: `stakeCents > 0` is `400 VALIDATION_FAILED {reason: stakes_disabled}`; the response echoes `topicId`, `invitedUserId` and `stakeCents: 0`, with `rewardCents` (what the winner earns from the house: $100, at most 3 rewarded wins a day, 1 per pair of players a day, accounts at least 24 h old). Ledger `beef_reward` (a faucet). The old `beef_stake` / `beef_payout` / `beef_fee` flow is gone; matches opened before this change give each stake back to its owner (`beef_stake_refund`) when they end.
+- Six topics (`beef_fast_chain_vs_l2`, `beef_memes_vs_utility`, `beef_perps_vs_spot`, `beef_farm_vs_trade`, `beef_anon_vs_doxxed`, `beef_cabal_is_real`); unknown is `400 {reason: unknown_topic}`. At most 3 open challenges (`409 {reason: too_many_open}`).
+- Phases: `open` (10 min, then `expired`) -> `active` (5 min debate in the Debate Arena) -> `voting` (10 min) -> `closed`, moved by a worker every 15 s and re-checked on every action.
+- New `GET /beef/{id}`, `POST /beef/{id}/cancel` (challenger, while open), `POST /beef/{id}/votes {votedUserId}` -> `201 {matchId, votedUserId, at}` (`403 VOTE_NOT_ALLOWED {reason: participant | too_new | level}`, `403 SYBIL_JAILED`, `409 ALREADY_VOTED`, `409 CONFLICT {reason: not_voting}`). `decline` is now the invited player's (the challenger cancels). Accept: only the invited player for an aimed challenge (`403 FORBIDDEN {reason: not_invited}`), `409 {reason: not_open | in_match}`, `403 BLOCKED`.
+- `GET /beef` gains `scope=mine|open|arena` (mine covers invites) and a working `cursor`; `GET /beef/elo?userId=`.
+- `BeefMatch` gains `invitedUserId`, `topicId`, `rewardCents`, `rewardPaidCents`, `phaseEndsAt`, `votes` (null until closed), `crowdVotes` (null until closed), `myVote`; `feeBps` is 0.
+- Result: player votes plus an arena crowd of 5 NPC votes split by each participant's activity in the arena during the live phase (talk seconds, emotes, chat lines; capped; deterministic). Equal totals are a draw (Elo as a draw, no reward). Elo moves for at most 3 matches per pair per day.
+- Realtime: `beef_challenge` to the invited player; `beef_update` (every phase change) and `beef_result` (close) to the city and the Debate Arena venue rooms.
+- New error codes `VOTE_NOT_ALLOWED` (403) and `ALREADY_VOTED` (409). Settle stays admin-only (a manual override, same caps).
+
 ## 2026-10-30 - Farm: Sybil jail, bail and the Sybil Barn (unlock A5)
 
 Migration 111 (`sybil_jail`). New config `config/sybil_reasons.json`. Capabilities `sybilBail` (bail, and the game roll itself) and `sybilBarn`.
