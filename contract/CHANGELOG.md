@@ -1,3 +1,13 @@
+## 2026-10-30 - VC Row: NPC term sheets, deals, dump at unlock (unlock WP-B B2, migration 1700000121000)
+
+Behind the `vc` capability (`503 CAPABILITY_OFF {capability: 'vc'}` until it is in `CAPABILITIES_ON`). No VC Cash ever reaches a player.
+
+- New: `GET /projects/{id}/vc-offers` (founder) → `{offers: [VcOffer]}`, `POST /vc-offers/{offerId}/accept|decline` → `VcOffer`. `VcOffer = {offerId, projectId, vcArchetypeId, investCents, equityBps, unlockAt, status, expiresAt}`. Errors: 403 `not_owner`; 409 `not_pending` | `expired` | `wrong_status`.
+- Changed: `GET /vc-row/deals` is now behind `vc`, takes `cursor` and `limit` (default 20), and pages with `nextCursor`; `status` is `active | unlocked | dumped`.
+- `GET /projects/{id}` `vcStakes` is filled: `[{vcArchetypeId, equityBps, investedCents, unlockAt}]` for deals not yet dumped.
+- Worker: a daily generator gives live projects under a $5,000 treasury 1-3 term sheets a week (value = 50% of the coin market cap, 8-18% equity, $200-$5,000, 24 h to answer). Accepting puts the money in the project treasury (an NPC faucet that only feeds sinks) and opens a deal that unlocks in 7 days. After unlock the VC dumps 1.5x its stake (capped at -30%) without being front-runnable (security review H2): only the unlock day is published (`unlockAt` is 00:00 UTC), the dump starts at a hidden random time within 72 h, bleeds out in 24 small steps over up to 12 h, and `proj_vc_dump` and world event `evt_vc_dump {projectId, name, coinId}` (new id in `ids/events.json`) go out only when it ends. `POST /perps` answers `409 CONFLICT {reason: 'perp_entry_frozen'}` on that coin from 24 h before unlock until the bleed ends. New event ids `proj_vc_invested`, `proj_vc_unlocked`, `proj_vc_dump`.
+- Realtime (city): `vc_offer` (founder).
+
 ## 2026-10-30 - Paid calls on the ct_escrow program and creator mode (unlock C2)
 
 Migration 131 (`paid_calls`, `creator_profiles` mode columns). Dark until the operator adds `paidCalls` and `creatorMode` to `CAPABILITIES_ON`; devnet only; needs the escrow upgraded and initialized (docs/ONCHAIN.md "Paid-call escrow on devnet").

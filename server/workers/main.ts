@@ -53,8 +53,9 @@
  * overlapping run (a slow tick, a stalled-job retry) never applies twice.
  * The in-process loops (market sim, police) run on every replica instead.
  *
- *   - Builder projects: weekly payroll (Monday 00:00 UTC), a daily risk roll
- *     and an hourly offer-expiry sweep, one queue (see projects.ts).
+ *   - Builder projects: weekly payroll (Monday 00:00 UTC), a daily risk roll,
+ *     an hourly offer-expiry sweep, and VC Row offers and unlocks, one queue
+ *     (see projects.ts).
  *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the

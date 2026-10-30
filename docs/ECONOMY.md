@@ -27,6 +27,9 @@ The full content lives in M2 onward. This is the table of contents and the rules
   another account; the treasury's operating cost is a pure sink. Two projects per account,
   founder roles included. `POST /projects/{id}/hire` (founder paid the hire directly) answers
   `410 GONE`.
+- **VC Row** (unlock B2): an accepted NPC term sheet puts Cash into the project TREASURY only
+  ($200-$5,000 a cheque, 1-3 offers a week, only for live projects under a $5,000 treasury). The
+  treasury only feeds sinks and never funds wages, so VC money never reaches a player.
 
 ## Cash units
 

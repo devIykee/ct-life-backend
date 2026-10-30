@@ -29,6 +29,11 @@
       "id": "evt_project_launch",
       "label": "Project Launch",
       "effect": "a player project's token lists on the in-game launchpad; params {projectId, name, ticker, coinId}"
+    },
+    {
+      "id": "evt_vc_dump",
+      "label": "VC Dump",
+      "effect": "a VC Row NPC sells its project stake at unlock (coin price shock); params {projectId, name, coinId}"
     }
   ]
 }

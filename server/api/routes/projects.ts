@@ -5,7 +5,6 @@
  *   POST   /v1/projects
  *   GET    /v1/projects/{id}
  *   GET    /v1/me/project-offers
- *   GET    /v1/vc-row/deals
  *   POST   /v1/projects/{id}/hire                 410 GONE {reason:'use_offers'}
  *
  * Behind the `builder` capability (503 CAPABILITY_OFF until it is in
@@ -35,7 +34,6 @@ import {
   fundProject,
   getProject,
   listProjects,
-  listVcDeals,
   removeMember,
 } from '../../application/projects.js';
 import {
@@ -47,6 +45,7 @@ import {
 import { getLaunchQuote, launchProject } from '../../application/project-launch.js';
 import { listProjectEvents } from '../../application/project-events.js';
 import { completeProjectTask, startProjectTask } from '../../application/project-tasks.js';
+import { registerVcRoutes } from './vc-row.js';
 
 const FoundBody = z.object({
   kind: z.enum(PROJECT_KINDS),
@@ -57,10 +56,6 @@ const FoundBody = z.object({
 
 const OfferQuery = z.object({
   status: z.enum(['pending', 'accepted', 'declined', 'expired', 'withdrawn']).optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-});
-
-const DealQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(50),
 });
 
@@ -99,15 +94,13 @@ const builder = requireCapability('builder');
  * Register the projects routes.
  */
 export function registerProjectRoutes(app: FastifyInstance): void {
+  // VC Row (B2) registers here so server/api/main.ts needs no new line.
+  registerVcRoutes(app);
+
   app.get('/v1/me/project-offers', { preHandler: requireAuth }, async (req, reply) => {
     const q = parse(OfferQuery, req.query);
     const offers = await listMyProjectOffers(req.ctx, req.user!.sub, q.status ?? null, q.limit);
     return reply.send({ offers, nextCursor: null });
-  });
-
-  app.get('/v1/vc-row/deals', { preHandler: requireAuth }, async (req, reply) => {
-    const q = parse(DealQuery, req.query);
-    return reply.send({ deals: await listVcDeals(req.ctx, q.limit), nextCursor: null });
   });
 
   app.get('/v1/projects', { preHandler: requireAuth }, async (req, reply) => {

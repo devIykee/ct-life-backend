@@ -3180,6 +3180,9 @@ paths:
       tags: [markets]
       operationId: postPerps
       summary: Open a perp.
+      description: >-
+        `409 CONFLICT {reason: 'perp_entry_frozen'}` while a VC Row dump is due on that project coin
+        (from 24 h before its unlock until the bleed ends).
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -8494,6 +8497,114 @@ paths:
           description: Conflict (`CONFLICT`; see `details.reason`)
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
+  # --- VC Row (unlock WP-B B2). Capability `vc`. ---------------------------
+  /projects/{id}/vc-offers:
+    get:
+      tags: [projects]
+      operationId: getProjectVcOffers
+      summary: Term sheets from VC Row NPCs for my project, newest first (capability vc). Founder only.
+      description: |
+        A live project with a treasury under `vc.treasuryThresholdCents` ($5,000),
+        live for 24 h+, gets 1-3 term sheets a week (daily chance, guaranteed after
+        7 quiet days, never two open at once). Terms: the VC values the project at
+        50% of its coin's market cap and buys 8-18% (`equityBps`), cheque $200-$5,000.
+        `unlockAt` is 00:00 UTC of the unlock DAY only (7 days after acceptance;
+        for a pending offer, if accepted now). The exact time is never sent. A pending offer past `expiresAt` (24 h) reads as `expired`. The
+        founder also gets `vc_offer` on the city room. 403 `not_owner`; 404.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Offers
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [offers]
+                properties:
+                  offers: { type: array, items: { $ref: '#/components/schemas/VcOffer' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /vc-offers/{offerId}/accept:
+    post:
+      tags: [projects]
+      operationId: postVcOffersOfferIdAccept
+      summary: Take the VC money (capability vc). Founder only.
+      description: |
+        `investCents` goes into the project treasury (an NPC faucet into the
+        treasury; never to a player). A deal opens that unlocks in 7 days. After
+        unlock the VC dumps 1.5x its stake (capped at -30%), starting at a hidden
+        random time within 72 h and bleeding out in 24 small steps over up to 12 h;
+        `proj_vc_dump` and world event `evt_vc_dump {projectId, name, coinId}` go
+        out when it ends. New perps on the coin are refused from 24 h before
+        unlock until the bleed ends (`POST /perps` 409 `perp_entry_frozen`).
+        Other open offers expire. Errors: 403 `not_owner`; 404; 409 `not_pending` |
+        `expired` | `wrong_status` (project not live).
+      parameters:
+        - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VcOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /vc-offers/{offerId}/decline:
+    post:
+      tags: [projects]
+      operationId: postVcOffersOfferIdDecline
+      summary: Turn the VC down (capability vc). Founder only. 409 `not_pending` | `expired`.
+      parameters:
+        - { name: offerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Declined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VcOffer' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /vc-row/deals:
+    get:
+      tags: [projects]
+      operationId: getVcRowDeals
+      summary: The VC Row board, newest first, keyset paged (capability vc).
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - {
+            name: limit,
+            in: query,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 20 },
+          }
+      responses:
+        '200':
+          description: Deals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deals, nextCursor]
+                properties:
+                  deals: { type: array, items: { $ref: '#/components/schemas/VcDeal' } }
+                  nextCursor: { type: [string, 'null'] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /me/sybil-status:
     get:
@@ -11525,7 +11636,7 @@ components:
             format: date-time,
             description: 'Next Monday 00:00 UTC; null while launching or rugged.',
           }
-        vcStakes: { type: array, items: { type: object } }
+        vcStakes: { type: array, items: { $ref: '#/components/schemas/VcStake' } }
         recentEvents: { type: array, items: { $ref: '#/components/schemas/ProjectEvent' } }
         myTask:
           type: [object, 'null']
@@ -11619,3 +11730,36 @@ components:
               jailedAt: { type: string, format: date-time }
               releaseAt: { type: string, format: date-time }
         nextCursor: { type: 'null' }
+    # --- VC Row (unlock WP-B B2) ---------------------------------------------
+    VcOffer:
+      type: object
+      required:
+        [offerId, projectId, vcArchetypeId, investCents, equityBps, unlockAt, status, expiresAt]
+      properties:
+        offerId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        vcArchetypeId: { type: string, description: 'Id from ids/archetypes.json (`vc`).' }
+        investCents: { type: integer, minimum: 1 }
+        equityBps: { type: integer, minimum: 1, maximum: 10000 }
+        unlockAt: { type: string, format: date-time }
+        status: { type: string, enum: [pending, accepted, declined, expired] }
+        expiresAt: { type: string, format: date-time }
+    VcDeal:
+      type: object
+      required: [projectId, projectName, vcArchetypeId, investCents, equityBps, status, at]
+      properties:
+        projectId: { type: string, format: uuid }
+        projectName: { type: string }
+        vcArchetypeId: { type: string }
+        investCents: { type: integer }
+        equityBps: { type: integer, minimum: 1, maximum: 10000 }
+        status: { type: string, enum: [active, unlocked, dumped] }
+        at: { type: string, format: date-time }
+    VcStake:
+      type: object
+      required: [vcArchetypeId, equityBps, investedCents, unlockAt]
+      properties:
+        vcArchetypeId: { type: string }
+        equityBps: { type: integer, minimum: 1, maximum: 10000 }
+        investedCents: { type: integer }
+        unlockAt: { type: string, format: date-time }

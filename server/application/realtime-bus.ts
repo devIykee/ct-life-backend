@@ -41,6 +41,7 @@ export type UserMessageType =
   // Builder and VC Row (unlock WP-B).
   | 'hire_offer'
   | 'project_event'
+  | 'vc_offer'
   | 'event_live'
   | 'event_ended'
   | 'irl_checkin'

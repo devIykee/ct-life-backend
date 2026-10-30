@@ -323,3 +323,8 @@ jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active wh
 AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
 over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
 idempotency ref `sybil-bail:<jail_id>`), a sink.
+
+## VC Row (migration 1700000121000, unlock WP-B B2)
+
+- `vc_offers` — an NPC term sheet: `vc_archetype_id`, `invest_cents`, `equity_bps`, `unlock_days`, `status` pending | accepted | declined | expired, `expires_at`; at most one `pending` per project (partial unique index).
+- `vc_deals` gains `offer_id`, `unlock_at`, `dumped_at`; `status` adds `unlocked` and `dumped` (the board maps legacy `exited` → `unlocked`, `written_off` → `dumped`).
