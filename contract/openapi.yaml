@@ -9218,6 +9218,29 @@ paths:
           content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /homes/{ownerId}/knock:
+    post:
+      tags: [player]
+      operationId: postHomeKnock
+      summary: Knock on a home's door (capability `visitorPolicy`, unlock D5).
+      description: >-
+        The owner gets the realtime `home_knock {fromUserId, alias, homeId, at}` if online.
+        Refused: your own home (`400 {reason: self_knock}`), no live home (`404`), a block in
+        either direction (`403 BLOCKED`, the owner is not told), a `closed` home
+        (`403 HOME_CLOSED`). One knock per door per minute and 10 an hour per player
+        (`429 RATE_LIMITED {reason: knock_cooldown | knock_limit, retryAfterMs}`).
+      parameters:
+        - { name: ownerId, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '204': { description: Knocked }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:

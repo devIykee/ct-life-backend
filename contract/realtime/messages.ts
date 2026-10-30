@@ -369,6 +369,15 @@ export const PredictionSettledMessage = z.object({
 });
 export type PredictionSettledMessage = z.infer<typeof PredictionSettledMessage>;
 
+/** Unlock D5: someone knocked on your home's door (toast). */
+export const HomeKnockMessage = z.object({
+  fromUserId: z.string().min(1),
+  alias: z.string().min(1),
+  homeId: z.string().min(1),
+  at: z.number().int().nonnegative(),
+});
+export type HomeKnockMessage = z.infer<typeof HomeKnockMessage>;
+
 // ---------------------------------------------------------------------------
 // Server -> client (market room)
 // ---------------------------------------------------------------------------

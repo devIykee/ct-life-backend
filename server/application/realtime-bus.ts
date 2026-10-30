@@ -56,7 +56,8 @@ export type UserMessageType =
   | 'sybil_status'
   | 'beef_challenge'
   | 'beef_update'
-  | 'beef_result';
+  | 'beef_result'
+  | 'home_knock';
 
 export interface UserMessage {
   readonly userId: string;
