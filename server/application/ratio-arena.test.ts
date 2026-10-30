@@ -629,3 +629,35 @@ describe('Elo reads never write (review L10)', () => {
     );
   });
 });
+
+describe('aimed-challenge rate limits (review L11)', () => {
+  it('cancel-and-resend to the same player is cooled down; one target gets at most N an hour', async () => {
+    const t0 = new Date();
+    const a = await player();
+    const b = await player();
+    const m = await openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, t0);
+    await cancelMatch(ctx, a, m.matchId, t0);
+    await expect(openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, t0)).rejects.toMatchObject(
+      {
+        code: 'RATE_LIMITED',
+        details: { reason: 'invite_cooldown' },
+      },
+    );
+    const later = at(t0, cfg.limits.inviteCooldownSeconds + 1);
+    await expect(
+      openMatch(ctx, a, { topicId: TOPIC, invitedUserId: b }, later),
+    ).resolves.toMatchObject({ invitedUserId: b });
+    // Open challenges (no target) are not affected.
+    await expect(openMatch(ctx, a, { topicId: TOPIC }, t0)).resolves.toMatchObject({
+      status: 'open',
+    });
+
+    const target = await player();
+    for (let i = 0; i < cfg.limits.maxInvitesPerTargetPerHour; i++) {
+      await openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: target }, t0);
+    }
+    await expect(
+      openMatch(ctx, await player(), { topicId: TOPIC, invitedUserId: target }, t0),
+    ).rejects.toMatchObject({ code: 'RATE_LIMITED', details: { reason: 'target_invite_cap' } });
+  });
+});

@@ -325,3 +325,36 @@ describe('Cabal invites (unlock A3)', () => {
     });
   });
 });
+
+describe('Cabal invite rate limits (review L11)', () => {
+  it('revoke-and-resend to the same guest is cooled down; one guest gets at most 10 an hour', async () => {
+    const ctx = buildContext();
+    const host = await newUser('l11h');
+    await setBalance(host, MARINA_GATE_CENTS);
+    const guest = await newUser('l11g');
+    const first = await createCabalInvite(ctx, host, guest);
+    await revokeCabalInvite(ctx, host, first.inviteId);
+    await expect(createCabalInvite(ctx, host, guest)).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      details: { reason: 'invite_cooldown' },
+    });
+    // After the cooldown the same host may invite again.
+    const later = new Date(Date.now() + 11 * 60_000);
+    await expect(createCabalInvite(ctx, host, guest, later)).resolves.toMatchObject({
+      status: 'pending',
+    });
+    // Ten other hosts fill the guest's hour; the eleventh is refused.
+    const target = await newUser('l11t');
+    for (let i = 0; i < 10; i++) {
+      const h = await newUser(`l11x${i}`);
+      await setBalance(h, MARINA_GATE_CENTS);
+      await createCabalInvite(ctx, h, target);
+    }
+    const h11 = await newUser('l11y');
+    await setBalance(h11, MARINA_GATE_CENTS);
+    await expect(createCabalInvite(ctx, h11, target)).rejects.toMatchObject({
+      code: 'RATE_LIMITED',
+      details: { reason: 'target_invite_cap' },
+    });
+  });
+});

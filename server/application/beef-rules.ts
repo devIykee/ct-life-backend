@@ -27,7 +27,11 @@ export interface BeefConfig {
     maxScorePerParticipant: number;
   };
   readonly voters: { minAccountAgeHours: number; minShiftDays: number };
-  readonly limits: { maxOpenPerChallenger: number };
+  readonly limits: {
+    maxOpenPerChallenger: number;
+    inviteCooldownSeconds: number;
+    maxInvitesPerTargetPerHour: number;
+  };
 }
 
 export interface Activity {

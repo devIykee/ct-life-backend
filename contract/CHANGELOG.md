@@ -6,6 +6,7 @@ Migration 113.
 - CT Beef eligibility (participants and voters) no longer uses a "level": the highest skill never rose, and career level comes from client-reported mini-game scores. It is now server-controlled: account at least 48 h old and paid for server-timed shifts (`shift_pay`) on at least 2 distinct UTC days (`403 FORBIDDEN {reason: too_new | shift_days}`, `403 VOTE_NOT_ALLOWED {reason: participant | too_new | shift_days}`). A normal player reaches it on day 2-3.
 - CT Beef result: player votes decide; the arena crowd (built from client-reported activity) only breaks a tie in player votes, so a bot maxing its activity score can no longer outvote real players.
 - `GET /beef/elo?userId=` is read-only: no `beef_elo` row is created on read (a never-played player reads 1500 and zeros; rows are created only for real participants); `404 NOT_FOUND` for an unknown user.
+- Invite rate limits per target: an aimed beef challenge or a targeted Cabal invite from the same sender to the same player at most once per 10 minutes (cancelled and revoked ones count), and at most 10 a player can receive per hour; else `429 RATE_LIMITED {reason: invite_cooldown | target_invite_cap, retryAfterMs}`. Stops create, cancel/revoke, create notification loops.
 
 ## 2026-10-30 - Knock on a home's door (unlock D5)
 

@@ -7824,6 +7824,10 @@ paths:
           description: CONFLICT with details.reason invites_exhausted, already_member or invite_pending
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '429':
+          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or target_invite_cap (10 an hour per target); details.retryAfterMs
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }
     get:
       tags: [competition]
@@ -8845,6 +8849,10 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
           description: CONFLICT too_many_open
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '429':
+          description: RATE_LIMITED invite_cooldown (same sender and target within 10 min) or target_invite_cap (10 an hour per target); details.retryAfterMs
           content:
             application/json: { schema: { $ref: '#/components/schemas/Error' } }
         '503': { $ref: '#/components/responses/CapabilityOff' }

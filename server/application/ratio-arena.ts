@@ -42,6 +42,7 @@ import { beefConfig } from './beef-rules.js';
 import { markLive } from './beef-activity.js';
 import { publishBeef, publishBeefChallenge } from './beef-events.js';
 import { isSybilJailed } from './sybil-jail.js';
+import { assertInviteRate } from './invite-rate.js';
 
 export type BeefStatus =
   'open' | 'active' | 'voting' | 'closed' | 'declined' | 'cancelled' | 'expired';
@@ -308,6 +309,10 @@ export async function openMatch(
       const u = await c.query(`SELECT 1 FROM users WHERE id = $1`, [invited]);
       if ((u.rowCount ?? 0) === 0) throw new NotFoundError({ kind: 'user', id: invited });
       if (await blockedPair(c, challengerUserId, invited)) throw new BlockedError();
+      await assertInviteRate(c, 'beef', challengerUserId, invited, now, {
+        pairCooldownMs: cfg.limits.inviteCooldownSeconds * 1000,
+        perTargetPerHour: cfg.limits.maxInvitesPerTargetPerHour,
+      });
     }
     const open = await c.query<{ n: number }>(
       `SELECT COUNT(*)::int AS n FROM beef_matches

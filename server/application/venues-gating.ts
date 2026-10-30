@@ -49,11 +49,16 @@ import { activeJail, JAIL_VENUE_ID } from './heat.js';
 import type { AppContext } from './context.js';
 import { publishToUser } from './realtime-bus.js';
 import { isSybilJailed } from './sybil-jail.js';
+import { assertInviteRate } from './invite-rate.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
 const CABAL_INVITE_TTL_DAYS = 7;
 /** Invites a host may have pending at once. */
 export const CABAL_INVITES_PER_HOST = 3;
+/** One targeted invite from a host to the same guest per 10 minutes (review L11). */
+export const CABAL_INVITE_PAIR_COOLDOWN_MS = 10 * 60_000;
+/** Targeted invites one guest can receive per hour, from everyone. */
+export const CABAL_INVITES_PER_TARGET_PER_HOUR = 10;
 const CODE_BYTES = 24; // 32-char base64url
 
 export type CabalInviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
@@ -248,6 +253,11 @@ async function checkGuest(
     [hostUserId, guestUserId, now.toISOString()],
   );
   if ((dup.rowCount ?? 0) > 0) throw new ConflictError({ reason: 'invite_pending' });
+  // Revoke-and-resend must not become a notification loop (review L11).
+  await assertInviteRate(client, 'cabal', hostUserId, guestUserId, now, {
+    pairCooldownMs: CABAL_INVITE_PAIR_COOLDOWN_MS,
+    perTargetPerHour: CABAL_INVITES_PER_TARGET_PER_HOUR,
+  });
 }
 
 /**
