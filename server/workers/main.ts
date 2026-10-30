@@ -95,6 +95,7 @@ import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import type { LikenessGenerationWorker } from '../application/likeness-worker.js';
 import type { LikenessPhotoService } from '../application/likeness-photos.js';
 import { startProjectsWorker } from './projects.js';
+import { startBeefPhases } from './beef.js';
 
 export interface WorkersHandle {
   redis: ReturnType<typeof createRedis>;
@@ -482,6 +483,9 @@ export async function buildWorkers(likeness?: {
     ctx,
   });
 
+  // CT Beef phases (unlock A6): every 15 s while the capability `beef` is on.
+  const beefPhases = await startBeefPhases(ctx, conn, newClient(redis), log);
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -579,6 +583,7 @@ export async function buildWorkers(likeness?: {
       await stopProjects();
       await marketsQueue.close();
       await paidCalls.close();
+      await beefPhases.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

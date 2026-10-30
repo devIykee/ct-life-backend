@@ -1,3 +1,17 @@
+## 2026-10-30 - CT Beef: stake-free, topics, invites, phases, votes, the arena crowd (unlock A6)
+
+Migration 112. New config `config/beef_topics.json`. Capabilities `beef` (app; every player beef route and the phase worker) and `beefVoting`.
+
+- **Stake-free (economy rule: Cash never moves between players).** `POST /beef {topicId, invitedUserId?, stakeCents?: 0}`: `stakeCents > 0` is `400 VALIDATION_FAILED {reason: stakes_disabled}`; the response echoes `topicId`, `invitedUserId` and `stakeCents: 0`, with `rewardCents` (what the winner earns from the house: $100, at most 3 rewarded wins a day, 1 per pair of players a day, accounts at least 24 h old, and only when at least 3 real players voted and the winner leads on player votes alone; a crowd-decided match moves Elo but pays nothing). Ledger `beef_reward` (a faucet). Both participants need an account at least 24 h old and level 2 to open or accept (`403 FORBIDDEN {reason: too_new | level}`). The old `beef_stake` / `beef_payout` / `beef_fee` flow is gone: migration 112 expires old staked open challenges, an old staked challenge can never be accepted (`409 {reason: legacy_stake}`), and a player is refunded (`beef_stake_refund`) only the stake the ledger shows they paid for that match.
+- Six topics (`beef_fast_chain_vs_l2`, `beef_memes_vs_utility`, `beef_perps_vs_spot`, `beef_farm_vs_trade`, `beef_anon_vs_doxxed`, `beef_cabal_is_real`); unknown is `400 {reason: unknown_topic}`. At most 3 open challenges (`409 {reason: too_many_open}`).
+- Phases: `open` (10 min, then `expired`) -> `active` (5 min debate in the Debate Arena) -> `voting` (10 min) -> `closed`, moved by a worker every 15 s and re-checked on every action.
+- New `GET /beef/{id}`, `POST /beef/{id}/cancel` (challenger, while open), `POST /beef/{id}/votes {votedUserId}` -> `201 {matchId, votedUserId, at}` (`403 VOTE_NOT_ALLOWED {reason: participant | too_new | level}`, `403 SYBIL_JAILED`, `409 ALREADY_VOTED`, `409 CONFLICT {reason: not_voting}`). `decline` is now the invited player's (the challenger cancels). Accept: only the invited player for an aimed challenge (`403 FORBIDDEN {reason: not_invited}`), `409 {reason: not_open | in_match}`, `403 BLOCKED`.
+- `GET /beef` gains `scope=mine|open|arena` (mine covers invites) and a working `cursor`; `GET /beef/elo?userId=`.
+- `BeefMatch` gains `invitedUserId`, `topicId`, `rewardCents`, `rewardPaidCents`, `phaseEndsAt`, `votes` (null until closed), `crowdVotes` (null until closed), `myVote`; `feeBps` is 0.
+- Result: player votes plus an arena crowd of 5 NPC votes split by each participant's activity in the arena during the live phase (talk seconds, emotes, chat lines; capped; deterministic). Equal totals are a draw (Elo as a draw, no reward). Elo moves for at most 3 matches per pair per day.
+- Realtime: `beef_challenge` to the invited player; `beef_update` (every phase change) and `beef_result` (close) to the city and the Debate Arena venue rooms.
+- New error codes `VOTE_NOT_ALLOWED` (403) and `ALREADY_VOTED` (409). Settle stays admin-only (a manual override, same caps).
+
 ## 2026-10-30 - VC Row: NPC term sheets, deals, dump at unlock (unlock WP-B B2, migration 1700000121000)
 
 Behind the `vc` capability (`503 CAPABILITY_OFF {capability: 'vc'}` until it is in `CAPABILITIES_ON`). No VC Cash ever reaches a player.

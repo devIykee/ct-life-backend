@@ -53,7 +53,10 @@ export type UserMessageType =
   | 'x_link_update'
   | 'cabal_invite'
   | 'prediction_settled'
-  | 'sybil_status';
+  | 'sybil_status'
+  | 'beef_challenge'
+  | 'beef_update'
+  | 'beef_result';
 
 export interface UserMessage {
   readonly userId: string;

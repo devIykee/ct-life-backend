@@ -328,3 +328,14 @@ idempotency ref `sybil-bail:<jail_id>`), a sink.
 
 - `vc_offers` — an NPC term sheet: `vc_archetype_id`, `invest_cents`, `equity_bps`, `unlock_days`, `status` pending | accepted | declined | expired, `expires_at`; at most one `pending` per project (partial unique index).
 - `vc_deals` gains `offer_id`, `unlock_at`, `dumped_at`; `status` adds `unlocked` and `dumped` (the board maps legacy `exited` → `unlocked`, `written_off` → `dumped`).
+
+## CT Beef, stake-free (migration 112, unlock A6)
+
+`beef_matches` gains `topic_id` (`config/beef_topics.json`), `invited_user_id` (only that player may
+accept or decline), `phase_ends_at` (end of the current open / active / voting phase), `reward_cents`
+(shown at open), `reward_paid_cents` (paid at close: 0 for a draw or a cap), `votes_challenger` /
+`votes_accepter` (player votes) and `crowd_challenger` / `crowd_accepter` (the NPC arena crowd). Status
+adds `voting` and `expired`; a `closed` match may have no winner (draw); `stake_cents` is `>= 0` and 0 for
+new matches (older stakes are refunded to their owners when those matches end). `beef_votes` (one row per
+voter per match) and `beef_presence` (each participant's talk seconds, emotes and chat lines during the
+live phase, copied from Redis `beef:act:<matchId>` when the match moves to voting).

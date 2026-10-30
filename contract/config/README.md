@@ -25,6 +25,7 @@ Files:
 | `projects.json`      | Builder: weekly wage band per role, operating cost, offer TTL, role cap, launch cost per kind and Builder discount, daily risk odds.          | Wages are game-paid for a project task, capped; the treasury op cost is a sink. No event adds Cash.                                                |
 | `predictions.json`   | Prediction Pit (unlock D3): fixed payout, stake limits, daily stake cap, and how often each market kind opens and for how long it takes bets. | `payoutBps` 19000 = 1.9x the stake back on a win (house edge 5%). Cents are int64. See `docs/PREDICTIONS.md`.                                      |
 | `sybil_reasons.json` | Game-rolled Sybil jail tiers (claim attempts per hour, roll chance, jail minutes) and the bail price.                                         | `chanceBps` out of 10000; jail 120-720 min; bail = farm yield per started hour x `bailYieldMultiplier`, clamped to `minBailCents`..`maxBailCents`. |
+| `beef_topics.json`   | CT Beef: the six topics, phase lengths, the house reward and its caps, Elo, the arena crowd weights, voter eligibility, open-challenge limit. | Seconds for phases; `winnerCents` int cents; caps per UTC day; the crowd is `npcVotes` split by activity score.                                    |
 
 The schema validator (`tools/contract-check/schema-validate.ts`) loads every `*.schema.json`, compiles the corresponding JSON file, and fails the build on any error. The CI `contract-check` job runs this on every push.
 

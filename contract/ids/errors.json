@@ -468,6 +468,16 @@
       "code": "CREATOR_UNAVAILABLE",
       "httpStatus": 403,
       "message": "This creator is not taking paid calls right now."
+    },
+    {
+      "code": "VOTE_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "You cannot vote in this match."
+    },
+    {
+      "code": "ALREADY_VOTED",
+      "httpStatus": 409,
+      "message": "You already voted in this match."
     }
   ]
 }

@@ -52,6 +52,7 @@ The full content lives in M2 onward. This is the table of contents and the rules
 | Rent rebates / promotions | spec 4       | TBD                                                  |
 | Cash top-ups (real money) | spec 4       | USDC, SOL, SKR, ORE; ORE 15% bonus, SKR 10%          |
 | Project wages (Builder)   | unlock B1    | game-paid band; project task; capped per project     |
+| CT Beef win reward        | unlock A6    | house-paid, capped (`beef_topics.json`); no stakes   |
 
 ## Sinks (Cash out)
 
