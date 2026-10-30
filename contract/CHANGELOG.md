@@ -1,3 +1,10 @@
+## 2026-10-30 - Report an AI NPC chat reply
+
+Migration 106.
+
+- `POST /llm/chat` now returns `replyId` (the stored interaction id) and `archetype` alongside `response`. The client already reads `replyId` and shows its Report button only when it is set.
+- `POST /reports` accepts `targetType: "npc_reply"` with `targetId` = that `replyId`. Only the player the reply was written for may report it; otherwise `400 VALIDATION_FAILED` with `details.reason: unknown_reply`. The admin queue shows the reply text as the preview, and `remove_content` blanks it.
+
 ## 2026-10-30 - Venue voice tokens need presence in the venue
 
 - `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
