@@ -6,6 +6,21 @@ No migration. Capabilities `districtStandings` and `seasonResults` (`503 CAPABIL
 - New `GET /me/season-results?seasonId=` -> `{seasonId, leagueId, finalRank, outcome: promoted|relegated|stayed, toLeagueId, rewards: []}`. Latest finished season when `seasonId` is omitted. `404 NOT_FOUND` when there is none, `400` for a malformed id. `rewards` are read from the ledger (`season_reward`); nothing pays one yet.
 - Fix: the daily district rollover (00:05 UTC) now rolls the day that just ended. It used to roll the new day, which had five minutes of activity, so every district went back to its default holder.
 
+## 2026-10-30 - Move home in one step (unlock D1, capability `homeMove`)
+
+No migration. Dark until `homeMove` is in `CAPABILITIES_ON` (`503 CAPABILITY_OFF` before that).
+
+- New `POST /homes/move {kind}` (Idempotency-Key) -> `200 {home: LeasedHome, movedOutHomeId: string|null}`. Atomic: the caller's live lease(s) end (`moved_out`, unit freed, guests removed), a unit of the new tier is taken, the first week of the new rent is debited, the new lease starts. Upgrade and downsize work the same way; no refund of the old week; debt stays.
+- Errors: `402 INSUFFICIENT_CASH {have, need, shortfallCents}`, `409 CONFLICT {reason: same_home}`, `409 CONFLICT {reason: no_unit_free, tier}`, `403 FORBIDDEN {reason: phase_locked}` (LIVE_PHASE < 4), `400 VALIDATION_FAILED`.
+- `POST /homes` (lease without moving) and `POST /homes/{homeId}/rent` are unchanged.
+
+## 2026-10-30 - Recent world events: GET /events/active (unlock A1)
+
+No migration. Capability `worldEvents` (off until the operator adds it to `CAPABILITIES_ON`; `503 CAPABILITY_OFF` until then).
+
+- `GET /events/active` now answers `{events: [{eventId, at, params}]}`: the `evt_*` world events broadcast in the last 2 hours, newest first, at most 50; `at` is epoch ms (the same value as the realtime `event` message). It used to fall into `GET /events/{slug}` and answer 404. `401` without a token.
+- Every world event the server broadcasts is also kept in Redis (`world:events`, trimmed to 2 h and 50 on each write). Market-mood events are kept once per refresh even with several city shards.
+
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
 Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.
@@ -15,6 +30,23 @@ Phase 0 of the unlock plan: the switchboard every hidden feature turns on throug
 - Mainnet boot guard: with `APP_ENV=prod` (Solana mainnet) the API, realtime and workers refuse to start unless `ALLOW_MAINNET=1`.
 - `ids/report_reasons.json`: new reason `voice` (the client sends it for voice-chat reports).
 - Migration number blocks for the parallel unlock packages (README, Database Migrations): A `1700000110000-1700000119000`, B `…120…129`, C `…130…139`, D `…140…149`.
+
+## 2026-10-30 - Report an AI NPC chat reply
+
+Migration 106.
+
+- `POST /llm/chat` now returns `replyId` (the stored interaction id) and `archetype` alongside `response`. The client already reads `replyId` and shows its Report button only when it is set.
+- `POST /reports` accepts `targetType: "npc_reply"` with `targetId` = that `replyId`. Only the player the reply was written for may report it; otherwise `400 VALIDATION_FAILED` with `details.reason: unknown_reply`. The admin queue shows the reply text as the preview, and `remove_content` blanks it.
+
+## 2026-10-30 - Venue voice tokens need presence in the venue
+
+- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
+- New error code `NOT_IN_VENUE` (403).
+
+## 2026-10-30 - Alpha calls use the server price; background sweeps start
+
+- `POST /alpha-calls`: the stored `entryMicros` is now the coin's server price at placement (the body's value must still be positive but is ignored), and the call is refused unless `stopMicros < price < targetMicros`: `400 VALIDATION_FAILED` with `details.reason` `price_outside_band` (plus `details.priceMicros`), `unknown_coin` or `coin_dead`. The response's `entryMicros` is the stored server price.
+- Perp liquidation (5 s), alpha grading (30 s), the payment poller (30 s) and weekly rent (Monday 00:00 UTC) now run in the workers process. Prediction settlement runs only with `PREDICTIONS_SETTLEMENT_ENABLED=1` (off by default; the resolver is still a dev stub).
 
 ## 2026-10-26 - Approved display names (migration 105)
 

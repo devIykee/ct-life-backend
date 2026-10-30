@@ -142,7 +142,8 @@ function toHomeRow(row: HomeDbRow): HomeRow {
   };
 }
 
-const RENT_BY_KIND: Record<HomeKind, number> = {
+/** Weekly rent per home kind, in cents (the first week is paid on lease or move). */
+export const RENT_BY_KIND: Record<HomeKind, number> = {
   parents_basement: 2_000, // $20 / week
   hacker_house: 6_000, // $60 / week
   studio: 18_000, // $180 / week
@@ -257,6 +258,17 @@ async function selectHomeRequired(ctx: AppContext, homeId: string): Promise<Home
   const row = await selectHome(ctx, homeId);
   if (!row) throw new NotFoundError({ resource: 'home', id: homeId });
   return row;
+}
+
+/**
+ * One home by instance id, as its owner sees it.
+ * @param ctx - The app context.
+ * @param homeId - The instance id (`home:<uuid>`).
+ * @returns The home row.
+ * @throws NotFoundError when there is no such home.
+ */
+export async function getHomeRow(ctx: AppContext, homeId: string): Promise<HomeRow> {
+  return selectHomeRequired(ctx, homeId);
 }
 
 /** Owner pays rent manually (e.g. mid-week). */

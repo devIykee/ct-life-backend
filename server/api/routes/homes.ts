@@ -10,11 +10,13 @@
  *   POST /v1/homes/:ownerId/visit
  *   GET  /v1/homes/:id
  *   GET  /v1/units/:unitId/access
+ *   POST /v1/homes/move                 (capability homeMove)
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
+import { requireCapability } from '../middleware/capability.js';
 import { ValidationFailedError } from '../../shared/domain/errors.js';
 import {
   addGuest,
@@ -27,6 +29,7 @@ import {
   removeGuest,
 } from '../../application/homes.js';
 import { unitAccess } from '../../application/home-units.js';
+import { moveHome } from '../../application/home-move.js';
 
 const HomeKind = z.enum([
   'parents_basement',
@@ -49,6 +52,18 @@ export function registerHomeRoutes(app: FastifyInstance): void {
     const types = await listHomeTypes(req.ctx);
     return reply.send(types);
   });
+
+  // Unlock D1: give up the current lease and take a new one, atomically.
+  app.post(
+    '/v1/homes/move',
+    { preHandler: [requireCapability('homeMove'), requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const body = CreateBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const out = await moveHome(req.ctx, req.user!.sub, body.data.kind);
+      return reply.send(out);
+    },
+  );
 
   app.post('/v1/homes', { preHandler: [requireAuth, withIdempotency()] }, async (req, reply) => {
     const body = CreateBody.safeParse(req.body);
