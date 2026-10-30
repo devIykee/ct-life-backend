@@ -6,6 +6,8 @@
  *   POST  /v1/creator            — create a creator profile (one per user)
  *   GET   /v1/creator/:handle   — public read by handle
  *   PATCH /v1/creator            — update bio, banner, avatar, categories
+ *   PUT   /v1/creator            — creator mode for paid calls: on/off, USDC rate,
+ *                                  max minutes (unlock C2; capability creatorMode)
  *
  * `handle` is the public identifier; UNIQUE on the table. The
  * creator profile is the basis for paid calls (server/application/
@@ -16,6 +18,7 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { ConflictError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
+import { isCapabilityOn } from './capabilities.js';
 
 const HANDLE_REGEX = /^[a-z0-9_]+$/;
 const HANDLE_MIN = 3;
@@ -211,3 +214,129 @@ export async function getCreatorByUserId(ctx: AppContext, userId: string): Promi
 }
 
 void uuidv7;
+
+// --- Creator mode for paid calls (unlock C2) ----------------------------------
+
+/** 0.25 USDC a minute, in base units (the API floor; the program only checks > 0). */
+export const CREATOR_RATE_MIN = 250_000n;
+/** 50 USDC a minute, in base units (the program's ceiling too). */
+export const CREATOR_RATE_MAX = 50_000_000n;
+/** The program refuses `max_minutes` above 60. */
+export const CREATOR_MAX_MINUTES = 60;
+
+/** What a profile card and `PUT /creator` show. Rates are USDC base-unit strings. */
+export interface CreatorMode {
+  readonly enabled: boolean;
+  readonly ratePerMinUsdc: string;
+  readonly maxMinutes: number;
+}
+
+/**
+ * Turn creator mode on or off and set the rate. Creates the creator profile on the
+ * first call (handle `c_<id>`, editable later with PATCH). The payout wallet is the
+ * caller's own wallet, recorded now: paid calls pay the creator on chain there.
+ *
+ * @param ctx - The app context.
+ * @param userId - The creator.
+ * @param mode - `ratePerMinUsdc` 250000..50000000 base units, `maxMinutes` 1..60.
+ * @throws ValidationFailedError `rate_out_of_range` or `max_minutes`.
+ */
+export async function putCreatorMode(
+  ctx: AppContext,
+  userId: string,
+  mode: CreatorMode,
+): Promise<CreatorMode> {
+  if (!/^\d{1,12}$/.test(mode.ratePerMinUsdc)) {
+    throw new ValidationFailedError({ reason: 'rate_out_of_range' });
+  }
+  const rate = BigInt(mode.ratePerMinUsdc);
+  if (rate < CREATOR_RATE_MIN || rate > CREATOR_RATE_MAX) {
+    throw new ValidationFailedError({
+      reason: 'rate_out_of_range',
+      min: CREATOR_RATE_MIN.toString(),
+      max: CREATOR_RATE_MAX.toString(),
+    });
+  }
+  if (
+    !Number.isInteger(mode.maxMinutes) ||
+    mode.maxMinutes < 1 ||
+    mode.maxMinutes > CREATOR_MAX_MINUTES
+  ) {
+    throw new ValidationFailedError({ reason: 'max_minutes', min: 1, max: CREATOR_MAX_MINUTES });
+  }
+  return ctx.db.withConnection(async (c) => {
+    const u = await c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [userId]);
+    const wallet = u.rows[0]?.wallet;
+    if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: userId });
+    const handle = `c_${userId.replace(/-/g, '').slice(0, 20)}`;
+    const r = await c.query<{ enabled: boolean; rate_per_min_usdc: string; max_minutes: number }>(
+      `INSERT INTO creator_profiles
+         (user_id, handle, enabled, rate_per_min_usdc, max_minutes, payout_wallet, mode_updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
+       ON CONFLICT (user_id) DO UPDATE SET
+         enabled = EXCLUDED.enabled,
+         rate_per_min_usdc = EXCLUDED.rate_per_min_usdc,
+         max_minutes = EXCLUDED.max_minutes,
+         payout_wallet = EXCLUDED.payout_wallet,
+         mode_updated_at = now()
+       RETURNING enabled, rate_per_min_usdc, max_minutes`,
+      [userId, handle, mode.enabled, rate.toString(), mode.maxMinutes, wallet],
+    );
+    const row = r.rows[0]!;
+    return {
+      enabled: row.enabled,
+      ratePerMinUsdc: String(row.rate_per_min_usdc),
+      maxMinutes: Number(row.max_minutes),
+    };
+  });
+}
+
+/** A creator's paid-call terms as the paid-call service needs them. */
+export interface CreatorTerms extends CreatorMode {
+  readonly payoutWallet: string;
+}
+
+/**
+ * @param ctx - The app context.
+ * @param userId - The creator.
+ * @returns Their terms, or null when they never set a rate.
+ */
+export async function creatorTerms(ctx: AppContext, userId: string): Promise<CreatorTerms | null> {
+  const r = await ctx.db.withConnection((c) =>
+    c.query<{
+      enabled: boolean;
+      rate_per_min_usdc: string | null;
+      max_minutes: number | null;
+      payout_wallet: string | null;
+    }>(
+      `SELECT enabled, rate_per_min_usdc, max_minutes, payout_wallet
+         FROM creator_profiles WHERE user_id = $1`,
+      [userId],
+    ),
+  );
+  const row = r.rows[0];
+  if (!row || row.rate_per_min_usdc === null || row.max_minutes === null || !row.payout_wallet) {
+    return null;
+  }
+  return {
+    enabled: row.enabled,
+    ratePerMinUsdc: String(row.rate_per_min_usdc),
+    maxMinutes: Number(row.max_minutes),
+    payoutWallet: row.payout_wallet,
+  };
+}
+
+/**
+ * The `creator` field of `GET /users/:id`: the terms while `creatorMode` is on and the
+ * user set a rate, otherwise null. Never exposes the payout wallet.
+ *
+ * @param ctx - The app context.
+ * @param userId - The profile's user.
+ */
+export async function creatorCard(ctx: AppContext, userId: string): Promise<CreatorMode | null> {
+  if (!isCapabilityOn(ctx, 'creatorMode')) return null;
+  const t = await creatorTerms(ctx, userId);
+  return t === null
+    ? null
+    : { enabled: t.enabled, ratePerMinUsdc: t.ratePerMinUsdc, maxMinutes: t.maxMinutes };
+}

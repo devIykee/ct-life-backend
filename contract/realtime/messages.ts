@@ -349,6 +349,11 @@ export const CallInviteMessage = z.object({
   callId: z.string().min(1),
   fromUserId: z.string().min(1),
   paid: z.boolean(),
+  /** Paid calls (unlock C2): 'paid', the terms, and when the creator must accept by. */
+  kind: z.enum(['paid']).optional(),
+  ratePerMinUsdc: z.string().optional(),
+  maxMinutes: z.number().int().optional(),
+  acceptBy: z.string().optional(),
 });
 export type CallInviteMessage = z.infer<typeof CallInviteMessage>;
 

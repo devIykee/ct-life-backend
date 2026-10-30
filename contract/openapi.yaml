@@ -3374,6 +3374,9 @@ paths:
       tags: [social]
       operationId: getUser
       summary: Public profile of a user.
+      description: >-
+        `creator` (unlock C2): the user's paid-call terms while capability `creatorMode` is on
+        and they set a rate, otherwise null. Show "Paid call" only when `creator.enabled`.
       x-phase: 1
       parameters:
         - name: id
@@ -4188,6 +4191,11 @@ paths:
       description: |
         `ratePerMinUsdc` is a string of base units, between 250000 and
         50000000 (0.25 to 50 USDC). `maxMinutes` is 1 to 60.
+
+        Unlock C2: capability `creatorMode` (`503 CAPABILITY_OFF` while off). Creates the
+        creator profile on first use. Paid calls pay the creator on chain to the wallet they
+        are signed in with when they call this. Answers the mode, not the whole profile.
+        `400 VALIDATION_FAILED {reason: rate_out_of_range | max_minutes}`.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4208,10 +4216,12 @@ paths:
               maxMinutes: 10
       responses:
         '200':
-          description: Profile
+          description: The creator mode
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/CreatorProfile' }
+              schema: { $ref: '#/components/schemas/CreatorMode' }
+              example: { enabled: true, ratePerMinUsdc: '2000000', maxMinutes: 10 }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
         '400':
           description: Rate out of range
           content:
@@ -4222,8 +4232,8 @@ paths:
                   error:
                     {
                       code: 'VALIDATION_FAILED',
-                      message: 'ratePerMinUsdc must be between 250000 and 50000000.',
-                      details: {},
+                      message: 'Request body or parameters failed validation.',
+                      details: { reason: 'rate_out_of_range', min: '250000', max: '50000000' },
                     },
                 }
 
@@ -4235,6 +4245,17 @@ paths:
       description: |
         Returns `{ callId, sessionPda, tx }` where `tx` is an unsigned v0
         base64 transaction to be signed with MWA `sign_and_send_transactions`.
+
+        Unlock C2 (capability `paidCalls`, devnet only). The server reads the creator's rate,
+        and `tx` is the ct_escrow `open_session` with the fan as fee payer. `amount` is the
+        deposit in USDC base units: rate x minutes x (1 + feeBps/10000); the fan also needs a
+        little devnet SOL for the fee and the session rent (returned when the call closes).
+        Send it before `expiresAt`, then `POST /paid-calls/{id}/submitted`.
+        `403 CREATOR_UNAVAILABLE` (no rate or turned off), `403 BLOCKED`,
+        `400 VALIDATION_FAILED {reason: minutes_over_max | cannot_call_self}`,
+        `409 CONFLICT {reason: call_in_progress}`, `503 CAPABILITY_OFF {reason:
+        escrow_not_initialized | escrow_wrong_version | escrow_config_mismatch}` when the
+        escrow is not usable yet.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4249,23 +4270,74 @@ paths:
                 creatorId: { type: string, format: uuid }
                 minutes: { type: integer, minimum: 1, maximum: 60 }
       responses:
-        '200':
+        '201':
           description: Created
           content:
             application/json:
               schema:
                 type: object
-                required: [callId, sessionPda, tx]
+                required:
+                  [callId, sessionPda, tx, amount, feeBps, ratePerMinUsdc, minutes, expiresAt]
                 properties:
                   callId: { type: string, format: uuid }
                   sessionPda: { type: string }
                   tx: { type: string, description: 'base64 v0 transaction.' }
+                  amount: { type: string, description: 'Deposit, USDC base units.' }
+                  feeBps: { type: integer }
+                  ratePerMinUsdc: { type: string }
+                  minutes: { type: integer }
+                  expiresAt: { type: string, format: date-time }
+              example:
+                callId: '0192a1c2-...'
+                sessionPda: '9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin'
+                tx: 'base64...'
+                amount: '2750000'
+                feeBps: 1000
+                ratePerMinUsdc: '500000'
+                minutes: 5
+                expiresAt: '2026-10-30T12:02:00.000Z'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403':
+          description: The creator takes no paid calls now (or a block)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CREATOR_UNAVAILABLE,
+                      message: 'This creator is not taking paid calls right now.',
+                      details: { creatorId: '0192a1c2-...' },
+                    },
+                }
+        '409':
+          description: A call is already open
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: call_in_progress },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /paid-calls/{id}/submitted:
     post:
       tags: [voice]
       operationId: postPaidCallsIdSubmitted
       summary: Report the open_session signature.
+      description: >-
+        The server reads the ct_escrow Session account and requires it to match the booking
+        (fan, creator, session id, rate, minutes, deposit, status Open), then rings the
+        creator (`call_invite {kind: paid}`) and answers `status: ringing` with `acceptBy`.
+        `409 CONFLICT {reason: not_found_yet}`: not on chain yet, retry in 1-2 s.
+        `400 VALIDATION_FAILED {reason: tx_mismatch}`. Idempotent for the same call.
       x-phase: 3
       parameters:
         - name: id
@@ -4288,12 +4360,33 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PaidCall' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '409':
+          description: Not on chain yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: not_found_yet },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /paid-calls/{id}/accept:
     post:
       tags: [voice]
       operationId: postPaidCallsIdAccept
       summary: Creator accepts the call.
+      description: >-
+        The server's settle authority sends `accept` on chain; then both players get a token
+        with `POST /rtc/token {kind: paid_call, id: callId}` (403 before the accept). Must
+        happen before `acceptBy`; after it `409 CONFLICT {reason: accept_window_closed}` and the
+        deposit is refunded. `409 {reason: not_ringing}`. `403 FORBIDDEN {reason: not_creator}`.
       x-phase: 3
       parameters:
         - name: id
@@ -4313,6 +4406,10 @@ paths:
       tags: [voice]
       operationId: postPaidCallsIdDecline
       summary: Creator declines the call.
+      description: >-
+        The creator declines, or the fan cancels, a ringing call. Answers `status: refunding`;
+        the worker refunds the whole deposit on chain once the escrow's accept window has
+        passed (the program allows nothing earlier), then `refunded`.
       x-phase: 3
       parameters:
         - name: id
@@ -4332,6 +4429,12 @@ paths:
       tags: [voice]
       operationId: postPaidCallsIdEnd
       summary: End the call early.
+      description: >-
+        No body. The server times the call (accept to now, capped at the booked minutes) and
+        the settle authority sends `settle`: the creator gets rate x ceil(seconds/60), the fee
+        is on top, the fan gets the rest. Answers `settled` (or `settling` if the send failed;
+        the worker retries). A live call is also ended at its booked minutes by the worker, and
+        when a participant leaves the LiveKit room. `409 CONFLICT {reason: not_live}`.
       x-phase: 3
       parameters:
         - name: id
@@ -7377,6 +7480,30 @@ paths:
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /webhooks/livekit:
+    post:
+      tags: [voice]
+      operationId: postWebhooksLivekit
+      summary: LiveKit server webhook (server to server).
+      description: >-
+        Content-Type `application/webhook+json`, signed JWT in `Authorization` (verified with
+        the LiveKit API key and secret, including the body hash). Marks voice rooms ended and
+        speakers left; for a live paid call, `participant_left` or `room_finished` ends and
+        settles it. Configure it in LiveKit Cloud to `https://<api>/v1/webhooks/livekit`.
+      x-phase: 3
+      security: []
+      responses:
+        '200':
+          description: Applied
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  status: { type: string, enum: [applied, replay, no_match] }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -8581,6 +8708,16 @@ components:
         minerTier: { type: string, enum: [none, prospector, miner, refiner] }
         look: { $ref: '#/components/schemas/Look' }
         netWorthCents: { type: integer }
+        creator:
+          nullable: true
+          allOf: [{ $ref: '#/components/schemas/CreatorMode' }]
+    CreatorMode:
+      type: object
+      required: [enabled, ratePerMinUsdc, maxMinutes]
+      properties:
+        enabled: { type: boolean }
+        ratePerMinUsdc: { type: string, description: 'USDC base units per minute.' }
+        maxMinutes: { type: integer, minimum: 1, maximum: 60 }
     FactoryTemplateId:
       type: string
       enum:
@@ -9094,10 +9231,37 @@ components:
       required: [callId, status]
       properties:
         callId: { type: string, format: uuid }
-        status: { type: string, enum: [awaiting_payment, ringing, live, settled, refunded] }
-        minutesUsed: { type: integer }
-        creatorAmount: { type: string, nullable: true }
-        refundAmount: { type: string, nullable: true }
+        status:
+          type: string
+          enum: [awaiting_payment, ringing, live, settling, settled, refunding, refunded, expired]
+        minutesUsed: { type: integer, nullable: true }
+        creatorAmount: { type: string, nullable: true, description: 'USDC base units.' }
+        refundAmount: { type: string, nullable: true, description: 'USDC base units.' }
+        feeAmount: { type: string, nullable: true }
+        fanUserId: { type: string, format: uuid }
+        creatorUserId: { type: string, format: uuid }
+        ratePerMinUsdc: { type: string }
+        maxMinutes: { type: integer }
+        deposit: { type: string }
+        feeBps: { type: integer }
+        sessionPda: { type: string }
+        payBy: { type: string, format: date-time }
+        acceptBy: { type: string, format: date-time, nullable: true }
+        acceptedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        endReason:
+          type: string
+          nullable: true
+          description: >-
+            declined, cancelled, not_answered, not_paid, paid_late, fan_ended, creator_ended,
+            max_reached, participant_left, room_finished
+        signatures:
+          type: object
+          properties:
+            open: { type: string, nullable: true }
+            accept: { type: string, nullable: true }
+            settle: { type: string, nullable: true }
+            refund: { type: string, nullable: true }
     AdBooking:
       type: object
       required: [bookingId, slotId, termId, uploadId, link, status, createdAt]

@@ -718,3 +718,11 @@ export class CapabilityOffError extends DomainError {
     this.httpStatus = 503;
   }
 }
+
+export class CreatorUnavailableError extends DomainError {
+  readonly code = 'CREATOR_UNAVAILABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This creator is not taking paid calls right now.', details);
+    this.httpStatus = 403;
+  }
+}

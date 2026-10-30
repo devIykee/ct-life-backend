@@ -41,6 +41,7 @@ import { CHARACTER_PALETTES } from '../../shared/domain/character-palettes.js';
 import { buildCapabilitiesPayload } from '../../shared/domain/capabilities.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { chainConfigPayload } from '../../application/chain-config.js';
+import { creatorCard } from '../../application/creator.js';
 
 /**
  * B34: Compare semver versions. Returns true if clientVersion < minVersion.
@@ -297,7 +298,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const svc = new PublicProfileService(req.ctx);
     const profile = await svc.byId(id);
     if (profile === null) throw new NotFoundError({ kind: 'user', id });
-    return reply.send(profile);
+    // Paid-call terms (unlock C2): null unless creatorMode is on and a rate is set.
+    return reply.send({ ...profile, creator: await creatorCard(req.ctx, id) });
   });
 }
 
