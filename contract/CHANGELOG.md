@@ -1,3 +1,14 @@
+## 2026-10-30 - Home NFT gallery, read-only (unlock D4, capability `nftGallery`)
+
+Migration 142. Rules in `docs/NFT_GALLERY.md`. Dark until `nftGallery` is in `CAPABILITIES_ON`.
+
+- New `GET /nfts/me?limit=&cursor=` -> `{wallet, items: [NftItem], cursor}` from Helius DAS (devnet: all NFTs, `ok` only for allow-listed collections; mainnet: only allow-listed collections). `NftItem = {assetId, name, collection, imageUrl, mime: 'image/png', moderation: 'ok'|'pending'|'nsfw'|'blocked', network: 'devnet'|'mainnet'}`.
+- New `GET /homes/{ownerId}/gallery` (`me` allowed) and `PUT /homes/me/gallery {frames: [{slot, assetId}]}` (Idempotency-Key) -> `{frames, items}`. Errors: `403 FORBIDDEN {reason: not_owner}`, `400 {reason: slot_out_of_range | duplicate_slot | duplicate_asset}`; visitors see only `ok` frames and need visit access (`BLOCKED`, `HOME_CLOSED`, `followers_only`, `locked`); `404` without a live home.
+- New `GET /img/{hash}` -> `image/png` (<= 512 px, <= 512 KiB): an SSRF-safe proxy for image URLs read from DAS.
+- `GET /config` gains `nft {imageHosts, maxImageBytes, maxImagePx, maxSlots}` while the capability is on.
+- Daily worker removes frames whose asset left the wallet. New config `contract/config/nft_gallery.json`.
+- Not included: minting CT Life devnet prints (needs WP-C's payments settlement and a funded devnet treasury).
+
 ## 2026-10-30 - CT Beef: stake-free, topics, invites, phases, votes, the arena crowd (unlock A6)
 
 Migration 112. New config `config/beef_topics.json`. Capabilities `beef` (app; every player beef route and the phase worker) and `beefVoting`.
