@@ -52,16 +52,18 @@ export async function markVenueJoin(
  * @param presence - The room's presence (shared Redis).
  * @param instanceId - The venue room id.
  * @param userId - Who left.
+ * @returns The user's sessions still in the instance (0 when this was the last).
  */
 export async function markVenueLeave(
   presence: Presence,
   instanceId: string,
   userId: string,
-): Promise<void> {
+): Promise<number> {
   const key = venueMembersKey(instanceId);
   const n = await presence.hincrby(key, userId, -1);
   if (n < 0) await presence.hset(key, userId, '0');
   await presence.expire(key, VENUE_MEMBERS_TTL_SEC);
+  return Math.max(0, n);
 }
 
 /** How often a live room pushes its member hash's expiry back. */

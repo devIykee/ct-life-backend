@@ -116,6 +116,10 @@ describe('POST /v1/rtc/token (venue)', () => {
     const res = await tokenFor(hostId, { kind: 'venue', id: instanceId });
     expect(res.statusCode).toBe(200);
     expect(res.json().roomName).toBe(`venue:${instanceId}`);
+    // Short-lived: about 10 minutes, not the 1 h default.
+    const ttl = (Date.parse(res.json().expiresAt) - Date.now()) / 1000;
+    expect(ttl).toBeGreaterThan(9 * 60);
+    expect(ttl).toBeLessThanOrEqual(10 * 60 + 1);
     expect(grant(res.json().token)).toMatchObject({ room: `venue:${instanceId}` });
     // A prefixed id names the same room.
     expect((await tokenFor(hostId, { kind: 'venue', id: `venue:${instanceId}` })).statusCode).toBe(

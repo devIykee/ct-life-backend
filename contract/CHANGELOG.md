@@ -1,6 +1,6 @@
 ## 2026-10-30 - Venue voice tokens need presence in the venue
 
-- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
+- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
 - New error code `NOT_IN_VENUE` (403).
 
 ## 2026-10-26 - Approved display names (migration 105)

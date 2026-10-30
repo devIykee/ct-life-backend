@@ -303,15 +303,35 @@ export class VenueRoom extends Room {
     const member = this.members.get(client.sessionId);
     if (member !== undefined && this.presence) {
       this.members.delete(client.sessionId);
-      void markVenueLeave(this.presence, this.state.instanceId, member).catch(() => {
-        // Presence is best effort; the hash expires on its own.
-      });
+      const instanceId = this.state.instanceId;
+      void markVenueLeave(this.presence, instanceId, member)
+        .then((left) => (left === 0 ? this.removeFromVoice(instanceId, member) : undefined))
+        .catch(() => {
+          // Best effort; the hash expires on its own and the token is short.
+        });
     }
     this.state.players.delete(client.sessionId);
     this.anchors.delete(client.sessionId);
     this.moveBuckets.delete(client.sessionId);
     this.lastEmoteAt.delete(client.sessionId);
     this.lastSayAt.delete(client.sessionId);
+  }
+
+  /**
+   * Disconnect a user who has left this instance from its LiveKit rooms, so
+   * leaving (or being banned out) also ends what they hear. LiveKit checks a
+   * token only on connect, so without this a connected listener would stay.
+   * @param instanceId - The venue room id.
+   * @param userId - The LiveKit identity.
+   */
+  protected async removeFromVoice(instanceId: string, userId: string): Promise<void> {
+    const { buildContext } = await import('../../application/context.js');
+    const ctx = buildContext();
+    await Promise.all(
+      (['venue', 'proximity'] as const).map((kind) =>
+        ctx.livekit.removeParticipant(ctx, { kind, id: instanceId, identity: userId }),
+      ),
+    );
   }
 
   // --- Message handlers -------------------------------------------

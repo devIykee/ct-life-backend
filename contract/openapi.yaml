@@ -3921,7 +3921,10 @@ paths:
         For `venue`, `id` is the venue instanceId (the Colyseus room id from
         `welcome`), and a token is minted only while the caller has a session
         in that venue room; otherwise 403 `NOT_IN_VENUE`. Join the venue room
-        first, then ask for the token.
+        first, then ask for the token. Venue tokens last 10 minutes (needed only
+        to connect; LiveKit refreshes a connected participant's token itself).
+        Leaving the venue room with your last session disconnects you from its
+        LiveKit room; ask for a new token on the next visit.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
