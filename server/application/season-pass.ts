@@ -1,16 +1,14 @@
 /**
- * Season pass service (M5 #61).
+ * Season pass service (M5 #61; unlock WP-C C1).
  *
  * Endpoints:
  *
- *   POST /v1/season-pass/buy   — buy the season pass. The M5 dev
- *                                path credits Cash from a recorded
- *                                webhook (production wires the
- *                                payment intent flow from M3);
- *                                M5 ships the buy endpoint that
- *                                debits the user's cash for
- *                                price_paid_cents and writes the
- *                                season_pass row.
+ *   POST /v1/payments/intents {kind:'season_pass', sku:'season_pass', currency:'USDC'}
+ *                              — the only way to buy the pass (server/application/topup.ts).
+ *                                Settlement calls `grantSeasonPass`; no Cash moves.
+ *   POST /v1/season-pass/buy   — 410 GONE {reason:'buy_with_intent'}. It used to debit
+ *                                $5 of Cash, which mixed the play-money ledger with a
+ *                                real-money product (docs/ECONOMY.md).
  *   GET  /v1/season-pass/me    — return the user's pass (or 404)
  *   POST /v1/season-pass/claim — claim the weekly perk. The
  *                                server/workers/sunday-unlock.ts
@@ -21,17 +19,16 @@
  *                                meta payload (or 404 if no
  *                                WeeklyMeta yet).
  *
- * Idempotency:
- *   - The season_pass.user_id UNIQUE means re-buying flips
- *     tier='free' to tier='season' in-place; the application
- *     extends expires_at by SEASON_DURATION_MS from now.
- *   - The weekly perk credit is owned by the Sunday Unlock
- *     worker; the claim endpoint just returns the meta shape.
+ * The pass lasts until the end of the season it was bought in
+ * (`contract/config/season_tracks.json` endsAt). The season_pass.user_id UNIQUE
+ * means a later purchase overwrites the row in place.
  */
-import { runInTransaction } from '../shared/db/uow.js';
+import type { PoolClient } from 'pg';
 import { ValidationFailedError } from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
+import { isCapabilityOn } from './capabilities.js';
+import { currentSeason, type SeasonDef } from './season-tracks.js';
 
 export type PassTier = 'free' | 'season';
 
@@ -44,8 +41,12 @@ export interface SeasonPassRow {
   readonly pricePaidCents: number;
 }
 
-const SEASON_PRICE_CENTS = 500; // $5
-const SEASON_DURATION_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+/** The intent sku, and the only sku valid with `kind: 'season_pass'`. */
+export const SEASON_PASS_SKU = 'season_pass';
+/** Spec: a 5 USDC season pass. USDC base units (6 decimals). */
+export const SEASON_PASS_PRICE_USDC_BASE = 5_000_000n;
+/** The same price in US cents, kept on the row as `price_paid_cents`. */
+export const SEASON_PASS_PRICE_CENTS = 500;
 
 interface PassDbRow {
   pass_id: string;
@@ -67,52 +68,69 @@ function rowToPass(r: PassDbRow): SeasonPassRow {
   };
 }
 
-/** Buy the season pass. Idempotent on user_id (UNIQUE). */
-export async function buy(_ctx: AppContext, userId: string): Promise<SeasonPassRow> {
-  const passId = uuidv7();
-  const result = await runInTransaction(async (client) => {
-    // Ensure balance row + lock.
-    await client.query(
-      `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 0)
-       ON CONFLICT (user_id) DO NOTHING`,
-      [userId],
-    );
-    const bal = await client.query<{ cash_cents: string }>(
-      `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
-      [userId],
-    );
-    const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');
-    if (cash < BigInt(SEASON_PRICE_CENTS)) {
-      throw new ValidationFailedError({
-        reason: 'insufficient cash',
-        have: cash.toString(),
-        need: SEASON_PRICE_CENTS.toString(),
-      });
-    }
-    await client.query(
-      `UPDATE balances SET cash_cents = cash_cents - $1, updated_at = now() WHERE user_id = $2`,
-      [SEASON_PRICE_CENTS, userId],
-    );
-    await client.query(
-      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
-       VALUES ($1, $2, 'cash', 'season_pass_buy', 'season_pass', $3, $4)`,
-      [userId, -SEASON_PRICE_CENTS, userId, `season-pass-buy:${userId}:${uuidv7()}`],
-    );
-    // Upsert the pass row.
-    const newExpires = new Date(Date.now() + SEASON_DURATION_MS);
-    const r = await client.query<PassDbRow>(
-      `INSERT INTO season_pass (pass_id, user_id, tier, started_at, expires_at, price_paid_cents)
-       VALUES ($1, $2, 'season', now(), $3, $4)
-       ON CONFLICT (user_id) DO UPDATE
-         SET tier = EXCLUDED.tier,
-             expires_at = EXCLUDED.expires_at,
-             price_paid_cents = season_pass.price_paid_cents + EXCLUDED.price_paid_cents
-       RETURNING pass_id, user_id, tier, started_at, expires_at, price_paid_cents`,
-      [passId, userId, newExpires, SEASON_PRICE_CENTS],
-    );
-    return r.rows[0]!;
-  });
-  return rowToPass(result);
+/** `GET /config` `seasonPass` block (C1). */
+export interface SeasonPassOffer {
+  readonly sku: typeof SEASON_PASS_SKU;
+  /** USDC base units, as a string. */
+  readonly priceUsdc: string;
+  readonly currency: 'USDC';
+  readonly seasonId: string;
+  readonly endsAt: string;
+}
+
+/**
+ * The pass on sale right now, or null when the purchase capability is off, the
+ * deployment is not on devnet, or no season is running. `GET /config` sends it as
+ * `seasonPass`; the client shows "unavailable" without it.
+ *
+ * @param ctx - The app context.
+ * @param now - The current time.
+ */
+export function seasonPassOffer(
+  ctx: Pick<AppContext, 'config'>,
+  now: Date = new Date(),
+): SeasonPassOffer | null {
+  if (!isCapabilityOn(ctx, 'seasonPassPurchase')) return null;
+  if (ctx.config.solana.cluster !== 'devnet') return null;
+  const season = currentSeason(now);
+  if (season === null) return null;
+  return {
+    sku: SEASON_PASS_SKU,
+    priceUsdc: SEASON_PASS_PRICE_USDC_BASE.toString(),
+    currency: 'USDC',
+    seasonId: season.seasonId,
+    endsAt: season.endsAt,
+  };
+}
+
+/**
+ * Grant (or extend) the pass for `season`, inside the settlement transaction of a
+ * verified payment intent. Never touches Cash. Idempotent per user: a second grant
+ * for the same season leaves `expires_at` at the season end and adds the price.
+ *
+ * @param client - The open transaction.
+ * @param userId - The buyer.
+ * @param season - The season the intent was created in.
+ * @returns The pass row.
+ */
+export async function grantSeasonPass(
+  client: Pick<PoolClient, 'query'>,
+  userId: string,
+  season: Pick<SeasonDef, 'endsAt'>,
+): Promise<SeasonPassRow> {
+  const r = await client.query<PassDbRow>(
+    `INSERT INTO season_pass (pass_id, user_id, tier, started_at, expires_at, price_paid_cents)
+     VALUES ($1, $2, 'season', now(), $3, $4)
+     ON CONFLICT (user_id) DO UPDATE
+       SET tier = 'season',
+           started_at = CASE WHEN season_pass.tier = 'season' AND season_pass.expires_at > now()
+                             THEN season_pass.started_at ELSE now() END,
+           expires_at = GREATEST(season_pass.expires_at, EXCLUDED.expires_at),
+           price_paid_cents = season_pass.price_paid_cents + EXCLUDED.price_paid_cents
+     RETURNING pass_id, user_id, tier, started_at, expires_at, price_paid_cents`,
+    [uuidv7(), userId, season.endsAt, SEASON_PASS_PRICE_CENTS],
+  );
+  return rowToPass(r.rows[0]!);
 }
 
 /** Look up the user's pass row. Returns null when there is none. */

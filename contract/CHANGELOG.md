@@ -1,3 +1,13 @@
+## 2026-10-30 - Season pass bought with a payment intent (unlock C1)
+
+No migration. Dark until the operator adds `seasonPassPurchase` to `CAPABILITIES_ON`; devnet only.
+
+- `GET /config` gains `seasonPass {sku: 'season_pass', priceUsdc: '5000000', currency: 'USDC', seasonId, endsAt}`, present only while the capability is on, the deployment is on devnet and a season is running.
+- `POST /payments/intents {kind: 'season_pass', sku: 'season_pass', currency: 'USDC'}` returns the usual `PaymentIntent` for 5 USDC (`cashCents: 0`). The `sku` enum gains `season_pass`, valid only with that kind (`400 VALIDATION_FAILED {reason: 'sku_kind_mismatch'}`). `409 CONFLICT` with `reason` `already_active` (live pass), `intent_pending` (an earlier signed pass intent is still being reconciled; `intentId`) or `no_active_season`. `503 CAPABILITY_OFF` while off.
+- Settlement verifies the finalized transfer exactly like a top-up, then grants (or extends) the pass until the season's `endsAt`. No Cash moves; `payment_confirmed` carries `kind: 'season_pass'` and `cashCents: 0`.
+- `POST /season-pass/buy` (it debited $5 of Cash) now answers `410 GONE {reason: 'buy_with_intent'}`. `GET /season-pass/me` is unchanged.
+- Fix: payment reconciliation reads the deployment's own cluster RPC (`HELIUS_RPC_URL_DEVNET` on devnet) instead of the mainnet client.
+
 ## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
 
 Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.

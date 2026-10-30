@@ -4380,6 +4380,18 @@ paths:
         of creation. The client signs `tx` with MWA, polls
         `GET /payments/intents/{id}`, and the city room emits
         `payment_confirmed` once the on-chain transfer is verified.
+
+        **Season pass (unlock C1).** `{kind: season_pass, sku: season_pass, currency: USDC}`
+        buys the current season's pass for `amount: '5000000'` (5 USDC, base units; the
+        price and season are in `GET /config` `seasonPass`). Settlement grants the pass until
+        the season's `endsAt` and never credits Cash (`cashCents: 0`); `payment_confirmed`
+        carries `kind: season_pass`. Only on devnet and while capability `seasonPassPurchase`
+        is on (`503 CAPABILITY_OFF` otherwise). `sku: season_pass` with another kind, or
+        another sku with `kind: season_pass`, is `400 VALIDATION_FAILED {reason:
+        sku_kind_mismatch}`. A live pass is `409 CONFLICT {reason: already_active}`; an
+        earlier signed pass intent still being reconciled is `409 CONFLICT {reason:
+        intent_pending, intentId}`; no season running is `409 CONFLICT {reason:
+        no_active_season}`.
       x-phase: 2
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4392,7 +4404,10 @@ paths:
               required: [kind, sku, currency]
               properties:
                 kind: { type: string, enum: [topup, cosmetic, ad, season_pass] }
-                sku: { type: string }
+                sku:
+                  type: string
+                  enum: [ramen, bag, whale, cabal, custom, season_pass]
+                  description: '`season_pass` only with `kind: season_pass`.'
                 currency: { type: string, enum: [USDC, SOL, SKR, ORE] }
             example:
               kind: 'topup'
@@ -4417,6 +4432,34 @@ paths:
                 tx: 'base64...'
                 solanaPayUrl: 'solana:...'
                 expiresAt: '2026-10-05T12:10:00.000Z'
+        '400':
+          description: Bad body, or a season_pass sku/kind mismatch
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: VALIDATION_FAILED,
+                      message: 'Request body or parameters failed validation.',
+                      details: { reason: 'sku_kind_mismatch' },
+                    },
+                }
+        '409':
+          description: Season pass already active, a pass intent pending, or no season running
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: 'already_active' },
+                    },
+                }
         '429':
           description: Top-up cap reached
           content:
@@ -4824,6 +4867,35 @@ paths:
                       code: TIER_LOCKED,
                       message: 'Not enough Season XP for this tier yet.',
                       details: { tier: 1, track: free, xp: 249, xpRequired: 250 },
+                    },
+                }
+
+  /season-pass/buy:
+    post:
+      tags: [season]
+      operationId: postSeasonPassBuy
+      summary: 'Retired: answers 410 GONE. Buy the pass with POST /payments/intents.'
+      description: >-
+        The season pass is a real-money product bought through a payment intent
+        (`{kind: season_pass, sku: season_pass, currency: USDC}`); it is never bought with
+        Cash. Always `410 GONE {reason: buy_with_intent, use: 'POST /v1/payments/intents'}`.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '410':
+          description: Retired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: GONE,
+                      message: 'This endpoint was removed; see details.use for its replacement.',
+                      details: { reason: buy_with_intent, use: 'POST /v1/payments/intents' },
                     },
                 }
 
@@ -8345,6 +8417,20 @@ components:
             version: { type: integer, const: 1 }
             beefChallenges: { type: boolean }
             targetedCabalInvites: { type: boolean }
+        seasonPass:
+          type: object
+          description: >-
+            The season pass on sale (unlock C1). Present only while capability
+            `seasonPassPurchase` is on, the deployment is on devnet and a season is running;
+            a missing key means "unavailable". Buy with `POST /payments/intents {kind:
+            season_pass, sku, currency}`.
+          required: [sku, priceUsdc, currency, seasonId, endsAt]
+          properties:
+            sku: { type: string, const: season_pass }
+            priceUsdc: { type: string, description: 'USDC base units (6 decimals), e.g. 5000000.' }
+            currency: { type: string, const: USDC }
+            seasonId: { type: string }
+            endsAt: { type: string, format: date-time }
     CharacterPalettes:
       type: object
       additionalProperties: false
