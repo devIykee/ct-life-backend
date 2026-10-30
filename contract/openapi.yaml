@@ -7289,6 +7289,94 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /devnet/test-tokens:
+    get:
+      tags: [payments]
+      operationId: getDevnetTestTokens
+      summary: What the "Get test tokens" card shows (devnet only).
+      description: >-
+        Capability `devnetDrip`. Devnet USDC comes from Circle's faucet (the client opens
+        `usdc.faucetUrl`; 20 USDC per address every 2 h, the player picks Solana Devnet and
+        pastes `wallet`). Devnet SOL for fees comes from `POST /devnet/drip` once a UTC day.
+        `sol.reason` is `unconfigured` (no ops treasury on this server), `claimed_today`
+        or `budget_spent`; `sol.nextAt` is the next 00:00 UTC for the last two. Reads only
+        the database.
+      x-phase: 2
+      responses:
+        '200':
+          description: Test token sources
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DevnetTestTokens' }
+              example:
+                cluster: devnet
+                wallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
+                usdc:
+                  {
+                    faucetUrl: 'https://faucet.circle.com/',
+                    mint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+                    perRequestBaseUnits: '20000000',
+                    everyHours: 2,
+                  }
+                sol: { dripLamports: '20000000', available: true, reason: null, nextAt: null }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /devnet/drip:
+    post:
+      tags: [payments]
+      operationId: postDevnetDrip
+      summary: Send today's devnet SOL drip (0.02 SOL) to my wallet.
+      description: >-
+        Capability `devnetDrip`; devnet only (the server checks the RPC's genesis hash before
+        it sends). One drip per wallet and per account per UTC day, none while the wallet
+        already holds 0.05 SOL, within a global daily budget. Returns once the RPC accepted
+        the transfer (`signature`); confirmation follows in a few seconds. `409 CONFLICT
+        {reason: balance_sufficient}`; `429 RATE_LIMITED {reason: daily_drip | drip_budget,
+        nextAt}`; `503 CAPABILITY_OFF {reason: drip_unconfigured | treasury_low |
+        rpc_not_devnet | devnet_only}`; `503 SERVER_BUSY {reason: drip_send_failed}` (nothing
+        was sent; the day's slot is freed, retry).
+      x-phase: 2
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Sent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [dripId, signature, lamports, wallet, nextAt]
+                properties:
+                  dripId: { type: string, format: uuid }
+                  signature: { type: string }
+                  lamports: { type: string }
+                  wallet: { type: string }
+                  nextAt: { type: string, format: date-time }
+              example:
+                dripId: '0192a1c2-...'
+                signature: '5VERv8NM...'
+                lamports: '20000000'
+                wallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
+                nextAt: '2026-10-31T00:00:00.000Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: The wallet already holds enough devnet SOL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: CONFLICT,
+                      message: 'Resource conflict.',
+                      details: { reason: balance_sufficient, balanceLamports: '60000000' },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -8388,6 +8476,7 @@ components:
                   seasonPassPurchase,
                   factory,
                   projectHq,
+                  devnetDrip,
                 ]
               properties:
                 beefVoting: { type: boolean }
@@ -8406,6 +8495,9 @@ components:
                 seasonPassPurchase: { type: boolean }
                 factory: { type: boolean }
                 projectHq: { type: boolean }
+                devnetDrip:
+                  type: boolean
+                  description: Devnet test tokens (the "Get test tokens" card, `/devnet/*`).
         competitionCapabilities:
           type: object
           description: >-
@@ -8431,6 +8523,31 @@ components:
             currency: { type: string, const: USDC }
             seasonId: { type: string }
             endsAt: { type: string, format: date-time }
+    DevnetTestTokens:
+      type: object
+      required: [cluster, wallet, usdc, sol]
+      properties:
+        cluster: { type: string, const: devnet }
+        wallet: { type: string }
+        usdc:
+          type: object
+          required: [faucetUrl, mint, perRequestBaseUnits, everyHours]
+          properties:
+            faucetUrl: { type: string, format: uri }
+            mint: { type: string }
+            perRequestBaseUnits: { type: string }
+            everyHours: { type: integer }
+        sol:
+          type: object
+          required: [dripLamports, available, reason, nextAt]
+          properties:
+            dripLamports: { type: string }
+            available: { type: boolean }
+            reason:
+              type: string
+              nullable: true
+              enum: [unconfigured, claimed_today, budget_spent, null]
+            nextAt: { type: string, format: date-time, nullable: true }
     CharacterPalettes:
       type: object
       additionalProperties: false

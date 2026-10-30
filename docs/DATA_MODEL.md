@@ -282,3 +282,7 @@ collisions. CI and Railway run with `--no-check-order`, so blocks may land out o
 | D Platform (markets, homes, NFT gallery) | `1700000140000-1700000149000` |
 
 Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
+
+## Chain (unlock WP-C)
+
+- `devnet_drips` (migration 130) — one row per devnet SOL drip from the ops treasury (`POST /v1/devnet/drip`). `wallet_hash` is sha256 of the wallet (no address stored); `UNIQUE (wallet_hash, day)` and `UNIQUE (user_id, day)` cap it at one drip per wallet and per account per UTC day; `signature` is filled after the send. A send the RPC refuses deletes the row. `user_id` is `ON DELETE CASCADE`.
