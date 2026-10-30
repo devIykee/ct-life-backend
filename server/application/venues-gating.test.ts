@@ -15,6 +15,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 
 import { buildContext, _resetContextForTests } from './context.js';
+import { subscribeUserMessages, type UserMessage } from './realtime-bus.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import {
@@ -227,8 +228,23 @@ describe('Cabal invites (unlock A3)', () => {
     const host = await richHost('a3t');
     const guest = await newUser('a3tg');
     const stranger = await newUser('a3ts');
+    const rung: UserMessage[] = [];
+    const sub = subscribeUserMessages(ctx.redis.main, (m) => {
+      if (m.type === 'cabal_invite') rung.push(m);
+    });
+    await new Promise((r) => setTimeout(r, 150));
     const inv = await createCabalInvite(ctx, host, guest);
     expect(inv.guestUserId).toBe(guest);
+    await new Promise((r) => setTimeout(r, 150));
+    await sub.quit();
+    expect(rung.filter((m) => m.userId === guest).map((m) => m.payload)).toEqual([
+      expect.objectContaining({
+        inviteId: inv.inviteId,
+        fromUserId: host,
+        expiresAt: Date.parse(inv.expiresAt),
+      }),
+    ]);
+    expect(JSON.stringify(rung)).not.toContain(inv.code!);
     await expect(acceptCabalInvite(ctx, stranger, inv.inviteId)).rejects.toMatchObject({
       code: 'FORBIDDEN',
       details: { reason: 'not_guest' },

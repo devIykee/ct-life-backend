@@ -47,6 +47,7 @@ import { randomBytes } from 'node:crypto';
 import { careerAreasAt } from './ladders.js';
 import { activeJail, JAIL_VENUE_ID } from './heat.js';
 import type { AppContext } from './context.js';
+import { publishToUser } from './realtime-bus.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
 const CABAL_INVITE_TTL_DAYS = 7;
@@ -142,21 +143,23 @@ export async function marinaVisit(
  * block pair with the host (`403 BLOCKED`), is already a member (`409
  * already_member`) or already has a pending invite from this host (`409
  * invite_pending`). The host row is locked so the cap holds under concurrency.
- * @param _ctx - The application context.
+ * The guest gets the user message `cabal_invite {inviteId, fromUserId,
+ * expiresAt (epoch ms), at}`.
+ * @param ctx - The application context.
  * @param hostUserId - The caller.
  * @param guestUserId - The invited player, or null for an open invite.
  * @param now - Injectable clock.
  * @returns The invite, with its code (the caller is the host).
  */
 export async function createCabalInvite(
-  _ctx: AppContext,
+  ctx: AppContext,
   hostUserId: string,
   guestUserId: string | null = null,
   now: Date = new Date(),
 ): Promise<CabalInviteRow> {
   const code = randomBytes(CODE_BYTES).toString('base64url');
   const expiresAt = new Date(now.getTime() + CABAL_INVITE_TTL_DAYS * 86_400_000);
-  return runInTransaction(async (client) => {
+  const invite = await runInTransaction(async (client) => {
     const host = await client.query<{ id: string }>(
       `SELECT id FROM users WHERE id = $1 FOR UPDATE`,
       [hostUserId],
@@ -192,6 +195,16 @@ export async function createCabalInvite(
     );
     return rowToInvite(r.rows[0]!, hostUserId, now);
   });
+  if (guestUserId !== null) {
+    // Ring the guest (city room); the code never leaves the host.
+    await publishToUser(ctx, guestUserId, 'cabal_invite', {
+      inviteId: invite.inviteId,
+      fromUserId: hostUserId,
+      expiresAt: expiresAt.getTime(),
+      at: now.getTime(),
+    });
+  }
+  return invite;
 }
 
 type TxClient = Parameters<Parameters<typeof runInTransaction>[0]>[0];
