@@ -364,6 +364,15 @@ export class VenueFullError extends DomainError {
   }
 }
 
+/** Venue voice was asked for an instance the caller is not currently in. */
+export class NotInVenueError extends DomainError {
+  readonly code = 'NOT_IN_VENUE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are not in that venue. Join it before connecting to its voice.', details);
+    this.httpStatus = 403;
+  }
+}
+
 export class SpotTakenError extends DomainError {
   readonly code = 'SPOT_TAKEN';
   constructor(details: Record<string, unknown> = {}) {
