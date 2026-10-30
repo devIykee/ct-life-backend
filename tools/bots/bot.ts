@@ -227,16 +227,24 @@ export class Bot {
     return r.intentId;
   }
 
-  /** M3: place a binary prediction. */
+  /** Unlock D3: bet `yes` on the first open Prediction Pit market (null when none). */
   async betOnPrediction(stakeCents: number): Promise<string | null> {
-    const res = await fetch(`${this.opts.apiBase}/v1/predictions`, {
+    const list = await fetch(`${this.opts.apiBase}/v1/predictions/markets?status=open`, {
+      headers: { authorization: `Bearer ${this.accessToken}` },
+    });
+    if (!list.ok) return null;
+    const { markets } = (await list.json()) as { markets: Array<{ marketId: string }> };
+    const market = markets[0];
+    if (!market) return null;
+    const url = `${this.opts.apiBase}/v1/predictions/markets/${encodeURIComponent(market.marketId)}/bets`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${this.accessToken}`,
         'idempotency-key': idempotencyKey('pred'),
       },
-      body: JSON.stringify({ outcomeId: 'btc-24h-up', stakeCents, horizon: '5m' }),
+      body: JSON.stringify({ outcomeId: 'yes', stakeCents }),
     });
     if (!res.ok) return null;
     const r = (await res.json()) as PredictionResponse;

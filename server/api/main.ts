@@ -65,6 +65,7 @@ import { registerLikenessRoutes } from './routes/likeness.js';
 import { registerGroupRoutes } from './routes/groups.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
+import { registerDevnetDripRoutes } from './routes/devnet-drip.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -197,6 +198,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerGroupRoutes(app);
   const likeness = await buildLikenessRuntime(ctx.config, ctx.db);
   registerLikenessRoutes(app, (_db, userId) => likeness.forOwner(userId));
+  registerDevnetDripRoutes(app);
 
   // /healthz, /readyz are registered in ops routes.
 

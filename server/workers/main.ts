@@ -36,6 +36,24 @@
  *   - Analytics retention: a daily job (03:15 UTC) deletes product events
  *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
  *
+ *   - Perp liquidation (every 5 s), alpha call grading (every 30 s), the
+ *     payment poller (every 30 s, the top-up and ad payment backstop) and
+ *     weekly rent (Monday 00:00 UTC). Prediction resolution (every 5 s) only
+ *     with PREDICTIONS_SETTLEMENT_ENABLED=1. See liquidation.ts, alpha.ts,
+ *     payment-poller.ts, rent.ts, predictions.ts.
+ *
+ *   - Prediction market generator (every minute, unlock D3), with the same
+ *     flag and the `predict` capability. See prediction-markets.ts.
+ *
+ * Multiple replicas: every repeatable job above is a BullMQ job scheduler,
+ * so each tick is one job that one worker takes, whichever replica it runs
+ * on. The handlers also hold row locks or conditional updates, so an
+ * overlapping run (a slow tick, a stalled-job retry) never applies twice.
+ * The in-process loops (market sim, police) run on every replica instead.
+ *
+ *   - Builder projects: weekly payroll (Monday 00:00 UTC), a daily risk roll
+ *     and an hourly offer-expiry sweep, one queue (see projects.ts).
+ *
  * The workers process does not open a public HTTP port by default
  * (PORT_WORKERS=0). A `/healthz` handler is registered on the
  * configured `PORT_WORKERS` if non-zero.
@@ -58,6 +76,12 @@ import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
 import { NPC_CALLERS_QUEUE, handleNpcCallers } from './npc-callers.js';
 import { ACCOUNT_PURGE_QUEUE, handleAccountPurge } from './account-purge.js';
 import { REKT_SWEEP_QUEUE, handleRektSweep } from './rekt-sweep.js';
+import { LIQUIDATION_QUEUE, handleLiquidation } from './liquidation.js';
+import { PREDICTIONS_QUEUE, handlePredictions } from './predictions.js';
+import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
+import { PAYMENT_POLLER_QUEUE, handlePaymentPoller } from './payment-poller.js';
+import { RENT_QUEUE, handleWeeklyRent } from './rent.js';
+import { PREDICTION_MARKETS_QUEUE, handlePredictionMarkets } from './prediction-markets.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -66,6 +90,7 @@ import { startLikenessScheduler } from './likeness.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import type { LikenessGenerationWorker } from '../application/likeness-worker.js';
 import type { LikenessPhotoService } from '../application/likeness-photos.js';
+import { startProjectsWorker } from './projects.js';
 
 export interface WorkersHandle {
   redis: ReturnType<typeof createRedis>;
@@ -142,6 +167,12 @@ export async function buildWorkers(likeness?: {
   const callersQueue = new Queue(NPC_CALLERS_QUEUE, { connection: conn });
   const purgeQueue = new Queue(ACCOUNT_PURGE_QUEUE, { connection: conn });
   const rektQueue = new Queue(REKT_SWEEP_QUEUE, { connection: conn });
+  const liquidationQueue = new Queue(LIQUIDATION_QUEUE, { connection: conn });
+  const predictionsQueue = new Queue(PREDICTIONS_QUEUE, { connection: conn });
+  const alphaQueue = new Queue(ALPHA_GRADING_QUEUE, { connection: conn });
+  const paymentQueue = new Queue(PAYMENT_POLLER_QUEUE, { connection: conn });
+  const rentQueue = new Queue(RENT_QUEUE, { connection: conn });
+  const marketsQueue = new Queue(PREDICTION_MARKETS_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -254,6 +285,56 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'rekt-sweep failed'),
   );
 
+  const liquidationWorker = new Worker(
+    LIQUIDATION_QUEUE,
+    async (job) => handleLiquidation(job, ctx),
+    { connection: newClient(redis) },
+  );
+  liquidationWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'liquidation failed'),
+  );
+
+  const predictionsWorker = new Worker(
+    PREDICTIONS_QUEUE,
+    async (job) => handlePredictions(job, ctx),
+    { connection: newClient(redis) },
+  );
+  predictionsWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'predictions failed'),
+  );
+
+  const alphaWorker = new Worker(ALPHA_GRADING_QUEUE, async (job) => handleAlphaGrading(job, ctx), {
+    connection: newClient(redis),
+  });
+  alphaWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'alpha-grading failed'),
+  );
+
+  const paymentWorker = new Worker(
+    PAYMENT_POLLER_QUEUE,
+    async (job) => handlePaymentPoller(job, ctx),
+    { connection: newClient(redis) },
+  );
+  paymentWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'payment-poller failed'),
+  );
+
+  const rentWorker = new Worker(RENT_QUEUE, async (job) => handleWeeklyRent(job, ctx), {
+    connection: newClient(redis),
+  });
+  rentWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'weekly-rent failed'),
+  );
+
+  const marketsWorker = new Worker(
+    PREDICTION_MARKETS_QUEUE,
+    async (job) => handlePredictionMarkets(job, ctx),
+    { connection: newClient(redis) },
+  );
+  marketsWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'prediction-markets failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
   const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
@@ -329,6 +410,67 @@ export async function buildWorkers(likeness?: {
     { name: 'sweep', data: {} },
   );
 
+  // Sub-minute sweeps keep only recent job records, so Redis does not grow
+  // by thousands of finished jobs a day.
+  const sweepJobOpts = { removeOnComplete: 100, removeOnFail: 500 };
+  // Perps: close positions whose coin price crossed the liquidation price.
+  await liquidationQueue.upsertJobScheduler(
+    'liquidation',
+    { every: 5_000 },
+    { name: 'sweep', data: {}, opts: sweepJobOpts },
+  );
+  // Prediction Pit: resolve bets whose closes_at has passed. Fails closed:
+  // only with PREDICTIONS_SETTLEMENT_ENABLED=1, because the outcome resolver
+  // is still a dev stub (application/predictions.ts). With the flag off, a
+  // scheduler left by an earlier run is removed so nothing settles.
+  if (cfg.features.predictionSettlement) {
+    await predictionsQueue.upsertJobScheduler(
+      'predictions',
+      { every: 5_000 },
+      { name: 'sweep', data: {}, opts: sweepJobOpts },
+    );
+  } else {
+    await predictionsQueue.removeJobScheduler('predictions');
+    log.info('prediction settlement off (PREDICTIONS_SETTLEMENT_ENABLED unset)');
+  }
+  // Alpha calls: grade hit target / hit stop / expired.
+  await alphaQueue.upsertJobScheduler(
+    'alpha-grading',
+    { every: 30_000 },
+    { name: 'sweep', data: {}, opts: sweepJobOpts },
+  );
+  // Top-up and ad payments not final at submit time; expire stale intents.
+  await paymentQueue.upsertJobScheduler(
+    'payment-poller',
+    { every: 30_000 },
+    { name: 'sweep', data: {}, opts: sweepJobOpts },
+  );
+  // Weekly rent: debit, or count a missed week (overdue, then evicted).
+  await rentQueue.upsertJobScheduler(
+    'weekly-rent',
+    { pattern: '0 0 * * 1', tz: 'UTC' },
+    { name: 'rent', data: {} },
+  );
+  // Prediction Pit markets (unlock D3): open, snapshot, close, prune. Same
+  // fail-closed flag as settlement; the handler also needs `predict` on.
+  if (cfg.features.predictionSettlement) {
+    await marketsQueue.upsertJobScheduler(
+      'prediction-markets',
+      { pattern: '* * * * *', tz: 'UTC' },
+      { name: 'tick', data: {}, opts: sweepJobOpts },
+    );
+  } else {
+    await marketsQueue.removeJobScheduler('prediction-markets');
+  }
+
+  // Builder projects: payroll, risk roll, offer expiry (one queue, three schedulers).
+  const stopProjects = await startProjectsWorker(
+    ctx,
+    conn,
+    newClient(redis),
+    log.child({ worker: 'projects' }),
+  );
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -360,6 +502,12 @@ export async function buildWorkers(likeness?: {
   void purgeWorker;
   void purgeQueue;
   void rektWorker;
+  void liquidationWorker;
+  void predictionsWorker;
+  void alphaWorker;
+  void paymentWorker;
+  void rentWorker;
+  void marketsWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -372,7 +520,6 @@ export async function buildWorkers(likeness?: {
   void callersQueue;
   void rektQueue;
   void log;
-  void cfg;
 
   return {
     redis,
@@ -394,6 +541,12 @@ export async function buildWorkers(likeness?: {
       await callersWorker.close();
       await purgeWorker.close();
       await rektWorker.close();
+      await liquidationWorker.close();
+      await predictionsWorker.close();
+      await alphaWorker.close();
+      await paymentWorker.close();
+      await rentWorker.close();
+      await marketsWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -407,6 +560,13 @@ export async function buildWorkers(likeness?: {
       await callersQueue.close();
       await purgeQueue.close();
       await rektQueue.close();
+      await liquidationQueue.close();
+      await predictionsQueue.close();
+      await alphaQueue.close();
+      await paymentQueue.close();
+      await rentQueue.close();
+      await stopProjects();
+      await marketsQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

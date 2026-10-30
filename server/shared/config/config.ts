@@ -212,6 +212,21 @@ export interface Config {
     readonly mainnetTests: boolean;
     /** Read the ORE board from mainnet (read-only). ORE_READER_ENABLED. */
     readonly oreReader: boolean;
+    /**
+     * Schedule the prediction settlement sweep in the workers process.
+     * PREDICTIONS_SETTLEMENT_ENABLED, off unless set. With unlock D3 it also
+     * gates the market generator, so no market opens that nothing would settle.
+     */
+    readonly predictionSettlement: boolean;
+    /**
+     * Where daily `crypto` prediction markets read BTC/SOL prices
+     * (PREDICTIONS_CRYPTO_SOURCE): `off` (default: no crypto markets, only
+     * in-game `sim` and `event` ones), `binance` (api.binance.com) or
+     * `binance_vision` (data-api.binance.vision). Off by default because the
+     * Binance data terms have not been cleared for a monetized app; see
+     * docs/PREDICTIONS.md.
+     */
+    readonly predictionCryptoSource: 'off' | 'binance' | 'binance_vision';
   };
 
   readonly llmModel: string;
@@ -263,6 +278,13 @@ function asBoundedInt(name: string, fallback: number, min: number, max: number):
   const n = Number(raw.trim());
   if (n < min || n > max) throw new ConfigError(name, `expected an integer ${min}..${max}`);
   return n;
+}
+
+function asCryptoSource(raw: string | undefined): 'off' | 'binance' | 'binance_vision' {
+  const v = (raw ?? '').trim();
+  if (v === '' || v === 'off') return 'off';
+  if (v === 'binance' || v === 'binance_vision') return v;
+  throw new ConfigError('PREDICTIONS_CRYPTO_SOURCE', 'expected off, binance or binance_vision');
 }
 
 function asBool(name: string, fallback: boolean): boolean {
@@ -529,6 +551,8 @@ export function loadConfig(): Config {
       xLinkEnabled: asBool('X_LINK_ENABLED', false),
       mainnetTests: asBool('RUN_MAINNET_TESTS', false),
       oreReader: asBool('ORE_READER_ENABLED', false),
+      predictionSettlement: asBool('PREDICTIONS_SETTLEMENT_ENABLED', false),
+      predictionCryptoSource: asCryptoSource(process.env.PREDICTIONS_CRYPTO_SOURCE),
     },
 
     // `||`, not `??`: .env.example ships `LLM_MODEL=` (empty), which must mean "default".

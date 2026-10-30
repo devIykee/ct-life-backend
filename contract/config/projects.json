@@ -1,0 +1,101 @@
+{
+  "version": "1.0.0",
+  "_note": "Builder (player projects). Wages are a game faucet, never the founder's money: each role has a fixed weekly band, paid only for a week the member did a project task for THIS project (project_work_log), prorated for a mid-week join, one paid role per player, capped per project and per founder. The project treasury pays an operating cost (a pure sink) that does not fund or gate wages. Cash never moves between players. Treasury Cash is never withdrawable. Routes: contract/openapi.yaml (tag projects).",
+  "wages": {
+    "dev": {
+      "minCentsPerWeek": 15000,
+      "maxCentsPerWeek": 30000
+    },
+    "auditor": {
+      "minCentsPerWeek": 15000,
+      "maxCentsPerWeek": 30000
+    },
+    "kol": {
+      "minCentsPerWeek": 10000,
+      "maxCentsPerWeek": 20000
+    },
+    "mod": {
+      "minCentsPerWeek": 8000,
+      "maxCentsPerWeek": 15000
+    }
+  },
+  "payroll": {
+    "operatingCostBps": 10000,
+    "maxWagesCentsPerProjectWeek": 60000,
+    "maxWagesCentsPerFounderWeek": 90000
+  },
+  "task": {
+    "durationMinutes": 10
+  },
+  "offers": {
+    "ttlHours": 48,
+    "maxPendingPerProject": 8
+  },
+  "membership": {
+    "maxRolesPerPlayer": 1,
+    "maxProjectsPerPlayer": 2
+  },
+  "fund": {
+    "maxCentsPerCall": 10000000
+  },
+  "launch": {
+    "costCentsByKind": {
+      "memecoin": 50000,
+      "dex": 250000,
+      "nft_studio": 200000,
+      "perps_venue": 400000,
+      "l2": 1000000
+    },
+    "builderTribeId": "builder",
+    "builderDiscountBps": 3000,
+    "requiredRole": "dev",
+    "minProjectAgeMinutes": 30
+  },
+  "risk": {
+    "events": [
+      {
+        "id": "proj_exploit",
+        "dailyChanceBps": 200,
+        "mitigatedBy": "auditor",
+        "mitigatedChanceBps": 100,
+        "treasuryDeltaBps": -2000,
+        "treasuryDeltaCapCents": 200000,
+        "priceShockBps": -3000,
+        "worldEventId": "evt_exploit"
+      },
+      {
+        "id": "proj_rug_accusation",
+        "dailyChanceBps": 300,
+        "mitigatedBy": "mod",
+        "mitigatedChanceBps": 150,
+        "treasuryDeltaBps": -500,
+        "treasuryDeltaCapCents": 50000,
+        "priceShockBps": -1500,
+        "worldEventId": null
+      },
+      {
+        "id": "proj_audit_passed",
+        "dailyChanceBps": 400,
+        "requiresRole": "auditor",
+        "treasuryDeltaBps": 0,
+        "treasuryDeltaCapCents": 0,
+        "priceShockBps": 500,
+        "worldEventId": null
+      }
+    ]
+  },
+  "eventIds": [
+    "proj_founded",
+    "proj_member_joined",
+    "proj_member_left",
+    "proj_funded",
+    "proj_launched",
+    "proj_audit_passed",
+    "proj_exploit",
+    "proj_rug_accusation",
+    "proj_payroll_paid",
+    "proj_payroll_missed",
+    "proj_paused",
+    "proj_resumed"
+  ]
+}

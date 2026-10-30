@@ -364,6 +364,15 @@ export class VenueFullError extends DomainError {
   }
 }
 
+/** Venue voice was asked for an instance the caller is not currently in. */
+export class NotInVenueError extends DomainError {
+  readonly code = 'NOT_IN_VENUE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are not in that venue. Join it before connecting to its voice.', details);
+    this.httpStatus = 403;
+  }
+}
+
 export class SpotTakenError extends DomainError {
   readonly code = 'SPOT_TAKEN';
   constructor(details: Record<string, unknown> = {}) {
@@ -716,6 +725,22 @@ export class CapabilityOffError extends DomainError {
   constructor(details: Record<string, unknown> = {}) {
     super('This feature is not turned on on this server yet.', details);
     this.httpStatus = 503;
+  }
+}
+
+export class HomeClosedError extends DomainError {
+  readonly code = 'HOME_CLOSED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This home is closed to visitors.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class NetWorthTooLowError extends DomainError {
+  readonly code = 'NET_WORTH_TOO_LOW';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Your net worth is below what this needs.', details);
+    this.httpStatus = 403;
   }
 }
 
