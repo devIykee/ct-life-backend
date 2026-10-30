@@ -173,6 +173,7 @@ Written by apply (creates the row, never resets it) and by shift completion, in 
 ### `reports` and `blocks` (M1/M2)
 
 - `report_id`, `reporter_user_id`, `target_type`, `target_id`, `reason_id`, `note`, `created_at`, `resolved_by`, `resolved_at`.
+- `target_type` is `user | message | space | call | post | ad | npc_reply` (migration 106 added `npc_reply`: an AI NPC chat reply, `target_id` = `llm_npc_interactions.interaction_id`).
 - `block_id`, `blocker_user_id`, `blocked_user_id`, `created_at`. `UNIQUE (blocker_user_id, blocked_user_id)`.
 
 ### `webhook_events` (M3)

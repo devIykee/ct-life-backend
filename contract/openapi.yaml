@@ -3402,7 +3402,8 @@ paths:
               type: object
               required: [targetType, targetId, reasonId]
               properties:
-                targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                targetType:
+                  { type: string, enum: [user, message, space, call, post, ad, npc_reply] }
                 targetId: { type: string }
                 reasonId: { type: string, enum: [spam, scam, harassment, impersonation, nsfw] }
                 note: { type: string, maxLength: 500 }
@@ -3414,6 +3415,9 @@ paths:
       description: |
         At most 10 an hour per player (burst of 5): beyond that `429 RATE_LIMITED`. Reporting a target
         that you already have an open report on is a no-op (204). Reporting yourself is `400`.
+        `npc_reply` reports an AI NPC chat reply: `targetId` is the `replyId` from `POST /llm/chat`,
+        and only the player the reply was written for may report it (otherwise `400`,
+        `details.reason: unknown_reply`).
       responses:
         '204': { description: Reported }
         '400': { $ref: '#/components/responses/ValidationFailed' }
@@ -5920,7 +5924,8 @@ paths:
                       properties:
                         reportId: { type: integer }
                         reporterUserId: { type: string, format: uuid }
-                        targetType: { type: string, enum: [user, message, space, call, post, ad] }
+                        targetType:
+                          { type: string, enum: [user, message, space, call, post, ad, npc_reply] }
                         targetId: { type: string }
                         reasonId: { type: string }
                         note: { type: [string, 'null'] }
