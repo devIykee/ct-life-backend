@@ -292,3 +292,8 @@ Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 - `project_work_log` — PK `(project_id, user_id, week_start)`; `source` hq_shift | project_task. The only thing payroll counts as work for that project and week.
 - `project_tasks` — timed project tasks (`started_at`, `ends_at`, `completed_at`); one open task per member and project (partial unique index).
 - `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.
+
+## VC Row (migration 1700000121000, unlock WP-B B2)
+
+- `vc_offers` — an NPC term sheet: `vc_archetype_id`, `invest_cents`, `equity_bps`, `unlock_days`, `status` pending | accepted | declined | expired, `expires_at`; at most one `pending` per project (partial unique index).
+- `vc_deals` gains `offer_id`, `unlock_at`, `dumped_at`; `status` adds `unlocked` and `dumped` (the board maps legacy `exited` → `unlocked`, `written_off` → `dumped`).

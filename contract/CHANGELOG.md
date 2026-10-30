@@ -1,3 +1,13 @@
+## 2026-10-30 - VC Row: NPC term sheets, deals, dump at unlock (unlock WP-B B2, migration 1700000121000)
+
+Behind the `vc` capability (`503 CAPABILITY_OFF {capability: 'vc'}` until it is in `CAPABILITIES_ON`). No VC Cash ever reaches a player.
+
+- New: `GET /projects/{id}/vc-offers` (founder) → `{offers: [VcOffer]}`, `POST /vc-offers/{offerId}/accept|decline` → `VcOffer`. `VcOffer = {offerId, projectId, vcArchetypeId, investCents, equityBps, unlockAt, status, expiresAt}`. Errors: 403 `not_owner`; 409 `not_pending` | `expired` | `wrong_status`.
+- Changed: `GET /vc-row/deals` is now behind `vc`, takes `cursor` and `limit` (default 20), and pages with `nextCursor`; `status` is `active | unlocked | dumped`.
+- `GET /projects/{id}` `vcStakes` is filled: `[{vcArchetypeId, equityBps, investedCents, unlockAt}]` for deals not yet dumped.
+- Worker: a daily generator gives live projects under a $5,000 treasury 1-3 term sheets a week (value = 50% of the coin market cap, 8-18% equity, $200-$5,000, 24 h to answer). Accepting puts the money in the project treasury (an NPC faucet that only feeds sinks) and opens a deal that unlocks in 7 days. At unlock the VC dumps: coin price shock of 1.5x the stake (capped at -30%), `proj_vc_dump`, world event `evt_vc_dump {projectId, name, coinId}` (new id in `ids/events.json`). New event ids `proj_vc_invested`, `proj_vc_unlocked`, `proj_vc_dump`.
+- Realtime (city): `vc_offer` (founder).
+
 ## 2026-10-30 - Builder: role offers, treasury, launch, game-paid payroll (unlock WP-B B1, migration 1700000120000)
 
 Behind the `builder` capability (`503 CAPABILITY_OFF` until it is in `CAPABILITIES_ON`). Keeps the rule that Cash never moves between players.

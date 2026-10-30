@@ -14,6 +14,7 @@
  *     risk losses), never to a player.
  */
 import type { Rng } from './rng.js';
+import type { VcConfig } from './vc.js';
 
 export const PROJECT_KINDS = ['memecoin', 'dex', 'nft_studio', 'perps_venue', 'l2'] as const;
 export const HIRE_ROLES = ['dev', 'mod', 'kol', 'auditor'] as const;
@@ -63,6 +64,7 @@ export interface ProjectsConfig {
     readonly minProjectAgeMinutes: number;
   };
   readonly risk: { readonly events: readonly RiskEventDef[] };
+  readonly vc: VcConfig;
 }
 
 const DAY_MS = 86_400_000;

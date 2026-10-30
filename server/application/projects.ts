@@ -106,7 +106,12 @@ export interface ProjectDetail {
   readonly hires: ProjectHireRow[];
   readonly payrollCentsPerWeek: number;
   readonly nextPayrollAt: string | null;
-  readonly vcStakes: unknown[];
+  readonly vcStakes: Array<{
+    vcArchetypeId: string;
+    equityBps: number;
+    investedCents: number;
+    unlockAt: string;
+  }>;
   readonly recentEvents: ProjectEventRow[];
   /** The caller's open project task, or null (not a member, or none open). */
   readonly myTask: { taskId: string; startedAt: string; endsAt: string } | null;
@@ -404,6 +409,17 @@ export async function getProject(
       [projectId, caller, isoDate(weekStartUtc(Date.now()))],
     );
     const me = mine.rows[0];
+    const vc = await c.query<{
+      vc_archetype_id: string;
+      equity_bps: number;
+      invest_cents: string;
+      unlock_at: Date | null;
+      created_at: Date;
+    }>(
+      `SELECT vc_archetype_id, equity_bps, invest_cents, unlock_at, created_at FROM vc_deals
+        WHERE project_id = $1 AND status IN ('active', 'unlocked') ORDER BY created_at`,
+      [projectId],
+    );
     const payroll = hires.reduce((s, h) => s + h.salaryCentsPerWeek, 0);
     const paying = project.status !== 'rugged' && project.status !== 'launching';
     return {
@@ -412,7 +428,12 @@ export async function getProject(
       hires,
       payrollCentsPerWeek: payroll,
       nextPayrollAt: paying ? new Date(nextPayrollAt(Date.now())).toISOString() : null,
-      vcStakes: [],
+      vcStakes: vc.rows.map((d) => ({
+        vcArchetypeId: d.vc_archetype_id,
+        equityBps: d.equity_bps,
+        investedCents: Number(d.invest_cents),
+        unlockAt: (d.unlock_at ?? d.created_at).toISOString(),
+      })),
       myTask:
         me?.task_id && me.started_at && me.ends_at
           ? {
@@ -584,51 +605,4 @@ export async function listProjects(
     ),
   );
   return r.rows.map(toSummary);
-}
-
-export interface VcDealRow {
-  readonly projectId: string;
-  readonly projectName: string | null;
-  readonly vcArchetypeId: string;
-  readonly investCents: number;
-  readonly equityBps: number;
-  readonly status: string;
-  readonly at: string;
-}
-
-/**
- * Recent VC deals for the VC Row venue board.
- * @param ctx - The application context.
- * @param limit - Page size.
- * @returns Deals, newest first.
- */
-export async function listVcDeals(ctx: AppContext, limit: number): Promise<VcDealRow[]> {
-  const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{
-      project_id: string;
-      project_name: string | null;
-      vc_archetype_id: string;
-      invest_cents: string;
-      equity_bps: number;
-      status: string;
-      created_at: Date;
-    }>(
-      `SELECT d.project_id, p.name AS project_name, d.vc_archetype_id,
-              d.invest_cents, d.equity_bps, d.status, d.created_at
-         FROM vc_deals d
-         JOIN projects p ON p.project_id = d.project_id
-        ORDER BY d.created_at DESC
-        LIMIT $1`,
-      [limit],
-    );
-  });
-  return r.rows.map((row) => ({
-    projectId: row.project_id,
-    projectName: row.project_name,
-    vcArchetypeId: row.vc_archetype_id,
-    investCents: Number(row.invest_cents),
-    equityBps: row.equity_bps,
-    status: row.status,
-    at: row.created_at.toISOString(),
-  }));
 }

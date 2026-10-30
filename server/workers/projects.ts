@@ -3,7 +3,9 @@
  *
  *   payroll        Monday 00:00 UTC  wages (game-paid) + operating cost (treasury)
  *   risk           daily 12:00 UTC   exploit / rug accusation / audit, price shock
- *   expire-offers  hourly at :07     pending role offers past expiry -> expired
+ *   expire-offers  hourly at :07     pending role and VC offers past expiry -> expired
+ *   vc-offers      daily 15:00 UTC   VC Row term sheets for qualifying live projects (B2)
+ *   vc-unlock      hourly at :17     deals past unlock: the VC dumps (B2)
  *
  * Every handler is idempotent (payroll runs table, a per-day Redis claim for
  * risk, a conditional UPDATE for offers), so a retried or overlapping job
@@ -15,6 +17,7 @@ import type { Logger } from 'pino';
 import type { AppContext } from '../application/context.js';
 import { expireOffers } from '../application/project-offers.js';
 import { runDailyRisk, runWeeklyPayroll } from '../application/project-payroll.js';
+import { expireVcOffers, generateVcOffers, runVcUnlocks } from '../application/vc-row.js';
 import { SeededRng } from '../shared/domain/rng.js';
 
 export const PROJECTS_QUEUE = 'jobs-projects';
@@ -35,6 +38,13 @@ export async function handleProjectsJob(job: Job, ctx: AppContext, log: Logger):
       log.info({ fired }, 'projects risk');
     } else if (job.name === 'expire-offers') {
       await expireOffers(ctx);
+      await expireVcOffers(ctx);
+    } else if (job.name === 'vc-offers') {
+      const made = await generateVcOffers(ctx, new SeededRng(Date.now() >>> 0));
+      log.info({ made }, 'projects vc offers');
+    } else if (job.name === 'vc-unlock') {
+      const dumped = await runVcUnlocks(ctx, new SeededRng(Date.now() >>> 0));
+      if (dumped > 0) log.info({ dumped }, 'projects vc dumps');
     }
   } catch (e) {
     log.error({ job: job.name, err: (e as Error).message }, 'projects job failed');
@@ -77,6 +87,16 @@ export async function startProjectsWorker(
     'projects-expire-offers',
     { pattern: '7 * * * *', tz: 'UTC' },
     { name: 'expire-offers', data: {}, opts },
+  );
+  await queue.upsertJobScheduler(
+    'projects-vc-offers',
+    { pattern: '0 15 * * *', tz: 'UTC' },
+    { name: 'vc-offers', data: {}, opts },
+  );
+  await queue.upsertJobScheduler(
+    'projects-vc-unlock',
+    { pattern: '17 * * * *', tz: 'UTC' },
+    { name: 'vc-unlock', data: {}, opts },
   );
   return async () => {
     await worker.close();
