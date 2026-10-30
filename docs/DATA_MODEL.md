@@ -312,3 +312,12 @@ NULL` serves the guest's list and the duplicate-pending check.
 - `project_payroll_runs` — PK `(project_id, week_start)`; makes the Monday payroll idempotent.
 - `prediction_markets` (migration 141) — server-generated Prediction Pit markets: `kind` (`sim | crypto | event | mirror`), `question_key`, `params` (client strings), `outcomes`, `horizon`, `opens_at` / `closes_at` (bets) / `resolves_at`, `source`, `payout_bps`, stake limits, `status` (`open | closed | resolved | void`). Recorded at open: `strike_micros` (crypto) and `basis` (for sim and event markets the sealed draw's secret and its sha256 commitment; the secret is server-only until resolution). Recorded once at resolution: `resolved_value_micros`, `resolved_outcome_id`, `resolved_at` (a CHECK ties `resolved` to an outcome). See [Prediction Pit](PREDICTIONS.md).
 - `predictions` gains `market_id` (null on legacy bets), `payout_cents` and `resolved_at` (migration 141).
+
+## Sybil jail (migration 111, unlock A5)
+
+`sybil_jail`: one row per game-rolled stay in the Sybil Barn (`jail_id`, `user_id`, `reason_id` from
+`config/sybil_reasons.json`, `jailed_at`, `release_at`, `bail_cents_per_hour` = the player's farm yield at
+jail time, `released_at` and `bail_paid_cents` when bailed). A stay is active while `released_at IS NULL
+AND release_at > now()`; release is lazy, no worker. The admin jail stays on `users.is_sybil_jailed`, wins
+over a game stay and is never bailable. Bail is a ledger row `sybil_bail` (`ref_type sybil_jail`,
+idempotency ref `sybil-bail:<jail_id>`), a sink.

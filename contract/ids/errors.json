@@ -458,6 +458,11 @@
       "code": "NET_WORTH_TOO_LOW",
       "httpStatus": 403,
       "message": "Your net worth is below what this needs."
+    },
+    {
+      "code": "SYBIL_JAILED",
+      "httpStatus": 403,
+      "message": "You are in the Barn."
     }
   ]
 }

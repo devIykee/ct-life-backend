@@ -1,3 +1,15 @@
+## 2026-10-30 - Farm: Sybil jail, bail and the Sybil Barn (unlock A5)
+
+Migration 111 (`sybil_jail`). New config `config/sybil_reasons.json`. Capabilities `sybilBail` (bail, and the game roll itself) and `sybilBarn`.
+
+- Game-rolled jail: while `sybilBail` is on, every `POST /airdrop/claim` attempt that reaches the server is counted per player for an hour. At 5 / 10 / 20 attempts a CSPRNG roll at 20% / 50% / 100% jails for 2 / 6 / 12 h (`sybil_claim_spam`, `sybil_bot_pattern`, `sybil_clone_farm`). The attempt that is jailed is refused. Release is lazy (on read).
+- `POST /airdrop/claim` while jailed (admin or game) now answers `403 SYBIL_JAILED {releaseAt, reasonId}` (new error code; it was `403 FORBIDDEN {reason: sybil_jailed}`, which clients already map).
+- `GET /me/sybil-status` fills `releaseAt`, `reasonId`, `bailCents`, `bailable` and adds `source: game | admin | null`. Admin jails stay unbailable with `reasonId: sybil_admin_review`.
+- New `POST /me/sybil-status/bail` -> the status (`jailed: false`). Bail = farm yield per started hour still to serve, clamped to $5-$150; ledger `sybil_bail`, a sink (Cash never moves to another player). `402 INSUFFICIENT_CASH {have, need}`, `409 CONFLICT {reason: not_jailed | not_bailable}`.
+- New `GET /sybil-barn` -> `{count, inmates: [{userId, alias, reasonId, jailedAt, releaseAt}] (game stays, <= 50, no anon), nextCursor: null}`.
+- `GET /venues/sybil_barn/access` also admits game-jailed players.
+- New user message `sybil_status` (the status with `jailedAt`/`releaseAt` as epoch ms, plus `at`; `bailPaidCents` after a bail).
+
 ## 2026-10-30 - Prediction Pit: real markets and a recorded-source resolver (unlock D3, app `predict`)
 
 Migration 141. Contract and rules in `docs/PREDICTIONS.md`. Routes dark until `predict` is in `CAPABILITIES_ON`; markets open and settle only with `PREDICTIONS_SETTLEMENT_ENABLED=1` (workers).

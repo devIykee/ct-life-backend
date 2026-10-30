@@ -743,3 +743,11 @@ export class NetWorthTooLowError extends DomainError {
     this.httpStatus = 403;
   }
 }
+
+export class SybilJailedError extends DomainError {
+  readonly code = 'SYBIL_JAILED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are in the Barn.', details);
+    this.httpStatus = 403;
+  }
+}
