@@ -1,3 +1,10 @@
+## 2026-10-30 - Knock on a home's door (unlock D5)
+
+No migration. Gated with the visitor features: dark until `visitorPolicy` is in `CAPABILITIES_ON`.
+
+- New `POST /homes/{ownerId}/knock` (Idempotency-Key) -> `204`; the owner gets realtime `home_knock {fromUserId, alias, homeId, at}`. Errors: `400 {reason: self_knock}`, `404` (no live home), `403 BLOCKED` (either side; the owner is not told), `403 HOME_CLOSED`, `429 RATE_LIMITED {reason: knock_cooldown | knock_limit}` (1 per door per minute, 10 an hour).
+- The rest of D5 (ORE stake hidden off-mainnet, dashboard tooltip, Rekt card share) is client-only.
+
 ## 2026-10-30 - Home NFT gallery, read-only (unlock D4, capability `nftGallery`)
 
 Migration 142. Rules in `docs/NFT_GALLERY.md`. Dark until `nftGallery` is in `CAPABILITIES_ON`.

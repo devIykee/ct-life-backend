@@ -45,7 +45,8 @@ export type UserMessageType =
   | 'jailed'
   | 'released'
   | 'event'
-  | 'prediction_settled';
+  | 'prediction_settled'
+  | 'home_knock';
 
 export interface UserMessage {
   readonly userId: string;
