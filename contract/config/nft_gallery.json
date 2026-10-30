@@ -16,5 +16,6 @@
     }
   ],
   "maxNewImagesPerWalletPerDay": 200,
-  "maxPendingImageBytes": 268435456
+  "maxPendingImageBytes": 268435456,
+  "maxTotalImageBytes": 1073741824
 }

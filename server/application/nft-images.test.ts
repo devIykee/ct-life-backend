@@ -288,6 +288,106 @@ describe('proxiedImage', () => {
     expect(okUsage.rows[0]!.bytes).toBe(okSum.rows[0]!.n);
   });
 
+  it('upgrades a pending image to ok when its collection is allow-listed, moving its bytes', async () => {
+    const wallet = `upgrade-${Date.now()}`;
+    const sourceUrl = `${base}/art.png?up=${Date.now()}`;
+    const h = imageHash(sourceUrl);
+    hashes.push(h);
+    await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'pending' }]);
+    expect(await proxiedImage(ctx, h, { allowPrivateForTests: true })).not.toBeNull();
+    const before = await pool.query<{ class: string; bytes: string }>(
+      `SELECT class, bytes FROM nft_image_usage ORDER BY class`,
+    );
+    await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'ok' }]);
+    const row = await pool.query<{ class: string; n: number }>(
+      `SELECT class, octet_length(bytes) AS n FROM nft_images WHERE hash = $1`,
+      [h],
+    );
+    expect(row.rows[0]!.class).toBe('ok');
+    const after = await pool.query<{ class: string; bytes: string }>(
+      `SELECT class, bytes FROM nft_image_usage ORDER BY class`,
+    );
+    const n = BigInt(row.rows[0]!.n);
+    expect(BigInt(after.rows[0]!.bytes)).toBe(BigInt(before.rows[0]!.bytes) + n); // ok
+    expect(BigInt(after.rows[1]!.bytes)).toBe(BigInt(before.rows[1]!.bytes) - n); // pending
+  });
+
+  it('a frame protects a pending image from eviction but never from the budget', async () => {
+    const one = (await reencode(bigPng)).png.length;
+    const owner = (
+      await pool.query<{ id: string }>(
+        `INSERT INTO users (id, wallet) VALUES (gen_random_uuid(), $1) RETURNING id`,
+        [`frame-${Date.now()}`],
+      )
+    ).rows[0]!.id;
+    const reg = async (tag: string): Promise<string> => {
+      const h = await registerImage(ctx, `${base}/art.png?frame=${tag}-${Date.now()}`);
+      hashes.push(h);
+      return h;
+    };
+    const framed = await reg('framed');
+    expect(await proxiedImage(ctx, framed, { allowPrivateForTests: true })).not.toBeNull();
+    await pool.query(
+      `INSERT INTO home_gallery_frames (owner_user_id, slot, asset_id, network, name, image_hash, moderation)
+       VALUES ($1, 1, 'asset-framed', 'devnet', 'Framed', $2, 'pending')`,
+      [owner, framed],
+    );
+    await pool.query(
+      `UPDATE nft_images SET last_served_at = now() - interval '30 days' WHERE hash = $1`,
+      [framed],
+    );
+    // Framing does not change the class: it still counts as pending.
+    expect(
+      (await pool.query(`SELECT class FROM nft_images WHERE hash = $1`, [framed])).rows[0],
+    ).toEqual({
+      class: 'pending',
+    });
+    // A tight budget: the oldest image is the framed one, and it is not evicted.
+    const used = BigInt(
+      (
+        await pool.query<{ bytes: string }>(
+          `SELECT bytes FROM nft_image_usage WHERE class = 'pending'`,
+        )
+      ).rows[0]!.bytes,
+    );
+    const next = await reg('next');
+    await proxiedImage(ctx, next, {
+      allowPrivateForTests: true,
+      maxPendingBytes: Number(used) + one,
+    });
+    expect(
+      (await pool.query(`SELECT status FROM nft_images WHERE hash = $1`, [framed])).rows[0],
+    ).toEqual({
+      status: 'ok',
+    });
+    // Unframed, it is evictable again: the frame/unframe loop stays inside the budget.
+    await pool.query(`DELETE FROM home_gallery_frames WHERE owner_user_id = $1`, [owner]);
+    const third = await reg('third');
+    const budget = Number(used) + one;
+    await proxiedImage(ctx, third, { allowPrivateForTests: true, maxPendingBytes: budget });
+    const nowUsed = BigInt(
+      (
+        await pool.query<{ bytes: string }>(
+          `SELECT bytes FROM nft_image_usage WHERE class = 'pending'`,
+        )
+      ).rows[0]!.bytes,
+    );
+    expect(nowUsed).toBeLessThanOrEqual(BigInt(budget));
+    expect(
+      (await pool.query(`SELECT bytes FROM nft_images WHERE hash = $1`, [framed])).rows[0].bytes,
+    ).toBeNull();
+    await pool.query(`DELETE FROM users WHERE id = $1`, [owner]);
+  });
+
+  it('keeps everything under the overall byte cap, allow-listed images included', async () => {
+    const wallet = `total-${Date.now()}`;
+    const sourceUrl = `${base}/art.png?total=${Date.now()}`;
+    const h = imageHash(sourceUrl);
+    hashes.push(h);
+    await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'ok' }]);
+    expect(await proxiedImage(ctx, h, { allowPrivateForTests: true, maxTotalBytes: 0 })).toBeNull();
+  });
+
   it('reserves the per-wallet quota atomically under parallel requests', async () => {
     const wallet = `race-${Date.now()}`;
     const batch = (k: number) =>

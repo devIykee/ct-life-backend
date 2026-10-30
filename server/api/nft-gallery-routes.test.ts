@@ -23,6 +23,7 @@ import { createDb } from '../shared/db/pool.js';
 import { buildContext } from '../application/context.js';
 import { recheckFrames } from '../application/nft-gallery.js';
 
+const RUN = Date.now();
 const MAD_LADS = 'J1S9H3QjnRtBbbuD4HjPV6RpRhwuk4zKbxsnCHuTgh9w';
 const OTHER = 'Other1111111111111111111111111111111111111';
 let api: TestApi;
@@ -44,8 +45,8 @@ function asset(
     burnt: opts.burnt ?? false,
     content: {
       metadata: { name: `Asset ${id.slice(0, 6)}` },
-      links: { image: `https://img.example/${id}.png` },
-      files: [{ uri: `https://img.example/${id}.png`, mime: 'image/png' }],
+      links: { image: `https://img.example/${RUN}/${id}.png` },
+      files: [{ uri: `https://img.example/${RUN}/${id}.png`, mime: 'image/png' }],
     },
     grouping: opts.collection ? [{ group_key: 'collection', group_value: opts.collection }] : [],
     ownership: { owner: opts.owner },
@@ -190,6 +191,18 @@ describe('nft gallery', () => {
       { slot: 2, assetId: id(12) },
     ]);
     expect((await api.call(owner, 'GET', '/v1/homes/me/gallery')).body.frames).toHaveLength(2);
+    // Framing never exempts an image from the budget: the devnet (pending) one stays pending.
+    const classes = await db().withConnection((c) =>
+      c.query<{ asset_id: string; class: string }>(
+        `SELECT f.asset_id, i.class FROM home_gallery_frames f JOIN nft_images i ON i.hash = f.image_hash
+          WHERE f.owner_user_id = $1 ORDER BY f.slot`,
+        [owner.sub],
+      ),
+    );
+    expect(classes.rows).toEqual([
+      { asset_id: id(11), class: 'pending' },
+      { asset_id: id(12), class: 'ok' },
+    ]);
 
     const visitor = await api.player();
     const seen = await api.call(visitor, 'GET', `/v1/homes/${owner.sub}/gallery`);

@@ -16,10 +16,11 @@
  *     is pinned to the checked address and the peer address is checked again
  *     on connect (no DNS rebinding). Up to 3 redirects, each checked the same
  *     way. One 10 s deadline covers the whole fetch (slow sources included),
- *     at most 4 fetches at once per process. Images of allow-listed or framed
- *     NFTs (`ok`) are exempt from the byte budget; every other image
- *     (`pending`: anyone can mint one) shares `maxPendingImageBytes`, with the
- *     least recently served unframed ones evicted to make room. Byte totals
+ *     at most 4 fetches at once per process. Images of allow-listed NFTs
+ *     (`ok`) skip the pending budget; every other image (`pending`: anyone can
+ *     mint one, framed or not) shares `maxPendingImageBytes`, with the least
+ *     recently served unframed ones evicted to make room; all images together
+ *     stay under `maxTotalImageBytes`. Byte totals
  *     are running counters (`nft_image_usage`), updated in the same
  *     transaction as the bytes.
  *   - Source type must be PNG, JPEG, GIF, WebP or AVIF (no SVG); at most
@@ -359,6 +360,7 @@ async function storeImage(
   hash: string,
   out: { png: Buffer; width: number; height: number },
   budget: number,
+  totalCap: number,
 ): Promise<boolean> {
   return runInTransaction(async (c) => {
     const row = await c.query<{ class: 'ok' | 'pending'; status: string }>(
@@ -372,6 +374,9 @@ async function storeImage(
       const used = await makePendingRoom(c, out.png.length, budget);
       if (used + BigInt(out.png.length) > BigInt(budget)) return false;
     }
+    // Overall cap across both classes (allow-listed images included).
+    const total = await c.query<{ n: string }>(`SELECT sum(bytes) AS n FROM nft_image_usage`);
+    if (BigInt(total.rows[0]?.n ?? '0') + BigInt(out.png.length) > BigInt(totalCap)) return false;
     await c.query(
       `UPDATE nft_images SET status = 'ok', mime = 'image/png', width = $2, height = $3,
               bytes = $4, fail_reason = NULL, fetched_at = now(), last_served_at = now()
@@ -395,10 +400,11 @@ export interface ServedImage {
  * now. Null for an unknown hash, a source that failed (retried hourly), a full
  * pending budget, or too many fetches in flight.
  *
- * Budget: `ok` images (allow-listed, or framed by their owner) are exempt;
- * `pending` images share `maxPendingImageBytes`, and the least recently served
- * unframed ones are evicted to make room, so nobody can fill the cache and
- * block everyone's gallery for good.
+ * Budget: `ok` images (allow-listed collections only) skip the pending budget;
+ * `pending` images (everything else, framed or not) share
+ * `maxPendingImageBytes`, and the least recently served unframed ones are
+ * evicted to make room (a frame protects an image from eviction, never from
+ * the budget). Everything together stays under `maxTotalImageBytes`.
  * @param ctx - The app context.
  * @param hash - The proxy key.
  * @param opts - Test-only fetch options and budget override.
@@ -407,7 +413,7 @@ export interface ServedImage {
 export async function proxiedImage(
   ctx: AppContext,
   hash: string,
-  opts: Partial<FetchOptions> & { maxPendingBytes?: number } = {},
+  opts: Partial<FetchOptions> & { maxPendingBytes?: number; maxTotalBytes?: number } = {},
 ): Promise<ServedImage | null> {
   if (!/^[0-9a-f]{40}$/.test(hash)) return null;
   const r = await ctx.db.withConnection((c) =>
@@ -452,7 +458,8 @@ export async function proxiedImage(
     });
     const out = await reencode(src.body);
     const budget = opts.maxPendingBytes ?? nftGalleryConfig().maxPendingImageBytes;
-    return (await storeImage(hash, out, budget)) ? { png: out.png } : null;
+    const totalCap = opts.maxTotalBytes ?? nftGalleryConfig().maxTotalImageBytes;
+    return (await storeImage(hash, out, budget, totalCap)) ? { png: out.png } : null;
   } catch (e) {
     await ctx.db.withConnection((c) =>
       c.query(
@@ -469,12 +476,12 @@ export async function proxiedImage(
 }
 
 /**
- * Mark images owner-approved (framed on a wall): class `ok`, exempt from the
- * pending budget. Moves their counted bytes in the same transaction.
+ * Upgrade images to class `ok` (their collection is allow-listed now), moving
+ * their counted bytes from `pending` to `ok` in the same transaction.
  * @param c - A client inside the caller's transaction.
- * @param hashes - The framed images.
+ * @param hashes - The allow-listed images.
  */
-export async function approveImages(c: Pick<PoolClient, 'query'>, hashes: string[]): Promise<void> {
+export async function upgradeToOk(c: Pick<PoolClient, 'query'>, hashes: string[]): Promise<void> {
   if (hashes.length === 0) return;
   await c.query(`SELECT 1 FROM nft_image_usage ORDER BY class FOR UPDATE`);
   const moved = await c.query<{ n: string }>(

@@ -36,7 +36,7 @@ import type { AppContext } from './context.js';
 import { homeEntryRefusal } from './homes.js';
 import { policyRefusalError, visitorPolicyRefusal } from './home-settings.js';
 import { nftGalleryConfig } from './nft-gallery-config.js';
-import { approveImages, imageHash, normalizeImageUri } from './nft-images.js';
+import { imageHash, normalizeImageUri, upgradeToOk } from './nft-images.js';
 
 export type Network = 'devnet' | 'mainnet';
 export type Moderation = 'ok' | 'pending' | 'nsfw' | 'blocked';
@@ -208,9 +208,10 @@ export async function registerImages(
     ]),
   );
   const have = new Set(known.rows.map((r) => r.hash));
-  const fresh = items.filter((h) => !have.has(h.imageHash));
-  const ok = fresh.filter((h) => h.moderation === 'ok');
-  const pending = fresh.filter((h) => h.moderation !== 'ok');
+  // Allow-listed images always register, and upgrade a row first seen as pending.
+  const ok = items.filter((h) => h.moderation === 'ok');
+  // Only new pending URLs count against the quota.
+  const pending = items.filter((h) => h.moderation !== 'ok' && !have.has(h.imageHash));
   const key = `img:quota:${wallet}:${new Date().toISOString().slice(0, 10)}`;
   let granted = 0;
   if (pending.length > 0) {
@@ -222,7 +223,7 @@ export async function registerImages(
     if (granted < pending.length) await ctx.redis.main.decrby(key, pending.length - granted);
   }
   const take = pending.slice(0, granted);
-  const insert = async (rows: typeof fresh, cls: 'ok' | 'pending'): Promise<void> => {
+  const insert = async (rows: typeof items, cls: 'ok' | 'pending'): Promise<void> => {
     if (rows.length === 0) return;
     await ctx.db.withConnection((c) =>
       c.query(
@@ -234,6 +235,14 @@ export async function registerImages(
     );
   };
   await insert(ok, 'ok');
+  if (ok.length > 0) {
+    await runInTransaction((c) =>
+      upgradeToOk(
+        c,
+        ok.map((h) => h.imageHash),
+      ),
+    );
+  }
   await insert(take, 'pending');
   return granted;
 }
@@ -420,15 +429,26 @@ export async function putGallery(
   for (const f of frames) {
     if (!held.has(f.assetId)) throw new ForbiddenError({ reason: 'not_owner', assetId: f.assetId });
   }
+  // Register the framed images like any other: allow-listed ones as `ok`, the
+  // rest as `pending` under the same per-wallet quota. Framing never exempts an
+  // image from the budget (a frame/unframe loop must not grow storage); it
+  // only protects it from eviction while the frame stays.
+  const chosen = frames.map((f) => held.get(f.assetId)!);
+  await registerImages(ctx, await walletOf(ctx, userId), chosen);
+  const known = await ctx.db.withConnection((c) =>
+    c.query<{ hash: string }>(`SELECT hash FROM nft_images WHERE hash = ANY($1::text[])`, [
+      chosen.map((h) => h.imageHash),
+    ]),
+  );
+  const have = new Set(known.rows.map((r) => r.hash));
+  const missing = chosen.find((h) => !have.has(h.imageHash));
+  if (missing) {
+    throw new RateLimitedError(3_600_000, { reason: 'image_quota', assetId: missing.assetId });
+  }
   await runInTransaction(async (client) => {
     await client.query(`DELETE FROM home_gallery_frames WHERE owner_user_id = $1`, [userId]);
     for (const f of frames) {
       const h = held.get(f.assetId)!;
-      // Framed = owner-approved: exempt from the pending budget (approveImages).
-      await client.query(
-        `INSERT INTO nft_images (hash, source_url, class) VALUES ($1, $2, 'ok') ON CONFLICT (hash) DO NOTHING`,
-        [h.imageHash, h.sourceUrl],
-      );
       await client.query(
         `INSERT INTO home_gallery_frames
            (owner_user_id, slot, asset_id, network, name, collection, image_hash, moderation)
@@ -436,10 +456,6 @@ export async function putGallery(
         [userId, f.slot, f.assetId, h.network, h.name, h.collection, h.imageHash, h.moderation],
       );
     }
-    await approveImages(
-      client,
-      frames.map((f) => held.get(f.assetId)!.imageHash),
-    );
   });
   return readFrames(ctx, userId, true);
 }
