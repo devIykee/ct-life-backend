@@ -42,6 +42,19 @@
 Without `FACTORY_DBC_CONFIG` or a metadata store, launches answer `503 FACTORY_UNAVAILABLE` and
 `GET /v1/factory/config` says `enabled: false`.
 
+## Turning it on (unlock C3)
+
+The client opens the Launchpad Tower desk only when `GET /v1/config` has
+`factory: {livePhase: 2, cluster: "devnet"}`. The API sends it only while **all** of these hold:
+the `factory` capability is in `CAPABILITIES_ON`, the cluster is devnet, `FACTORY_DBC_CONFIG` is
+set and a metadata store is configured. `POST /v1/factory/launch/prepare`, `/confirm` and
+`/submit` answer `503 CAPABILITY_OFF` until the capability is on (`JAILED` is still answered
+first); the board, token detail, trades, metadata and the Helius webhook stay open.
+
+Order: run the devnet setup above and `tools/factory/devnet-run.ts` against a local API started
+with `CAPABILITIES_ON=factory` (the run needs launches on), keep the report as evidence, set the
+env on Railway, then add `factory` to the deployed `CAPABILITIES_ON`.
+
 ## Contract for the client (lane C)
 
 1. `GET /v1/factory/config` → `{enabled, cluster, onChain {feeClaimer, creatorTradingFeePercentage,

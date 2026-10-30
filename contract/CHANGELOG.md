@@ -1,3 +1,10 @@
+## 2026-10-30 - Factory config hook (unlock C3)
+
+No migration. Dark until the operator adds `factory` to `CAPABILITIES_ON`.
+
+- `GET /config` gains `factory {livePhase: 2, cluster: 'devnet'}`, present only while the `factory` capability is on, the cluster is devnet and real launches are configured (`FACTORY_DBC_CONFIG` and a metadata store).
+- `POST /factory/launch/prepare`, `/confirm` and `/submit` answer `503 CAPABILITY_OFF` while the capability is off (`JAILED` is still checked first). Reads, metadata and the webhook are unchanged.
+
 ## 2026-10-30 - Paid calls on the ct_escrow program and creator mode (unlock C2)
 
 Migration 131 (`paid_calls`, `creator_profiles` mode columns). Dark until the operator adds `paidCalls` and `creatorMode` to `CAPABILITIES_ON`; devnet only; needs the escrow upgraded and initialized (docs/ONCHAIN.md "Paid-call escrow on devnet").

@@ -2741,7 +2741,10 @@ paths:
         legacy transaction: priority-fee instructions included, fee payer = the caller's wallet,
         a fresh blockhash (about 60-90 s of life), already signed by the new mint. Pass these
         exact bytes to MWA sign_and_send_transactions, then call /factory/launch/confirm. 503
-        FACTORY_UNAVAILABLE when the server has no partner config.
+        FACTORY_UNAVAILABLE when the server has no partner config. Unlock C3: prepare, confirm
+        and submit answer 503 CAPABILITY_OFF until the `factory` capability is on (JAILED is
+        still answered first); the client opens the desk only when `GET /config` has
+        `factory`.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -8640,6 +8643,17 @@ components:
             version: { type: integer, const: 1 }
             beefChallenges: { type: boolean }
             targetedCabalInvites: { type: boolean }
+        factory:
+          type: object
+          description: >-
+            Real token launches (unlock C3; docs/FACTORY-REAL.md). Present only while capability
+            `factory` is on, the deployment is on devnet and launches are configured (DBC partner
+            config + metadata store). The client opens the Launchpad Tower desk with it and
+            speaks the real contract (`/factory/launch/prepare` -> MWA -> `/confirm`).
+          required: [livePhase, cluster]
+          properties:
+            livePhase: { type: integer, const: 2 }
+            cluster: { type: string, const: devnet }
         seasonPass:
           type: object
           description: >-
