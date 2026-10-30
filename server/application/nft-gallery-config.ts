@@ -15,7 +15,7 @@ const NftGalleryFile = z.object({
   maxImageBytes: z.number().int().min(16_384),
   maxImagePx: z.number().int().min(64).max(2048),
   maxSourceBytes: z.number().int().min(65_536),
-  maxStoredImageBytes: z.number().int().min(1_048_576),
+  maxPendingImageBytes: z.number().int().min(1_048_576),
   maxNewImagesPerWalletPerDay: z.number().int().min(1).max(10_000),
   devnetCollections: z.array(Collection),
   mainnetCollections: z.array(Collection),

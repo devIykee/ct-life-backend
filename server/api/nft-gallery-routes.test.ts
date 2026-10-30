@@ -14,6 +14,7 @@
  *   - the daily re-check drops a frame whose asset left the wallet;
  *   - config `nft` block and 503 while off.
  */
+import { createHash } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import sharp from 'sharp';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -228,15 +229,17 @@ describe('nft gallery', () => {
     const png = await sharp({ create: { width: 4, height: 4, channels: 3, background: '#09f' } })
       .png()
       .toBuffer();
-    const hash = 'a'.repeat(39) + 'b';
-    await db().withConnection((c) =>
-      c.query(
-        `INSERT INTO nft_images (hash, source_url, status, mime, width, height, bytes, fetched_at)
-         VALUES ($1, 'https://img.example/t.png', 'ok', 'image/png', 4, 4, $2, now())
-         ON CONFLICT (hash) DO NOTHING`,
+    const hash = createHash('sha256').update(`route-${Date.now()}`).digest('hex').slice(0, 40);
+    await db().withConnection(async (c) => {
+      await c.query(
+        `INSERT INTO nft_images (hash, source_url, status, mime, width, height, bytes, fetched_at, class)
+         VALUES ($1, 'https://img.example/t.png', 'ok', 'image/png', 4, 4, $2, now(), 'ok')`,
         [hash, png],
-      ),
-    );
+      );
+      await c.query(`UPDATE nft_image_usage SET bytes = bytes + $1 WHERE class = 'ok'`, [
+        png.length,
+      ]);
+    });
     const r = await api.app.inject({ method: 'GET', url: `/v1/img/${hash}` });
     expect(r.statusCode).toBe(200);
     expect(r.headers['content-type']).toBe('image/png');

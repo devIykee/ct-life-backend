@@ -52,9 +52,14 @@ lists that host (empty when `PUBLIC_API_BASE_URL` is unset, which the Factory al
 - at most 3 redirects, each checked the same way; **one 10 s deadline for the whole fetch**, so a source
   trickling a byte at a time cannot hold a socket (L6); at most 4 fetches at once per process;
 - PNG, JPEG, GIF, WebP or AVIF only (no SVG), at most 8 MiB, at most 40 MP decoded;
-- no new fetch once the cache holds `maxStoredImageBytes` (1 GiB); new image URLs of non-allow-listed NFTs
-  (which anyone can mint) count against `maxNewImagesPerWalletPerDay` (200) per wallet, so one wallet cannot
-  grow the cache without bound (L6);
+- byte budget: images of allow-listed NFTs and of NFTs framed on a wall (owner-approved) are class `ok`
+  and exempt. Every other image (class `pending`: anyone can mint one) shares `maxPendingImageBytes`
+  (256 MiB); when it is full, the least recently served unframed pending images lose their bytes (they are
+  fetched again if asked for), so one user cannot fill the cache and block everyone's gallery. Totals are
+  running counters in `nft_image_usage`, updated in the same transaction as the bytes (no full-table SUM
+  per request);
+- new pending image URLs count against `maxNewImagesPerWalletPerDay` (200) per wallet, reserved atomically
+  in Redis (INCRBY, keep what fits, DECRBY the rest);
 - re-encodes to a palette PNG no larger than 512 px and 512 KiB (stepping down to 384 and 256 px if
   needed), and caches it in `nft_images`. A failed source is retried after an hour.
 

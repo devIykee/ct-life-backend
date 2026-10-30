@@ -15,6 +15,6 @@
       "_source": "group_value of Mad Lads #8420 in Helius's getAsset example (helius.dev/docs/api-reference/das/getasset); [Inference] not confirmed on a project page"
     }
   ],
-  "maxStoredImageBytes": 1073741824,
-  "maxNewImagesPerWalletPerDay": 200
+  "maxNewImagesPerWalletPerDay": 200,
+  "maxPendingImageBytes": 268435456
 }

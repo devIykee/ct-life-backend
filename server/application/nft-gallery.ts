@@ -36,7 +36,7 @@ import type { AppContext } from './context.js';
 import { homeEntryRefusal } from './homes.js';
 import { policyRefusalError, visitorPolicyRefusal } from './home-settings.js';
 import { nftGalleryConfig } from './nft-gallery-config.js';
-import { imageHash, normalizeImageUri } from './nft-images.js';
+import { approveImages, imageHash, normalizeImageUri } from './nft-images.js';
 
 export type Network = 'devnet' | 'mainnet';
 export type Moderation = 'ok' | 'pending' | 'nsfw' | 'blocked';
@@ -186,8 +186,9 @@ async function walletOf(ctx: AppContext, userId: string): Promise<string> {
  * Register holdings' image URLs with the proxy (only URLs read from DAS are
  * ever fetched). Allow-listed (`ok`) images always register; images of
  * anything else anyone can mint count against a per-wallet daily quota of new
- * URLs (`maxNewImagesPerWalletPerDay`), so one wallet cannot grow the cache
- * without bound. Past the quota an item still lists, its image 404s.
+ * URLs (`maxNewImagesPerWalletPerDay`, reserved atomically in Redis), so one
+ * wallet cannot grow the registry without bound. Past the quota an item still
+ * lists, its image 404s.
  * @param ctx - The app context.
  * @param wallet - The owner's wallet.
  * @param items - The holdings.
@@ -211,23 +212,30 @@ export async function registerImages(
   const ok = fresh.filter((h) => h.moderation === 'ok');
   const pending = fresh.filter((h) => h.moderation !== 'ok');
   const key = `img:quota:${wallet}:${new Date().toISOString().slice(0, 10)}`;
-  const used = Number((await ctx.redis.main.get(key)) ?? '0');
-  const take = pending.slice(0, Math.max(0, limit - used));
-  if (take.length > 0) {
-    await ctx.redis.main.incrby(key, take.length);
-    await ctx.redis.main.expire(key, 86_400);
+  let granted = 0;
+  if (pending.length > 0) {
+    // Reserve atomically: INCRBY first, keep what fits under the limit, give
+    // the rest back. Two parallel requests can never both pass the limit.
+    const after = await ctx.redis.main.incrby(key, pending.length);
+    if (after === pending.length) await ctx.redis.main.expire(key, 86_400);
+    granted = Math.max(0, Math.min(pending.length, limit - (after - pending.length)));
+    if (granted < pending.length) await ctx.redis.main.decrby(key, pending.length - granted);
   }
-  const reg = [...ok, ...take];
-  if (reg.length > 0) {
+  const take = pending.slice(0, granted);
+  const insert = async (rows: typeof fresh, cls: 'ok' | 'pending'): Promise<void> => {
+    if (rows.length === 0) return;
     await ctx.db.withConnection((c) =>
       c.query(
-        `INSERT INTO nft_images (hash, source_url)
-         SELECT * FROM unnest($1::text[], $2::text[]) ON CONFLICT (hash) DO NOTHING`,
-        [reg.map((h) => h.imageHash), reg.map((h) => h.sourceUrl)],
+        `INSERT INTO nft_images (hash, source_url, class)
+         SELECT h, u, $3 FROM unnest($1::text[], $2::text[]) AS t(h, u)
+         ON CONFLICT (hash) DO NOTHING`,
+        [rows.map((h) => h.imageHash), rows.map((h) => h.sourceUrl), cls],
       ),
     );
-  }
-  return take.length;
+  };
+  await insert(ok, 'ok');
+  await insert(take, 'pending');
+  return granted;
 }
 
 async function readHoldings(ctx: AppContext, wallet: string): Promise<Holding[]> {
@@ -416,8 +424,9 @@ export async function putGallery(
     await client.query(`DELETE FROM home_gallery_frames WHERE owner_user_id = $1`, [userId]);
     for (const f of frames) {
       const h = held.get(f.assetId)!;
+      // Framed = owner-approved: exempt from the pending budget (approveImages).
       await client.query(
-        `INSERT INTO nft_images (hash, source_url) VALUES ($1, $2) ON CONFLICT (hash) DO NOTHING`,
+        `INSERT INTO nft_images (hash, source_url, class) VALUES ($1, $2, 'ok') ON CONFLICT (hash) DO NOTHING`,
         [h.imageHash, h.sourceUrl],
       );
       await client.query(
@@ -427,6 +436,10 @@ export async function putGallery(
         [userId, f.slot, f.assetId, h.network, h.name, h.collection, h.imageHash, h.moderation],
       );
     }
+    await approveImages(
+      client,
+      frames.map((f) => held.get(f.assetId)!.imageHash),
+    );
   });
   return readFrames(ctx, userId, true);
 }

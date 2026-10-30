@@ -16,8 +16,12 @@
  *     is pinned to the checked address and the peer address is checked again
  *     on connect (no DNS rebinding). Up to 3 redirects, each checked the same
  *     way. One 10 s deadline covers the whole fetch (slow sources included),
- *     at most 4 fetches at once per process, and none once the cache holds
- *     `maxStoredImageBytes`.
+ *     at most 4 fetches at once per process. Images of allow-listed or framed
+ *     NFTs (`ok`) are exempt from the byte budget; every other image
+ *     (`pending`: anyone can mint one) shares `maxPendingImageBytes`, with the
+ *     least recently served unframed ones evicted to make room. Byte totals
+ *     are running counters (`nft_image_usage`), updated in the same
+ *     transaction as the bytes.
  *   - Source type must be PNG, JPEG, GIF, WebP or AVIF (no SVG); at most
  *     `maxSourceBytes`, 10 s; at most 40 MP decoded (no decompression bombs).
  *   - Re-encoded with sharp to a palette PNG no larger than `maxImagePx` on
@@ -32,6 +36,8 @@ import { request as httpsRequest } from 'node:https';
 import { request as httpRequest } from 'node:http';
 import { BlockList, isIP } from 'node:net';
 import sharp from 'sharp';
+import type { PoolClient } from 'pg';
+import { runInTransaction } from '../shared/db/uow.js';
 import type { AppContext } from './context.js';
 import { nftGalleryConfig } from './nft-gallery-config.js';
 
@@ -295,29 +301,138 @@ export interface ServedImage {
   readonly png: Buffer;
 }
 
+const EVICT_BATCH = 50;
+
+/**
+ * Make room in the pending budget: drop the bytes of the least recently served
+ * pending images that no wall frames (they go back to `pending` and are
+ * fetched again if someone asks). Runs in the caller's transaction, with the
+ * usage row locked, so the counter always equals the stored bytes.
+ * @returns The pending bytes in use after eviction.
+ */
+async function makePendingRoom(
+  c: Pick<PoolClient, 'query'>,
+  need: number,
+  budget: number,
+): Promise<bigint> {
+  const u = await c.query<{ bytes: string }>(
+    `SELECT bytes FROM nft_image_usage WHERE class = 'pending' FOR UPDATE`,
+  );
+  let used = BigInt(u.rows[0]?.bytes ?? '0');
+  if (used + BigInt(need) <= BigInt(budget)) return used;
+  const victims = await c.query<{ hash: string; n: number }>(
+    `SELECT hash, octet_length(bytes) AS n FROM nft_images i
+      WHERE class = 'pending' AND status = 'ok'
+        AND NOT EXISTS (SELECT 1 FROM home_gallery_frames f WHERE f.image_hash = i.hash)
+      ORDER BY COALESCE(last_served_at, fetched_at) NULLS FIRST
+      LIMIT $1
+        FOR UPDATE SKIP LOCKED`,
+    [EVICT_BATCH],
+  );
+  const drop: string[] = [];
+  let freed = 0n;
+  for (const v of victims.rows) {
+    if (used - freed + BigInt(need) <= BigInt(budget)) break;
+    drop.push(v.hash);
+    freed += BigInt(v.n);
+  }
+  if (drop.length > 0) {
+    await c.query(
+      `UPDATE nft_images SET status = 'pending', bytes = NULL, mime = NULL, width = NULL, height = NULL
+        WHERE hash = ANY($1::text[])`,
+      [drop],
+    );
+    await c.query(`UPDATE nft_image_usage SET bytes = bytes - $1 WHERE class = 'pending'`, [
+      freed.toString(),
+    ]);
+    used -= freed;
+  }
+  return used;
+}
+
+/**
+ * Store a re-encoded image and count its bytes, in one transaction. A pending
+ * image that still does not fit after eviction is not stored.
+ * @returns False when the pending budget is full.
+ */
+async function storeImage(
+  hash: string,
+  out: { png: Buffer; width: number; height: number },
+  budget: number,
+): Promise<boolean> {
+  return runInTransaction(async (c) => {
+    const row = await c.query<{ class: 'ok' | 'pending'; status: string }>(
+      `SELECT class, status FROM nft_images WHERE hash = $1 FOR UPDATE`,
+      [hash],
+    );
+    const r = row.rows[0];
+    if (!r) return false;
+    if (r.status === 'ok') return true; // another replica stored it
+    if (r.class === 'pending') {
+      const used = await makePendingRoom(c, out.png.length, budget);
+      if (used + BigInt(out.png.length) > BigInt(budget)) return false;
+    }
+    await c.query(
+      `UPDATE nft_images SET status = 'ok', mime = 'image/png', width = $2, height = $3,
+              bytes = $4, fail_reason = NULL, fetched_at = now(), last_served_at = now()
+        WHERE hash = $1`,
+      [hash, out.width, out.height, out.png],
+    );
+    await c.query(`UPDATE nft_image_usage SET bytes = bytes + $1 WHERE class = $2`, [
+      out.png.length,
+      r.class,
+    ]);
+    return true;
+  });
+}
+
+export interface ServedImage {
+  readonly png: Buffer;
+}
+
 /**
  * The PNG for a registered hash: from the cache, or fetched and re-encoded
- * now. Null for an unknown hash, or a source that failed (retried hourly).
+ * now. Null for an unknown hash, a source that failed (retried hourly), a full
+ * pending budget, or too many fetches in flight.
+ *
+ * Budget: `ok` images (allow-listed, or framed by their owner) are exempt;
+ * `pending` images share `maxPendingImageBytes`, and the least recently served
+ * unframed ones are evicted to make room, so nobody can fill the cache and
+ * block everyone's gallery for good.
  * @param ctx - The app context.
  * @param hash - The proxy key.
- * @param opts - Test-only fetch options.
+ * @param opts - Test-only fetch options and budget override.
  * @returns The image, or null.
  */
 export async function proxiedImage(
   ctx: AppContext,
   hash: string,
-  opts: Partial<FetchOptions> & { maxStoredBytes?: number } = {},
+  opts: Partial<FetchOptions> & { maxPendingBytes?: number } = {},
 ): Promise<ServedImage | null> {
   if (!/^[0-9a-f]{40}$/.test(hash)) return null;
   const r = await ctx.db.withConnection((c) =>
-    c.query<{ source_url: string; status: string; bytes: Buffer | null; fetched_at: Date | null }>(
-      `SELECT source_url, status, bytes, fetched_at FROM nft_images WHERE hash = $1`,
+    c.query<{
+      source_url: string;
+      status: string;
+      bytes: Buffer | null;
+      fetched_at: Date | null;
+      last_served_at: Date | null;
+    }>(
+      `SELECT source_url, status, bytes, fetched_at, last_served_at FROM nft_images WHERE hash = $1`,
       [hash],
     ),
   );
   const row = r.rows[0];
   if (!row) return null;
-  if (row.status === 'ok' && row.bytes) return { png: row.bytes };
+  if (row.status === 'ok' && row.bytes) {
+    // LRU clock for eviction, written at most once an hour per image.
+    if (!row.last_served_at || Date.now() - row.last_served_at.getTime() > 3_600_000) {
+      await ctx.db.withConnection((c) =>
+        c.query(`UPDATE nft_images SET last_served_at = now() WHERE hash = $1`, [hash]),
+      );
+    }
+    return { png: row.bytes };
+  }
   if (
     row.status === 'failed' &&
     row.fetched_at &&
@@ -325,12 +440,6 @@ export async function proxiedImage(
   ) {
     return null;
   }
-  // Storage cap: past it, no new image is fetched (cached ones still serve).
-  const cap = opts.maxStoredBytes ?? nftGalleryConfig().maxStoredImageBytes;
-  const used = await ctx.db.withConnection((c) =>
-    c.query<{ n: string }>(`SELECT COALESCE(sum(octet_length(bytes)), 0) AS n FROM nft_images`),
-  );
-  if (BigInt(used.rows[0]?.n ?? '0') >= BigInt(cap)) return null;
   if (inFlight >= MAX_CONCURRENT_FETCHES) return null;
   // One fetch per image at a time across replicas.
   const lock = await ctx.redis.main.set(`img:fetch:${hash}`, '1', 'EX', 30, 'NX');
@@ -342,15 +451,8 @@ export async function proxiedImage(
       ...opts,
     });
     const out = await reencode(src.body);
-    await ctx.db.withConnection((c) =>
-      c.query(
-        `UPDATE nft_images SET status = 'ok', mime = 'image/png', width = $2, height = $3,
-                bytes = $4, fail_reason = NULL, fetched_at = now()
-          WHERE hash = $1`,
-        [hash, out.width, out.height, out.png],
-      ),
-    );
-    return { png: out.png };
+    const budget = opts.maxPendingBytes ?? nftGalleryConfig().maxPendingImageBytes;
+    return (await storeImage(hash, out, budget)) ? { png: out.png } : null;
   } catch (e) {
     await ctx.db.withConnection((c) =>
       c.query(
@@ -363,5 +465,31 @@ export async function proxiedImage(
   } finally {
     inFlight--;
     await ctx.redis.main.del(`img:fetch:${hash}`);
+  }
+}
+
+/**
+ * Mark images owner-approved (framed on a wall): class `ok`, exempt from the
+ * pending budget. Moves their counted bytes in the same transaction.
+ * @param c - A client inside the caller's transaction.
+ * @param hashes - The framed images.
+ */
+export async function approveImages(c: Pick<PoolClient, 'query'>, hashes: string[]): Promise<void> {
+  if (hashes.length === 0) return;
+  await c.query(`SELECT 1 FROM nft_image_usage ORDER BY class FOR UPDATE`);
+  const moved = await c.query<{ n: string }>(
+    `WITH up AS (
+       UPDATE nft_images SET class = 'ok'
+        WHERE hash = ANY($1::text[]) AND class = 'pending'
+        RETURNING COALESCE(octet_length(bytes), 0) AS n
+     ) SELECT COALESCE(sum(n), 0) AS n FROM up`,
+    [hashes],
+  );
+  const n = moved.rows[0]?.n ?? '0';
+  if (n !== '0') {
+    await c.query(
+      `UPDATE nft_image_usage SET bytes = bytes + CASE class WHEN 'ok' THEN $1::bigint ELSE -$1::bigint END`,
+      [n],
+    );
   }
 }

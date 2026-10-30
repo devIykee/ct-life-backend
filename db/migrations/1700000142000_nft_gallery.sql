@@ -13,6 +13,9 @@
 --                        keyed by a hash of it, and once fetched the
 --                        re-encoded PNG (<= 512 px, <= 512 KiB). Only URLs the
 --                        server itself read from DAS are ever fetched.
+--                        `pending` images share a byte budget and the least
+--                        recently served unframed ones are evicted to make room;
+--                        `ok` (allow-listed or framed) images are exempt.
 
 -- Up Migration
 CREATE TABLE nft_images (
@@ -24,10 +27,24 @@ CREATE TABLE nft_images (
   height       integer CHECK (height IS NULL OR height BETWEEN 1 AND 4096),
   bytes        bytea,
   fail_reason  text,
+  -- `ok`: allow-listed or framed by its owner (exempt from the pending budget);
+  -- `pending`: any other NFT image (anyone can mint one), budgeted and evictable.
+  class        text NOT NULL DEFAULT 'pending' CHECK (class IN ('ok', 'pending')),
   created_at   timestamptz NOT NULL DEFAULT now(),
   fetched_at   timestamptz,
+  last_served_at timestamptz,
   CHECK ((status = 'ok') = (bytes IS NOT NULL))
 );
+
+CREATE INDEX nft_images_evict_idx ON nft_images (class, status, last_served_at);
+
+-- Running byte totals per class, updated in the same transaction as the bytes
+-- they count (no full-table SUM per request).
+CREATE TABLE nft_image_usage (
+  class  text PRIMARY KEY CHECK (class IN ('ok', 'pending')),
+  bytes  bigint NOT NULL DEFAULT 0 CHECK (bytes >= 0)
+);
+INSERT INTO nft_image_usage (class) VALUES ('ok'), ('pending');
 
 CREATE TABLE home_gallery_frames (
   owner_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -48,4 +65,5 @@ CREATE INDEX home_gallery_frames_checked_idx ON home_gallery_frames (checked_at)
 
 -- Down Migration
 DROP TABLE IF EXISTS home_gallery_frames;
+DROP TABLE IF EXISTS nft_image_usage;
 DROP TABLE IF EXISTS nft_images;
