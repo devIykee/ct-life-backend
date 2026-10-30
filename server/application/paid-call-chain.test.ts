@@ -5,14 +5,19 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { Keypair, PublicKey } from '@solana/web3.js';
-import { ASSOCIATED_TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token';
+import { Keypair, PublicKey, SystemProgram } from '@solana/web3.js';
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID,
+} from '@solana/spl-token';
 import {
   checkOpenTransaction,
   classifyClosure,
   escrowEventsFromLogs,
   refundInstructions,
   settleInstructions,
+  tokenAccountState,
   type RpcTx,
 } from './paid-call-chain.js';
 import { CT_ESCROW_PROGRAM_ID, sessionPda } from '../shared/solana/ct-escrow.js';
@@ -44,26 +49,92 @@ function b58(bytes: Uint8Array): string {
 }
 const disc = (s: string): Buffer => createHash('sha256').update(s).digest().subarray(0, 8);
 
-describe('settle and refund recreate the fan token account first', () => {
-  it('settle: fan, creator and treasury ATAs (idempotent, authority pays), then settle', () => {
-    const ixs = settleInstructions({ authority, cfg, ref, secondsUsed: 60n });
-    expect(ixs).toHaveLength(4);
-    for (const ix of ixs.slice(0, 3)) {
-      expect(ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)).toBe(true);
-      expect(ix.data[0]).toBe(1); // CreateIdempotent
-      expect(ix.keys[0]!.pubkey.equals(authority)).toBe(true);
-    }
-    expect(ixs[0]!.keys[1]!.pubkey.equals(fanAta)).toBe(true);
-    expect(ixs[3]!.programId.equals(CT_ESCROW_PROGRAM_ID)).toBe(true);
+const RENT = 2_039_280n;
+const OK = { fan: 'ok', creator: 'ok', treasury: 'ok' } as const;
+const settlePlan = (states: Parameters<typeof settleInstructions>[0]['states']) =>
+  settleInstructions({ authority, cfg, ref, secondsUsed: 60n, states, rentExemptLamports: RENT });
+/** The settle instruction's fan token account (lib.rs Settle: index 5). */
+const fanOf = (ixs: { keys: { pubkey: PublicKey }[] }[]) => ixs[ixs.length - 1]!.keys[5]!.pubkey;
+
+describe('settle and refund never depend on a player-controlled account (review M2/M4)', () => {
+  it('usable accounts: settle alone, no creates, no rent', () => {
+    const p = settlePlan(OK);
+    expect(p.instructions).toHaveLength(1);
+    expect(p.instructions[0]!.programId.equals(CT_ESCROW_PROGRAM_ID)).toBe(true);
+    expect(fanOf(p.instructions).equals(fanAta)).toBe(true);
+    expect(p.rentLamports).toBe(0n);
+    expect(p.extraSigners).toHaveLength(0);
   });
 
-  it('refund: the fan ATA (idempotent) before refund', () => {
-    const ixs = refundInstructions({ authority, cfg, ref });
-    expect(ixs).toHaveLength(2);
-    expect(ixs[0]!.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)).toBe(true);
-    expect(ixs[0]!.data[0]).toBe(1);
-    expect(ixs[0]!.keys[1]!.pubkey.equals(fanAta)).toBe(true);
-    expect(ixs[1]!.programId.equals(CT_ESCROW_PROGRAM_ID)).toBe(true);
+  it('a missing fan ATA is created (idempotent, authority pays) and counted as rent', () => {
+    const p = settlePlan({ ...OK, fan: 'missing' });
+    expect(p.instructions).toHaveLength(2);
+    expect(p.instructions[0]!.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)).toBe(true);
+    expect(p.instructions[0]!.data[0]).toBe(1);
+    expect(p.instructions[0]!.keys[0]!.pubkey.equals(authority)).toBe(true);
+    expect(p.instructions[0]!.keys[1]!.pubkey.equals(fanAta)).toBe(true);
+    expect(fanOf(p.instructions).equals(fanAta)).toBe(true);
+    expect(p.rentLamports).toBe(RENT);
+  });
+
+  it('a fan ATA handed to another owner (or frozen) is bypassed with a fresh fan-owned account', () => {
+    const p = settlePlan({ ...OK, fan: 'unusable' });
+    expect(p.instructions).toHaveLength(3);
+    expect(p.instructions[0]!.programId.equals(SystemProgram.programId)).toBe(true);
+    expect(p.instructions[1]!.programId.equals(TOKEN_PROGRAM_ID)).toBe(true);
+    expect(p.extraSigners).toHaveLength(1);
+    const fresh = p.extraSigners[0]!.publicKey;
+    expect(fanOf(p.instructions).equals(fresh)).toBe(true);
+    expect(fresh.equals(fanAta)).toBe(false);
+    // initializeAccount3(account, mint) with the fan as token owner in the data.
+    expect(p.instructions[1]!.keys[0]!.pubkey.equals(fresh)).toBe(true);
+    expect(Buffer.from(p.instructions[1]!.data.subarray(1)).equals(fan.toBuffer())).toBe(true);
+    expect(p.rentLamports).toBe(RENT);
+  });
+
+  it('refund plans the fan account the same way', () => {
+    const ok = refundInstructions({
+      authority,
+      cfg,
+      ref,
+      fanState: 'ok',
+      rentExemptLamports: RENT,
+    });
+    expect(ok.instructions).toHaveLength(1);
+    expect(ok.rentLamports).toBe(0n);
+    const handed = refundInstructions({
+      authority,
+      cfg,
+      ref,
+      fanState: 'unusable',
+      rentExemptLamports: RENT,
+    });
+    expect(handed.instructions).toHaveLength(3);
+    expect(handed.extraSigners).toHaveLength(1);
+    // Refund: fan_usdc_ata is index 4.
+    const refundIx = handed.instructions[2]!;
+    expect(refundIx.keys[4]!.pubkey.equals(handed.extraSigners[0]!.publicKey)).toBe(true);
+  });
+
+  it('classifies a canonical ATA read', () => {
+    const acct = (info: Record<string, string>, owner = TOKEN_PROGRAM_ID.toBase58()) => ({
+      owner,
+      data: { parsed: { info } },
+    });
+    const mint = USDC.toBase58();
+    const me = fan.toBase58();
+    expect(tokenAccountState(null, me, mint)).toBe('missing');
+    expect(tokenAccountState(acct({ owner: me, mint, state: 'initialized' }), me, mint)).toBe('ok');
+    const alt = Keypair.generate().publicKey.toBase58();
+    expect(tokenAccountState(acct({ owner: alt, mint, state: 'initialized' }), me, mint)).toBe(
+      'unusable',
+    );
+    expect(tokenAccountState(acct({ owner: me, mint, state: 'frozen' }), me, mint)).toBe(
+      'unusable',
+    );
+    expect(tokenAccountState(acct({ owner: me, mint, state: 'initialized' }, alt), me, mint)).toBe(
+      'unusable',
+    );
   });
 });
 

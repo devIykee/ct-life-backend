@@ -1,3 +1,14 @@
+## 2026-10-30 - WP-C security review follow-up (paid calls, season pass, Factory)
+
+Migration 132 (`paid_calls` backoff and rent columns, status `stuck`). Everything stays dark behind the existing capabilities.
+
+- Paid calls (M2): settle and refund pay into the canonical USDC account only when it is usable; one handed to another owner or frozen is bypassed with a fresh account owned by the same wallet, created in the same transaction. A player can no longer make settle fail and refund in full after the deadline. No program change.
+- Paid calls (M3): the sweep runs one bounded batch per status (live first), retries failures with exponential backoff, and parks a row as `stuck` after 8 failures (ALERT log). `PaidCall.status` gains `stuck`.
+- Paid calls (M4): accounts are created only when missing; booking needs both players' USDC accounts to exist (`400 {reason: usdc_account_missing}`, `403 CREATOR_UNAVAILABLE {reason: creator_usdc_account_missing}`); per-user limits `429 RATE_LIMITED {reason: paid_call_rate | creator_call_rate | account_recreations}`; `503 CAPABILITY_OFF {reason: authority_low}` under 0.02 SOL, ALERT under 0.1 SOL.
+- Paid calls (L1): an authority transaction that fails on chain after preflight is a failure, never `live`/`settled`/`refunded`.
+- Season pass (L3): a `season_pass` intent grants only at 5 USDC and only while `seasonPassPurchase` is on; another price fails for a manual refund; abandoned intents still expire while off; the poller reconciles each kind in its own batch.
+- Factory (L4): launch prepare/confirm/submit refuse anything but devnet.
+
 ## 2026-10-30 - Knock on a home's door (unlock D5)
 
 No migration. Gated with the visitor features: dark until `visitorPolicy` is in `CAPABILITIES_ON`.

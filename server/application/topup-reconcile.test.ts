@@ -324,8 +324,9 @@ describe('top-up reconciliation', () => {
       `UPDATE payment_intents SET created_at = now() - interval '6 days' WHERE intent_id = $1`,
       [topup.intentId],
     );
-    finalized.set('topupsig', paymentTx(topup));
-    history.set(topup.reference, ['topupsig']);
+    const s = sig();
+    finalized.set(s, paymentTx(topup));
+    history.set(topup.reference, [s]);
     await reconcileOpenIntents(ctx(), 50);
     expect(await status(topup.intentId)).toBe('confirmed');
   });

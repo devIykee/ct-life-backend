@@ -10,10 +10,18 @@
  * `init_config`, the old devnet binary, or a config made with another key can never take
  * a fan's deposit.
  *
- * Settle and refund (re)create every token account they pay into (fan, creator,
- * treasury) with the idempotent ATA instruction, paid by the settle authority, so a fan
- * who closes their own USDC account cannot make settle fail and then refund the whole
- * deposit after the deadline.
+ * Settle and refund never depend on the state of an account a player controls. The
+ * program accepts ANY USDC token account whose token owner is the fan / creator /
+ * treasury (lib.rs Settle and Refund constraints), so before each send the server reads
+ * the canonical ATAs and plans a destination for each (`planDestinations`):
+ *   - present, owned by the right wallet, not frozen  -> use it (no create, no rent);
+ *   - missing                                         -> idempotent ATA create;
+ *   - handed to another owner (SetAuthority) or frozen -> a FRESH token account owned by
+ *     the right wallet, created in the same transaction (createAccount +
+ *     initializeAccount3), so nobody can make settle fail and then refund in full
+ *     after the deadline (security review M2). No program change is needed.
+ * Every create is rent the settle authority pays; `settle` / `refund` return it so the
+ * service can cap it per user (security review M4).
  *
  * The pure pieces (`settleInstructions`, `refundInstructions`, `checkOpenTransaction`,
  * `escrowEventsFromLogs`) are exported for tests; tests swap the whole port with
@@ -22,15 +30,19 @@
 import { createHash } from 'node:crypto';
 import {
   Connection,
+  Keypair,
   PublicKey,
+  SystemProgram,
   TransactionMessage,
   VersionedTransaction,
-  type Keypair,
   type TransactionInstruction,
 } from '@solana/web3.js';
 import {
+  ACCOUNT_SIZE,
   createAssociatedTokenAccountIdempotentInstruction,
+  createInitializeAccount3Instruction,
   getAssociatedTokenAddressSync,
+  TOKEN_PROGRAM_ID,
 } from '@solana/spl-token';
 import type { AppContext } from './context.js';
 import { assertDevnetChain, assertDevnetRpc, clusterRpc } from './chain-rpc.js';
@@ -92,10 +104,23 @@ export interface EscrowChain {
   verifyOpen(ctx: AppContext, ref: SessionRef, signature: string): Promise<OpenCheck>;
   /** For a closed session: the settle or refund that closed it, or null if not found. */
   closure(ctx: AppContext, ref: SessionRef): Promise<SessionClosure | null>;
+  /** Canonical USDC ATA state of each wallet (booking requires 'ok' for fan and creator). */
+  usdcAccounts(ctx: AppContext, owners: string[]): Promise<Record<string, TokenAccountState>>;
+  /** The settle authority's SOL balance, in lamports. */
+  authorityLamports(ctx: AppContext): Promise<bigint>;
   accept(ctx: AppContext, ref: SessionRef): Promise<string>;
-  settle(ctx: AppContext, ref: SessionRef & { secondsUsed: bigint }): Promise<string>;
-  refund(ctx: AppContext, ref: SessionRef): Promise<string>;
+  settle(ctx: AppContext, ref: SessionRef & { secondsUsed: bigint }): Promise<AuthoritySend>;
+  refund(ctx: AppContext, ref: SessionRef): Promise<AuthoritySend>;
 }
+
+/** A settle or refund the authority sent, and the account rent it paid for it. */
+export interface AuthoritySend {
+  signature: string;
+  rentLamports: bigint;
+}
+
+/** The canonical ATA of a wallet: usable, missing, or unusable (another owner / frozen). */
+export type TokenAccountState = 'ok' | 'missing' | 'unusable';
 
 let override: EscrowChain | null = null;
 
@@ -146,64 +171,160 @@ function keys(ref: SessionRef): { fan: PublicKey; creator: PublicKey; session: P
 
 // --- Pure instruction lists -----------------------------------------------------
 
+/** jsonParsed `getMultipleAccounts` value for a token account (null = missing). */
+export interface ParsedTokenAccount {
+  owner: string;
+  data: { parsed?: { info?: { owner?: string; mint?: string; state?: string } } } | unknown;
+}
+
+/** Classify a canonical ATA read for `owner` and `mint`. */
+export function tokenAccountState(
+  acct: ParsedTokenAccount | null,
+  owner: string,
+  mint: string,
+): TokenAccountState {
+  if (acct === null) return 'missing';
+  const info = (
+    acct.data as { parsed?: { info?: { owner?: string; mint?: string; state?: string } } }
+  )?.parsed?.info;
+  if (acct.owner !== TOKEN_PROGRAM_ID.toBase58() || !info) return 'unusable';
+  if (info.owner !== owner || info.mint !== mint || info.state !== 'initialized') return 'unusable';
+  return 'ok';
+}
+
+/** Where one payout goes, and what (if anything) must be created first. */
+interface Destination {
+  account: PublicKey;
+  instructions: TransactionInstruction[];
+  signers: Keypair[];
+  rentLamports: bigint;
+}
+
+function destination(args: {
+  state: TokenAccountState;
+  authority: PublicKey;
+  owner: PublicKey;
+  mint: PublicKey;
+  rentExemptLamports: bigint;
+}): Destination {
+  const ata = getAssociatedTokenAddressSync(args.mint, args.owner, true);
+  if (args.state === 'ok') return { account: ata, instructions: [], signers: [], rentLamports: 0n };
+  if (args.state === 'missing') {
+    return {
+      account: ata,
+      instructions: [
+        createAssociatedTokenAccountIdempotentInstruction(
+          args.authority,
+          ata,
+          args.owner,
+          args.mint,
+        ),
+      ],
+      signers: [],
+      rentLamports: args.rentExemptLamports,
+    };
+  }
+  // The ATA was handed to someone else or frozen: a fresh account the owner holds.
+  const fresh = Keypair.generate();
+  return {
+    account: fresh.publicKey,
+    instructions: [
+      SystemProgram.createAccount({
+        fromPubkey: args.authority,
+        newAccountPubkey: fresh.publicKey,
+        lamports: Number(args.rentExemptLamports),
+        space: ACCOUNT_SIZE,
+        programId: TOKEN_PROGRAM_ID,
+      }),
+      createInitializeAccount3Instruction(fresh.publicKey, args.mint, args.owner),
+    ],
+    signers: [fresh],
+    rentLamports: args.rentExemptLamports,
+  };
+}
+
+/** A planned authority transaction. */
+export interface PlannedTx {
+  instructions: TransactionInstruction[];
+  extraSigners: Keypair[];
+  rentLamports: bigint;
+}
+
 /**
- * settle, preceded by idempotent creates of every token account it pays into (fan,
- * creator, treasury), all paid by the settle authority.
+ * settle, with each payout account planned from its current state (see the header):
+ * nothing is created for a usable account, so repeated calls cost no rent.
  */
 export function settleInstructions(args: {
   authority: PublicKey;
   cfg: Pick<EscrowConfig, 'usdcMint' | 'treasury'>;
   ref: SessionRef;
   secondsUsed: bigint;
-}): TransactionInstruction[] {
+  states: { fan: TokenAccountState; creator: TokenAccountState; treasury: TokenAccountState };
+  rentExemptLamports: bigint;
+}): PlannedTx {
   const { fan, creator, session } = keys(args.ref);
   const mint = new PublicKey(args.cfg.usdcMint);
   const treasury = new PublicKey(args.cfg.treasury);
-  const fanAta = getAssociatedTokenAddressSync(mint, fan);
-  const creatorAta = getAssociatedTokenAddressSync(mint, creator);
-  const treasuryAta = getAssociatedTokenAddressSync(mint, treasury);
-  const ata = (a: PublicKey, owner: PublicKey): TransactionInstruction =>
-    createAssociatedTokenAccountIdempotentInstruction(args.authority, a, owner, mint);
-  return [
-    ata(fanAta, fan),
-    ata(creatorAta, creator),
-    ata(treasuryAta, treasury),
-    buildSettleIx({
-      settleAuthority: args.authority,
-      fan,
-      creator,
-      sessionId: args.ref.sessionId,
-      secondsUsed: args.secondsUsed,
-      vault: sessionVault(session, mint),
-      usdcMint: mint,
-      creatorUsdcAta: creatorAta,
-      fanUsdcAta: fanAta,
-      treasuryUsdcAta: treasuryAta,
-    }),
-  ];
+  const base = { authority: args.authority, mint, rentExemptLamports: args.rentExemptLamports };
+  const f = destination({ ...base, state: args.states.fan, owner: fan });
+  const c = destination({ ...base, state: args.states.creator, owner: creator });
+  const t = destination({ ...base, state: args.states.treasury, owner: treasury });
+  return {
+    instructions: [
+      ...f.instructions,
+      ...c.instructions,
+      ...t.instructions,
+      buildSettleIx({
+        settleAuthority: args.authority,
+        fan,
+        creator,
+        sessionId: args.ref.sessionId,
+        secondsUsed: args.secondsUsed,
+        vault: sessionVault(session, mint),
+        usdcMint: mint,
+        creatorUsdcAta: c.account,
+        fanUsdcAta: f.account,
+        treasuryUsdcAta: t.account,
+      }),
+    ],
+    extraSigners: [...f.signers, ...c.signers, ...t.signers],
+    rentLamports: f.rentLamports + c.rentLamports + t.rentLamports,
+  };
 }
 
-/** refund, preceded by an idempotent create of the fan's token account. */
+/** refund, with the fan's payout account planned from its current state. */
 export function refundInstructions(args: {
   authority: PublicKey;
   cfg: Pick<EscrowConfig, 'usdcMint'>;
   ref: SessionRef;
-}): TransactionInstruction[] {
+  fanState: TokenAccountState;
+  rentExemptLamports: bigint;
+}): PlannedTx {
   const { fan, creator, session } = keys(args.ref);
   const mint = new PublicKey(args.cfg.usdcMint);
-  const fanAta = getAssociatedTokenAddressSync(mint, fan);
-  return [
-    createAssociatedTokenAccountIdempotentInstruction(args.authority, fanAta, fan, mint),
-    buildRefundIx({
-      fan,
-      creator,
-      sessionId: args.ref.sessionId,
-      vault: sessionVault(session, mint),
-      usdcMint: mint,
-      fanUsdcAta: fanAta,
-      signer: args.authority,
-    }),
-  ];
+  const f = destination({
+    authority: args.authority,
+    mint,
+    rentExemptLamports: args.rentExemptLamports,
+    state: args.fanState,
+    owner: fan,
+  });
+  return {
+    instructions: [
+      ...f.instructions,
+      buildRefundIx({
+        fan,
+        creator,
+        sessionId: args.ref.sessionId,
+        vault: sessionVault(session, mint),
+        usdcMint: mint,
+        fanUsdcAta: f.account,
+        signer: args.authority,
+      }),
+    ],
+    extraSigners: f.signers,
+    rentLamports: f.rentLamports,
+  };
 }
 
 // --- Pure verification ----------------------------------------------------------
@@ -325,6 +446,28 @@ async function getTx(ctx: AppContext, signature: string): Promise<RpcTx | null> 
   ]);
 }
 
+async function readUsdcAccounts(
+  ctx: AppContext,
+  owners: string[],
+): Promise<Record<string, TokenAccountState>> {
+  const mint = new PublicKey(USDC_DEVNET_MINT);
+  const atas = owners.map((o) => getAssociatedTokenAddressSync(mint, new PublicKey(o), true));
+  const r = await clusterRpc(ctx).rpc<{ value: Array<ParsedTokenAccount | null> }>(
+    'getMultipleAccounts',
+    [atas.map((a) => a.toBase58()), { encoding: 'jsonParsed', commitment: 'confirmed' }],
+  );
+  const out: Record<string, TokenAccountState> = {};
+  owners.forEach((o, i) => {
+    out[o] = tokenAccountState(r.value[i] ?? null, o, USDC_DEVNET_MINT);
+  });
+  return out;
+}
+
+async function rentExempt(ctx: AppContext): Promise<bigint> {
+  const v = await clusterRpc(ctx).rpc<number>('getMinimumBalanceForRentExemption', [ACCOUNT_SIZE]);
+  return BigInt(v);
+}
+
 let configCache: { at: number; value: EscrowConfig } | null = null;
 const CONFIG_TTL_MS = 60_000;
 
@@ -398,6 +541,18 @@ const realChain: EscrowChain = {
     return classifyClosure(txs, pda);
   },
 
+  async usdcAccounts(ctx, owners) {
+    return readUsdcAccounts(ctx, owners);
+  },
+
+  async authorityLamports(ctx) {
+    const r = await clusterRpc(ctx).rpc<{ value: number }>('getBalance', [
+      settleAuthority(ctx).publicKey.toBase58(),
+      { commitment: 'confirmed' },
+    ]);
+    return BigInt(r.value);
+  },
+
   async accept(ctx, ref) {
     await assertDevnetRpc(ctx, 'paidCalls');
     const signer = settleAuthority(ctx);
@@ -420,26 +575,46 @@ const realChain: EscrowChain = {
     await assertDevnetRpc(ctx, 'paidCalls');
     const cfg = await realChain.config(ctx);
     const signer = settleAuthority(ctx);
-    return sendAuthorityTx({
+    const states = await readUsdcAccounts(ctx, [ref.fan, ref.creator, cfg.treasury]);
+    const plan = settleInstructions({
+      authority: signer.publicKey,
+      cfg,
+      ref,
+      secondsUsed: ref.secondsUsed,
+      states: {
+        fan: states[ref.fan]!,
+        creator: states[ref.creator]!,
+        treasury: states[cfg.treasury]!,
+      },
+      rentExemptLamports: await rentExempt(ctx),
+    });
+    const signature = await sendAuthorityTx({
       connection: connection(ctx),
       signer,
-      instructions: settleInstructions({
-        authority: signer.publicKey,
-        cfg,
-        ref,
-        secondsUsed: ref.secondsUsed,
-      }),
+      instructions: plan.instructions,
+      extraSigners: plan.extraSigners,
     });
+    return { signature, rentLamports: plan.rentLamports };
   },
 
   async refund(ctx, ref) {
     await assertDevnetRpc(ctx, 'paidCalls');
     const cfg = await realChain.config(ctx);
     const signer = settleAuthority(ctx);
-    return sendAuthorityTx({
+    const states = await readUsdcAccounts(ctx, [ref.fan]);
+    const plan = refundInstructions({
+      authority: signer.publicKey,
+      cfg,
+      ref,
+      fanState: states[ref.fan]!,
+      rentExemptLamports: await rentExempt(ctx),
+    });
+    const signature = await sendAuthorityTx({
       connection: connection(ctx),
       signer,
-      instructions: refundInstructions({ authority: signer.publicKey, cfg, ref }),
+      instructions: plan.instructions,
+      extraSigners: plan.extraSigners,
     });
+    return { signature, rentLamports: plan.rentLamports };
   },
 };
