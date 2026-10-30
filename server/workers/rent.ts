@@ -9,18 +9,57 @@
  * EVICT_AFTER_MISSED_WEEKS misses in a row it is `evicted` and its unit
  * is free again. A paid week clears the overdue state. Moved-out and
  * evicted homes owe nothing.
+ *
+ * Scheduled by BullMQ in main.ts (`0 0 * * 1`). Each home is charged at
+ * most once per rent week (the week starting Monday 00:00 UTC): the week's
+ * ledger row carries the idempotency key `home-rent-weekly:<home>:<week>`,
+ * the cash debit when paid and a zero-delta `rent_missed` marker when not
+ * (zero rows stay off the bank statement and out of the weekly P&L). A
+ * second run in the same week (a stalled-job retry, another replica, a
+ * manual trigger) finds the key and changes nothing.
  */
+import type { Job } from 'bullmq';
 import { runInTransaction } from '../shared/db/uow.js';
-import { uuidv7 } from '../shared/domain/uuid.js';
 import type { Db } from '../shared/db/pool.js';
+import type { AppContext } from '../application/context.js';
 import { EVICT_AFTER_MISSED_WEEKS } from '../application/homes.js';
 import { publishHomeAccess } from '../application/home-units.js';
 import { createRedis } from '../shared/redis/client.js';
 
+export const RENT_QUEUE = 'jobs-weekly-rent';
+
 /**
- *
+ * The rent week `now` falls in, as the date of its Monday (UTC), e.g.
+ * '2026-10-26'. Every run inside one week shares the key.
+ * @param now - Any instant.
  */
-export async function runWeeklyRent(db: Db): Promise<{ debited: number; debt: number }> {
+export function rentWeekKey(now: Date): string {
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const sinceMonday = (day.getUTCDay() + 6) % 7;
+  day.setUTCDate(day.getUTCDate() - sinceMonday);
+  return day.toISOString().slice(0, 10);
+}
+
+/**
+ * BullMQ handler.
+ * @param _job - The repeatable job (carries no data).
+ * @param ctx - The app context.
+ */
+export async function handleWeeklyRent(_job: Job, ctx: AppContext): Promise<void> {
+  const out = await runWeeklyRent(ctx.db);
+  console.info(`[rent] week ${rentWeekKey(new Date())}: debited=${out.debited} debt=${out.debt}`);
+}
+
+/**
+ * Charge one week of rent on every live home.
+ * @param db - The database.
+ * @param now - When the run happens; picks the rent week (tests pass a date).
+ */
+export async function runWeeklyRent(
+  db: Db,
+  now: Date = new Date(),
+): Promise<{ debited: number; debt: number }> {
+  const week = rentWeekKey(now);
   let debited = 0;
   let debt = 0;
   const evicted: string[] = [];
@@ -56,6 +95,14 @@ export async function runWeeklyRent(db: Db): Promise<{ debited: number; debt: nu
           `SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`,
           [row.owner_user_id],
         );
+        // Once per home per rent week: a second run this week stops here.
+        // Two runs racing past this check collide on the unique key below
+        // and the later one rolls back.
+        const weekRef = `home-rent-weekly:${row.home_id}:${week}`;
+        const done = await client.query(`SELECT 1 FROM ledger_entries WHERE idempotency_ref = $1`, [
+          weekRef,
+        ]);
+        if ((done.rowCount ?? 0) > 0) return;
         const cash = BigInt(bal.rows[0]?.cash_cents ?? '0');
         if (cash >= BigInt(rent)) {
           const paid = await client.query(
@@ -72,7 +119,7 @@ export async function runWeeklyRent(db: Db): Promise<{ debited: number; debt: nu
           await client.query(
             `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
              VALUES ($1, $2, 'cash', 'rent', 'home', $3, $4)`,
-            [row.owner_user_id, -rent, row.home_id, `home-rent-weekly:${uuidv7()}`],
+            [row.owner_user_id, -rent, row.home_id, weekRef],
           );
           debited += 1;
         } else {
@@ -90,6 +137,13 @@ export async function runWeeklyRent(db: Db): Promise<{ debited: number; debt: nu
             `UPDATE balances SET debt_cents = debt_cents + $1, updated_at = now()
              WHERE user_id = $2`,
             [rent, row.owner_user_id],
+          );
+          // Zero-delta marker for the week (kept off the bank statement and
+          // the weekly P&L, which skip or sum to nothing for zero rows).
+          await client.query(
+            `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
+             VALUES ($1, 0, 'cash', 'rent_missed', 'home', $2, $3)`,
+            [row.owner_user_id, row.home_id, weekRef],
           );
           if (missed.rows[0]?.status === 'evicted') evicted.push(row.home_id);
           debt += 1;
