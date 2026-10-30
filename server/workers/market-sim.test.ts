@@ -12,7 +12,12 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { buildContext } from '../application/context.js';
-import { isDrawnDown, MarketEngine, type HiddenArc } from '../application/market-engine.js';
+import {
+  isDrawnDown,
+  MarketEngine,
+  MAX_PRICE_MICROS,
+  type HiddenArc,
+} from '../application/market-engine.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { houseCoinName, launchIfRoom } from './market-sim.js';
 
@@ -104,6 +109,28 @@ describe('MarketEngine lifecycle', () => {
     );
     expect(await engine.tick(id)).toBe(true);
     expect((await stage(id)).price).toBe(2_500_000);
+  });
+
+  it('pulls a runaway coin back under the ceiling and turns its run (no bigint overflow)', async () => {
+    // Production 2026-10-30: price ~9.3e15 micros, so mcap_cents ~9.3e18 overflowed bigint on every UPDATE.
+    const id = await insertCoin(
+      { outcome: 'moon', slopeBps: 300, noiseBps: 0, drawdownBps: 9_500 },
+      9_300_000_000_000_000,
+    );
+    const engine = new MarketEngine(market, { db: ctx.db, redis: ctx.redis.main });
+    await engine.track(id);
+    await engine.tick(id);
+    const top = await ctx.db.withConnection((c) =>
+      c.query<{ price_micros: string; mcap_cents: string; stage: string }>(
+        `SELECT price_micros, mcap_cents, stage FROM coins WHERE coin_id = $1`,
+        [id],
+      ),
+    );
+    expect(BigInt(top.rows[0]!.price_micros)).toBe(MAX_PRICE_MICROS);
+    expect(BigInt(top.rows[0]!.mcap_cents)).toBe(MAX_PRICE_MICROS * 1_000n);
+    expect(top.rows[0]!.stage).not.toBe('dead');
+    await engine.tick(id);
+    expect(BigInt((await stage(id)).price)).toBeLessThan(MAX_PRICE_MICROS);
   });
 
   it('kills a rugging coin once, stops ticking it and reports it', async () => {

@@ -512,7 +512,7 @@ export async function runVcUnlocks(
         if (p.coinId !== null && per !== 0) {
           for (let i = 0; i < steps; i++) {
             await c.query(
-              `UPDATE coins SET price_micros = GREATEST(1, price_micros * (10000 + $2::bigint) / 10000)
+              `UPDATE coins SET price_micros = LEAST(100000000000, GREATEST(1, price_micros * (10000 + $2::bigint) / 10000))
                 WHERE coin_id = $1 AND stage <> 'dead'`,
               [p.coinId, per],
             );
