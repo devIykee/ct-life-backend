@@ -352,6 +352,8 @@ ct-life-backend/
 | `TIP_FEE_BPS`                     | Fee burned on every Cash tip, basis points (default 300 = 3%, 0 turns it off)                                                                                                                    |
 | `FACTORY_DBC_CONFIG`              | Meteora DBC partner config PUBLIC address (created once on-chain); empty makes real token launches unavailable (503)                                                                             |
 | `LIVE_PHASE`                      | Release phase the deployment has opened, 1 to 6 (default 1). Sent as `livePhase` in `GET /config`; the client opens the apps of every phase up to it. Set 6 to open all apps for private testers |
+| `CAPABILITIES_ON`                 | Comma list of finished-but-dark features to turn on (`GET /config` `capabilities`); empty = all off, unknown names ignored. See `.env.example`                                                   |
+| `ALLOW_MAINNET`                   | `1` lets `APP_ENV=prod` (Solana mainnet) boot; anything else refuses to start on mainnet                                                                                                         |
 | `LLM_MODEL`                       | LLM model id for the AI NPCs                                                                                                                                                                     |
 | `X_CLIENT_ID`                     | X (Twitter) OAuth client id                                                                                                                                                                      |
 | `X_CLIENT_SECRET`                 | X OAuth client secret                                                                                                                                                                            |
@@ -413,6 +415,9 @@ pnpm db:rollback
 # Check migration status
 pnpm db:status
 ```
+
+**Migration number blocks.** The parallel unlock packages each take migration numbers
+from their own block; see [Migration number blocks](docs/DATA_MODEL.md#migration-number-blocks).
 
 ---
 

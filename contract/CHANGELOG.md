@@ -1,3 +1,13 @@
+## 2026-10-30 - Capabilities in GET /config, CAPABILITY_OFF, mainnet boot guard
+
+Phase 0 of the unlock plan: the switchboard every hidden feature turns on through. No migration. Nothing changes for players until the operator sets `CAPABILITIES_ON`.
+
+- `GET /config` gains `capabilities {version: 2, apps: {beef, builder, vc, predict}, features: {beefVoting, districtStandings, seasonResults, sybilBail, sybilBarn, cabalRevoke, xUnlink, worldEvents, homeMove, visitorPolicy, nftGallery, paidCalls, creatorMode, seasonPassPurchase, factory, projectHq}}` and `competitionCapabilities {version: 1, beefChallenges, targetedCabalInvites}`. Every key is always sent. Values come only from the env `CAPABILITIES_ON` (comma list of names): no code defaults, unknown names ignored and logged at boot, names case-sensitive, empty = all `false`. `beefChallenges` = `apps.beef`; `targetedCabalInvites` is on when `cabalInvites` is listed. Clients treat a missing block or key as off. The ETag follows the list.
+- New error code `CAPABILITY_OFF` (503, `details.capability`): a feature route answers it while its capability is off (`assertCapabilityOn` in `server/application/capabilities.ts`, preHandler `requireCapability` in `server/api/middleware/capability.ts`).
+- Mainnet boot guard: with `APP_ENV=prod` (Solana mainnet) the API, realtime and workers refuse to start unless `ALLOW_MAINNET=1`.
+- `ids/report_reasons.json`: new reason `voice` (the client sends it for voice-chat reports).
+- Migration number blocks for the parallel unlock packages (README, Database Migrations): A `1700000110000-1700000119000`, B `…120…129`, C `…130…139`, D `…140…149`.
+
 ## 2026-10-26 - Approved display names (migration 105)
 
 The user approved real, relatable names for everything players see (ct-life-evidence/names/NAMES.md; the client table is `contract/ids/names.json`). Ids, slugs, codes and routes do not change; only display text the server writes or stores.

@@ -710,3 +710,11 @@ export class RiskNotAcceptedError extends DomainError {
     this.httpStatus = 400;
   }
 }
+
+export class CapabilityOffError extends DomainError {
+  readonly code = 'CAPABILITY_OFF';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This feature is not turned on on this server yet.', details);
+    this.httpStatus = 503;
+  }
+}
