@@ -8978,9 +8978,7 @@ paths:
         paid shifts) at least 2: else `403
         VOTE_NOT_ALLOWED {reason: participant | too_new | level}` or `403 SYBIL_JAILED`. `409
         ALREADY_VOTED`; `409 CONFLICT {reason: not_voting}` outside the 10-minute window; `400`
-        when `votedUserId` is not a participant. At close an arena crowd of 5 NPC votes is split
-        by each participant's activity in the Debate Arena during the live phase. Capabilities
-        `beef` and `beefVoting`.
+        when `votedUserId` is not a participant. At close an arena crowd of 5 NPC votes is split by each participant's activity in the Debate Arena during the live phase; it only breaks a tie in player votes and never outvotes real players. Capabilities `beef` and `beefVoting`.
       x-phase: 6
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }

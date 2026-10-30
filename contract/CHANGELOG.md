@@ -4,6 +4,7 @@ Migration 113.
 
 - Sybil jail: two claims racing at the top tier could insert two stays (bail freed one, so the player paid twice). Jailing now runs under the user row lock, closes timed-out stays first and inserts only when no stay is active; a partial unique index (`sybil_jail_one_open_idx`) allows one open stay per player. Bail closes every open stay.
 - CT Beef "level" (participants and voters must be level 2) now means the player's highest career level (`career_progress.level`, raised by paid shifts; one good shift reaches 2). It was the highest skill, which nothing in the game raises, so every open, accept and vote answered `403 level`.
+- CT Beef result: player votes decide; the arena crowd (built from client-reported activity) only breaks a tie in player votes, so a bot maxing its activity score can no longer outvote real players.
 
 ## 2026-10-30 - Knock on a home's door (unlock D5)
 

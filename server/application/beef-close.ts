@@ -12,8 +12,10 @@
  * workers never double-close) and the city / arena get `beef_update` (and
  * `beef_result` on close).
  *
- * Closing: player votes (1 each) plus the arena crowd (beef-rules.ts
- * `crowdSplit` of activity) decide; equal totals are a draw. Elo moves (as a
+ * Closing: player votes (1 each) decide; the arena crowd (beef-rules.ts
+ * `crowdSplit` of activity) only breaks a tie in player votes (it is built
+ * from client-reported activity, so it never outvotes a real player); a tie
+ * in both is a draw. Elo moves (as a
  * draw on a tie) unless the pair already played `maxRatedMatchesPerPairPerDay`
  * rated matches today (anti win-trading). The winner gets `reward_cents` from
  * the house (ledger `beef_reward`, a faucet: no player pays it) only when at
@@ -185,9 +187,10 @@ async function closeMatch(
       : 0;
   };
   const crowd = crowdSplit(cfg.crowd.npcVotes, score(ch), score(ac));
-  const totalC = count(ch) + crowd.challenger;
-  const totalA = count(ac) + crowd.accepter;
-  const winner = forcedWinner ?? (totalC > totalA ? ch : totalA > totalC ? ac : null);
+  // Real votes decide. The crowd's activity score comes from what clients
+  // report (talking, emotes, chat), so it only breaks a tie in player votes and
+  // can never outvote a real player (review L9).
+  const winner = forcedWinner ?? decideWinner(ch, ac, count(ch), count(ac), crowd);
 
   const day = utcDayStart(now).toISOString();
   const pairRated = await c.query<{ n: number }>(
@@ -251,6 +254,22 @@ async function closeMatch(
       at: now.getTime(),
     },
   };
+}
+
+/**
+ * Player votes first; the crowd only when players are level (including no
+ * votes at all); a level crowd too is a draw.
+ */
+export function decideWinner(
+  ch: string,
+  ac: string,
+  votesC: number,
+  votesA: number,
+  crowd: { challenger: number; accepter: number },
+): string | null {
+  if (votesC !== votesA) return votesC > votesA ? ch : ac;
+  if (crowd.challenger !== crowd.accepter) return crowd.challenger > crowd.accepter ? ch : ac;
+  return null;
 }
 
 async function bumpElo(

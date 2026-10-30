@@ -579,3 +579,28 @@ describe('listing', () => {
     );
   });
 });
+
+describe('the crowd never outvotes real players (review L9)', () => {
+  it('a maxed-out crowd loses to a 3-1 player vote and only breaks player ties', async () => {
+    const t0 = new Date();
+    const { id, a, b } = await live(t0);
+    // a farms the crowd score to the cap; b gets more real votes.
+    await recordArenaActivity(ctx.redis.main, a, 'talk', 30);
+    for (let i = 0; i < 300; i++) await recordArenaActivity(ctx.redis.main, a, 'emote', 1);
+    await advanceBeefPhases(ctx, toVoting(t0));
+    await votes(id, b, 3);
+    await votes(id, a, 1);
+    await advanceBeefPhases(ctx, toClose(t0));
+    const done = await getMatch(ctx, b, id);
+    expect(done.crowdVotes).toEqual({ challenger: 5, accepter: 0 });
+    expect(done.winnerUserId).toBe(b);
+    expect(done.rewardPaidCents).toBe(cfg.reward.winnerCents);
+  });
+
+  it('decideWinner: votes first, crowd only on a tie, else a draw', async () => {
+    const { decideWinner } = await import('./beef-close.js');
+    expect(decideWinner('c', 'a', 1, 3, { challenger: 5, accepter: 0 })).toBe('a');
+    expect(decideWinner('c', 'a', 2, 2, { challenger: 5, accepter: 0 })).toBe('c');
+    expect(decideWinner('c', 'a', 0, 0, { challenger: 2, accepter: 2 })).toBeNull();
+  });
+});
