@@ -1,26 +1,28 @@
 /**
  * Prediction routes.
  *
- *   POST /v1/predictions
- *   GET  /v1/predictions?status=
+ *   GET  /v1/predictions/markets?status=&cursor=        (app capability predict)
+ *   POST /v1/predictions/markets/:marketId/bets         (app capability predict)
+ *   GET  /v1/predictions?status=                        the caller's bets
+ *   POST /v1/predictions                                410 GONE {reason:'use_market_bets'}
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { ValidationFailedError } from '../../shared/domain/errors.js';
-import {
-  listPredictions,
-  placePrediction,
-  type Horizon,
-  type PredictionStatus,
-} from '../../application/predictions.js';
+import { requireCapability } from '../middleware/capability.js';
+import { GoneError, ValidationFailedError } from '../../shared/domain/errors.js';
+import { listPredictions, placeBet, type PredictionStatus } from '../../application/predictions.js';
+import { listMarkets } from '../../application/prediction-markets.js';
 
-const PlaceBody = z.object({
-  outcomeId: z.string().min(1).max(64),
-  stakeCents: z.number().int().positive(),
-  horizon: z.enum(['5m', '15m', '1h', 'daily']),
-});
+const BetBody = z
+  .object({
+    outcomeId: z.string().min(1).max(64),
+    stakeCents: z.number().int().positive(),
+  })
+  .strict();
+
+const MarketParams = z.object({ marketId: z.string().min(1).max(200) });
 
 const ListQuery = z.object({
   status: z.enum(['open', 'won', 'lost', 'cancelled']).optional(),
@@ -31,19 +33,35 @@ const ListQuery = z.object({
  * @param app - The Fastify instance.
  */
 export function registerPredictionRoutes(app: FastifyInstance): void {
+  // The legacy route took any outcome id and was never wired to a market list.
+  app.post('/v1/predictions', { preHandler: requireAuth }, async () => {
+    throw new GoneError({
+      reason: 'use_market_bets',
+      use: 'POST /v1/predictions/markets/{marketId}/bets',
+    });
+  });
+
+  app.get(
+    '/v1/predictions/markets',
+    { preHandler: [requireCapability('predict'), requireAuth] },
+    async (req, reply) => reply.send(await listMarkets(req.ctx, req.query)),
+  );
+
   app.post(
-    '/v1/predictions',
-    { preHandler: [requireAuth, withIdempotency()] },
+    '/v1/predictions/markets/:marketId/bets',
+    { preHandler: [requireCapability('predict'), requireAuth, withIdempotency()] },
     async (req, reply) => {
-      const body = PlaceBody.safeParse(req.body);
+      const p = MarketParams.safeParse(req.params);
+      const body = BetBody.safeParse(req.body);
+      if (!p.success) throw new ValidationFailedError({ issues: p.error.issues });
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
-      const result = await placePrediction(req.ctx, {
+      const receipt = await placeBet(req.ctx, {
         userId: req.user!.sub,
+        marketId: p.data.marketId,
         outcomeId: body.data.outcomeId,
         stakeCents: body.data.stakeCents,
-        horizon: body.data.horizon as Horizon,
       });
-      return reply.send(result); // B22: return 200, not 201
+      return reply.code(201).send(receipt);
     },
   );
 

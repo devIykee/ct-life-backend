@@ -44,7 +44,8 @@ export type UserMessageType =
   | 'police_pursuit_end'
   | 'jailed'
   | 'released'
-  | 'event';
+  | 'event'
+  | 'prediction_settled';
 
 export interface UserMessage {
   readonly userId: string;

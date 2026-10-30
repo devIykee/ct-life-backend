@@ -286,3 +286,6 @@ Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 ## Unlock D: homes, markets, NFT gallery (migrations 140-149)
 
 - `home_settings` (migration 140) — one row per player: `visitors` (`open | followers | closed`, default `open`), `updated_at`. Per player, not per lease, so it survives `POST /homes/move`. No row means `open`. Read by `POST /homes/{ownerId}/visit` and the `home` room before the door check.
+- `prediction_markets` (migration 141) — server-generated Prediction Pit markets: `kind` (`sim | crypto | event | mirror`), `question_key`, `params` (client strings), `outcomes`, `horizon`, `opens_at` / `closes_at` (bets) / `resolves_at`, `source`, `payout_bps`, stake limits, `status` (`open | closed | resolved | void`). Recorded at open: `strike_micros`, `basis` (the coin set for event markets). Recorded once at resolution: `resolved_value_micros`, `resolved_outcome_id`, `resolved_at` (a CHECK ties `resolved` to an outcome). See [Prediction Pit](PREDICTIONS.md).
+- `prediction_price_snapshots` (migration 141) — `(coin_id, minute)` price written each minute for coins with an unresolved `sim` market; pruned after `pruneAfterDays`.
+- `predictions` gains `market_id` (null on legacy bets), `payout_cents` and `resolved_at` (migration 141).

@@ -309,6 +309,7 @@ ct-life-backend/
 | `ANTHROPIC_API_KEY`                    | Anthropic API key                                                                                       | -       |
 | `X_LINK_ENABLED`                       | Enable X account linking                                                                                | `false` |
 | `PREDICTIONS_SETTLEMENT_ENABLED`       | Schedule the prediction settlement sweep (workers); keep off in prod while the resolver is a dev stub   | `false` |
+| `PREDICTIONS_CRYPTO_SOURCE`            | Daily BTC/SOL prediction markets source: `off`, `binance`, `binance_vision` (terms not cleared)         | `off`   |
 | `TRIPO_API_KEY`                        | Server-only key for an explicitly authorized operator likeness trial; does not enable public generation | unset   |
 | `LIKENESS_PRICE_USDC_CENTS`            | Approved retail price in integer USDC cents; never a client-supplied price                              | 300     |
 | `LIKENESS_GENERATION_ENABLED`          | Allow configured generation; requires all other gates and owned entitlement                             | false   |

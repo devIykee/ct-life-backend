@@ -42,6 +42,9 @@
  *     with PREDICTIONS_SETTLEMENT_ENABLED=1. See liquidation.ts, alpha.ts,
  *     payment-poller.ts, rent.ts, predictions.ts.
  *
+ *   - Prediction market generator (every minute, unlock D3), with the same
+ *     flag and the `predict` capability. See prediction-markets.ts.
+ *
  * Multiple replicas: every repeatable job above is a BullMQ job scheduler,
  * so each tick is one job that one worker takes, whichever replica it runs
  * on. The handlers also hold row locks or conditional updates, so an
@@ -75,6 +78,7 @@ import { PREDICTIONS_QUEUE, handlePredictions } from './predictions.js';
 import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
 import { PAYMENT_POLLER_QUEUE, handlePaymentPoller } from './payment-poller.js';
 import { RENT_QUEUE, handleWeeklyRent } from './rent.js';
+import { PREDICTION_MARKETS_QUEUE, handlePredictionMarkets } from './prediction-markets.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -164,6 +168,7 @@ export async function buildWorkers(likeness?: {
   const alphaQueue = new Queue(ALPHA_GRADING_QUEUE, { connection: conn });
   const paymentQueue = new Queue(PAYMENT_POLLER_QUEUE, { connection: conn });
   const rentQueue = new Queue(RENT_QUEUE, { connection: conn });
+  const marketsQueue = new Queue(PREDICTION_MARKETS_QUEUE, { connection: conn });
 
   // Workers.
   const crierWorker = new Worker<{ event: unknown }>(
@@ -317,6 +322,15 @@ export async function buildWorkers(likeness?: {
     log.error({ jobId: job?.id, err: err.message }, 'weekly-rent failed'),
   );
 
+  const marketsWorker = new Worker(
+    PREDICTION_MARKETS_QUEUE,
+    async (job) => handlePredictionMarkets(job, ctx),
+    { connection: newClient(redis) },
+  );
+  marketsWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'prediction-markets failed'),
+  );
+
   const stopMarket = await startMarketSim(ctx, log.child({ worker: 'market' }));
   const stopPolice = startPolice(ctx, log.child({ worker: 'police' }));
 
@@ -433,6 +447,17 @@ export async function buildWorkers(likeness?: {
     { pattern: '0 0 * * 1', tz: 'UTC' },
     { name: 'rent', data: {} },
   );
+  // Prediction Pit markets (unlock D3): open, snapshot, close, prune. Same
+  // fail-closed flag as settlement; the handler also needs `predict` on.
+  if (cfg.features.predictionSettlement) {
+    await marketsQueue.upsertJobScheduler(
+      'prediction-markets',
+      { pattern: '* * * * *', tz: 'UTC' },
+      { name: 'tick', data: {}, opts: sweepJobOpts },
+    );
+  } else {
+    await marketsQueue.removeJobScheduler('prediction-markets');
+  }
 
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
@@ -470,6 +495,7 @@ export async function buildWorkers(likeness?: {
   void alphaWorker;
   void paymentWorker;
   void rentWorker;
+  void marketsWorker;
   void crierQueue;
   void sundayQueue;
   void metaQueue;
@@ -508,6 +534,7 @@ export async function buildWorkers(likeness?: {
       await alphaWorker.close();
       await paymentWorker.close();
       await rentWorker.close();
+      await marketsWorker.close();
       await crierQueue.close();
       await dailyQueue.close();
       await sundayQueue.close();
@@ -526,6 +553,7 @@ export async function buildWorkers(likeness?: {
       await alphaQueue.close();
       await paymentQueue.close();
       await rentQueue.close();
+      await marketsQueue.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },

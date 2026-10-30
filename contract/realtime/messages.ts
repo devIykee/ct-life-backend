@@ -353,6 +353,15 @@ export type CallInviteMessage = z.infer<typeof CallInviteMessage>;
 export const KickedMessage = z.object({ reasonId: z.string().min(1) });
 export type KickedMessage = z.infer<typeof KickedMessage>;
 
+/** Unlock D3: one of your Prediction Pit bets settled (toast; refetch history). */
+export const PredictionSettledMessage = z.object({
+  predictionId: z.string().min(1),
+  marketId: z.string().min(1).nullable(),
+  status: z.enum(['won', 'lost', 'cancelled']),
+  payoutCents: z.number().int().nonnegative(),
+});
+export type PredictionSettledMessage = z.infer<typeof PredictionSettledMessage>;
+
 // ---------------------------------------------------------------------------
 // Server -> client (market room)
 // ---------------------------------------------------------------------------

@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "_note": "Prediction Pit (unlock D3). Play-money Cash only, house-banked fixed odds. Each market's strike is recorded when it opens and the bet window is short, so nobody can bet after watching most of the move. See docs/PREDICTIONS.md.",
+  "payoutBps": 19000,
+  "minStakeCents": 100,
+  "maxStakeCents": 50000,
+  "dailyStakeCapCents": 200000,
+  "sim": {
+    "topCoins": 3,
+    "horizons": [
+      { "horizon": "5m", "everySec": 60, "betWindowSec": 60 },
+      { "horizon": "15m", "everySec": 180, "betWindowSec": 180 },
+      { "horizon": "1h", "everySec": 600, "betWindowSec": 600 }
+    ]
+  },
+  "event": {
+    "everySec": 600,
+    "betWindowSec": 600,
+    "horizon": "1h",
+    "questions": ["event_rug_1h", "event_graduate_1h"]
+  },
+  "crypto": {
+    "symbols": ["BTCUSDT", "SOLUSDT"],
+    "everySec": 3600,
+    "betWindowSec": 3600,
+    "horizonSec": 86400
+  },
+  "resolveGraceSec": 1800,
+  "snapshotGraceSec": 120,
+  "pruneAfterDays": 3
+}

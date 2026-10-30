@@ -327,7 +327,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect([201, 200, 400, 422]).toContain(r.statusCode);
   });
 
-  it('predictions: alice can place a prediction as herself', async () => {
+  it('predictions: the legacy route is retired (410); bets go to a market', async () => {
     const r = await app.inject({
       method: 'POST',
       url: '/v1/predictions',
@@ -339,7 +339,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
         stakeCents: 100,
       },
     });
-    expect([201, 200, 400, 422]).toContain(r.statusCode);
+    expect(r.statusCode).toBe(410);
   });
 
   it('perps: alice can open a perp as herself', async () => {
