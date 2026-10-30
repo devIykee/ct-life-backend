@@ -245,11 +245,11 @@ describe('nft gallery', () => {
     const hash = createHash('sha256').update(`route-${Date.now()}`).digest('hex').slice(0, 40);
     await db().withConnection(async (c) => {
       await c.query(
-        `INSERT INTO nft_images (hash, source_url, status, mime, width, height, bytes, fetched_at, class)
-         VALUES ($1, 'https://img.example/t.png', 'ok', 'image/png', 4, 4, $2, now(), 'ok')`,
+        `INSERT INTO nft_images (hash, source_url, status, mime, width, height, bytes, fetched_at, class, pool)
+         VALUES ($1, 'https://img.example/t.png', 'ok', 'image/png', 4, 4, $2, now(), 'ok', 'ok')`,
         [hash, png],
       );
-      await c.query(`UPDATE nft_image_usage SET bytes = bytes + $1 WHERE class = 'ok'`, [
+      await c.query(`UPDATE nft_image_usage SET bytes = bytes + $1 WHERE pool = 'ok'`, [
         png.length,
       ]);
     });

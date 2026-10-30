@@ -36,7 +36,7 @@ import type { AppContext } from './context.js';
 import { homeEntryRefusal } from './homes.js';
 import { policyRefusalError, visitorPolicyRefusal } from './home-settings.js';
 import { nftGalleryConfig } from './nft-gallery-config.js';
-import { imageHash, normalizeImageUri, upgradeToOk } from './nft-images.js';
+import { imageHash, normalizeImageUri, repool, repoolOrphans, upgradeToOk } from './nft-images.js';
 
 export type Network = 'devnet' | 'mainnet';
 export type Moderation = 'ok' | 'pending' | 'nsfw' | 'blocked';
@@ -446,7 +446,10 @@ export async function putGallery(
     throw new RateLimitedError(3_600_000, { reason: 'image_quota', assetId: missing.assetId });
   }
   await runInTransaction(async (client) => {
-    await client.query(`DELETE FROM home_gallery_frames WHERE owner_user_id = $1`, [userId]);
+    const old = await client.query<{ image_hash: string }>(
+      `DELETE FROM home_gallery_frames WHERE owner_user_id = $1 RETURNING image_hash`,
+      [userId],
+    );
     for (const f of frames) {
       const h = held.get(f.assetId)!;
       await client.query(
@@ -456,6 +459,11 @@ export async function putGallery(
         [userId, f.slot, f.assetId, h.network, h.name, h.collection, h.imageHash, h.moderation],
       );
     }
+    // Framed images move to the owner-bounded `framed` pool; unframed ones go
+    // back to their LRU pool (same transaction, same lock order).
+    await repool(client, [
+      ...new Set([...old.rows.map((r) => r.image_hash), ...chosen.map((h) => h.imageHash)]),
+    ]);
   });
   return readFrames(ctx, userId, true);
 }
@@ -503,11 +511,18 @@ export async function recheckFrames(
     }
     await ctx.db.withConnection(async (c) => {
       if (gone.length > 0) {
-        const r = await c.query(
-          `DELETE FROM home_gallery_frames WHERE owner_user_id = $1 AND asset_id = ANY($2::text[])`,
+        const r = await c.query<{ image_hash: string }>(
+          `DELETE FROM home_gallery_frames WHERE owner_user_id = $1 AND asset_id = ANY($2::text[])
+           RETURNING image_hash`,
           [o.owner_user_id, gone],
         );
         removed += r.rowCount ?? 0;
+        await runInTransaction((t) =>
+          repool(
+            t,
+            r.rows.map((x) => x.image_hash),
+          ),
+        );
       }
       await c.query(`UPDATE home_gallery_frames SET checked_at = $2 WHERE owner_user_id = $1`, [
         o.owner_user_id,
@@ -517,5 +532,7 @@ export async function recheckFrames(
     // The holdings cache would still list a sold asset for a few minutes.
     if (gone.length > 0) await ctx.redis.main.del(`nft:holdings:${o.wallet}`);
   }
+  // Frames that vanished another way (account deletion cascades).
+  await runInTransaction((t) => repoolOrphans(t));
   return removed;
 }

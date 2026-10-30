@@ -52,13 +52,18 @@ lists that host (empty when `PUBLIC_API_BASE_URL` is unset, which the Factory al
 - at most 3 redirects, each checked the same way; **one 10 s deadline for the whole fetch**, so a source
   trickling a byte at a time cannot hold a socket (L6); at most 4 fetches at once per process;
 - PNG, JPEG, GIF, WebP or AVIF only (no SVG), at most 8 MiB, at most 40 MP decoded;
-- byte budget: only images of allow-listed collections are class `ok` and skip the pending budget (a
-  row first seen as `pending` is upgraded, bytes moved, when its collection is allow-listed). Every other
-  image is class `pending`, framed or not, and shares `maxPendingImageBytes` (256 MiB). When that is full,
-  the least recently served pending images that no wall frames lose their bytes (fetched again if asked
-  for). A frame protects an image from eviction, never from the budget, so a frame/unframe loop cannot
-  grow storage. All images together stay under `maxTotalImageBytes` (1 GiB). Totals are running counters
-  in `nft_image_usage`, updated in the same transaction as the bytes;
+- storage is bounded by construction. Every stored image's bytes sit in exactly one pool, each with a
+  running counter in `nft_image_usage`. The counters are locked in one global order and updated in the same
+  transaction as the bytes:
+  - `framed`: referenced by at least one wall frame. It counts only against the owner: at most `maxSlots`
+    (12) frames × `maxImageBytes` (512 KiB) = 6 MiB per player, never evicted while framed, and outside every
+    shared budget;
+  - `ok`: unframed images of allow-listed collections, pure LRU within `maxOkImageBytes` (512 MiB);
+  - `pending`: every other unframed image (anyone can mint one), pure LRU within `maxPendingImageBytes`
+    (256 MiB). Nothing in a shared pool is pinned;
+  - unframing moves an image back to its LRU pool (evicting, or dropping its bytes if it doesn't fit), so a
+    frame/unframe loop stays bounded. A daily job re-pools framed images whose frames vanished another way;
+  - a row first seen as `pending` is upgraded to `ok` (bytes moved) when its collection is allow-listed;
 - new pending image URLs (from `GET /nfts/me` or from framing) count against `maxNewImagesPerWalletPerDay`
   (200) per wallet, reserved atomically in Redis; framing an image past the quota is
   `429 RATE_LIMITED {reason: image_quota}`;

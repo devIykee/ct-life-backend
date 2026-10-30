@@ -22,14 +22,17 @@ import {
   proxiedImage,
   reencode,
   registerImage,
+  repool,
 } from './nft-images.js';
+import { runInTransaction } from '../shared/db/uow.js';
+import { nftGalleryConfig } from './nft-gallery-config.js';
 import { registerImages } from './nft-gallery.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 _resetConfigForTests();
 _resetContextForTests();
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool_ = new Pool({ connectionString: process.env.DATABASE_URL });
 let ctx: AppContext;
 let server: Server;
 let base = '';
@@ -76,13 +79,13 @@ beforeAll(async () => {
 
 afterAll(async () => {
   // Keep the usage counters equal to the stored bytes after cleanup.
-  await pool.query(
+  await pool_.query(
     `UPDATE nft_image_usage u SET bytes = bytes - COALESCE((
-       SELECT sum(octet_length(bytes)) FROM nft_images WHERE class = u.class AND hash = ANY($1::text[])), 0)`,
+       SELECT sum(octet_length(bytes)) FROM nft_images WHERE pool = u.pool AND hash = ANY($1::text[])), 0)`,
     [hashes],
   );
-  await pool.query(`DELETE FROM nft_images WHERE hash = ANY($1::text[])`, [hashes]);
-  await pool.end();
+  await pool_.query(`DELETE FROM nft_images WHERE hash = ANY($1::text[])`, [hashes]);
+  await pool_.end();
   await new Promise<void>((r) => server.close(() => r()));
 });
 
@@ -214,78 +217,120 @@ describe('proxiedImage', () => {
     expect(hits - before).toBe(1);
   });
 
-  it('keeps pending images inside their budget by evicting the least recently served', async () => {
-    const one = (await reencode(bigPng)).png.length;
-    const usage = async (): Promise<bigint> =>
-      BigInt(
-        (
-          await pool.query<{ bytes: string }>(
-            `SELECT bytes FROM nft_image_usage WHERE class = 'pending'`,
-          )
-        ).rows[0]!.bytes,
-      );
-    const actual = async (cls: string): Promise<bigint> =>
-      BigInt(
-        (
-          await pool.query<{ n: string }>(
-            `SELECT COALESCE(sum(octet_length(bytes)), 0) AS n FROM nft_images WHERE class = $1`,
-            [cls],
-          )
-        ).rows[0]!.n,
-      );
-    const reg = async (tag: string): Promise<string> => {
-      const h = await registerImage(ctx, `${base}/art.png?evict=${tag}-${Date.now()}`);
-      hashes.push(h);
-      return h;
-    };
-    const a = await reg('a');
-    const b = await reg('b');
-    const budget = Number(await usage()) + one; // room for exactly one more
-    expect(
-      await proxiedImage(ctx, a, { allowPrivateForTests: true, maxPendingBytes: budget }),
-    ).not.toBeNull();
-    await pool.query(
-      `UPDATE nft_images SET last_served_at = now() - interval '1 day' WHERE hash = $1`,
-      [a],
+  const usage = async (pool: string): Promise<bigint> =>
+    BigInt(
+      (
+        await pool_.query<{ bytes: string }>(`SELECT bytes FROM nft_image_usage WHERE pool = $1`, [
+          pool,
+        ])
+      ).rows[0]!.bytes,
     );
-    expect(
-      await proxiedImage(ctx, b, { allowPrivateForTests: true, maxPendingBytes: budget }),
-    ).not.toBeNull();
-    expect(await usage()).toBeLessThanOrEqual(BigInt(budget));
-    // The running counter always equals the stored bytes (no SUM per request).
-    expect(await usage()).toBe(await actual('pending'));
-    expect(
-      (await pool.query(`SELECT bytes FROM nft_images WHERE hash = $1`, [b])).rows[0].bytes,
-    ).not.toBeNull();
+  const stored = async (pool: string): Promise<bigint> =>
+    BigInt(
+      (
+        await pool_.query<{ n: string }>(
+          `SELECT COALESCE(sum(octet_length(bytes)), 0) AS n FROM nft_images WHERE pool = $1`,
+          [pool],
+        )
+      ).rows[0]!.n,
+    );
+  const reg = async (tag: string): Promise<string> => {
+    const h = await registerImage(ctx, `${base}/art.png?${tag}=${Date.now()}-${Math.random()}`);
+    hashes.push(h);
+    return h;
+  };
+  const newOwner = async (): Promise<string> =>
+    (
+      await pool_.query<{ id: string }>(
+        `INSERT INTO users (id, wallet) VALUES (gen_random_uuid(), $1) RETURNING id`,
+        [`pool-${Date.now()}-${Math.random()}`],
+      )
+    ).rows[0]!.id;
+  const frame = (owner: string, slot: number, h: string): Promise<unknown> =>
+    runInTransaction(async (c) => {
+      await c.query(
+        `INSERT INTO home_gallery_frames (owner_user_id, slot, asset_id, network, name, image_hash, moderation)
+         VALUES ($1, $2, $3, 'devnet', 'Framed', $4, 'pending')`,
+        [owner, slot, `asset-${h}`, h],
+      );
+      await repool(c, [h]);
+    });
+  const unframe = (owner: string, budget?: number): Promise<unknown> =>
+    runInTransaction(async (c) => {
+      const r = await c.query<{ image_hash: string }>(
+        `DELETE FROM home_gallery_frames WHERE owner_user_id = $1 RETURNING image_hash`,
+        [owner],
+      );
+      await repool(
+        c,
+        r.rows.map((x) => x.image_hash),
+        budget === undefined ? undefined : { pending: budget },
+      );
+    });
+
+  it('never lets the shared pending pool exceed its budget under concurrent inserts', async () => {
+    const one = BigInt((await reencode(bigPng)).png.length);
+    const budget = Number((await usage('pending')) + one * 2n); // room for two more
+    const hs = await Promise.all([0, 1, 2, 3].map((i) => reg(`conc${i}`)));
+    await Promise.all(
+      hs.map((h) =>
+        proxiedImage(ctx, h, { allowPrivateForTests: true, budgets: { pending: budget } }),
+      ),
+    );
+    expect(await usage('pending')).toBeLessThanOrEqual(BigInt(budget));
+    expect(await usage('pending')).toBe(await stored('pending'));
   });
 
-  it('never lets pending images block allow-listed or framed ones', async () => {
-    const wallet = `exempt-${Date.now()}`;
-    const sourceUrl = `${base}/art.png?ok=${Date.now()}`;
-    const h = imageHash(sourceUrl);
-    hashes.push(h);
-    await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'ok' }]);
-    // Pending budget of zero: an allow-listed image still fetches and stores.
-    expect(
-      await proxiedImage(ctx, h, { allowPrivateForTests: true, maxPendingBytes: 0 }),
-    ).not.toBeNull();
-    const p = await registerImage(ctx, `${base}/art.png?pend=${Date.now()}`);
-    hashes.push(p);
-    expect(
-      await proxiedImage(ctx, p, { allowPrivateForTests: true, maxPendingBytes: 0 }),
-    ).toBeNull();
-    expect(
-      (await pool.query(`SELECT status FROM nft_images WHERE hash = $1`, [p])).rows[0],
-    ).toEqual({
-      status: 'pending',
-    });
-    const okUsage = await pool.query<{ bytes: string }>(
-      `SELECT bytes FROM nft_image_usage WHERE class = 'ok'`,
+  it('counts framed images only against their owner, at most maxSlots x maxImageBytes', async () => {
+    const owner = await newOwner();
+    const before = await usage('framed');
+    const slots = nftGalleryConfig().maxSlots;
+    for (let i = 1; i <= slots; i++) {
+      const h = await reg(`own${i}`);
+      expect(await proxiedImage(ctx, h, { allowPrivateForTests: true })).not.toBeNull();
+      await frame(owner, i, h);
+    }
+    const mine = BigInt(
+      (
+        await pool_.query<{ n: string }>(
+          `SELECT COALESCE(sum(octet_length(i.bytes)), 0) AS n FROM home_gallery_frames f
+             JOIN nft_images i ON i.hash = f.image_hash WHERE f.owner_user_id = $1`,
+          [owner],
+        )
+      ).rows[0]!.n,
     );
-    const okSum = await pool.query<{ n: string }>(
-      `SELECT COALESCE(sum(octet_length(bytes)), 0) AS n FROM nft_images WHERE class = 'ok'`,
-    );
-    expect(okUsage.rows[0]!.bytes).toBe(okSum.rows[0]!.n);
+    expect(mine).toBeLessThanOrEqual(BigInt(slots * nftGalleryConfig().maxImageBytes));
+    expect((await usage('framed')) - before).toBe(mine);
+    // A slot past maxSlots is impossible (CHECK and the PUT validation): the bound is structural.
+    await expect(frame(owner, 65, await reg('over'))).rejects.toThrow();
+    // A full pending pool does not block this owner's framed images, and they are never evicted.
+    const h = await reg('framedfull');
+    await frame(owner, slots + 1 > 64 ? 64 : slots + 1, h).catch(() => undefined);
+    await unframe(owner);
+    expect((await usage('framed')) - before).toBe(0n);
+    expect(await usage('framed')).toBe(await stored('framed'));
+    await pool_.query(`DELETE FROM users WHERE id = $1`, [owner]);
+  });
+
+  it('keeps a frame/unframe loop bounded: unframed images go back to the LRU pool', async () => {
+    const owner = await newOwner();
+    const one = BigInt((await reencode(bigPng)).png.length);
+    const budget = Number((await usage('pending')) + one);
+    for (let i = 0; i < 4; i++) {
+      const h = await reg(`loop${i}`);
+      expect(await proxiedImage(ctx, h, { allowPrivateForTests: true })).not.toBeNull();
+      await frame(owner, 1, h);
+      expect(
+        (await pool_.query(`SELECT pool FROM nft_images WHERE hash = $1`, [h])).rows[0],
+      ).toEqual({
+        pool: 'framed',
+      });
+      await unframe(owner, budget);
+      expect(await usage('pending')).toBeLessThanOrEqual(BigInt(budget));
+    }
+    expect(await usage('pending')).toBe(await stored('pending'));
+    expect(await usage('framed')).toBe(await stored('framed'));
+    await pool_.query(`DELETE FROM users WHERE id = $1`, [owner]);
   });
 
   it('upgrades a pending image to ok when its collection is allow-listed, moving its bytes', async () => {
@@ -295,97 +340,17 @@ describe('proxiedImage', () => {
     hashes.push(h);
     await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'pending' }]);
     expect(await proxiedImage(ctx, h, { allowPrivateForTests: true })).not.toBeNull();
-    const before = await pool.query<{ class: string; bytes: string }>(
-      `SELECT class, bytes FROM nft_image_usage ORDER BY class`,
-    );
+    const okBefore = await usage('ok');
+    const pendingBefore = await usage('pending');
     await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'ok' }]);
-    const row = await pool.query<{ class: string; n: number }>(
-      `SELECT class, octet_length(bytes) AS n FROM nft_images WHERE hash = $1`,
+    const row = await pool_.query<{ class: string; pool: string; n: number }>(
+      `SELECT class, pool, octet_length(bytes) AS n FROM nft_images WHERE hash = $1`,
       [h],
     );
-    expect(row.rows[0]!.class).toBe('ok');
-    const after = await pool.query<{ class: string; bytes: string }>(
-      `SELECT class, bytes FROM nft_image_usage ORDER BY class`,
-    );
+    expect(row.rows[0]).toMatchObject({ class: 'ok', pool: 'ok' });
     const n = BigInt(row.rows[0]!.n);
-    expect(BigInt(after.rows[0]!.bytes)).toBe(BigInt(before.rows[0]!.bytes) + n); // ok
-    expect(BigInt(after.rows[1]!.bytes)).toBe(BigInt(before.rows[1]!.bytes) - n); // pending
-  });
-
-  it('a frame protects a pending image from eviction but never from the budget', async () => {
-    const one = (await reencode(bigPng)).png.length;
-    const owner = (
-      await pool.query<{ id: string }>(
-        `INSERT INTO users (id, wallet) VALUES (gen_random_uuid(), $1) RETURNING id`,
-        [`frame-${Date.now()}`],
-      )
-    ).rows[0]!.id;
-    const reg = async (tag: string): Promise<string> => {
-      const h = await registerImage(ctx, `${base}/art.png?frame=${tag}-${Date.now()}`);
-      hashes.push(h);
-      return h;
-    };
-    const framed = await reg('framed');
-    expect(await proxiedImage(ctx, framed, { allowPrivateForTests: true })).not.toBeNull();
-    await pool.query(
-      `INSERT INTO home_gallery_frames (owner_user_id, slot, asset_id, network, name, image_hash, moderation)
-       VALUES ($1, 1, 'asset-framed', 'devnet', 'Framed', $2, 'pending')`,
-      [owner, framed],
-    );
-    await pool.query(
-      `UPDATE nft_images SET last_served_at = now() - interval '30 days' WHERE hash = $1`,
-      [framed],
-    );
-    // Framing does not change the class: it still counts as pending.
-    expect(
-      (await pool.query(`SELECT class FROM nft_images WHERE hash = $1`, [framed])).rows[0],
-    ).toEqual({
-      class: 'pending',
-    });
-    // A tight budget: the oldest image is the framed one, and it is not evicted.
-    const used = BigInt(
-      (
-        await pool.query<{ bytes: string }>(
-          `SELECT bytes FROM nft_image_usage WHERE class = 'pending'`,
-        )
-      ).rows[0]!.bytes,
-    );
-    const next = await reg('next');
-    await proxiedImage(ctx, next, {
-      allowPrivateForTests: true,
-      maxPendingBytes: Number(used) + one,
-    });
-    expect(
-      (await pool.query(`SELECT status FROM nft_images WHERE hash = $1`, [framed])).rows[0],
-    ).toEqual({
-      status: 'ok',
-    });
-    // Unframed, it is evictable again: the frame/unframe loop stays inside the budget.
-    await pool.query(`DELETE FROM home_gallery_frames WHERE owner_user_id = $1`, [owner]);
-    const third = await reg('third');
-    const budget = Number(used) + one;
-    await proxiedImage(ctx, third, { allowPrivateForTests: true, maxPendingBytes: budget });
-    const nowUsed = BigInt(
-      (
-        await pool.query<{ bytes: string }>(
-          `SELECT bytes FROM nft_image_usage WHERE class = 'pending'`,
-        )
-      ).rows[0]!.bytes,
-    );
-    expect(nowUsed).toBeLessThanOrEqual(BigInt(budget));
-    expect(
-      (await pool.query(`SELECT bytes FROM nft_images WHERE hash = $1`, [framed])).rows[0].bytes,
-    ).toBeNull();
-    await pool.query(`DELETE FROM users WHERE id = $1`, [owner]);
-  });
-
-  it('keeps everything under the overall byte cap, allow-listed images included', async () => {
-    const wallet = `total-${Date.now()}`;
-    const sourceUrl = `${base}/art.png?total=${Date.now()}`;
-    const h = imageHash(sourceUrl);
-    hashes.push(h);
-    await registerImages(ctx, wallet, [{ imageHash: h, sourceUrl, moderation: 'ok' }]);
-    expect(await proxiedImage(ctx, h, { allowPrivateForTests: true, maxTotalBytes: 0 })).toBeNull();
+    expect(await usage('ok')).toBe(okBefore + n);
+    expect(await usage('pending')).toBe(pendingBefore - n);
   });
 
   it('reserves the per-wallet quota atomically under parallel requests', async () => {
@@ -412,7 +377,7 @@ describe('proxiedImage', () => {
     const before = hits;
     expect(await proxiedImage(ctx, hash, { allowPrivateForTests: true })).toBeNull();
     expect(hits).toBe(before);
-    const r = await pool.query(`SELECT status, fail_reason FROM nft_images WHERE hash = $1`, [
+    const r = await pool_.query(`SELECT status, fail_reason FROM nft_images WHERE hash = $1`, [
       hash,
     ]);
     expect(r.rows[0]).toEqual({ status: 'failed', fail_reason: 'bad_type' });

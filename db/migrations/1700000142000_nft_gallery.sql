@@ -13,9 +13,8 @@
 --                        keyed by a hash of it, and once fetched the
 --                        re-encoded PNG (<= 512 px, <= 512 KiB). Only URLs the
 --                        server itself read from DAS are ever fetched.
---                        `pending` images share a byte budget and the least
---                        recently served unframed ones are evicted to make room;
---                        `ok` (allow-listed or framed) images are exempt.
+--                        Framed images count per owner (slots x 512 KiB);
+--                        unframed ones sit in two LRU pools (ok, pending).
 
 -- Up Migration
 CREATE TABLE nft_images (
@@ -27,24 +26,26 @@ CREATE TABLE nft_images (
   height       integer CHECK (height IS NULL OR height BETWEEN 1 AND 4096),
   bytes        bytea,
   fail_reason  text,
-  -- `ok`: allow-listed or framed by its owner (exempt from the pending budget);
-  -- `pending`: any other NFT image (anyone can mint one), budgeted and evictable.
+  -- Moderation class: `ok` = allow-listed collection, `pending` = anything else.
   class        text NOT NULL DEFAULT 'pending' CHECK (class IN ('ok', 'pending')),
+  -- Which usage counter holds the bytes: `framed` (referenced by a frame;
+  -- bounded per owner), else the class's LRU pool (`ok` or `pending`).
+  pool         text NOT NULL DEFAULT 'pending' CHECK (pool IN ('framed', 'ok', 'pending')),
   created_at   timestamptz NOT NULL DEFAULT now(),
   fetched_at   timestamptz,
   last_served_at timestamptz,
   CHECK ((status = 'ok') = (bytes IS NOT NULL))
 );
 
-CREATE INDEX nft_images_evict_idx ON nft_images (class, status, last_served_at);
+CREATE INDEX nft_images_evict_idx ON nft_images (pool, status, last_served_at);
 
--- Running byte totals per class, updated in the same transaction as the bytes
--- they count (no full-table SUM per request).
+-- Running byte totals per pool, updated in the same transaction as the bytes
+-- they count (no full-table SUM per request). Always locked in pool order.
 CREATE TABLE nft_image_usage (
-  class  text PRIMARY KEY CHECK (class IN ('ok', 'pending')),
+  pool   text PRIMARY KEY CHECK (pool IN ('framed', 'ok', 'pending')),
   bytes  bigint NOT NULL DEFAULT 0 CHECK (bytes >= 0)
 );
-INSERT INTO nft_image_usage (class) VALUES ('ok'), ('pending');
+INSERT INTO nft_image_usage (pool) VALUES ('framed'), ('ok'), ('pending');
 
 CREATE TABLE home_gallery_frames (
   owner_user_id  uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
