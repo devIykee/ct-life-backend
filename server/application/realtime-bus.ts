@@ -45,6 +45,7 @@ export type UserMessageType =
   | 'event_live'
   | 'event_ended'
   | 'irl_checkin'
+  | 'player_joined'
   | 'police_pursuit'
   | 'police_pursuit_end'
   | 'jailed'

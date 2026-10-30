@@ -379,6 +379,31 @@ describe('carjacking', () => {
     (room as unknown as { meta: Map<string, { spawnedBy: string | null }> }).meta.get(id)!;
   const lastCode = (c: ReturnType<typeof fakeClient>): unknown => c.sent.at(-1)?.payload.code;
 
+  it('lets the player into their parked car when its stored pose trails the real one, within limits', async () => {
+    const { room, presence, a } = await two();
+    await msg(room, 'vehicle_enter', a, { id: 'mine', kind: 'compact', x: 1, z: 0 });
+    msg(room, 'vehicle_exit', a, { id: 'mine', x: 1, z: 0, yaw: 0 });
+    const car = vehicles(room).get('mine')!;
+    expect(car.driver).toBe('');
+
+    // The real car rolled on to x = 40 but the server still has x = 20; the player stands by the real one.
+    car.x = 20;
+    now += 2_000;
+    await presence.hset(POS_HASH, 'a', encodePos({ x: 41, z: 0, at: now }));
+    await msg(room, 'vehicle_enter', a, { id: 'mine', kind: 'compact', x: 40, z: 0 });
+    expect(car.driver).toBe('a');
+    expect(car.x).toBe(40);
+    msg(room, 'vehicle_exit', a, { id: 'mine', x: 40, z: 0, yaw: 0 });
+
+    // A claimed pose far from the stored one is still refused, and the car stays put.
+    now += 2_000;
+    await presence.hset(POS_HASH, 'a', encodePos({ x: 141, z: 0, at: now }));
+    await msg(room, 'vehicle_enter', a, { id: 'mine', kind: 'compact', x: 140, z: 0 });
+    expect(lastCode(a)).toBe('VEHICLE_TOO_FAR');
+    expect(car.x).toBe(40);
+    expect(car.driver).toBe('');
+  });
+
   it('steals an NPC traffic car with steal:true and adds heat; without the flag it asks for it', async () => {
     const { room, b } = await two();
     await msg(room, 'vehicle_enter', b, { id: 'traffic_7', kind: 'compact', x: 3, z: 0 });

@@ -9136,7 +9136,7 @@ paths:
       description: >-
         Every `assetId` must be in the caller's current holdings (`GET /nfts/me`), else
         `403 FORBIDDEN {reason: not_owner, assetId}`. Slots 1..`nft.maxSlots` (12),
-        `400 {reason: slot_out_of_range}`; `400 {reason: duplicate_slot | duplicate_asset}`. Framing a new non-allow-listed image past the per-wallet daily image quota is `429 RATE_LIMITED {reason: image_quota}`. An
+        `400 {reason: slot_out_of_range}`; `400 {reason: duplicate_slot | duplicate_asset}`. Framing a new non-allow-listed image past the per-wallet daily image quota is `429 RATE_LIMITED {reason: image_quota}`. Framing needs an active, paid home: otherwise `403 FORBIDDEN {reason: home_required}` (an empty list always works). Framed images also share a global byte ceiling (`maxFramedImageBytes`); past it a new frame's image 404s until there is room. An
         empty list clears the wall. A daily job removes a frame whose asset left the wallet.
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
