@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "_note": "Game-rolled Sybil jail (unlock A5). Each POST /airdrop/claim attempt that reaches the server (a new Idempotency-Key; replays do not count) is counted per player over windowSeconds. When the count reaches a tier's minAttempts, the server rolls chanceBps (out of 10000) with a CSPRNG; the highest tier reached wins. A hit refuses that claim with 403 SYBIL_JAILED and jails for jailMinutes. Only rolls while the capability sybilBail is on. Bail = farm yield per started hour still to serve x bailYieldMultiplier, at least minBailCents, at most maxBailCents; paid to the house (a sink).",
+  "windowSeconds": 3600,
+  "bailYieldMultiplier": 1,
+  "minBailCents": 500,
+  "maxBailCents": 15000,
+  "tiers": [
+    { "reasonId": "sybil_claim_spam", "minAttempts": 5, "chanceBps": 2000, "jailMinutes": 120 },
+    { "reasonId": "sybil_bot_pattern", "minAttempts": 10, "chanceBps": 5000, "jailMinutes": 360 },
+    { "reasonId": "sybil_clone_farm", "minAttempts": 20, "chanceBps": 10000, "jailMinutes": 720 }
+  ],
+  "adminReasonId": "sybil_admin_review"
+}

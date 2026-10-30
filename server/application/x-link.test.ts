@@ -16,7 +16,7 @@ import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
-import { completeXLink, getXLink, startXLink, XClient } from './x-link.js';
+import { completeXLink, getXLink, startXLink, unlinkXLink, XClient } from './x-link.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -164,5 +164,26 @@ describe('x-link (verified X)', () => {
     const r = await getXLink(ctx, u);
     expect(r?.xUserId).toBe('77');
     expect(r?.xHandle).toBe('h');
+  });
+});
+
+describe('unlinkXLink (unlock A4)', () => {
+  it('deletes a verified link, then 404s; the same X account can link again', async () => {
+    const ctx = buildContext();
+    const u = await newUser();
+    const start = await startXLink(ctx, u);
+    await completeXLink(ctx, u, 'code', start.state, makeStubXClient('x-a4', 'a4handle', ''));
+    expect(await getXLink(ctx, u)).not.toBeNull();
+    await unlinkXLink(ctx, u);
+    expect(await getXLink(ctx, u)).toBeNull();
+    const rows = await pool.query(`SELECT 1 FROM x_links WHERE user_id = $1`, [u]);
+    expect(rows.rowCount).toBe(0);
+    await expect(unlinkXLink(ctx, u)).rejects.toBeInstanceOf(NotFoundError);
+    // x_user_id is UNIQUE: unlinking frees it for another player.
+    const other = await newUser();
+    const s2 = await startXLink(ctx, other);
+    await expect(
+      completeXLink(ctx, other, 'code', s2.state, makeStubXClient('x-a4', 'a4handle', '')),
+    ).resolves.toMatchObject({ xUserId: 'x-a4' });
   });
 });

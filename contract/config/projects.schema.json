@@ -1,0 +1,228 @@
+{
+  "title": "projects.json",
+  "type": "object",
+  "required": [
+    "version",
+    "wages",
+    "payroll",
+    "task",
+    "offers",
+    "membership",
+    "fund",
+    "launch",
+    "risk"
+  ],
+  "$defs": {
+    "band": {
+      "type": "object",
+      "required": ["minCentsPerWeek", "maxCentsPerWeek"],
+      "properties": {
+        "minCentsPerWeek": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxCentsPerWeek": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "riskEvent": {
+      "type": "object",
+      "required": [
+        "id",
+        "dailyChanceBps",
+        "treasuryDeltaBps",
+        "treasuryDeltaCapCents",
+        "priceShockBps"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^proj_[a-z_]+$"
+        },
+        "dailyChanceBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "mitigatedBy": {
+          "enum": ["dev", "mod", "kol", "auditor"]
+        },
+        "mitigatedChanceBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "requiresRole": {
+          "enum": ["dev", "mod", "kol", "auditor"]
+        },
+        "treasuryDeltaBps": {
+          "type": "integer",
+          "minimum": -10000,
+          "maximum": 0
+        },
+        "treasuryDeltaCapCents": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "priceShockBps": {
+          "type": "integer",
+          "minimum": -5000,
+          "maximum": 2000
+        },
+        "worldEventId": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  },
+  "properties": {
+    "version": {
+      "type": "string"
+    },
+    "wages": {
+      "type": "object",
+      "required": ["dev", "auditor", "kol", "mod"],
+      "properties": {
+        "dev": {
+          "$ref": "#/$defs/band"
+        },
+        "auditor": {
+          "$ref": "#/$defs/band"
+        },
+        "kol": {
+          "$ref": "#/$defs/band"
+        },
+        "mod": {
+          "$ref": "#/$defs/band"
+        }
+      }
+    },
+    "payroll": {
+      "type": "object",
+      "required": [
+        "operatingCostBps",
+        "maxWagesCentsPerProjectWeek",
+        "maxWagesCentsPerFounderWeek"
+      ],
+      "properties": {
+        "operatingCostBps": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxWagesCentsPerProjectWeek": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxWagesCentsPerFounderWeek": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "offers": {
+      "type": "object",
+      "required": ["ttlHours", "maxPendingPerProject"],
+      "properties": {
+        "ttlHours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 336
+        },
+        "maxPendingPerProject": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "membership": {
+      "type": "object",
+      "required": ["maxRolesPerPlayer", "maxProjectsPerPlayer"],
+      "properties": {
+        "maxRolesPerPlayer": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "maxProjectsPerPlayer": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "fund": {
+      "type": "object",
+      "required": ["maxCentsPerCall"],
+      "properties": {
+        "maxCentsPerCall": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "launch": {
+      "type": "object",
+      "required": [
+        "costCentsByKind",
+        "builderTribeId",
+        "builderDiscountBps",
+        "requiredRole",
+        "minProjectAgeMinutes"
+      ],
+      "properties": {
+        "costCentsByKind": {
+          "type": "object",
+          "required": ["memecoin", "dex", "nft_studio", "perps_venue", "l2"],
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "builderTribeId": {
+          "type": "string"
+        },
+        "builderDiscountBps": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        },
+        "requiredRole": {
+          "enum": ["dev", "mod", "kol", "auditor", null]
+        },
+        "minProjectAgeMinutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "required": ["events"],
+      "properties": {
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/riskEvent"
+          }
+        }
+      }
+    },
+    "eventIds": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "task": {
+      "type": "object",
+      "required": ["durationMinutes"],
+      "properties": {
+        "durationMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        }
+      }
+    }
+  }
+}

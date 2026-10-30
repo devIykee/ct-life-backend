@@ -1,0 +1,72 @@
+{
+  "title": "predictions.json",
+  "type": "object",
+  "required": [
+    "version",
+    "payoutBps",
+    "minStakeCents",
+    "maxStakeCents",
+    "dailyStakeCapCents",
+    "sim",
+    "event",
+    "crypto",
+    "resolveGraceSec",
+    "pruneAfterDays"
+  ],
+  "properties": {
+    "version": { "type": "string" },
+    "_note": { "type": "string" },
+    "payoutBps": { "type": "integer", "minimum": 10001, "maximum": 100000 },
+    "minStakeCents": { "type": "integer", "minimum": 1 },
+    "maxStakeCents": { "type": "integer", "minimum": 1 },
+    "dailyStakeCapCents": { "type": "integer", "minimum": 1 },
+    "sim": {
+      "type": "object",
+      "required": ["topCoins", "horizons"],
+      "properties": {
+        "topCoins": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "horizons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["horizon", "everySec", "betWindowSec"],
+            "properties": {
+              "horizon": { "enum": ["5m", "15m", "1h"] },
+              "everySec": { "type": "integer", "minimum": 60 },
+              "betWindowSec": { "type": "integer", "minimum": 30 }
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["everySec", "betWindowSec", "horizon", "questions"],
+      "properties": {
+        "everySec": { "type": "integer", "minimum": 60 },
+        "betWindowSec": { "type": "integer", "minimum": 30 },
+        "horizon": { "enum": ["1h"] },
+        "questions": {
+          "type": "array",
+          "maxItems": 1,
+          "items": { "enum": ["event_rug_1h"] }
+        }
+      }
+    },
+    "crypto": {
+      "type": "object",
+      "required": ["symbols", "everySec", "betWindowSec", "horizonSec"],
+      "properties": {
+        "symbols": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z0-9]{5,20}$" }
+        },
+        "everySec": { "type": "integer", "minimum": 3600 },
+        "betWindowSec": { "type": "integer", "minimum": 60 },
+        "horizonSec": { "type": "integer", "minimum": 3600 }
+      }
+    },
+    "resolveGraceSec": { "type": "integer", "minimum": 60 },
+    "pruneAfterDays": { "type": "integer", "minimum": 1 }
+  }
+}

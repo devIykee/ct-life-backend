@@ -327,7 +327,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
     expect([201, 200, 400, 422]).toContain(r.statusCode);
   });
 
-  it('predictions: alice can place a prediction as herself', async () => {
+  it('predictions: the legacy route is retired (410); bets go to a market', async () => {
     const r = await app.inject({
       method: 'POST',
       url: '/v1/predictions',
@@ -339,7 +339,7 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
         stakeCents: 100,
       },
     });
-    expect([201, 200, 400, 422]).toContain(r.statusCode);
+    expect(r.statusCode).toBe(410);
   });
 
   it('perps: alice can open a perp as herself', async () => {
@@ -448,16 +448,22 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
   });
 
   it('B2: cabal invites list shows only caller invites, not all codes', async () => {
+    // Hosts need net worth at the Marina gate ($100k) to create an invite.
+    const db = createDb();
+    await db.withConnection((c) =>
+      c.query(
+        `INSERT INTO balances (user_id, cash_cents, debt_cents) VALUES ($1, 10000000, 0), ($2, 10000000, 0)
+         ON CONFLICT (user_id) DO UPDATE SET cash_cents = GREATEST(balances.cash_cents, 10000000)`,
+        [alice.sub, bob.sub],
+      ),
+    );
     // Alice creates an invite
     const aliceInvite = await app.inject({
       method: 'POST',
       url: '/v1/cabal/invites',
       headers: authHeaders(alice, `cabal-alice-${uuidv7()}`),
     });
-    if (aliceInvite.statusCode !== 201 && aliceInvite.statusCode !== 200) {
-      // Skip if cabal not implemented
-      return;
-    }
+    expect(aliceInvite.statusCode, aliceInvite.body).toBe(201);
     const aliceCode = (aliceInvite.json() as { code: string }).code;
 
     // Bob creates an invite
