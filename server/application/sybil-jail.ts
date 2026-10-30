@@ -260,20 +260,37 @@ export async function rollSybilJail(
   const tier = tierFor(cfg, attempts);
   if (tier === null || roll(10_000) >= tier.chanceBps) return null;
   const releaseAt = new Date(now.getTime() + tier.jailMinutes * 60_000);
-  await ctx.db.withConnection((c) =>
-    c.query(
-      `INSERT INTO sybil_jail (jail_id, user_id, reason_id, jailed_at, release_at, bail_cents_per_hour)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        uuidv7(),
-        userId,
-        tier.reasonId,
-        now.toISOString(),
-        releaseAt.toISOString(),
-        Math.max(1, yieldCents),
-      ],
-    ),
+  // One stay at a time: two claims racing in both roll, but only the first to
+  // take the user lock inserts; the other sees the stay and does nothing. A
+  // stay whose timer ran out is closed here, so the partial unique index
+  // (migration 113: one row per player with released_at NULL) holds.
+  const inserted = await runInTransaction(
+    async (c) => {
+      await c.query(`SELECT id FROM users WHERE id = $1 FOR UPDATE`, [userId]);
+      await c.query(
+        `UPDATE sybil_jail SET released_at = release_at
+          WHERE user_id = $1 AND released_at IS NULL AND release_at <= $2`,
+        [userId, now.toISOString()],
+      );
+      if (await activeStay(c, userId, now)) return false;
+      await c.query(
+        `INSERT INTO sybil_jail (jail_id, user_id, reason_id, jailed_at, release_at, bail_cents_per_hour)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          uuidv7(),
+          userId,
+          tier.reasonId,
+          now.toISOString(),
+          releaseAt.toISOString(),
+          Math.max(1, yieldCents),
+        ],
+      );
+      return true;
+    },
+    {},
+    ctx.db,
   );
+  if (!inserted) return getSybilStatus(ctx, userId, now);
   try {
     await ctx.redis.main.del(`sybil:claims:${userId}`);
   } catch {
@@ -330,6 +347,12 @@ export async function paySybilBail(
       await client.query(
         `UPDATE sybil_jail SET released_at = $2, bail_paid_cents = $3 WHERE jail_id = $1`,
         [stay.jail_id, now.toISOString(), bail],
+      );
+      // Defensive: no other open stay may survive a paid bail.
+      await client.query(
+        `UPDATE sybil_jail SET released_at = $2
+          WHERE user_id = $1 AND released_at IS NULL AND jail_id <> $3`,
+        [userId, now.toISOString(), stay.jail_id],
       );
       return bail;
     },

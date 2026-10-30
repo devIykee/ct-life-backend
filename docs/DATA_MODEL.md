@@ -341,3 +341,8 @@ adds `voting` and `expired`; a `closed` match may have no winner (draw); `stake_
 new matches (older stakes are refunded to their owners when those matches end). `beef_votes` (one row per
 voter per match) and `beef_presence` (each participant's talk seconds, emotes and chat lines during the
 live phase, copied from Redis `beef:act:<matchId>` when the match moves to voting).
+
+## Sybil jail: one open stay (migration 113)
+
+`sybil_jail_one_open_idx`: unique `(user_id) WHERE released_at IS NULL`. A stay whose timer ran out is
+closed (`released_at = release_at`) when the next one is rolled, so the index never blocks a new stay.

@@ -1,3 +1,9 @@
+## 2026-10-30 - WP-A review follow-ups (#53, #56, #48)
+
+Migration 113.
+
+- Sybil jail: two claims racing at the top tier could insert two stays (bail freed one, so the player paid twice). Jailing now runs under the user row lock, closes timed-out stays first and inserts only when no stay is active; a partial unique index (`sybil_jail_one_open_idx`) allows one open stay per player. Bail closes every open stay.
+
 ## 2026-10-30 - Knock on a home's door (unlock D5)
 
 No migration. Gated with the visitor features: dark until `visitorPolicy` is in `CAPABILITIES_ON`.
