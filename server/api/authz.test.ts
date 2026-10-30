@@ -368,10 +368,11 @@ describe('authz: every mutating endpoint derives the actor from the JWT', () => 
         maxMinutes: 5,
       },
     });
-    // The endpoint may reject because bob has no creator profile.
-    // The point is that the server does not allow alice to specify a
-    // different fan (no fan override field).
-    expect(r.statusCode).toBeLessThan(500);
+    // The endpoint may reject because bob has no creator profile, the body is strict
+    // (no fan override field), or paid calls are dark (503 CAPABILITY_OFF, unlock C2).
+    // The point is that the server does not allow alice to specify a different fan.
+    if (r.statusCode === 503) expect(r.json().error.code).toBe('CAPABILITY_OFF');
+    else expect(r.statusCode).toBeLessThan(500);
   });
 
   it('x-link: non-admin cannot link another user (no admin route here)', async () => {

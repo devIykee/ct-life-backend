@@ -1,3 +1,15 @@
+## 2026-10-30 - Paid calls on the ct_escrow program and creator mode (unlock C2)
+
+Migration 131 (`paid_calls`, `creator_profiles` mode columns). Dark until the operator adds `paidCalls` and `creatorMode` to `CAPABILITIES_ON`; devnet only; needs the escrow upgraded and initialized (docs/ONCHAIN.md "Paid-call escrow on devnet").
+
+- `PUT /creator {enabled, ratePerMinUsdc: '250000'..'50000000', maxMinutes: 1..60}` now works and answers `{enabled, ratePerMinUsdc, maxMinutes}` (was documented, not served). `400 VALIDATION_FAILED {reason: rate_out_of_range | max_minutes}`. Capability `creatorMode`.
+- `GET /users/{id}` gains `creator: {enabled, ratePerMinUsdc, maxMinutes} | null`.
+- `POST /paid-calls {creatorId, minutes}` answers `201 {callId, sessionPda, tx, amount, feeBps, ratePerMinUsdc, minutes, expiresAt}`: `tx` is the server-built unsigned v0 `open_session` (fan pays). Was `{payeeUserId, pricePerMinuteCents, maxMinutes}` with no transaction. New error `CREATOR_UNAVAILABLE` (403); `409 CONFLICT {reason: call_in_progress}`; `400 {reason: minutes_over_max | cannot_call_self}`; `403 BLOCKED`.
+- `POST /paid-calls/{id}/submitted {signature}` verifies the Session account and the reported transaction on chain (confirmed, successful, fan-signed `open_session` of this PDA) before storing it (`409 {reason: not_found_yet}`, `400 {reason: tx_mismatch}`, `409 {reason: call_in_progress, who: creator}` with the call refunded) and rings the creator: `call_invite` gains optional `kind: 'paid'`, `ratePerMinUsdc`, `maxMinutes`, `acceptBy`.
+- `accept` sends the escrow `accept` with the settle authority; then `POST /rtc/token {kind: 'paid_call'}` works for both players. `decline` answers `refunding` (the refund lands after the accept window). `POST /paid-calls/{id}/end` takes **no body**: the server times the call and settles on chain. `PaidCall` gains `settling`, `refunding`, `expired`, `closed_unknown` statuses, the terms, the split, `acceptBy`, `endReason` and the signatures.
+- New `POST /webhooks/livekit` (LiveKit signed webhook): a participant leaving or the room finishing ends a live paid call.
+- A 15-second worker refunds unanswered/declined calls, ends calls at their booked minutes and retries settles.
+
 ## 2026-10-30 - Farm: Sybil jail, bail and the Sybil Barn (unlock A5)
 
 Migration 111 (`sybil_jail`). New config `config/sybil_reasons.json`. Capabilities `sybilBail` (bail, and the game roll itself) and `sybilBarn`.

@@ -463,6 +463,11 @@
       "code": "SYBIL_JAILED",
       "httpStatus": 403,
       "message": "You are in the Barn."
+    },
+    {
+      "code": "CREATOR_UNAVAILABLE",
+      "httpStatus": 403,
+      "message": "This creator is not taking paid calls right now."
     }
   ]
 }

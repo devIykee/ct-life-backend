@@ -35,6 +35,8 @@
  *     call on a house coin when their turn comes (see npc-callers.ts).
  *   - Analytics retention: a daily job (03:15 UTC) deletes product events
  *     older than ANALYTICS_RETENTION_DAYS (see analytics-prune.ts).
+ *   - Paid calls: a 15-second sweep refunds, auto-ends and settles paid calls
+ *     (see paid-calls.ts; a no-op while the paidCalls capability is off).
  *
  *   - Perp liquidation (every 5 s), alpha call grading (every 30 s), the
  *     payment poller (every 30 s, the top-up and ad payment backstop) and
@@ -82,6 +84,7 @@ import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
 import { PAYMENT_POLLER_QUEUE, handlePaymentPoller } from './payment-poller.js';
 import { RENT_QUEUE, handleWeeklyRent } from './rent.js';
 import { PREDICTION_MARKETS_QUEUE, handlePredictionMarkets } from './prediction-markets.js';
+import { startPaidCallSweep } from './paid-calls.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
 import { buildContext } from '../application/context.js';
 import { startMarketSim } from './market-sim.js';
@@ -471,6 +474,13 @@ export async function buildWorkers(likeness?: {
     log.child({ worker: 'projects' }),
   );
 
+  // Paid calls (unlock C2): refunds, auto-end at the booked minutes, settle retries.
+  const paidCalls = await startPaidCallSweep({
+    connection: conn,
+    workerConnection: newClient(redis),
+    ctx,
+  });
+
   // Optional healthz HTTP server.
   let healthzServer: ReturnType<typeof createServer> | null = null;
   const port = Number(process.env.PORT_WORKERS ?? 0);
@@ -567,6 +577,7 @@ export async function buildWorkers(likeness?: {
       await rentQueue.close();
       await stopProjects();
       await marketsQueue.close();
+      await paidCalls.close();
       if (healthzServer) await new Promise<void>((r) => healthzServer!.close(() => r()));
       await redis.close();
     },
