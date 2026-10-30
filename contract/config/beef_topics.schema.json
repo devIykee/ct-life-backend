@@ -161,45 +161,65 @@
     },
     "voters": {
       "type": "object",
-      "required": ["minAccountAgeHours", "minLevel"],
+      "required": ["minAccountAgeHours", "minShiftDays"],
       "additionalProperties": false,
       "properties": {
         "minAccountAgeHours": {
           "type": "integer",
           "minimum": 0
         },
-        "minLevel": {
+        "minShiftDays": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 10
+          "minimum": 0,
+          "maximum": 30
         }
       }
     },
     "limits": {
       "type": "object",
-      "required": ["maxOpenPerChallenger"],
+      "required": [
+        "maxOpenPerChallenger",
+        "inviteCooldownSeconds",
+        "maxInvitesPerSenderPerHour",
+        "maxNotificationsPerTargetPerHour"
+      ],
       "additionalProperties": false,
       "properties": {
         "maxOpenPerChallenger": {
           "type": "integer",
           "minimum": 1,
           "maximum": 20
+        },
+        "inviteCooldownSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 86400
+        },
+        "maxInvitesPerSenderPerHour": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "maxNotificationsPerTargetPerHour": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000
         }
       }
     },
     "participants": {
       "type": "object",
-      "required": ["minAccountAgeHours", "minLevel"],
+      "required": ["minAccountAgeHours", "minShiftDays"],
       "additionalProperties": false,
       "properties": {
         "minAccountAgeHours": {
           "type": "integer",
           "minimum": 0
         },
-        "minLevel": {
+        "minShiftDays": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 10
+          "minimum": 0,
+          "maximum": 30
         }
       }
     }

@@ -1,3 +1,13 @@
+## 2026-10-30 - WP-A review follow-ups (#53, #56, #48)
+
+Migration 113.
+
+- Sybil jail: two claims racing at the top tier could insert two stays (bail freed one, so the player paid twice). Jailing now runs under the user row lock, closes timed-out stays first and inserts only when no stay is active; a partial unique index (`sybil_jail_one_open_idx`) allows one open stay per player. Bail closes every open stay.
+- CT Beef eligibility (participants and voters) no longer uses a "level": the highest skill never rose, and career level comes from client-reported mini-game scores. It is now server-controlled: account at least 48 h old and paid for server-timed shifts (`shift_pay`) on at least 2 distinct UTC days (`403 FORBIDDEN {reason: too_new | shift_days}`, `403 VOTE_NOT_ALLOWED {reason: participant | too_new | shift_days}`). A normal player reaches it on day 2-3.
+- CT Beef result: player votes decide; the arena crowd (built from client-reported activity) only breaks a tie in player votes, so a bot maxing its activity score can no longer outvote real players.
+- `GET /beef/elo?userId=` is read-only: no `beef_elo` row is created on read (a never-played player reads 1500 and zeros; rows are created only for real participants); `404 NOT_FOUND` for an unknown user.
+- Invite rate limits (per sender, so nobody can block someone else's invite): an aimed beef challenge or targeted Cabal invite from the same sender to the same player at most once per 10 minutes (cancelled and revoked ones count), and at most 20 aimed challenges / 10 targeted Cabal invites per sender per hour; else `429 RATE_LIMITED {reason: invite_cooldown | sender_invite_cap, retryAfterMs}`. The per-target protection applies to pushes: a player gets at most 10 `beef_challenge` / `cabal_invite` pushes an hour; later invites are still created and listed (`GET /beef?scope=mine|open`, `GET /cabal/invites?guestId=`), just not pushed. Counts run under a per-target advisory lock.
+
 ## 2026-10-30 - Knock on a home's door (unlock D5)
 
 No migration. Gated with the visitor features: dark until `visitorPolicy` is in `CAPABILITIES_ON`.

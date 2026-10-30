@@ -14,6 +14,7 @@ import { buildServer } from './main.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { _resetContextForTests } from '../application/context.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
+import { _shifts } from '../application/shifts.js';
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const savedCaps = process.env.CAPABILITIES_ON;
@@ -38,6 +39,17 @@ async function boot(caps: string): Promise<void> {
   stop = handle.stop;
 }
 
+/** Paid server-timed shifts on `n` distinct past UTC days. */
+async function shiftDays(userId: string, n: number): Promise<void> {
+  for (let d = 1; d <= n; d++) {
+    await pool.query(
+      `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, created_at)
+       VALUES ($1, 4000, 'cash', 'shift_pay', 'shift', $2, now() - make_interval(days => $3))`,
+      [userId, uuidv7(), d],
+    );
+  }
+}
+
 /** A dev-auth player; `veteran` makes them old enough and leveled to play and vote. */
 async function devUser(veteran = false): Promise<U> {
   const r = await app!.inject({
@@ -52,10 +64,7 @@ async function devUser(veteran = false): Promise<U> {
     await pool.query(`UPDATE users SET created_at = now() - interval '3 days' WHERE id = $1`, [
       b.id,
     ]);
-    await pool.query(
-      `INSERT INTO skills (user_id, clout) VALUES ($1, 3) ON CONFLICT (user_id) DO UPDATE SET clout = 3`,
-      [b.id],
-    );
+    await shiftDays(b.id, 2);
   }
   return { id: b.id, token: b.accessToken };
 }
@@ -209,5 +218,34 @@ describe('beef routes', () => {
     const view = await call(voter, 'GET', `/v1/beef/${id}`);
     expect(view.body.votes).toBeNull();
     expect(view.body.myVote).toBe(a.id);
+  }, 30_000);
+
+  it('client scores alone never qualify; paid shifts on two days do', async () => {
+    await boot('beef');
+    const p = await devUser();
+    await pool.query(`UPDATE users SET created_at = now() - interval '4 days' WHERE id = $1`, [
+      p.id,
+    ]);
+    expect((await call(p, 'POST', '/v1/careers/discord_mod/apply', {})).status).toBe(200);
+    // Day 1: a perfect shift with a maxed client-reported score (promotes the career).
+    const work = async (): Promise<void> => {
+      const start = await call(p, 'POST', '/v1/shifts', { careerId: 'discord_mod' });
+      expect(start.status, JSON.stringify(start.body)).toBe(200);
+      const shiftId = start.body.shiftId as string;
+      _shifts.set(shiftId, { ..._shifts.get(shiftId)!, endsAt: 0 });
+      const done = await call(p, 'POST', `/v1/shifts/${shiftId}/complete`, {
+        results: [{ miniGameId: 'discord_mod_ban', score: 10 }],
+      });
+      expect(done.status, JSON.stringify(done.body)).toBe(200);
+    };
+    await work();
+    await work();
+    const sameDay = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(sameDay.status).toBe(403);
+    expect(sameDay.body.error.details).toMatchObject({ reason: 'shift_days', shiftDays: 1 });
+    // A shift paid on an earlier UTC day (a second day of play) qualifies.
+    await shiftDays(p.id, 1);
+    const ok = await call(p, 'POST', '/v1/beef', { topicId: TOPIC });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
   }, 30_000);
 });

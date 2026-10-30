@@ -49,11 +49,18 @@ import { activeJail, JAIL_VENUE_ID } from './heat.js';
 import type { AppContext } from './context.js';
 import { publishToUser } from './realtime-bus.js';
 import { isSybilJailed } from './sybil-jail.js';
+import { checkInviteRate } from './invite-rate.js';
 
 export const MARINA_GATE_CENTS = 10_000_000; // $100,000
 const CABAL_INVITE_TTL_DAYS = 7;
 /** Invites a host may have pending at once. */
 export const CABAL_INVITES_PER_HOST = 3;
+/** One targeted invite from a host to the same guest per 10 minutes (review L11). */
+export const CABAL_INVITE_PAIR_COOLDOWN_MS = 10 * 60_000;
+/** Targeted invites one host can send per hour. */
+export const CABAL_INVITES_PER_SENDER_PER_HOUR = 10;
+/** Targeted invites that ring one guest per hour; later ones are listed, not pushed. */
+export const CABAL_NOTIFY_PER_TARGET_PER_HOUR = 10;
 const CODE_BYTES = 24; // 32-char base64url
 
 export type CabalInviteStatus = 'pending' | 'accepted' | 'revoked' | 'expired';
@@ -160,44 +167,52 @@ export async function createCabalInvite(
 ): Promise<CabalInviteRow> {
   const code = randomBytes(CODE_BYTES).toString('base64url');
   const expiresAt = new Date(now.getTime() + CABAL_INVITE_TTL_DAYS * 86_400_000);
-  const invite = await runInTransaction(async (client) => {
-    const host = await client.query<{ id: string }>(
-      `SELECT id FROM users WHERE id = $1 FOR UPDATE`,
-      [hostUserId],
-    );
-    if (!host.rows[0]) throw new NotFoundError({ kind: 'user', id: hostUserId });
-    const bal = await client.query<BalanceRow>(
-      `SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1`,
-      [hostUserId],
-    );
-    const netWorth =
-      BigInt(bal.rows[0]?.cash_cents ?? '0') - BigInt(bal.rows[0]?.debt_cents ?? '0');
-    if (netWorth < BigInt(MARINA_GATE_CENTS)) {
-      throw new NetWorthTooLowError({
-        netWorthCents: Number(netWorth),
-        requiredNetWorthCents: MARINA_GATE_CENTS,
-      });
-    }
-    const pending = await client.query<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM cabal_invites
+  let notify = false;
+  const invite = await runInTransaction(
+    async (client) => {
+      const host = await client.query<{ id: string }>(
+        `SELECT id FROM users WHERE id = $1 FOR UPDATE`,
+        [hostUserId],
+      );
+      if (!host.rows[0]) throw new NotFoundError({ kind: 'user', id: hostUserId });
+      const bal = await client.query<BalanceRow>(
+        `SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1`,
+        [hostUserId],
+      );
+      const netWorth =
+        BigInt(bal.rows[0]?.cash_cents ?? '0') - BigInt(bal.rows[0]?.debt_cents ?? '0');
+      if (netWorth < BigInt(MARINA_GATE_CENTS)) {
+        throw new NetWorthTooLowError({
+          netWorthCents: Number(netWorth),
+          requiredNetWorthCents: MARINA_GATE_CENTS,
+        });
+      }
+      const pending = await client.query<{ n: number }>(
+        `SELECT COUNT(*)::int AS n FROM cabal_invites
         WHERE host_user_id = $1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2`,
-      [hostUserId, now.toISOString()],
-    );
-    if ((pending.rows[0]?.n ?? 0) >= CABAL_INVITES_PER_HOST) {
-      throw new ConflictError({ reason: 'invites_exhausted', limit: CABAL_INVITES_PER_HOST });
-    }
-    if (guestUserId !== null) await checkGuest(client, hostUserId, guestUserId, now);
-    const r = await client.query<CabalInviteDbRow>(
-      `INSERT INTO cabal_invites
+        [hostUserId, now.toISOString()],
+      );
+      if ((pending.rows[0]?.n ?? 0) >= CABAL_INVITES_PER_HOST) {
+        throw new ConflictError({ reason: 'invites_exhausted', limit: CABAL_INVITES_PER_HOST });
+      }
+      if (guestUserId !== null)
+        ({ notify } = await checkGuest(client, hostUserId, guestUserId, now));
+      const r = await client.query<CabalInviteDbRow>(
+        `INSERT INTO cabal_invites
          (invite_id, host_user_id, guest_user_id, code, expires_at, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING ${INVITE_COLS}`,
-      [uuidv7(), hostUserId, guestUserId, code, expiresAt.toISOString(), now.toISOString()],
-    );
-    return rowToInvite(r.rows[0]!, hostUserId, now);
-  });
-  if (guestUserId !== null) {
-    // Ring the guest (city room); the code never leaves the host.
+        [uuidv7(), hostUserId, guestUserId, code, expiresAt.toISOString(), now.toISOString()],
+      );
+      return rowToInvite(r.rows[0]!, hostUserId, now);
+      // Read committed: the host's row lock and the guest's advisory lock
+      // (invite-rate.ts) hold every count; SSI would only fail bursts.
+    },
+    { isolation: 'read committed' },
+  );
+  if (guestUserId !== null && notify) {
+    // Ring the guest (city room); the code never leaves the host. Past the
+    // guest's hourly push cap the invite is listed but not pushed.
     await publishToUser(ctx, guestUserId, 'cabal_invite', {
       inviteId: invite.inviteId,
       fromUserId: hostUserId,
@@ -228,7 +243,7 @@ async function checkGuest(
   hostUserId: string,
   guestUserId: string,
   now: Date,
-): Promise<void> {
+): Promise<{ notify: boolean }> {
   if (guestUserId === hostUserId) {
     throw new ValidationFailedError({ field: 'guestUserId', reason: 'self_invite' });
   }
@@ -248,6 +263,12 @@ async function checkGuest(
     [hostUserId, guestUserId, now.toISOString()],
   );
   if ((dup.rowCount ?? 0) > 0) throw new ConflictError({ reason: 'invite_pending' });
+  // Revoke-and-resend must not become a notification loop (review L11).
+  return checkInviteRate(client, 'cabal', hostUserId, guestUserId, now, {
+    pairCooldownMs: CABAL_INVITE_PAIR_COOLDOWN_MS,
+    perSenderPerHour: CABAL_INVITES_PER_SENDER_PER_HOUR,
+    notifyPerTargetPerHour: CABAL_NOTIFY_PER_TARGET_PER_HOUR,
+  });
 }
 
 /**
