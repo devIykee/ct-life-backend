@@ -1,3 +1,8 @@
+## 2026-10-30 - Venue voice tokens need presence in the venue
+
+- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
+- New error code `NOT_IN_VENUE` (403).
+
 ## 2026-10-26 - Approved display names (migration 105)
 
 The user approved real, relatable names for everything players see (ct-life-evidence/names/NAMES.md; the client table is `contract/ids/names.json`). Ids, slugs, codes and routes do not change; only display text the server writes or stores.

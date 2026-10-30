@@ -3918,6 +3918,10 @@ paths:
         speakers, everyone else joins subscribe-only, and an ended, missing or
         blocked Space mints nothing (403/404). Space tokens last 10 minutes so
         each new token re-checks the role. Client permission flags are ignored.
+        For `venue`, `id` is the venue instanceId (the Colyseus room id from
+        `welcome`), and a token is minted only while the caller has a session
+        in that venue room; otherwise 403 `NOT_IN_VENUE`. Join the venue room
+        first, then ask for the token.
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -3944,6 +3948,24 @@ paths:
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
                   canPublish: { type: boolean }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: >-
+            Not in that venue instance (`NOT_IN_VENUE`), or not a participant of the Space or
+            call (`FORBIDDEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: NOT_IN_VENUE,
+                      message: 'You are not in that venue. Join it before connecting to its voice.',
+                      details: { instanceId: 'a1B2c3D4e' },
+                    },
+                }
 
   /spaces:
     get:

@@ -5,6 +5,9 @@
  *
  * Returns a LiveKit token for proximity voice, Space audio, or call media.
  * B3: Validates user is participant of the room before minting token.
+ * Venue (and the legacy `proximity` kind): only for a user who is in that
+ * venue instance right now, else 403 NOT_IN_VENUE (see
+ * application/venue-voice.ts).
  * Publish permission is always server-derived; client flags are ignored.
  */
 import type { FastifyInstance } from 'fastify';
@@ -14,6 +17,7 @@ import { ForbiddenError, ValidationFailedError } from '../../shared/domain/error
 import type { RtcKind } from '../../application/livekit.js';
 import { SPACE_TOKEN_TTL_SEC, spaceRtcAccess } from '../../application/spaces.js';
 import { canonicalRoomName } from '../../shared/livekit/token.js';
+import { assertInVenueInstance } from '../../application/venue-voice.js';
 
 // The contract body is `{kind, id}`. `roomId` is accepted as a
 // deprecated alias so callers written against the old server keep
@@ -55,6 +59,14 @@ export function registerRtcRoutes(app: FastifyInstance): void {
       id = access.spaceId;
       canPublish = access.canPublish;
       ttlSec = SPACE_TOKEN_TTL_SEC;
+    }
+
+    // Venue voice is for people in that venue instance only. `proximity` is
+    // an older name for the same room kind and gets the same check.
+    if (kind === 'venue' || kind === 'proximity') {
+      const roomName = canonicalRoomName(kind, id);
+      if (!roomName) throw new ValidationFailedError({ reason: 'invalid_room_id', kind });
+      await assertInVenueInstance(req.ctx, roomName.slice(kind.length + 1), userId);
     }
 
     // B3: Validate user is a participant for call/video kinds
