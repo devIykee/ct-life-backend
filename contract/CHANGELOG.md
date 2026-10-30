@@ -1,3 +1,14 @@
+## 2026-10-30 - Cabal: targeted invites and revoke (unlock A3)
+
+Migration 110 (`cabal_invites.revoked_at`). Capabilities `cabalInvites` (targeted invites; also turns on `competitionCapabilities.targetedCabalInvites`) and `cabalRevoke`.
+
+- `POST /cabal/invites` takes an optional `{guestUserId}`: the invite is for that player only and the server echoes `guestUserId` (it used to ignore it). `404` unknown player, `400` yourself, `403 BLOCKED` block pair, `409 CONFLICT {reason: already_member | invite_pending}`. `503 CAPABILITY_OFF` while `cabalInvites` is off; open invites keep working.
+- Every new invite now checks the host: net worth at the Marina gate (`403 NET_WORTH_TOO_LOW {netWorthCents, requiredNetWorthCents}`, new error code) and at most 3 pending (`409 CONFLICT {reason: invites_exhausted}`). `GET /me/cabal` `invitesRemaining` and `hostGateCents` already described both; neither was enforced.
+- New `POST /cabal/invites/{id}/revoke` -> the invite with `status: revoked`. `403 FORBIDDEN {reason: not_host}`, `409 CONFLICT {reason: not_pending}`. `503 CAPABILITY_OFF` while `cabalRevoke` is off.
+- `CabalInvite` gains `status` (`pending | accepted | revoked | expired`) and `revokedAt`. `code` is only returned to the host (guests could see it in `GET /cabal/invites`).
+- New user message `cabal_invite {inviteId, fromUserId, expiresAt, at}` (epoch ms) to the guest of a targeted invite.
+- Fix: accepting checks that a targeted invite is yours (`403 FORBIDDEN {reason: not_guest}`) and refuses revoked invites and block pairs.
+
 ## 2026-10-30 - Season pass bought with a payment intent (unlock C1)
 
 No migration. Dark until the operator adds `seasonPassPurchase` to `CAPABILITIES_ON`; devnet only.

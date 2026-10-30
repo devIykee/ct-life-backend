@@ -287,3 +287,12 @@ Numbers below `1700000110000` stay for the open fix PRs (106 is PR #41).
 ## Unlock D: homes, markets, NFT gallery (migrations 140-149)
 
 - `home_settings` (migration 140) — one row per player: `visitors` (`open | followers | closed`, default `open`), `updated_at`. Per player, not per lease, so it survives `POST /homes/move`. No row means `open`. Read by `POST /homes/{ownerId}/visit` and the `home` room before the door check.
+
+## Cabal invite revoke (migration 110, unlock A3)
+
+`cabal_invites.revoked_at timestamptz` (null until the host revokes a pending invite with
+`POST /v1/cabal/invites/{id}/revoke`; set once, never cleared). `guest_user_id` is now also set at
+creation for a targeted invite, and only that player can accept it. The status the API reports is
+derived: `revoked` > `accepted` (`used_at`) > `expired` (`expires_at` passed) > `pending`. Partial index
+`cabal_invites_guest_pending_idx (guest_user_id, host_user_id) WHERE used_at IS NULL AND revoked_at IS
+NULL` serves the guest's list and the duplicate-pending check.

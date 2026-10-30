@@ -7567,6 +7567,153 @@ paths:
                 }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /cabal/invites:
+    post:
+      tags: [competition]
+      operationId: postCabalInvite
+      summary: Create a VIP Lounge (Cabal) invite, open or for one player.
+      description: >-
+        The host needs net worth at the Marina gate (`hostGateCents` in `GET /me/cabal`, $100,000),
+        else `403 NET_WORTH_TOO_LOW {netWorthCents, requiredNetWorthCents}`, and may have 3 pending
+        invites at once (`409 CONFLICT {reason: invites_exhausted}`). With `guestUserId` the invite
+        is for that player only (capability `cabalInvites`, `503 CAPABILITY_OFF` while off): `404`
+        unknown player, `400` yourself, `403 BLOCKED` for a block pair, `409 CONFLICT {reason:
+        already_member | invite_pending}`. The server echoes `guestUserId`; `code` is only ever
+        returned to the host. Expires after 7 days.
+      x-phase: 6
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                guestUserId: { type: [string, 'null'], format: uuid }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CabalInvite' }
+              example:
+                inviteId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e01'
+                hostUserId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e00'
+                guestUserId: '0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e02'
+                code: 'q8Zr3x0T1kq2v9mH0dFzQ7bN4cY6pL1a'
+                status: pending
+                usedAt: null
+                revokedAt: null
+                expiresAt: '2026-11-06T12:00:00.000Z'
+                createdAt: '2026-10-30T12:00:00.000Z'
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: NET_WORTH_TOO_LOW (host gate) or BLOCKED (block pair with the guest)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: NET_WORTH_TOO_LOW
+                  message: 'Your net worth is below what this needs.'
+                  details: { netWorthCents: 250000, requiredNetWorthCents: 10000000 }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT with details.reason invites_exhausted, already_member or invite_pending
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+    get:
+      tags: [competition]
+      operationId: getCabalInvites
+      summary: My Cabal invites, as host or guest.
+      description: >-
+        Only invites where I am the host or the guest. Filters `hostId`, `guestId` (a targeted
+        invite shows up for its guest while pending), `used`, `limit` (1..100). `code` is present
+        only on invites I host.
+      x-phase: 6
+      parameters:
+        - { name: hostId, in: query, required: false, schema: { type: string, format: uuid } }
+        - { name: guestId, in: query, required: false, schema: { type: string, format: uuid } }
+        - {
+            name: used,
+            in: query,
+            required: false,
+            schema: { type: string, enum: ['true', 'false'] },
+          }
+        - {
+            name: limit,
+            in: query,
+            required: false,
+            schema: { type: integer, minimum: 1, maximum: 100 },
+          }
+      responses:
+        '200':
+          description: Invites, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invites]
+                properties:
+                  invites: { type: array, items: { $ref: '#/components/schemas/CabalInvite' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /cabal/invites/{id}/accept:
+    post:
+      tags: [competition]
+      operationId: postCabalInviteAccept
+      summary: Accept a Cabal invite (become a member).
+      description: >-
+        A targeted invite can only be accepted by its guest (`403 FORBIDDEN {reason: not_guest}`).
+        Revoked, used or expired invites answer `403 FORBIDDEN`; a block pair with the host `403
+        BLOCKED`; the host's own invite `400`.
+      x-phase: 6
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/CabalInvite' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /cabal/invites/{id}/revoke:
+    post:
+      tags: [competition]
+      operationId: postCabalInviteRevoke
+      summary: Revoke a pending Cabal invite (host only).
+      description: >-
+        `200` with `status: revoked`. Not the host: `403 FORBIDDEN {reason: not_host}`. Accepted,
+        expired or already revoked: `409 CONFLICT {reason: not_pending, status}`. A revoked invite
+        frees one of the host's 3 slots. Capability `cabalRevoke`: `503 CAPABILITY_OFF` while off.
+      x-phase: 6
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Revoked
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/CabalInvite' } }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: CONFLICT with details.reason not_pending
+          content:
+            application/json: { schema: { $ref: '#/components/schemas/Error' } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -10161,3 +10308,19 @@ components:
         eventId: { type: string, pattern: '^evt_[a-z0-9_]+$', description: 'From ids/events.json.' }
         at: { type: integer, description: Epoch ms when the server broadcast it. }
         params: { type: object, additionalProperties: { type: string } }
+    CabalInvite:
+      type: object
+      required: [inviteId, hostUserId, guestUserId, status, usedAt, revokedAt, expiresAt, createdAt]
+      properties:
+        inviteId: { type: string, format: uuid }
+        hostUserId: { type: string, format: uuid }
+        guestUserId:
+          type: [string, 'null']
+          format: uuid
+          description: The invited player (targeted), or the player who accepted an open invite.
+        code: { type: string, description: Bearer code. Only present when the caller is the host. }
+        status: { type: string, enum: [pending, accepted, revoked, expired] }
+        usedAt: { type: [string, 'null'], format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time }
+        expiresAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }

@@ -735,3 +735,11 @@ export class HomeClosedError extends DomainError {
     this.httpStatus = 403;
   }
 }
+
+export class NetWorthTooLowError extends DomainError {
+  readonly code = 'NET_WORTH_TOO_LOW';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Your net worth is below what this needs.', details);
+    this.httpStatus = 403;
+  }
+}

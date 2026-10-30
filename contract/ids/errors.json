@@ -453,6 +453,11 @@
       "code": "HOME_CLOSED",
       "httpStatus": 403,
       "message": "This home is closed to visitors."
+    },
+    {
+      "code": "NET_WORTH_TOO_LOW",
+      "httpStatus": 403,
+      "message": "Your net worth is below what this needs."
     }
   ]
 }
