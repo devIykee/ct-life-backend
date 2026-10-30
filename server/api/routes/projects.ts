@@ -20,6 +20,10 @@
  *   GET    /v1/projects/{id}/events
  *   POST   /v1/projects/{id}/tasks                    start a timed project task
  *   POST   /v1/projects/{id}/tasks/{taskId}/complete  finish it (the week counts as worked)
+ *
+ * Behind `projectHq`:
+ *
+ *   POST   /v1/projects/{id}/hq/visit                 ticket for the project_hq room
  */
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -46,6 +50,7 @@ import { getLaunchQuote, launchProject } from '../../application/project-launch.
 import { listProjectEvents } from '../../application/project-events.js';
 import { completeProjectTask, startProjectTask } from '../../application/project-tasks.js';
 import { registerVcRoutes } from './vc-row.js';
+import { hqVisitTicket } from '../../application/project-hq.js';
 
 const FoundBody = z.object({
   kind: z.enum(PROJECT_KINDS),
@@ -210,6 +215,15 @@ export function registerProjectRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       const { id, taskId } = req.params as { id: string; taskId: string };
       return reply.send(await completeProjectTask(req.ctx, req.user!.sub, id, taskId));
+    },
+  );
+
+  app.post(
+    '/v1/projects/:id/hq/visit',
+    { preHandler: [requireCapability('projectHq'), requireAuth, withIdempotency()] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      return reply.send(await hqVisitTicket(req.ctx, req.user!.sub, id));
     },
   );
 

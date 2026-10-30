@@ -9177,6 +9177,43 @@ paths:
               schema: { type: string, format: binary }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/CapabilityOff' }
+  # --- Project HQ (unlock WP-B B3). Capability `projectHq`. -----------------
+  /projects/{id}/hq/visit:
+    post:
+      tags: [projects]
+      operationId: postProjectsIdHqVisit
+      summary: A ticket for the project's HQ room (capability projectHq).
+      description: |
+        The HQ is a `project_hq` Colyseus room per project (`hackathon_house`
+        layout, max 12). Join with `joinOrCreate('project_hq', {projectId, token})`,
+        or `joinById(roomId, {token})` once the room exists. Members always enter;
+        anyone else only while a member is inside. A refused join is a Colyseus
+        `ServerError {code, message}`: 4403 `members_only`, 4404 `not_found`,
+        4409 `wrong_status`, 4503 `capability_off`. `expiresAt` is advisory
+        (`hq.ticketTtlSeconds`). Errors: 403 `FORBIDDEN {reason: 'members_only'}`;
+        404; 409 `wrong_status` (rugged).
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HqTicket' }
+              example:
+                roomName: project_hq
+                roomId: hq_0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e20
+                venueId: hackathon_house
+                projectId: 0192a1c2-7b3e-7c4d-8e5f-6a7b8c9d0e20
+                expiresAt: '2026-11-08T12:05:00.000Z'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Conflict (`CONFLICT`; see `details.reason`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
 components:
   securitySchemes:
@@ -12313,3 +12350,20 @@ components:
       properties:
         frames: { type: array, items: { $ref: '#/components/schemas/GalleryFrame' } }
         items: { type: array, items: { $ref: '#/components/schemas/NftItem' } }
+    # --- Project HQ (unlock WP-B B3) -----------------------------------------
+    HqTicket:
+      type: object
+      required: [roomName, roomId, venueId, projectId, expiresAt]
+      properties:
+        roomName: { type: string, const: project_hq }
+        roomId:
+          { type: string, description: '`hq_<projectId>`; for `joinById` once the room exists.' }
+        venueId:
+          { type: string, const: hackathon_house, description: The interior layout to render. }
+        projectId:
+          {
+            type: string,
+            format: uuid,
+            description: "Pass to `joinOrCreate('project_hq', {projectId, token})`.",
+          }
+        expiresAt: { type: string, format: date-time }

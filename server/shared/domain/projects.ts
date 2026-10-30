@@ -65,6 +65,11 @@ export interface ProjectsConfig {
   };
   readonly risk: { readonly events: readonly RiskEventDef[] };
   readonly vc: VcConfig;
+  readonly hq: {
+    readonly maxClients: number;
+    readonly shiftMinutes: number;
+    readonly ticketTtlSeconds: number;
+  };
 }
 
 const DAY_MS = 86_400_000;

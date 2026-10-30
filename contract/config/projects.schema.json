@@ -11,7 +11,8 @@
     "fund",
     "launch",
     "risk",
-    "vc"
+    "vc",
+    "hq"
   ],
   "$defs": {
     "band": {
@@ -359,6 +360,26 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 168
+        }
+      }
+    },
+    "hq": {
+      "type": "object",
+      "required": ["maxClients", "shiftMinutes", "ticketTtlSeconds"],
+      "properties": {
+        "maxClients": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 50
+        },
+        "shiftMinutes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 240
+        },
+        "ticketTtlSeconds": {
+          "type": "integer",
+          "minimum": 30
         }
       }
     }
