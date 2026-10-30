@@ -3,7 +3,7 @@
 Migration 140 (`home_settings`). The settings routes are dark until `visitorPolicy` is in `CAPABILITIES_ON`.
 
 - New `GET /homes/me/settings` -> `{visitors: 'open'|'followers'|'closed'}` (default `open`) and `PUT /homes/me/settings {visitors}` (Idempotency-Key) -> same.
-- Enforced in `POST /homes/{ownerId}/visit` and on `home` room join (and the room's re-check): `closed` -> `403 HOME_CLOSED` (everyone but the owner); `followers` -> `403 FORBIDDEN {reason: followers_only}` unless the visitor follows the owner or is a guest. The policy only narrows access; the door rule still applies after it. Reading another player's home placements follows the same rule.
+- Enforced in `POST /homes/{ownerId}/visit` and on `home` room join (and the room's re-check): `closed` -> `403 HOME_CLOSED` (everyone but the owner); `followers` -> `403 FORBIDDEN {reason: followers_only}` unless the visitor and the owner follow each other (mutual; a one-way follow is not enough) or the visitor is a guest. Under every policy, `open` included, a visitor the owner blocked or who blocked the owner gets `403 BLOCKED`. The policy only narrows access; the door rule still applies after it. Reading another player's home placements follows the same rule.
 - New error code `HOME_CLOSED` (403).
 
 ## 2026-10-30 - Move home in one step (unlock D1, capability `homeMove`)

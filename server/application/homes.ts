@@ -15,7 +15,8 @@
  * A lease also takes a free unit (a door) of its tier, see home-units.ts.
  * A visit to a home that has a door needs access to it: the owner or a
  * guest, else 403 FORBIDDEN. Before the door, the owner's visitor policy
- * (home-settings.ts) may refuse: 403 HOME_CLOSED or FORBIDDEN followers_only.
+ * (home-settings.ts) may refuse: 403 BLOCKED (either side blocked the other,
+ * under every policy), HOME_CLOSED or FORBIDDEN followers_only.
  *
  * Weekly rent is debited by `server/workers/rent.ts` (the rent
  * worker) at Monday 00:00 UTC. When the owner has insufficient
@@ -523,13 +524,13 @@ export async function loadMeHome(
  * @param ctx - The app context.
  * @param homeId - The home's instance id.
  * @param userId - The player joining.
- * @returns `HOME_CLOSED`, `FORBIDDEN`, `NOT_FOUND`, or null.
+ * @returns `BLOCKED`, `HOME_CLOSED`, `FORBIDDEN`, `NOT_FOUND`, or null.
  */
 export async function homeEntryRefusal(
   ctx: AppContext,
   homeId: string,
   userId: string,
-): Promise<'HOME_CLOSED' | 'FORBIDDEN' | 'NOT_FOUND' | null> {
+): Promise<'BLOCKED' | 'HOME_CLOSED' | 'FORBIDDEN' | 'NOT_FOUND' | null> {
   return ctx.db.withConnection(async (c) => {
     const r = await c.query<{ owner_user_id: string; status: HomeStatus; unit_id: string | null }>(
       `SELECT owner_user_id, status, unit_id FROM homes WHERE home_id = $1`,
@@ -539,7 +540,7 @@ export async function homeEntryRefusal(
     if (!h) return 'NOT_FOUND';
     const home = { homeId, ownerUserId: h.owner_user_id, status: h.status };
     const policy = await visitorPolicyRefusal(c, home, userId);
-    if (policy !== null) return policy === 'HOME_CLOSED' ? 'HOME_CLOSED' : 'FORBIDDEN';
+    if (policy !== null) return policy === 'followers_only' ? 'FORBIDDEN' : policy;
     if (h.unit_id === null) return isLive(h.status) ? null : 'FORBIDDEN';
     return (await accessToHome(c, home, userId)).canEnter ? null : 'FORBIDDEN';
   });

@@ -1,6 +1,7 @@
 /**
- * Home room and the visitor policy (unlock D2): joining a closed home fails
- * with HOME_CLOSED, a followers-only home with FORBIDDEN, and a visitor
+ * Home room and the visitor policy (unlock D2): a blocked player is refused
+ * with BLOCKED even when open, joining a closed home fails with HOME_CLOSED,
+ * a followers-only home with FORBIDDEN unless the follow is mutual, and a visitor
  * already inside is shown out (4403) once the owner closes the home.
  * Driven directly (no matchmaker), like home.test.ts.
  */
@@ -26,6 +27,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 const owner = uuidv7();
 const visitor = uuidv7();
 const fan = uuidv7();
+const pest = uuidv7();
 
 function fakeClient(sessionId: string): {
   sessionId: string;
@@ -45,13 +47,18 @@ function fakeClient(sessionId: string): {
 }
 
 beforeAll(async () => {
-  for (const id of [owner, visitor, fan]) {
+  for (const id of [owner, visitor, fan, pest]) {
     await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `hp-${id}`]);
   }
   await pool.query(`INSERT INTO balances (user_id, cash_cents) VALUES ($1, 100000)`, [owner]);
-  await pool.query(`INSERT INTO follows (follower_user_id, followee_user_id) VALUES ($1, $2)`, [
-    fan,
+  // Mutual follow: fan qualifies for a followers-only home; visitor follows one way only.
+  await pool.query(
+    `INSERT INTO follows (follower_user_id, followee_user_id) VALUES ($1, $2), ($2, $1), ($3, $2)`,
+    [fan, owner, visitor],
+  );
+  await pool.query(`INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2)`, [
     owner,
+    pest,
   ]);
 });
 
@@ -76,6 +83,8 @@ describe('HomeRoom visitor policy', () => {
     const v = fakeClient('s-visitor');
     room.clients.push(v);
     await room.onJoin(v, { userId: visitor }); // open: fine
+    // Blocked: refused even while the home is open.
+    await expect(room.onJoin(fakeClient('s-pest'), { userId: pest })).rejects.toThrow('BLOCKED');
 
     await putHomeSettings(ctx, owner, 'closed');
     await room.recheck();
@@ -84,6 +93,7 @@ describe('HomeRoom visitor policy', () => {
     await room.onJoin(fakeClient('s-owner'), { userId: owner }); // the owner always
 
     await putHomeSettings(ctx, owner, 'followers');
+    // A one-way follower is refused; the mutual follower gets in.
     await expect(room.onJoin(fakeClient('s3'), { userId: visitor })).rejects.toThrow('FORBIDDEN');
     await room.onJoin(fakeClient('s-fan'), { userId: fan });
 

@@ -6,9 +6,14 @@
  *
  * `visitors` is one of:
  *   - `open` (default): the door rules alone decide (home-units.ts).
- *   - `followers`: only players who follow the owner, and the owner's guests.
- *     A refused visitor gets `403 FORBIDDEN {reason:'followers_only'}`.
+ *   - `followers`: only mutual followers (the visitor follows the owner AND the
+ *     owner follows the visitor back) and the owner's guests. A one-way follow
+ *     is not enough: following is one-sided, so anyone could follow the owner
+ *     and walk in. A refused visitor gets `403 FORBIDDEN {reason:'followers_only'}`.
  *   - `closed`: nobody but the owner. A refused visitor gets `403 HOME_CLOSED`.
+ *
+ * Under every policy, `open` included, a visitor the owner blocked, or who
+ * blocked the owner, is refused with `403 BLOCKED`.
  *
  * The policy narrows access; it never widens it. A home with a door still
  * needs the owner or a guest to open it, whatever the policy says.
@@ -23,7 +28,7 @@
  */
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
-import { ForbiddenError, HomeClosedError } from '../shared/domain/errors.js';
+import { BlockedError, ForbiddenError, HomeClosedError } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
 import { publishHomeAccess } from './home-units.js';
 
@@ -35,7 +40,7 @@ export interface HomeSettings {
 }
 
 /** Why the policy refuses a visitor; the contract error each maps to. */
-export type PolicyRefusal = 'HOME_CLOSED' | 'followers_only';
+export type PolicyRefusal = 'BLOCKED' | 'HOME_CLOSED' | 'followers_only';
 
 type Querier = Pick<PoolClient, 'query'>;
 
@@ -68,11 +73,24 @@ export async function visitorPolicyRefusal(
   visitorUserId: string,
 ): Promise<PolicyRefusal | null> {
   if (visitorUserId === home.ownerUserId) return null;
+  // A block either way refuses under every policy, `open` included.
+  const blocked = await c.query(
+    `SELECT 1 FROM blocks
+      WHERE (blocker_user_id = $1 AND blocked_user_id = $2)
+         OR (blocker_user_id = $2 AND blocked_user_id = $1)
+      LIMIT 1`,
+    [home.ownerUserId, visitorUserId],
+  );
+  if (blocked.rowCount) return 'BLOCKED';
   const policy = await loadVisitorPolicy(c, home.ownerUserId);
   if (policy === 'open') return null;
   if (policy === 'closed') return 'HOME_CLOSED';
+  // Mutual follow (the owner chose to follow back) or an owner-approved guest.
   const ok = await c.query(
-    `SELECT 1 FROM follows WHERE follower_user_id = $1 AND followee_user_id = $2
+    `SELECT 1 FROM follows a
+       JOIN follows b ON b.follower_user_id = a.followee_user_id
+                     AND b.followee_user_id = a.follower_user_id
+      WHERE a.follower_user_id = $1 AND a.followee_user_id = $2
      UNION ALL
      SELECT 1 FROM home_guests WHERE home_id = $3 AND user_id = $1
      LIMIT 1`,
@@ -84,12 +102,14 @@ export async function visitorPolicyRefusal(
 /**
  * The domain error for a refusal.
  * @param refusal - What the policy said.
- * @returns `HOME_CLOSED` (403) or `FORBIDDEN {reason:'followers_only'}` (403).
+ * @returns `BLOCKED`, `HOME_CLOSED` or `FORBIDDEN {reason:'followers_only'}` (all 403).
  */
-export function policyRefusalError(refusal: PolicyRefusal): HomeClosedError | ForbiddenError {
-  return refusal === 'HOME_CLOSED'
-    ? new HomeClosedError()
-    : new ForbiddenError({ reason: 'followers_only' });
+export function policyRefusalError(
+  refusal: PolicyRefusal,
+): BlockedError | HomeClosedError | ForbiddenError {
+  if (refusal === 'BLOCKED') return new BlockedError();
+  if (refusal === 'HOME_CLOSED') return new HomeClosedError();
+  return new ForbiddenError({ reason: 'followers_only' });
 }
 
 /**

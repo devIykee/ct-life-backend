@@ -68,9 +68,10 @@ describe('visitor policy', () => {
     expect((await api.call(owner, 'POST', `/v1/homes/${owner.sub}/visit`)).status).toBe(200);
   });
 
-  it('followers lets in followers and guests only', async () => {
+  it('followers lets in mutual followers and guests only; a one-way follower is refused', async () => {
     const owner = await homeOwner();
     const fan = await api.player();
+    const oneWay = await api.player();
     const stranger = await api.player();
     const guest = await api.player();
     await api.call(owner, 'PUT', '/v1/homes/me/settings', { visitors: 'followers' });
@@ -81,10 +82,11 @@ describe('visitor policy', () => {
     expect(errDetails(refused)).toEqual({ reason: 'followers_only' });
 
     await createDb().withConnection(async (c) => {
-      await c.query(`INSERT INTO follows (follower_user_id, followee_user_id) VALUES ($1, $2)`, [
-        fan.sub,
-        owner.sub,
-      ]);
+      // fan and owner follow each other; oneWay only follows the owner.
+      await c.query(
+        `INSERT INTO follows (follower_user_id, followee_user_id) VALUES ($1, $2), ($2, $1), ($3, $2)`,
+        [fan.sub, owner.sub, oneWay.sub],
+      );
       const h = await c.query<{ home_id: string }>(
         `SELECT home_id FROM homes WHERE owner_user_id = $1 AND status = 'active'`,
         [owner.sub],
@@ -95,11 +97,43 @@ describe('visitor policy', () => {
       ]);
     });
     expect((await api.call(fan, 'POST', `/v1/homes/${owner.sub}/visit`)).status).toBe(200);
+    const one = await api.call(oneWay, 'POST', `/v1/homes/${owner.sub}/visit`);
+    expect(one.status).toBe(403);
+    expect(errDetails(one)).toEqual({ reason: 'followers_only' });
     expect((await api.call(guest, 'POST', `/v1/homes/${owner.sub}/visit`)).status).toBe(200);
 
     // Back to open: the stranger gets in again.
     await api.call(owner, 'PUT', '/v1/homes/me/settings', { visitors: 'open' });
     expect((await api.call(stranger, 'POST', `/v1/homes/${owner.sub}/visit`)).status).toBe(200);
+  });
+
+  it('refuses a blocked visitor with BLOCKED under open, either direction, guests included', async () => {
+    const owner = await homeOwner();
+    const pest = await api.player();
+    const blocker = await api.player();
+    expect((await api.call(owner, 'GET', '/v1/homes/me/settings')).body).toEqual({
+      visitors: 'open',
+    });
+    await createDb().withConnection(async (c) => {
+      // owner blocked pest; blocker blocked owner (one row each, no mirror row).
+      await c.query(
+        `INSERT INTO blocks (blocker_user_id, blocked_user_id) VALUES ($1, $2), ($3, $1)`,
+        [owner.sub, pest.sub, blocker.sub],
+      );
+      const h = await c.query<{ home_id: string }>(
+        `SELECT home_id FROM homes WHERE owner_user_id = $1 AND status = 'active'`,
+        [owner.sub],
+      );
+      await c.query(`INSERT INTO home_guests (home_id, user_id) VALUES ($1, $2)`, [
+        h.rows[0]!.home_id,
+        pest.sub,
+      ]);
+    });
+    for (const who of [pest, blocker]) {
+      const r = await api.call(who, 'POST', `/v1/homes/${owner.sub}/visit`);
+      expect(r.status).toBe(403);
+      expect(errCode(r)).toBe('BLOCKED');
+    }
   });
 });
 
