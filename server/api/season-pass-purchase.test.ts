@@ -301,4 +301,62 @@ describe('season pass purchase', () => {
     expect(again.body.error).toMatchObject({ details: { reason: 'intent_pending' } });
     finalized = new Map();
   }, 30_000);
+
+  /** A season_pass intent written straight to the table, with a verified 'amount' transfer on chain. */
+  async function paidIntent(u: Authed, amount: string): Promise<string> {
+    const intentId = uuidv7();
+    const recipient = Keypair.generate().publicKey.toBase58();
+    const mint = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+    const reference = Keypair.generate().publicKey.toBase58();
+    const memo = uuidv7();
+    const signature = randomUUID().replace(/-/g, '').repeat(3).slice(0, 88);
+    await pool.query(
+      `INSERT INTO payment_intents (intent_id, user_id, kind, currency, amount, recipient, mint,
+         reference, memo, cash_cents, bonus_bps, status, signature, expires_at)
+       VALUES ($1, $2, 'season_pass', 'USDC', $3, $4, $5, $6, $7, 0, 0, 'pending', $8,
+               now() + interval '10 minutes')`,
+      [intentId, u.id, amount, recipient, mint, reference, memo, signature],
+    );
+    finalized.set(
+      signature,
+      transferTx({ wallet: u.wallet, recipient, mint, reference, memo, amount }),
+    );
+    return intentId;
+  }
+
+  it('a legacy season_pass intent at another price never grants a pass (fails, for a manual refund)', async () => {
+    await boot('seasonPassPurchase');
+    if (currentSeason(new Date()) === null) return;
+    const u = await devAuth();
+    const id = await paidIntent(u, '1000000');
+    expect(await reconcilePaymentIntent(buildContext(), id)).toBe('failed');
+    const st = await pool.query('SELECT status FROM payment_intents WHERE intent_id = $1', [id]);
+    expect(st.rows[0].status).toBe('failed');
+    const pass = await pool.query(
+      `SELECT 1 FROM season_pass WHERE user_id = $1 AND tier = 'season'`,
+      [u.id],
+    );
+    expect(pass.rows.length).toBe(0);
+  }, 30_000);
+
+  it('while seasonPassPurchase is off a paid 5 USDC intent waits, and settles once it is on', async () => {
+    await boot(undefined);
+    if (currentSeason(new Date()) === null) return;
+    const u = await devAuth();
+    const id = await paidIntent(u, '5000000');
+    expect(await reconcilePaymentIntent(buildContext(), id)).toBe('pending');
+    const none = await pool.query(
+      `SELECT 1 FROM season_pass WHERE user_id = $1 AND tier = 'season'`,
+      [u.id],
+    );
+    expect(none.rows.length).toBe(0);
+    await stop();
+    await boot('seasonPassPurchase');
+    expect(await reconcilePaymentIntent(buildContext(), id)).toBe('confirmed');
+    const pass = await pool.query(
+      `SELECT 1 FROM season_pass WHERE user_id = $1 AND tier = 'season'`,
+      [u.id],
+    );
+    expect(pass.rows.length).toBe(1);
+  }, 30_000);
 });

@@ -1,3 +1,14 @@
+## 2026-10-30 - WP-C security review follow-up (paid calls, season pass, Factory)
+
+Migration 132 (`paid_calls` backoff and rent columns, status `stuck`). Everything stays dark behind the existing capabilities.
+
+- Paid calls (M2): settle and refund pay into the canonical USDC account only when it is usable; one handed to another owner or frozen is bypassed with a fresh account owned by the same wallet, created in the same transaction. A player can no longer make settle fail and refund in full after the deadline. No program change.
+- Paid calls (M3): the sweep runs one batch per status. Live and settling rows are retried every pass, nearest refund deadline first, and never parked (a settle must land before the fan's refund window). Refund-path rows back off exponentially and are parked as `stuck` after 8 failures (ALERT log). Parked rows are re-checked every 10 min and reconciled if their session closed; `tools/scripts/paid-calls-requeue.ts` puts them back. `PaidCall.status` gains `stuck`.
+- Paid calls (M4): accounts are created only when missing; booking needs both players' USDC accounts to exist (`400 {reason: usdc_account_missing}`, `403 CREATOR_UNAVAILABLE {reason: creator_usdc_account_missing}`); per-user limits `429 RATE_LIMITED {reason: pair_call_rate | paid_call_rate | creator_call_rate | account_recreations}` (only funded calls count against a creator; rent counts against whoever's account forced it); `503 CAPABILITY_OFF {reason: authority_low}` under 0.02 SOL, ALERT under 0.1 SOL.
+- Paid calls (L1): an authority transaction that fails on chain after preflight is a failure, never `live`/`settled`/`refunded`.
+- Season pass (L3): a `season_pass` intent grants only at 5 USDC and only while `seasonPassPurchase` is on; another price fails for a manual refund; abandoned intents still expire while off; the poller reconciles each kind in its own batch.
+- Factory (L4): launch prepare/confirm/submit refuse anything but devnet.
+
 ## 2026-10-30 - WP-A review follow-ups (#53, #56, #48)
 
 Migration 113.

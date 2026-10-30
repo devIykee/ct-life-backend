@@ -101,6 +101,25 @@ Steps (operator, own machine, own keys; nothing in the API holds the admin or up
 3. **Fund the settle authority** with ~0.5 devnet SOL: it pays the fees of `accept`, `settle`
    and `refund`, and the rent of a creator's or the treasury's USDC account the first time
    `settle` needs it.
+   **Payout accounts (security review M2/M4).** `settle` and `refund` accept any USDC token
+   account owned by the fan / creator / treasury (the program checks owner and mint, not the
+   ATA address), so no program change is needed. Before each send the server reads the canonical
+   ATAs: a usable one is used as is; a missing one is created (idempotent); one handed to another
+   owner or frozen is bypassed with a fresh account owned by the same wallet, created in the same
+   transaction. Booking requires both players' USDC accounts to exist, so the authority pays
+   rent only when someone closed or handed theirs off mid-call, which is capped per user. The
+   worker logs `[paid-calls] ALERT` under 0.1 SOL and booking stops under 0.02 SOL.
+
+**Stuck calls.** A refund that keeps failing is parked as `stuck` (ALERT). The worker re-checks
+parked calls every 10 minutes and reconciles any whose session closed. After fixing the cause, run
+`pnpm exec tsx tools/scripts/paid-calls-requeue.ts --list`, then `--call <id>` or `--all-stuck`
+(database only; the worker does the chain work). Live and settling calls are never parked.
+
+**init_config race (review L5).** `init_config` accepts any payer as admin. Run the upgrade
+and `tools/scripts/escrow-init-config.ts --send` back to back; if someone else initializes
+first, the API refuses the config (`escrow_config_mismatch`) and the program needs another
+upgrade.
+
 4. Turn on `paidCalls` and `creatorMode`, and point the LiveKit webhook at
    `https://<api>/v1/webhooks/livekit`.
 

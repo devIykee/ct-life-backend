@@ -52,7 +52,7 @@ import {
   Connection,
 } from '@solana/web3.js';
 import { createTransferCheckedInstruction, getAssociatedTokenAddressSync } from '@solana/spl-token';
-import { assertCapabilityOn } from './capabilities.js';
+import { assertCapabilityOn, isCapabilityOn } from './capabilities.js';
 import { assertDevnetChain, clusterRpc } from './chain-rpc.js';
 import { publishToUser } from './realtime-bus.js';
 import { grantSeasonPass, SEASON_PASS_PRICE_USDC_BASE } from './season-pass.js';
@@ -493,6 +493,15 @@ export async function reconcilePaymentIntent(
   if (!intent || !RECONCILED_KINDS.includes(intent.kind) || intent.status === 'confirmed') {
     return 'unchanged';
   }
+  if (intent.kind === 'season_pass') {
+    // A season_pass intent at any other price (e.g. one made before unlock C1, priced
+    // from a top-up pack) never grants a pass: it fails here and is refunded by hand.
+    if (!isSeasonPassPrice(intent.amount))
+      return failLegacySeasonPass(ctx, intent.intent_id, intent.amount);
+    // While the capability is off nothing is granted, but an abandoned intent (never
+    // signed, nothing on chain, past expiry + grace) still expires so none pile up.
+    if (!isCapabilityOn(ctx, 'seasonPassPurchase')) return expireIfAbandoned(ctx, intent);
+  }
 
   const candidates = new Set<string>();
   if (signatureHint) candidates.add(signatureHint);
@@ -552,6 +561,51 @@ export async function reconcilePaymentIntent(
   return 'pending';
 }
 
+/**
+ * Expire an intent that was never signed and has nothing on chain, once past its expiry
+ * plus grace; otherwise leave it pending. Grants nothing.
+ */
+async function expireIfAbandoned(ctx: AppContext, intent: OpenIntent): Promise<ReconcileOutcome> {
+  if (intent.status !== 'pending') return 'unchanged';
+  if (intent.signature !== null) return 'pending';
+  if (Date.now() <= new Date(intent.expires_at).getTime() + EXPIRY_GRACE_MS) return 'pending';
+  const history = await clusterRpc(ctx).rpc<Array<{ signature: string }> | null>(
+    'getSignaturesForAddress',
+    [intent.reference, { commitment: 'finalized', limit: 1 }],
+  );
+  if ((history ?? []).length > 0) return 'pending';
+  await ctx.db.withConnection((c) =>
+    c.query(
+      `UPDATE payment_intents SET status = 'expired' WHERE intent_id = $1 AND status = 'pending'`,
+      [intent.intent_id],
+    ),
+  );
+  return 'expired';
+}
+
+function isSeasonPassPrice(amount: string): boolean {
+  return amount === SEASON_PASS_PRICE_USDC_BASE.toString();
+}
+
+async function failLegacySeasonPass(
+  ctx: AppContext,
+  intentId: string,
+  amount: string,
+): Promise<ReconcileOutcome> {
+  console.error(
+    `[payments] ALERT season_pass intent ${intentId} priced ${amount}, not ${SEASON_PASS_PRICE_USDC_BASE}: ` +
+      'no pass granted; refund any payment by hand',
+  );
+  await ctx.db.withConnection((c) =>
+    c.query(
+      `UPDATE payment_intents SET status = 'failed'
+        WHERE intent_id = $1 AND status IN ('pending', 'expired')`,
+      [intentId],
+    ),
+  );
+  return 'failed';
+}
+
 async function settleVerifiedIntent(
   ctx: AppContext,
   intentId: string,
@@ -566,8 +620,9 @@ async function settleVerifiedIntent(
       cash_cents: string;
       bonus_bps: number;
       created_at: Date;
+      amount: string;
     }>(
-      `SELECT user_id, kind, status, cash_cents, bonus_bps, created_at FROM payment_intents
+      `SELECT user_id, kind, status, cash_cents, bonus_bps, created_at, amount FROM payment_intents
        WHERE intent_id = $1 FOR UPDATE`,
       [intentId],
     );
@@ -580,6 +635,10 @@ async function settleVerifiedIntent(
       [signature, intentId],
     );
     if (intent.kind === 'season_pass') {
+      // Re-checked under the row lock: only a 5 USDC intent, only while the capability is on.
+      if (!isSeasonPassPrice(intent.amount) || !isCapabilityOn(ctx, 'seasonPassPurchase')) {
+        return 'unchanged';
+      }
       // The pass for the season the intent was bought in. No Cash moves.
       const season = currentSeason(intent.created_at);
       if (season !== null) {
@@ -685,15 +744,22 @@ export async function reconcileOpenIntents(
   ctx: AppContext,
   limit = 50,
 ): Promise<Record<ReconcileOutcome, number>> {
-  const r = await ctx.db.withConnection((c) =>
-    c.query<{ intent_id: string }>(
-      `SELECT intent_id FROM payment_intents
-       WHERE kind IN ('topup', 'ad', 'season_pass')
-         AND (status = 'pending' OR (status = 'expired' AND expires_at > $1))
-       ORDER BY created_at ASC LIMIT $2`,
-      [new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString(), limit],
-    ),
-  );
+  // One bounded batch per kind, so a backlog of one kind never starves the others.
+  const since = new Date(Date.now() - RECONCILE_WINDOW_MS).toISOString();
+  const rows: Array<{ intent_id: string }> = [];
+  for (const kind of RECONCILED_KINDS) {
+    const r = await ctx.db.withConnection((c) =>
+      c.query<{ intent_id: string }>(
+        `SELECT intent_id FROM payment_intents
+         WHERE kind = $1
+           AND (status = 'pending' OR (status = 'expired' AND expires_at > $2))
+         ORDER BY created_at ASC LIMIT $3`,
+        [kind, since, limit],
+      ),
+    );
+    rows.push(...r.rows);
+  }
+  const r = { rows };
   const counts: Record<ReconcileOutcome, number> = {
     confirmed: 0,
     pending: 0,

@@ -33,6 +33,7 @@ import {
 } from '@solana/web3.js';
 import { deriveDbcPoolAddress } from '@meteora-ag/dynamic-bonding-curve-sdk';
 import type { AppContext } from './context.js';
+import { assertDevnetChain } from './chain-rpc.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import {
   AgeRequiredError,
@@ -112,6 +113,8 @@ function storeOf(ctx: AppContext): MetadataStore | null {
 }
 
 function requireEnabled(ctx: AppContext): { config: PublicKey; store: MetadataStore } {
+  // Devnet only, even with APP_ENV=prod and ALLOW_MAINNET=1 (prepare, confirm, submit).
+  assertDevnetChain(ctx, 'factory');
   const f = ctx.config.factory;
   const store = storeOf(ctx);
   if (!f.dbcConfig || !store) throw new FactoryUnavailableError({});

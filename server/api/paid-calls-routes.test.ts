@@ -19,8 +19,14 @@ import {
   type OpenCheck,
   type SessionClosure,
   type SessionRef,
+  type TokenAccountState,
 } from '../application/paid-call-chain.js';
-import { sweepPaidCalls } from '../application/paid-calls.js';
+import {
+  _resetAuthorityBalanceForTests,
+  MAX_SWEEP_ATTEMPTS,
+  requeueStuckCalls,
+  sweepPaidCalls,
+} from '../application/paid-calls.js';
 import type { EscrowSession } from '../shared/solana/ct-escrow.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { AccessToken } from 'livekit-server-sdk';
@@ -39,6 +45,10 @@ let sent: string[] = [];
 let openCheck: OpenCheck = 'ok';
 let closureResult: SessionClosure | null = null;
 let settleFails = false;
+let refundFails = false;
+let settleRent = 0n;
+let accountStates: Record<string, TokenAccountState> = {};
+let authorityLamports = 1_000_000_000n;
 const key = (r: SessionRef): string => `${r.fan}:${r.creator}:${r.sessionId}`;
 
 const fakeChain: EscrowChain = {
@@ -67,6 +77,12 @@ const fakeChain: EscrowChain = {
   async closure() {
     return closureResult;
   },
+  async usdcAccounts(_ctx, owners) {
+    return Object.fromEntries(owners.map((o) => [o, accountStates[o] ?? 'ok']));
+  },
+  async authorityLamports() {
+    return authorityLamports;
+  },
   async accept(_ctx, ref) {
     const s = sessions.get(key(ref))!;
     sessions.set(key(ref), { ...s, status: 1 });
@@ -77,12 +93,23 @@ const fakeChain: EscrowChain = {
     if (settleFails) throw new Error('blockhash expired');
     sessions.delete(key(ref));
     sent.push(`settle:${ref.secondsUsed}`);
-    return `settle${uuidv7()}`;
+    return {
+      signature: `settle${uuidv7()}`,
+      rentLamports: settleRent,
+      fanRentLamports: settleRent,
+      creatorRentLamports: 0n,
+    };
   },
   async refund(_ctx, ref) {
+    if (refundFails) throw new Error('InvalidAccountData');
     sessions.delete(key(ref));
     sent.push('refund');
-    return `refund${uuidv7()}`;
+    return {
+      signature: `refund${uuidv7()}`,
+      rentLamports: 0n,
+      fanRentLamports: 0n,
+      creatorRentLamports: 0n,
+    };
   },
 };
 
@@ -202,6 +229,11 @@ beforeEach(() => {
   openCheck = 'ok';
   closureResult = null;
   settleFails = false;
+  refundFails = false;
+  settleRent = 0n;
+  accountStates = {};
+  authorityLamports = 1_000_000_000n;
+  _resetAuthorityBalanceForTests();
 });
 
 afterEach(async () => {
@@ -594,4 +626,282 @@ describe('paid calls and creator mode', () => {
     });
     expect(sent).not.toContain('refund');
   }, 30_000);
+
+  it('booking needs usable USDC accounts for both sides (no authority-paid rent)', async () => {
+    await boot(ON);
+    const c = await creator();
+    const fan = await devAuth();
+    accountStates[fan.wallet] = 'missing';
+    const r1 = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(r1.status).toBe(400);
+    expect(errOf(r1.body).details.reason).toBe('usdc_account_missing');
+    accountStates = { [c.wallet]: 'unusable' };
+    const r2 = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(r2.status).toBe(403);
+    expect(errOf(r2.body)).toMatchObject({
+      code: 'CREATOR_UNAVAILABLE',
+      details: { reason: 'creator_usdc_account_missing' },
+    });
+  }, 30_000);
+
+  async function pastCalls(
+    fanId: string,
+    creatorId: string,
+    n: number,
+    o: { fanRent?: bigint; creatorRent?: bigint; paid?: boolean } = {},
+  ) {
+    for (let i = 0; i < n; i++) {
+      await pool.query(
+        `INSERT INTO paid_calls (call_id, fan_user_id, creator_user_id, fan_wallet, creator_wallet,
+           session_id, session_pda, rate_per_min, max_minutes, fee_bps, deposit, status, pay_by,
+           open_signature, authority_rent_lamports, fan_rent_lamports, creator_rent_lamports)
+         VALUES ($1, $2, $3, 'w', 'w', $4, $5, 500000, 1, 1000, 550000, 'expired', now(), $6,
+                 $7::bigint + $8::bigint, $7, $8)`,
+        [
+          uuidv7(),
+          fanId,
+          creatorId,
+          1 + i,
+          `pda-${uuidv7()}`,
+          o.paid ? `sig-${uuidv7()}` : null,
+          (o.fanRent ?? 0n).toString(),
+          (o.creatorRent ?? 0n).toString(),
+        ],
+      );
+    }
+  }
+
+  it('per-fan limits: bookings per hour, and per pair per day', async () => {
+    await boot(ON);
+    const fan = await devAuth();
+    const a = await creator();
+    const b = await creator();
+    await pastCalls(fan.id, a.id, 3);
+    await pastCalls(fan.id, b.id, 3);
+    const c = await creator();
+    const r = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(r.status).toBe(429);
+    expect(errOf(r.body).details).toMatchObject({ reason: 'paid_call_rate', window: 'hour' });
+
+    const fan2 = await devAuth();
+    await pastCalls(fan2.id, c.id, 4);
+    const p = await call(fan2, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(p.status).toBe(429);
+    expect(errOf(p.body).details.reason).toBe('pair_call_rate');
+  }, 30_000);
+
+  it('a creator is not locked out by unpaid bookings; only funded calls count', async () => {
+    await boot(ON);
+    const c = await creator();
+    const spammer = await devAuth();
+    await pastCalls(spammer.id, c.id, 40); // unpaid, expired
+    const fan = await devAuth();
+    const ok = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+
+    const c2 = await creator();
+    await pastCalls(spammer.id, c2.id, 40, { paid: true });
+    const fan2 = await devAuth();
+    const busy = await call(fan2, 'POST', '/v1/paid-calls', { creatorId: c2.id, minutes: 1 });
+    expect(busy.status).toBe(429);
+    expect(errOf(busy.body).details.reason).toBe('creator_call_rate');
+  }, 30_000);
+
+  it('rent is charged to whoever forced it: the requesting fan, not the creator they call', async () => {
+    await boot(ON);
+    const c = await creator();
+    const other = await devAuth();
+    // Other fans forced rent on calls to this creator: booking the creator still works.
+    await pastCalls(other.id, c.id, 2, { fanRent: 2_039_280n });
+    const fan = await devAuth();
+    const ok = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(ok.status, JSON.stringify(ok.body)).toBe(201);
+    // The fan who forced it is limited.
+    const c2 = await creator();
+    const limited = await call(other, 'POST', '/v1/paid-calls', { creatorId: c2.id, minutes: 1 });
+    expect(limited.status).toBe(429);
+    expect(errOf(limited.body).details.reason).toBe('account_recreations');
+  }, 30_000);
+
+  it('stops booking under the authority balance floor', async () => {
+    await boot(ON);
+    authorityLamports = 10_000_000n; // 0.01 SOL
+    const c = await creator();
+    const fan = await devAuth();
+    const r = await call(fan, 'POST', '/v1/paid-calls', { creatorId: c.id, minutes: 1 });
+    expect(r.status).toBe(503);
+    expect(errOf(r.body).details).toMatchObject({
+      capability: 'paidCalls',
+      reason: 'authority_low',
+    });
+  }, 30_000);
+
+  it('records the rent the authority paid on settle', async () => {
+    await boot(ON);
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c, 3);
+    await call(c, 'POST', `/v1/paid-calls/${id}/accept`);
+    settleRent = 2_039_280n;
+    expect((await call(fan, 'POST', `/v1/paid-calls/${id}/end`)).body.status).toBe('settled');
+    const r = await pool.query(
+      'SELECT authority_rent_lamports FROM paid_calls WHERE call_id = $1',
+      [id],
+    );
+    expect(String(r.rows[0].authority_rent_lamports)).toBe('2039280');
+  }, 30_000);
+
+  it('failing refunds back off, then park as stuck; they never starve due rows', async () => {
+    await boot(ON);
+    const ctx = buildContext();
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c);
+    await call(c, 'POST', `/v1/paid-calls/${id}/decline`);
+    refundFails = true;
+    let t = Date.now() + 130_000;
+    await sweepPaidCalls(ctx, new Date(t));
+    let row = (await pool.query('SELECT * FROM paid_calls WHERE call_id = $1', [id])).rows[0];
+    expect(row).toMatchObject({
+      status: 'refunding',
+      attempts: 1,
+      last_error: 'InvalidAccountData',
+    });
+    expect(row.next_attempt_at.getTime()).toBeGreaterThan(t);
+    // Not due yet: the next pass leaves it alone.
+    await sweepPaidCalls(ctx, new Date(t + 1000));
+    row = (await pool.query('SELECT attempts FROM paid_calls WHERE call_id = $1', [id])).rows[0];
+    expect(row.attempts).toBe(1);
+    for (let n = 2; n <= MAX_SWEEP_ATTEMPTS; n++) {
+      t += 31 * 60_000;
+      await sweepPaidCalls(ctx, new Date(t));
+    }
+    row = (await pool.query('SELECT * FROM paid_calls WHERE call_id = $1', [id])).rows[0];
+    expect(row).toMatchObject({ status: 'stuck', attempts: MAX_SWEEP_ATTEMPTS });
+    expect(row.last_error).toContain('refunding');
+    expect((await call(fan, 'GET', `/v1/paid-calls/${id}`)).body.status).toBe('stuck');
+  }, 60_000);
+
+  it('a pile of failing rows cannot block a live call from being ended on time', async () => {
+    await boot(ON);
+    const ctx = buildContext();
+    // 210 refunding rows (more than the old 200-row window), older than everything, each
+    // with a live session whose refund fails.
+    const values: string[] = [];
+    const params: unknown[] = [];
+    const fanId = (await devAuth()).id;
+    const creatorId = (await devAuth()).id;
+    for (let i = 0; i < 210; i++) {
+      const fanW = Keypair.generate().publicKey.toBase58();
+      const creatorW = Keypair.generate().publicKey.toBase58();
+      sessions.set(key({ fan: fanW, creator: creatorW, sessionId: 1n }), {
+        sessionId: 1n,
+        fan: fanW,
+        creator: creatorW,
+        ratePerMin: 500_000n,
+        maxMinutes: 1,
+        deposit: 550_000n,
+        feeBps: 1000,
+        openedAt: 0n,
+        acceptedAt: 0n,
+        settledAt: 0n,
+        status: 0,
+      });
+      const o = params.length;
+      values.push(
+        `($${o + 1}, $${o + 2}, $${o + 3}, $${o + 4}, $${o + 5}, 1, $${o + 6}, 500000, 1, 1000, 550000,
+          'refunding', now(), now() - interval '1 hour', now() - interval '1 day')`,
+      );
+      params.push(uuidv7(), fanId, creatorId, fanW, creatorW, `pda-${uuidv7()}`);
+    }
+    await pool.query(
+      `INSERT INTO paid_calls (call_id, fan_user_id, creator_user_id, fan_wallet, creator_wallet,
+         session_id, session_pda, rate_per_min, max_minutes, fee_bps, deposit, status, pay_by,
+         opened_at, created_at)
+       VALUES ${values.join(',')}`,
+      params,
+    );
+    refundFails = true;
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c, 3);
+    await call(c, 'POST', `/v1/paid-calls/${id}/accept`);
+    await sweepPaidCalls(ctx, new Date(Date.now() + 3 * 60_000 + 1000));
+    expect((await call(fan, 'GET', `/v1/paid-calls/${id}`)).body.status).toBe('settled');
+    // The failing rows were tried in a bounded batch and backed off.
+    const tried = await pool.query(
+      `SELECT count(*)::int AS n FROM paid_calls WHERE fan_user_id = $1 AND attempts = 1`,
+      [fanId],
+    );
+    expect(tried.rows[0].n).toBe(50);
+    // Leave no failing rows behind for later sweeps (shared test database).
+    await pool.query('DELETE FROM paid_calls WHERE fan_user_id = $1', [fanId]);
+  }, 60_000);
+
+  it('a failing settle is retried every pass and never parked (the refund deadline matters)', async () => {
+    await boot(ON);
+    const ctx = buildContext();
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c, 3);
+    await call(c, 'POST', `/v1/paid-calls/${id}/accept`);
+    settleFails = true;
+    expect((await call(fan, 'POST', `/v1/paid-calls/${id}/end`)).body.status).toBe('settling');
+    let t = Date.now() + 30_000;
+    for (let n = 0; n < MAX_SWEEP_ATTEMPTS + 2; n++) {
+      await sweepPaidCalls(ctx, new Date(t));
+      t += 15_000;
+    }
+    const row = (await pool.query('SELECT * FROM paid_calls WHERE call_id = $1', [id])).rows[0];
+    expect(row).toMatchObject({ status: 'settling', next_attempt_at: null });
+    expect(row.attempts).toBe(MAX_SWEEP_ATTEMPTS + 2);
+    settleFails = false;
+    await sweepPaidCalls(ctx, new Date(t));
+    expect((await call(fan, 'GET', `/v1/paid-calls/${id}`)).body.status).toBe('settled');
+  }, 60_000);
+
+  async function stuckRefund(): Promise<{ id: string; fan: Authed; t: number }> {
+    const ctx = buildContext();
+    const c = await creator();
+    const fan = await devAuth();
+    const id = await ringing(fan, c);
+    await call(c, 'POST', `/v1/paid-calls/${id}/decline`);
+    refundFails = true;
+    let t = Date.now() + 130_000;
+    for (let n = 1; n <= MAX_SWEEP_ATTEMPTS; n++) {
+      await sweepPaidCalls(ctx, new Date(t));
+      t += 31 * 60_000;
+    }
+    const row = (
+      await pool.query('SELECT status, stuck_from FROM paid_calls WHERE call_id = $1', [id])
+    ).rows[0];
+    expect(row).toEqual({ status: 'stuck', stuck_from: 'refunding' });
+    return { id, fan, t };
+  }
+
+  it('stuck recovery: a session closed meanwhile is reconciled; ops requeue retries the rest', async () => {
+    await boot(ON);
+    const ctx = buildContext();
+    // 1. The fan refunded on chain themselves: the recheck reconciles it.
+    const a = await stuckRefund();
+    for (const [k, v] of sessions) if (v.fan === a.fan.wallet) sessions.delete(k);
+    closureResult = { kind: 'refunded', signature: 'fanSelfRefund', refundAmount: 2_750_000n };
+    await sweepPaidCalls(ctx, new Date(a.t + 11 * 60_000));
+    expect((await call(a.fan, 'GET', `/v1/paid-calls/${a.id}`)).body).toMatchObject({
+      status: 'refunded',
+      signatures: { refund: 'fanSelfRefund' },
+    });
+    // 2. Still open on chain: requeue puts it back and the next pass refunds it.
+    closureResult = null;
+    const b = await stuckRefund();
+    const out = await requeueStuckCalls(ctx, [b.id]);
+    expect(out).toEqual({ requeued: [b.id], skipped: [] });
+    const back = (
+      await pool.query('SELECT status, attempts FROM paid_calls WHERE call_id = $1', [b.id])
+    ).rows[0];
+    expect(back).toEqual({ status: 'refunding', attempts: 0 });
+    refundFails = false;
+    await sweepPaidCalls(ctx, new Date(b.t));
+    expect((await call(b.fan, 'GET', `/v1/paid-calls/${b.id}`)).body.status).toBe('refunded');
+  }, 90_000);
 });
