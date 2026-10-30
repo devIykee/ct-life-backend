@@ -49,6 +49,7 @@ import {
   type VehicleKind,
 } from '../../../contract/realtime/messages.js';
 import { authenticateJoin } from '../player.js';
+import { createLogger } from '../../shared/logger/logger.js';
 import {
   POS_HASH,
   VEHICLE_EXIT_CHANNEL,
@@ -237,8 +238,12 @@ export class VehiclesRoom extends Room {
 
   private async handleEnter(client: Client, msg: unknown): Promise<void> {
     const parsed = VehicleEnterMessage.safeParse(msg);
-    const reject = (code: string): void =>
+    const reject = (code: string): void => {
+      createLogger()
+        .child({ room: 'vehicles' })
+        .info({ code, vehicleId: parsed.data?.id, kind: parsed.data?.kind }, 'vehicle_enter rejected');
       client.send('rejected', { type: 'vehicle_enter', code, id: parsed.data?.id });
+    };
     if (!parsed.success) return reject('VALIDATION_FAILED');
     const s = this.sessions.get(client.sessionId);
     if (!s) return;
