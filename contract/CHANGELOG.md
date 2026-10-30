@@ -8,6 +8,23 @@ Phase 0 of the unlock plan: the switchboard every hidden feature turns on throug
 - `ids/report_reasons.json`: new reason `voice` (the client sends it for voice-chat reports).
 - Migration number blocks for the parallel unlock packages (README, Database Migrations): A `1700000110000-1700000119000`, B `…120…129`, C `…130…139`, D `…140…149`.
 
+## 2026-10-30 - Report an AI NPC chat reply
+
+Migration 106.
+
+- `POST /llm/chat` now returns `replyId` (the stored interaction id) and `archetype` alongside `response`. The client already reads `replyId` and shows its Report button only when it is set.
+- `POST /reports` accepts `targetType: "npc_reply"` with `targetId` = that `replyId`. Only the player the reply was written for may report it; otherwise `400 VALIDATION_FAILED` with `details.reason: unknown_reply`. The admin queue shows the reply text as the preview, and `remove_content` blanks it.
+
+## 2026-10-30 - Venue voice tokens need presence in the venue
+
+- `POST /rtc/token {kind: "venue", id: <instanceId>}` now mints a token only while the caller has a session in that venue room (the realtime venue room counts sessions in Redis `ctl:venue:members:<instanceId>` on join and leave). Otherwise `403 NOT_IN_VENUE` (`details.instanceId`). The unused `proximity` kind gets the same check. Venue/proximity tokens now last 10 minutes (was 1 h), and when a user's last session leaves the venue room (including a ban kick) the realtime server removes them from `venue:<instanceId>` and `proximity:<instanceId>` in LiveKit. A venue id carrying another kind's prefix is now `400 VALIDATION_FAILED` instead of a 500.
+- New error code `NOT_IN_VENUE` (403).
+
+## 2026-10-30 - Alpha calls use the server price; background sweeps start
+
+- `POST /alpha-calls`: the stored `entryMicros` is now the coin's server price at placement (the body's value must still be positive but is ignored), and the call is refused unless `stopMicros < price < targetMicros`: `400 VALIDATION_FAILED` with `details.reason` `price_outside_band` (plus `details.priceMicros`), `unknown_coin` or `coin_dead`. The response's `entryMicros` is the stored server price.
+- Perp liquidation (5 s), alpha grading (30 s), the payment poller (30 s) and weekly rent (Monday 00:00 UTC) now run in the workers process. Prediction settlement runs only with `PREDICTIONS_SETTLEMENT_ENABLED=1` (off by default; the resolver is still a dev stub).
+
 ## 2026-10-26 - Approved display names (migration 105)
 
 The user approved real, relatable names for everything players see (ct-life-evidence/names/NAMES.md; the client table is `contract/ids/names.json`). Ids, slugs, codes and routes do not change; only display text the server writes or stores.
