@@ -2,21 +2,16 @@
  * Prediction Pit resolution and settlement (unlock D3). Replaces the M3
  * coin-flip `resolveOutcome`.
  *
- * Two steps, so an outcome is decided exactly once from a recorded value:
+ * Two steps, so an outcome is decided exactly once:
  *
  *   1. Resolve: for each market past `resolves_at`, read the source value at
  *      `resolves_at` and store it with the winning outcome in one conditional
  *      UPDATE (`resolved_value_micros`, `resolved_outcome_id`). A market whose
  *      source never answers within the grace period becomes `void`.
- *        - sim:    the coin's minute snapshot at `resolves_at` (written by the
- *                  market worker). Missing snapshot: the live price if still
- *                  within `snapshotGraceSec` of `resolves_at`, else void.
- *                  `yes` iff value > strike.
- *        - event:  how many coins of the set recorded at open reached the
- *                  target stage AFTER the bet window closed, i.e. not already
- *                  in it in `closedStages` (recorded within seconds of
- *                  `closesAt`). `yes` iff > 0. No close record within
- *                  `snapshotGraceSec` of `closesAt`: void.
+ *        - sim, event: a sealed commit-reveal draw (prediction-markets.ts).
+ *                  The secret committed at open gives the outcome; it is
+ *                  published with the result. A secret that does not match
+ *                  its commitment voids the market (refund).
  *        - crypto: the close of the 1-minute candle that ends at `resolves_at`
  *                  from the reference source; void after `resolveGraceSec`.
  *   2. Settle: every open bet on a resolved or void market is claimed with a
@@ -34,12 +29,7 @@
 import { runInTransaction } from '../shared/db/uow.js';
 import type { AppContext } from './context.js';
 import { predictionsConfig } from './prediction-config.js';
-import {
-  MARKET_COLUMNS,
-  eventTargetStages,
-  snapshotClosedEvents,
-  type MarketRow,
-} from './prediction-markets.js';
+import { MARKET_COLUMNS, commitmentOf, drawOutcome, type MarketRow } from './prediction-markets.js';
 import type { ReferencePriceSource } from './price-source.js';
 import { publishToUser } from './realtime-bus.js';
 
@@ -51,49 +41,13 @@ function pastGrace(m: MarketRow, now: Date, graceSec: number): boolean {
   return now.getTime() - m.resolves_at.getTime() > graceSec * 1000;
 }
 
-async function decideSim(ctx: AppContext, m: MarketRow, now: Date): Promise<Decision> {
-  const coinId = m.source.ref;
-  const r = await ctx.db.withConnection((c) =>
-    c.query<{ price_micros: string }>(
-      `SELECT price_micros FROM prediction_price_snapshots
-        WHERE coin_id = $1 AND minute = date_trunc('minute', $2::timestamptz)`,
-      [coinId, m.resolves_at],
-    ),
-  );
-  let value = r.rows[0]?.price_micros;
-  if (value === undefined) {
-    if (pastGrace(m, now, predictionsConfig().snapshotGraceSec)) return 'void';
-    // The worker missed that minute; the live price is still "at resolvesAt".
-    const live = await ctx.db.withConnection((c) =>
-      c.query<{ price_micros: string }>(`SELECT price_micros FROM coins WHERE coin_id = $1`, [
-        coinId,
-      ]),
-    );
-    value = live.rows[0]?.price_micros;
-    if (value === undefined) return 'void';
-  }
-  const v = BigInt(value);
-  return { valueMicros: v, outcomeId: v > BigInt(m.strike_micros ?? '0') ? 'yes' : 'no' };
-}
-
-async function decideEvent(ctx: AppContext, m: MarketRow): Promise<Decision> {
-  const closed = m.basis.closedStages;
-  const closedAt = m.basis.closedAt ? new Date(m.basis.closedAt) : null;
-  const lateMs = closedAt ? closedAt.getTime() - m.closes_at.getTime() : Infinity;
-  // Without a timely close record there is no way to tell pre-close changes apart.
-  if (!closed || lateMs > predictionsConfig().snapshotGraceSec * 1000) return 'void';
-  const targets = eventTargetStages(m.question_key);
-  const r = await ctx.db.withConnection((c) =>
-    c.query<{ coin_id: string; stage: string }>(
-      `SELECT coin_id, stage FROM coins WHERE coin_id = ANY($1::uuid[])`,
-      [m.basis.coinIds ?? []],
-    ),
-  );
-  const changed = r.rows.filter(
-    (row) => targets.includes(row.stage) && !targets.includes(closed[row.coin_id] ?? ''),
-  );
-  const n = BigInt(changed.length);
-  return { valueMicros: n, outcomeId: n > 0n ? 'yes' : 'no' };
+/** A sealed draw (sim, event): reveal the committed secret's outcome. */
+function decideDraw(m: MarketRow): Decision {
+  const seed = m.basis.seed;
+  // A sealed market without its secret cannot be settled honestly: refund.
+  if (!seed || !m.basis.commitment || commitmentOf(seed) !== m.basis.commitment) return 'void';
+  const outcomeId = drawOutcome(seed, m.market_id);
+  return { valueMicros: outcomeId === 'yes' ? 1n : 0n, outcomeId };
 }
 
 async function decideCrypto(
@@ -134,7 +88,6 @@ export async function resolveDueMarkets(
   now: Date,
   source: ReferencePriceSource | null,
 ): Promise<number> {
-  await ctx.db.withConnection((c) => snapshotClosedEvents(c, now));
   const due = await ctx.db.withConnection((c) =>
     c.query<MarketRow>(
       `SELECT ${MARKET_COLUMNS} FROM prediction_markets
@@ -147,13 +100,11 @@ export async function resolveDueMarkets(
   for (const m of due.rows) {
     try {
       const d =
-        m.kind === 'sim'
-          ? await decideSim(ctx, m, now)
-          : m.kind === 'event'
-            ? await decideEvent(ctx, m)
-            : m.kind === 'crypto'
-              ? await decideCrypto(ctx, m, now, source)
-              : 'void';
+        m.kind === 'sim' || m.kind === 'event'
+          ? decideDraw(m)
+          : m.kind === 'crypto'
+            ? await decideCrypto(ctx, m, now, source)
+            : 'void';
       if (d === 'wait') continue;
       const r = await ctx.db.withConnection((c) =>
         d === 'void'

@@ -5,15 +5,13 @@
 -- they relied on) are gone.
 --
 --   prediction_markets  one row per market. `strike_micros` and `basis` are
---                       recorded when the market opens; `resolved_value_micros`
+--                       recorded when the market opens (`basis` holds the sealed
+--                       draw's secret for sim and event markets; only its
+--                       sha256 is public until resolution); `resolved_value_micros`
 --                       and `resolved_outcome_id` are recorded once, when it
 --                       resolves, and settlement only ever reads them.
 --                       Status: open (taking bets until closes_at) -> resolved
 --                       or void (source unavailable: every stake refunded).
---   prediction_price_snapshots
---                       the in-game coin price once a minute, written by the
---                       market worker; the `sim` resolver reads the snapshot of
---                       the market's resolves_at minute.
 --   predictions         gains market_id (null on legacy rows), payout_cents
 --                       (what was credited: 0 on a loss, the stake on a void)
 --                       and resolved_at.
@@ -49,13 +47,6 @@ CREATE TABLE prediction_markets (
 CREATE INDEX prediction_markets_open_idx ON prediction_markets (status, closes_at);
 CREATE INDEX prediction_markets_due_idx ON prediction_markets (status, resolves_at);
 
-CREATE TABLE prediction_price_snapshots (
-  coin_id       uuid NOT NULL,
-  minute        timestamptz NOT NULL,
-  price_micros  bigint NOT NULL CHECK (price_micros >= 0),
-  PRIMARY KEY (coin_id, minute)
-);
-
 ALTER TABLE predictions
   ADD COLUMN market_id     text REFERENCES prediction_markets(market_id),
   ADD COLUMN payout_cents  bigint CHECK (payout_cents IS NULL OR payout_cents >= 0),
@@ -71,5 +62,4 @@ ALTER TABLE predictions
   DROP COLUMN IF EXISTS resolved_at,
   DROP COLUMN IF EXISTS payout_cents,
   DROP COLUMN IF EXISTS market_id;
-DROP TABLE IF EXISTS prediction_price_snapshots;
 DROP TABLE IF EXISTS prediction_markets;

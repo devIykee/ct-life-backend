@@ -5,32 +5,35 @@
  *
  * The market worker (server/workers/prediction-markets.ts) calls
  * `generateMarkets` once a minute. It opens:
- *   - `sim`: "is $TICKER higher at resolvesAt than now?" on the top in-game
- *     coins by 5-minute volume, at the 5m / 15m / 1h horizons. Only house
- *     coins past the bonding curve (`final`/`graduated`, not player-launched):
- *     their price is written only by the market engine's drift. Terminal Cafe
- *     trades execute at the quote without moving it, and the launchpad buy
- *     that does move a price only works on `new` coins. So no player can push
- *     the price a sim market settles on;
- *   - `event`: "will any of these coins rug in the next hour?" over the same
- *     kind of coins (`event_graduate_1h` exists but is off by default: anyone
- *     can push a `new` coin to graduation with launchpad buys). The coin set
- *     and each coin's stage are recorded at open, and each coin's stage again
- *     right after `closesAt` (`closedStages`); only changes after that count;
+ *   - `sim` (`sim_call`): a sealed house call themed on one of the top in-game
+ *     coins, at the 5m / 15m / 1h horizons;
+ *   - `event` (`event_rug_1h`): the same kind of sealed call, off by default
+ *     (its copy would read as a real rug question, which it is not);
  *   - `crypto`: "is BTC (SOL) higher in 24 h than now?" from the configured
  *     reference source, only when PREDICTIONS_CRYPTO_SOURCE is not `off`.
  *
- * Every market records its strike (and, for events, the coin set) at the
- * moment it opens, and takes bets only for a short window after that
- * (`betWindowSec`), so nobody can watch most of the move and then bet on it
- * at fixed odds. New markets of each kind open every `everySec`, so one is
- * usually taking bets. Ids are deterministic per period, so two worker
- * replicas insert the same market once (`ON CONFLICT DO NOTHING`).
+ * Why sim and event markets are sealed draws, not price questions: every house
+ * coin keeps a fixed hidden drift for its whole life (hidden-arc.ts), and that
+ * drift shows in public data (`change5mBps`, the price history). A question
+ * about the coin's own price was therefore close to certain (a security review
+ * measured "yes" winning 100% of the time on graduated coins). Their outcome is
+ * now a commit-reveal draw, the standard "provably fair" pattern:
+ *   - at open the server draws a fresh 32-byte secret and publishes only
+ *     `commitment = sha256(secret)` (`fairness.commitment`);
+ *   - at `resolvesAt` the outcome is `yes` iff the low bit of
+ *     HMAC-SHA256(secret, marketId)[0] is 1, and the secret is published
+ *     (`fairness.seed`), so anyone can check both the hash and the outcome;
+ *   - nothing public (the coin, its trend, other markets) says anything about
+ *     the secret, and the server cannot change the outcome after bets because
+ *     the commitment is already public.
+ * Both outcomes have probability 1/2; at 1.9x the house keeps 5%.
  *
- * The worker also writes the minute price snapshot of every coin with an
- * unresolved `sim` market (the `sim` resolver reads it), marks markets whose
- * window ended `closed`, and prunes old unbet markets and snapshots.
+ * Markets take bets only for a short window after they open (`betWindowSec`).
+ * Ids are deterministic per period, so two worker replicas insert the same
+ * market once (`ON CONFLICT DO NOTHING`). The worker also marks markets whose
+ * window ended `closed` and prunes old unbet markets.
  */
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { ValidationFailedError } from '../shared/domain/errors.js';
@@ -63,6 +66,8 @@ export interface MarketView {
   readonly status: MarketStatus;
   readonly resolvedOutcomeId: string | null;
   readonly source: { type: 'sim' | 'binance' | 'polymarket'; ref: string };
+  /** Commit-reveal proof for sealed draws (sim, event); null for crypto. */
+  readonly fairness: { commitment: string; seed: string | null } | null;
 }
 
 export interface MarketRow {
@@ -81,36 +86,44 @@ export interface MarketRow {
   max_stake_cents: string;
   status: MarketStatus;
   strike_micros: string | null;
-  basis: {
-    coinIds?: string[];
-    symbol?: string;
-    openStages?: Record<string, string>;
-    closedStages?: Record<string, string>;
-    closedAt?: string;
-  };
+  basis: { symbol?: string; seed?: string; commitment?: string };
   resolved_outcome_id: string | null;
 }
-
-/** The stages that make an event question `yes`. */
-export function eventTargetStages(questionKey: string): string[] {
-  return questionKey === 'event_rug_1h' ? ['dead'] : ['final', 'graduated'];
-}
-
-/** Coins whose price only the engine moves: house coins past the curve. */
-const ENGINE_ONLY_COINS = `stage IN ('final', 'graduated') AND NOT player_launched AND creator_id IS NULL`;
 
 export const MARKET_COLUMNS = `market_id, kind, question_key, params, outcomes, horizon, opens_at,
   closes_at, resolves_at, source, payout_bps, min_stake_cents, max_stake_cents, status,
   strike_micros, basis, resolved_outcome_id`;
 
 /**
- * The wire shape of a market row.
+ * The commitment published for a secret.
+ * @param seedHex - The 32-byte secret, hex.
+ * @returns sha256 of the secret bytes, hex.
+ */
+export function commitmentOf(seedHex: string): string {
+  return createHash('sha256').update(Buffer.from(seedHex, 'hex')).digest('hex');
+}
+
+/**
+ * The outcome a revealed secret gives a market (anyone can recompute it).
+ * @param seedHex - The revealed secret, hex.
+ * @param marketId - The market.
+ * @returns `yes` iff the low bit of HMAC-SHA256(secret, marketId)[0] is 1.
+ */
+export function drawOutcome(seedHex: string, marketId: string): 'yes' | 'no' {
+  const mac = createHmac('sha256', Buffer.from(seedHex, 'hex')).update(marketId).digest();
+  return (mac[0]! & 1) === 1 ? 'yes' : 'no';
+}
+
+/**
+ * The wire shape of a market row. The secret is only shown once resolved.
  * @param r - The row.
  * @param now - The current time (an open market past its window reads `closed`).
  * @returns The contract `PredictionMarket`.
  */
 export function toMarketView(r: MarketRow, now: Date): MarketView {
   const status = r.status === 'open' && r.closes_at <= now ? 'closed' : r.status;
+  const sealed = r.basis.commitment !== undefined;
+  const revealed = r.status === 'resolved' || r.status === 'void';
   return {
     marketId: r.market_id,
     kind: r.kind,
@@ -127,6 +140,9 @@ export function toMarketView(r: MarketRow, now: Date): MarketView {
     status,
     resolvedOutcomeId: r.resolved_outcome_id,
     source: r.source,
+    fairness: sealed
+      ? { commitment: r.basis.commitment!, seed: revealed ? (r.basis.seed ?? null) : null }
+      : null,
   };
 }
 
@@ -142,6 +158,12 @@ interface NewMarket {
   source: { type: 'sim' | 'binance'; ref: string };
   strikeMicros: bigint | null;
   basis: Record<string, unknown>;
+}
+
+/** A fresh secret and its commitment for a sealed draw. */
+function sealedDraw(): { seed: string; commitment: string } {
+  const seed = randomBytes(32).toString('hex');
+  return { seed, commitment: commitmentOf(seed) };
 }
 
 async function insertMarket(c: PoolClient, m: NewMarket): Promise<boolean> {
@@ -193,9 +215,10 @@ async function marketExists(c: PoolClient, id: string): Promise<boolean> {
 
 async function openSimMarkets(c: PoolClient, now: Date): Promise<number> {
   const cfg = predictionsConfig();
-  const coins = await c.query<{ coin_id: string; ticker: string; price_micros: string }>(
-    `SELECT coin_id, ticker, price_micros FROM coins
-      WHERE ${ENGINE_ONLY_COINS} AND price_micros > 0
+  // The coin is only the theme of a sealed call; its price decides nothing.
+  const coins = await c.query<{ coin_id: string; ticker: string }>(
+    `SELECT coin_id, ticker FROM coins
+      WHERE stage <> 'dead' AND NOT player_launched AND creator_id IS NULL
       ORDER BY vol_5m_cents DESC, coin_id
       LIMIT $1`,
     [cfg.sim.topCoins],
@@ -206,18 +229,19 @@ async function openSimMarkets(c: PoolClient, now: Date): Promise<number> {
     if (!p) continue;
     const resolvesAt = new Date((p.startSec + HORIZON_SEC[h.horizon]) * 1000);
     for (const coin of coins.rows) {
+      const draw = sealedDraw();
       const ok = await insertMarket(c, {
         id: `sim:${coin.coin_id}:${h.horizon}:${p.startSec}`,
         kind: 'sim',
-        questionKey: 'sim_higher',
-        params: { coinId: coin.coin_id, ticker: coin.ticker, strikeMicros: coin.price_micros },
+        questionKey: 'sim_call',
+        params: { coinId: coin.coin_id, ticker: coin.ticker, commitment: draw.commitment },
         horizon: h.horizon,
         opensAt: now,
         closesAt: p.closesAt,
         resolvesAt,
-        source: { type: 'sim', ref: coin.coin_id },
-        strikeMicros: BigInt(coin.price_micros),
-        basis: { coinId: coin.coin_id },
+        source: { type: 'sim', ref: 'sealed_draw' },
+        strikeMicros: null,
+        basis: draw,
       });
       if (ok) n++;
     }
@@ -231,30 +255,19 @@ async function openEventMarkets(c: PoolClient, now: Date): Promise<number> {
   if (!p) return 0;
   let n = 0;
   for (const q of ev.questions) {
-    // The set the question is about is fixed now: rugs among the engine-only
-    // live coins, graduations among the coins still on the curve.
-    const coins = await c.query<{ coin_id: string; stage: string }>(
-      q === 'event_rug_1h'
-        ? `SELECT coin_id, stage FROM coins WHERE ${ENGINE_ONLY_COINS} ORDER BY coin_id`
-        : `SELECT coin_id, stage FROM coins
-            WHERE stage = 'new' AND NOT player_launched AND creator_id IS NULL ORDER BY coin_id`,
-    );
-    if (coins.rows.length === 0) continue;
+    const draw = sealedDraw();
     const ok = await insertMarket(c, {
       id: `event:${q}:${p.startSec}`,
       kind: 'event',
       questionKey: q,
-      params: { coins: String(coins.rows.length) },
+      params: { commitment: draw.commitment },
       horizon: ev.horizon,
       opensAt: now,
       closesAt: p.closesAt,
       resolvesAt: new Date((p.startSec + HORIZON_SEC[ev.horizon]) * 1000),
-      source: { type: 'sim', ref: 'market' },
+      source: { type: 'sim', ref: 'sealed_draw' },
       strikeMicros: null,
-      basis: {
-        coinIds: coins.rows.map((r) => r.coin_id),
-        openStages: Object.fromEntries(coins.rows.map((r) => [r.coin_id, r.stage])),
-      },
+      basis: draw,
     });
     if (ok) n++;
   }
@@ -275,7 +288,7 @@ async function openCryptoMarkets(
     if (await ctx.db.withConnection((c) => marketExists(c, id))) continue;
     // The strike is the open of the period's first minute, read from the source.
     const candle = await source.minuteCandle(symbol, p.startSec * 1000);
-    if (!candle) continue; // source down: sim and event markets still open
+    if (!candle) continue; // source down: sim markets still open
     const ok = await ctx.db.withConnection((c) =>
       insertMarket(c, {
         id,
@@ -297,32 +310,8 @@ async function openCryptoMarkets(
 }
 
 /**
- * Record each event coin's stage right after the bet window closed
- * (`basis.closedStages`, `basis.closedAt`), once. The resolver counts only
- * changes after this, so a rug that happened while bets were open never
- * decides the market. Called by the generator (every minute) and by the
- * settlement sweep (every 5 s), so it lands within seconds of `closesAt`.
- * @param c - A client.
- * @param now - The current time.
- */
-export async function snapshotClosedEvents(c: Pick<PoolClient, 'query'>, now: Date): Promise<void> {
-  await c.query(
-    `UPDATE prediction_markets m
-        SET basis = m.basis || jsonb_build_object(
-              'closedAt', to_jsonb($1::timestamptz),
-              'closedStages', COALESCE((
-                SELECT jsonb_object_agg(co.coin_id::text, co.stage) FROM coins co
-                 WHERE co.coin_id::text IN (SELECT jsonb_array_elements_text(m.basis->'coinIds'))
-              ), '{}'::jsonb))
-      WHERE m.kind = 'event' AND m.status IN ('open', 'closed') AND m.closes_at <= $1
-        AND NOT (m.basis ? 'closedStages')`,
-    [now],
-  );
-}
-
-/**
- * One generator run: open due markets, snapshot sim prices, close ended
- * windows, prune. Safe to run on several replicas at once.
+ * One generator run: open due markets, close ended windows, prune. Safe to
+ * run on several replicas at once.
  * @param ctx - The app context.
  * @param now - The current time.
  * @param source - The crypto reference source, or null when off.
@@ -336,32 +325,16 @@ export async function generateMarkets(
   const opened = await ctx.db.withConnection(async (c) => {
     const sim = await openSimMarkets(c, now);
     const ev = await openEventMarkets(c, now);
-    // Price of every coin an unresolved sim market is about, this minute.
-    await c.query(
-      `INSERT INTO prediction_price_snapshots (coin_id, minute, price_micros)
-       SELECT co.coin_id, date_trunc('minute', $1::timestamptz), co.price_micros
-         FROM coins co
-        WHERE co.coin_id IN (SELECT (source->>'ref')::uuid FROM prediction_markets
-                              WHERE kind = 'sim' AND status IN ('open', 'closed'))
-       ON CONFLICT (coin_id, minute) DO NOTHING`,
-      [now],
-    );
-    await snapshotClosedEvents(c, now);
     await c.query(
       `UPDATE prediction_markets SET status = 'closed' WHERE status = 'open' AND closes_at <= $1`,
       [now],
-    );
-    const days = predictionsConfig().pruneAfterDays;
-    await c.query(
-      `DELETE FROM prediction_price_snapshots WHERE minute < $1::timestamptz - make_interval(days => $2)`,
-      [now, days],
     );
     await c.query(
       `DELETE FROM prediction_markets m
         WHERE m.status IN ('resolved', 'void')
           AND m.resolves_at < $1::timestamptz - make_interval(days => $2)
           AND NOT EXISTS (SELECT 1 FROM predictions p WHERE p.market_id = m.market_id)`,
-      [now, days],
+      [now, predictionsConfig().pruneAfterDays],
     );
     return sim + ev;
   });

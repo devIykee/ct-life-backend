@@ -39,7 +39,6 @@ function withFlags(settlement: boolean, predict: boolean): AppContext {
 
 afterAll(async () => {
   await pool.query(`DELETE FROM prediction_markets WHERE opens_at = $1`, [now]);
-  await pool.query(`DELETE FROM prediction_price_snapshots WHERE coin_id = $1`, [coin]);
   await pool.query(`DELETE FROM coins WHERE coin_id = $1`, [coin]);
   await pool.end();
 });

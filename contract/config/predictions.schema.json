@@ -11,7 +11,6 @@
     "event",
     "crypto",
     "resolveGraceSec",
-    "snapshotGraceSec",
     "pruneAfterDays"
   ],
   "properties": {
@@ -49,7 +48,8 @@
         "horizon": { "enum": ["1h"] },
         "questions": {
           "type": "array",
-          "items": { "enum": ["event_rug_1h", "event_graduate_1h"] }
+          "maxItems": 1,
+          "items": { "enum": ["event_rug_1h"] }
         }
       }
     },
@@ -67,7 +67,6 @@
       }
     },
     "resolveGraceSec": { "type": "integer", "minimum": 60 },
-    "snapshotGraceSec": { "type": "integer", "minimum": 30 },
     "pruneAfterDays": { "type": "integer", "minimum": 1 }
   }
 }

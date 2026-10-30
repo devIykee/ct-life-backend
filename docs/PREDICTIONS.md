@@ -12,38 +12,39 @@ App capability: `predict` (`GET /v1/config` `capabilities.apps.predict`). Contra
 
 The workers process opens markets once a minute (`server/workers/prediction-markets.ts`):
 
-| Kind     | Question key                           | Opens                                                  | Bet window           | Resolves                             | Recorded at open                                                            | Decided from (at `resolvesAt`)                                  |
-| -------- | -------------------------------------- | ------------------------------------------------------ | -------------------- | ------------------------------------ | --------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `sim`    | `sim_higher`                           | top 3 engine-priced coins by 5-min volume, per horizon | 45 s / 2 min / 5 min | 5m / 15m / 1h after the period start | the coin price (`strikeMicros`)                                             | the coin's minute snapshot; `yes` iff higher than the strike    |
-| `event`  | `event_rug_1h`                         | every 10 min                                           | 5 min                | 1 h after the period start           | the coin set and each coin's stage; each stage again right after `closesAt` | coins that rugged after the close; `yes` iff any                |
-| `crypto` | `crypto_higher_24h` (BTCUSDT, SOLUSDT) | every hour, only with a source                         | 30 min               | 24 h after the hour                  | open of the hour's first 1m candle                                          | close of the 1m candle ending at `resolvesAt`; `yes` iff higher |
+| Kind     | Question key                           | Opens                                               | Bet window           | Resolves                             | Decided by                                                                           |
+| -------- | -------------------------------------- | --------------------------------------------------- | -------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
+| `sim`    | `sim_call`                             | per top-3 house coin (by 5-min volume), per horizon | 45 s / 2 min / 5 min | 5m / 15m / 1h after the period start | a sealed commit-reveal draw (below)                                                  |
+| `event`  | `event_rug_1h`                         | every 10 min, **off by default**                    | 5 min                | 1 h after the period start           | a sealed commit-reveal draw                                                          |
+| `crypto` | `crypto_higher_24h` (BTCUSDT, SOLUSDT) | every hour, only with a source                      | 30 min               | 24 h after the hour                  | close of the 1m candle ending at `resolvesAt` vs the open of the hour's first minute |
 
-**No player can push a settling value.** `sim` and `event` markets use only house coins past the
-bonding curve (`final`/`graduated`, not player-launched). Their price is written only by the market
-engine's drift: Terminal Cafe trades execute at the quote without moving `price_micros`, and the
-launchpad buy (the one player path that writes a price) is refused past the curve. A coin's death is a
-drawdown from its engine-made peak, so players cannot force a rug either. `event_graduate_1h` is
-implemented but off by default: anyone can push a `new` coin to graduation with launchpad buys.
+**Why sim and event markets are sealed draws.** Every house coin keeps a fixed hidden drift for its whole
+life (`server/application/hidden-arc.ts`: moon +60 bps a tick, slow bleed -30, rug -200, sideways 0),
+and the engine applies it every 2 s at every stage. The drift shows in public data (`change5mBps`, the
+price history). An independent security review simulated the exact tick formula: on moon coins "price
+higher at resolution" was true 100% of the time at 5m, 15m and 1h, and 0% on bleeding coins; rug
+questions were just as predictable. No question about a house coin's own price or death is fair at
+fixed odds, so these markets no longer ask one. The coin is only the theme.
 
-**No betting on a known outcome.** An `event` market refuses bets (`409 CONFLICT {reason:
-outcome_decided}`) once a coin of its set has rugged, checked inside the bet transaction with the coin
-rows share-locked. Each coin's stage is recorded again within seconds of `closesAt` (`closedStages`, by
-the 5 s settlement sweep), and only rugs after that count. No timely close record (within
-`snapshotGraceSec`) voids the market.
+**Commit-reveal** (the standard "provably fair" pattern):
 
-**Why the windows are short.** The plan's draft closed bets 60 s before resolution. At fixed odds that
-lets a player watch nearly the whole move and then bet on the side that is already winning, which
-turns the 5% edge into a Cash faucet. Here every market records its strike when it opens and takes
-bets only for its window right after that; a new market of each kind opens every `everySec`, so one
-is usually taking bets.
+1. At open the server draws a fresh 32-byte secret (`crypto.randomBytes`) and publishes only
+   `fairness.commitment = sha256(secret)` (also in `params.commitment`).
+2. At `resolvesAt` the outcome is `yes` iff the low bit of `HMAC-SHA256(secret, marketId)[0]` is 1, and the
+   secret is published as `fairness.seed`.
+3. Anyone can check `sha256(seed) == commitment` and recompute the outcome. Because the commitment is
+   public before any bet, the server cannot pick the outcome after seeing the bets. Nothing public says
+   anything about the secret.
+4. A secret that does not match its commitment voids the market (refund).
 
-**Outcomes are decided once.** The resolver stores `resolved_value_micros` and
-`resolved_outcome_id` with one conditional update. Settlement only reads them, so a later price,
-a retry or a second replica can never change an outcome.
+Both outcomes have probability 1/2, and 1.9x keeps a 5% house edge. A simulation test checks the yes-rate
+is 50% ± 3.5 points over 2,000 markets per horizon and kind, and that a coin that only goes up still
+resolves about half `no`. [Inference] This makes sim markets a house game of chance like the casino's coin
+flip; they sit behind the same 18+ confirmation. `event_rug_1h` is off by default because its copy would
+read as a real rug question.
 
-**Void.** A `sim` market with no snapshot within `snapshotGraceSec` of `resolvesAt`, or a `crypto`
-market whose source has not answered within `resolveGraceSec` (30 min), is `void`: every stake is
-refunded (bet status `cancelled`, `payoutCents` = stake).
+[Unverified] Perps on house coins are probably predictable for the same reason (long the moon coins,
+short the bleeders). They exist on `main`, outside this PR, and deserve their own review.
 
 ## Bets
 
@@ -55,7 +56,6 @@ refunded (bet status `cancelled`, `payoutCents` = stake).
 - 18+ confirmation, the same one the casino and the Factory use (`403 AGE_REQUIRED`).
 - Only while `status` is `open` and before `closesAt` (`409 CONFLICT {reason: market_closed}`).
 - Not in Jail (`403 JAILED`, like the other money routes).
-- Event markets: not after the outcome is decided (`409 CONFLICT {reason: outcome_decided}`).
 - Win: `stake x payoutBps / 10000` (1.9x, ledger `prediction_payout`). Loss: 0. Void: the stake
   (ledger `prediction_refund`). The player gets `prediction_settled`.
 

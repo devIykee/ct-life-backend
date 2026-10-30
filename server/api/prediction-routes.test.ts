@@ -1,7 +1,7 @@
 /**
  * Prediction Pit over HTTP (unlock D3): the market list and bets behind the
  * `predict` app capability, every bet error (unknown_outcome,
- * stake_out_of_range, market_closed, NOT_FOUND, AGE_REQUIRED,
+ * stake_out_of_range, market_closed, NOT_FOUND, AGE_REQUIRED, JAILED,
  * INSUFFICIENT_CASH, daily_stake_cap), idempotent replay, the history shape
  * and the retired POST /v1/predictions (410).
  *
@@ -12,6 +12,7 @@ import { bootApi, errCode, errDetails, type TestApi, type TestPlayer } from './h
 import { createDb } from '../shared/db/pool.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { predictionsConfig } from '../application/prediction-config.js';
+import { commitmentOf } from '../application/prediction-markets.js';
 
 let api: TestApi;
 const markets: string[] = [];
@@ -223,44 +224,28 @@ describe('prediction pit', () => {
     expect(await cashOf(p.sub)).toBe(10_000);
   });
 
-  it('refuses a bet on an event market whose outcome is already decided', async () => {
-    const coin = uuidv7();
+  it('shows a sealed market commitment but never its secret while open', async () => {
     const id = `test:${uuidv7()}`;
     markets.push(id);
-    await db().withConnection(async (c) => {
-      await c.query(
-        `INSERT INTO coins (coin_id, ticker, name, stage, price_micros, mcap_cents, launched_at, hidden_arc, seed)
-         VALUES ($1, $2, 'Decided Test', 'graduated', 1000, 1000, now(), '{}'::jsonb, 1)`,
-        [coin, `DT${coin.slice(-6).toUpperCase()}`],
-      );
-      await c.query(
+    const seed = 'cd'.repeat(32);
+    const commitment = commitmentOf(seed);
+    await db().withConnection((c) =>
+      c.query(
         `INSERT INTO prediction_markets
            (market_id, kind, question_key, params, outcomes, horizon, opens_at, closes_at, resolves_at,
             source, payout_bps, min_stake_cents, max_stake_cents, basis)
-         VALUES ($1, 'event', 'event_rug_1h', '{"coins":"1"}',
+         VALUES ($1, 'sim', 'sim_call', $2,
                  '[{"outcomeId":"yes","labelKey":"predict.outcome.yes"},{"outcomeId":"no","labelKey":"predict.outcome.no"}]',
-                 '1h', now() - interval '1 minute', now() + interval '4 minutes', now() + interval '59 minutes',
-                 '{"type":"sim","ref":"market"}', 19000, 100, 50000, $2)`,
-        [id, JSON.stringify({ coinIds: [coin], openStages: { [coin]: 'graduated' } })],
-      );
-    });
-    const p = await adult(10_000);
-    // Still undecided: the bet goes through.
-    expect(
-      (await api.call(p, 'POST', betUrl(id), { outcomeId: 'no', stakeCents: 100 })).status,
-    ).toBe(201);
-    // The coin rugs while bets are open: "yes" is now a sure thing, so no more bets.
-    await db().withConnection((c) =>
-      c.query(`UPDATE coins SET stage = 'dead' WHERE coin_id = $1`, [coin]),
+                 '5m', now() - interval '10 seconds', now() + interval '30 seconds', now() + interval '4 minutes',
+                 '{"type":"sim","ref":"sealed_draw"}', 19000, 100, 50000, $3)`,
+        [id, JSON.stringify({ ticker: 'TEST', commitment }), JSON.stringify({ seed, commitment })],
+      ),
     );
-    const r = await api.call(p, 'POST', betUrl(id), { outcomeId: 'yes', stakeCents: 100 });
-    expect(r.status).toBe(409);
-    expect(errDetails(r).reason).toBe('outcome_decided');
-    expect(await cashOf(p.sub)).toBe(9_900);
-    await db().withConnection(async (c) => {
-      await c.query(`DELETE FROM predictions WHERE market_id = $1`, [id]);
-      await c.query(`DELETE FROM coins WHERE coin_id = $1`, [coin]);
-    });
+    const p = await api.player();
+    const r = await api.call(p, 'GET', '/v1/predictions/markets');
+    const m = (r.body.markets as Array<Record<string, unknown>>).find((x) => x.marketId === id);
+    expect(m).toMatchObject({ questionKey: 'sim_call', fairness: { commitment, seed: null } });
+    expect(JSON.stringify(r.body)).not.toContain(seed);
   });
 
   it('retires POST /v1/predictions with 410 GONE use_market_bets', async () => {

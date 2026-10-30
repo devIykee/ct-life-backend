@@ -32,14 +32,13 @@ const PredictionsFile = z.object({
   }),
   event: Cadence.extend({
     horizon: z.literal('1h'),
-    questions: z.array(z.enum(['event_rug_1h', 'event_graduate_1h'])),
+    questions: z.array(z.enum(['event_rug_1h'])).max(1),
   }),
   crypto: Cadence.extend({
     symbols: z.array(z.string().regex(/^[A-Z0-9]{5,20}$/)),
     horizonSec: z.number().int().min(3600),
   }),
   resolveGraceSec: z.number().int().min(60),
-  snapshotGraceSec: z.number().int().min(30),
   pruneAfterDays: z.number().int().min(1),
 });
 

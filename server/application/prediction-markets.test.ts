@@ -4,11 +4,10 @@
  * the crypto source is a real local HTTP server speaking the Binance klines
  * shape, so nothing external is called.
  *
- *   - the generator opens sim markets on the top coins with the strike
- *     recorded at open, idempotently, and closes them when the window ends;
- *   - outcomes come from the recorded snapshot at resolvesAt; a win pays
- *     1.9x once, a loss nothing, a void market refunds;
- *   - event markets resolve from the coin set recorded at open;
+ *   - sim (and event) markets are sealed commit-reveal draws: the outcome
+ *     rate is 1/2 per horizon and kind (simulation), ignores the coin's trend,
+ *     the secret stays hidden until resolution and matches its commitment;
+ *     a win pays 1.9x once, a loss nothing, a bad secret voids and refunds;
  *   - crypto markets take the strike and the result from the source, back
  *     off on 429, and void when the source never answers;
  *   - a legacy bet (no market) is refunded.
@@ -20,12 +19,17 @@ import { config as loadDotenv } from 'dotenv';
 import { buildContext, _resetContextForTests, type AppContext } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { generateMarkets } from './prediction-markets.js';
+import { randomBytes } from 'node:crypto';
+import {
+  commitmentOf,
+  drawOutcome,
+  generateMarkets,
+  toMarketView,
+  type MarketRow,
+} from './prediction-markets.js';
 import { resolveDueMarkets, settleBets } from './prediction-resolver.js';
 import { BinanceKlineSource, decimalToMicros } from './price-source.js';
 import { predictionsConfig } from './prediction-config.js';
-import { launchpadBuy } from './launchpad.js';
-import { executeTrade } from './terminal-cafe.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 _resetConfigForTests();
@@ -109,9 +113,6 @@ afterAll(async () => {
     `DELETE FROM prediction_markets WHERE opens_at >= $1 AND opens_at < $2 OR market_id LIKE $3`,
     [at(-60), at(7 * 86_400), like],
   );
-  await pool.query(`DELETE FROM prediction_price_snapshots WHERE coin_id = ANY($1::uuid[])`, [
-    coins,
-  ]);
   await pool.query(`DELETE FROM positions WHERE coin_id = ANY($1::uuid[])`, [coins]);
   await pool.query(`DELETE FROM coins WHERE coin_id = ANY($1::uuid[])`, [coins]);
   await pool.end();
@@ -126,159 +127,115 @@ describe('decimalToMicros', () => {
   });
 });
 
-describe('sim markets', () => {
-  it('opens on the top coins with the strike at open, once, and settles from the snapshot', async () => {
-    const up = await newCoin(1_000_000);
-    const down = await newCoin(2_000_000);
-    const now = at(2); // 2 s into the hour: every horizon's period starts now
-    const opened = await generateMarkets(ctx, now, null);
-    expect(opened).toBeGreaterThanOrEqual(6);
-    expect(await generateMarkets(ctx, at(20), null)).toBe(0); // same periods: idempotent
+describe('sealed draws are fair', () => {
+  it('yes-rate is 50% within 3.5 points over 2000 markets per horizon and kind', () => {
+    // Each market gets a fresh secret, as generateMarkets does. 2000 draws:
+    // sigma = sqrt(0.25 / 2000) = 1.1 points, so 3.5 points is about 3 sigma.
+    const kinds = ['sim:5m', 'sim:15m', 'sim:1h', 'event:event_rug_1h'];
+    for (const kind of kinds) {
+      let yes = 0;
+      const n = 2000;
+      for (let i = 0; i < n; i++) {
+        const seed = randomBytes(32).toString('hex');
+        if (drawOutcome(seed, `${kind}:${HOUR0 / 1000 + i * 60}`) === 'yes') yes++;
+      }
+      expect(Math.abs(yes / n - 0.5), kind).toBeLessThan(0.035);
+    }
+  });
 
+  it('does not follow the coin: a coin that only goes up still resolves about half no', async () => {
+    // 200 markets on one coin whose price rises every minute: the outcome
+    // ignores the trend, so both outcomes stay near half.
+    const up = await newCoin(1_000_000);
+    await pool.query(`UPDATE coins SET vol_5m_cents = vol_5m_cents + 1 WHERE coin_id = $1`, [up]);
+    let yes = 0;
+    const ids: string[] = [];
+    for (let i = 0; i < 200; i++) {
+      const t = 30_000 + i * 60; // a fresh 5m period every minute
+      await pool.query(`UPDATE coins SET price_micros = price_micros + 1000 WHERE coin_id = $1`, [
+        up,
+      ]);
+      await generateMarkets(ctx, at(t + 1), null);
+      ids.push(`sim:${up}:5m:${Math.floor(HOUR0 / 1000) + t}`);
+    }
+    while ((await resolveDueMarkets(ctx, at(30_000 + 200 * 60 + 600), null)) > 0);
+    // Leave nothing due for later tests (the resolver takes 200 at a time).
+    for (const id of ids) expect((await market(id)).status, id).toBe('resolved');
+    for (const id of ids) if ((await market(id)).resolved_outcome_id === 'yes') yes++;
+    expect(yes).toBeGreaterThan(60);
+    expect(yes).toBeLessThan(140);
+  });
+});
+
+describe('sim markets', () => {
+  it('commit at open, reveal at resolution, pay 1.9x once', async () => {
+    const coin = await newCoin(1_000_000);
+    const now = at(2); // 2 s into the hour: every horizon's period starts now
+    expect(await generateMarkets(ctx, now, null)).toBeGreaterThanOrEqual(3);
+    expect(await generateMarkets(ctx, at(20), null)).toBe(0); // same periods: idempotent
     const startSec = Math.floor(HOUR0 / 1000);
-    const upId = `sim:${up}:5m:${startSec}`;
-    const m = await market(upId);
+    const id = `sim:${coin}:5m:${startSec}`;
+    const m = await market(id);
+    const basis = m.basis as { seed: string; commitment: string };
     expect(m).toMatchObject({
       kind: 'sim',
       status: 'open',
-      strike_micros: '1000000',
+      question_key: 'sim_call',
       horizon: '5m',
     });
+    expect(basis.commitment).toBe(commitmentOf(basis.seed));
+    expect(m.params).toMatchObject({ coinId: coin, commitment: basis.commitment });
+    expect(JSON.stringify(m.params)).not.toContain(basis.seed);
     expect((m.closes_at as Date).getTime()).toBe(HOUR0 + 45_000); // 45 s window
     expect((m.resolves_at as Date).getTime()).toBe(HOUR0 + 300_000);
-    expect(m.params).toMatchObject({ coinId: up, strikeMicros: '1000000' });
 
-    // Bets, then prices move; the worker snapshots at the resolves_at minute.
-    const yes = await newUser(0);
-    const no = await newUser(0);
-    const yesBet = await bet(yes, upId, 'yes', 1_000);
-    const noBet = await bet(no, upId, 'no', 1_000);
-    const downId = `sim:${down}:5m:${startSec}`;
-    const downBet = await bet(yes, downId, 'yes', 500);
-    await generateMarkets(ctx, at(90), null);
-    expect((await market(upId)).status).toBe('closed');
-    await pool.query(`UPDATE coins SET price_micros = 1500000 WHERE coin_id = $1`, [up]);
-    await pool.query(`UPDATE coins SET price_micros = 1900000 WHERE coin_id = $1`, [down]);
-    await generateMarkets(ctx, at(300), null);
-    // A later price change must not matter: the value is the recorded one.
-    await pool.query(`UPDATE coins SET price_micros = 1 WHERE coin_id = $1`, [up]);
+    // The public view shows the commitment, never the secret, until resolved.
+    const open = toMarketView(m as unknown as MarketRow, at(10));
+    expect(open.fairness).toEqual({ commitment: basis.commitment, seed: null });
 
-    expect(await resolveDueMarkets(ctx, at(301), null)).toBeGreaterThanOrEqual(2);
-    expect(await market(upId)).toMatchObject({
-      status: 'resolved',
-      resolved_outcome_id: 'yes',
-      resolved_value_micros: '1500000',
+    const expected = drawOutcome(basis.seed, id);
+    const winner = await newUser(0);
+    const loser = await newUser(0);
+    const w = await bet(winner, id, expected, 1_000);
+    const l = await bet(loser, id, expected === 'yes' ? 'no' : 'yes', 1_000);
+    await resolveDueMarkets(ctx, at(301), null);
+    const done = await market(id);
+    expect(done).toMatchObject({ status: 'resolved', resolved_outcome_id: expected });
+    expect(toMarketView(done as unknown as MarketRow, at(302)).fairness).toEqual({
+      commitment: basis.commitment,
+      seed: basis.seed,
     });
-    expect((await market(downId)).resolved_outcome_id).toBe('no');
-
     const [a, b] = await Promise.all([settleBets(ctx, at(302)), settleBets(ctx, at(302))]);
-    expect(a + b).toBeGreaterThanOrEqual(3);
-    expect(await settleBets(ctx, at(303))).toBe(0);
+    expect(a + b).toBeGreaterThanOrEqual(2);
     const rows = await pool.query<{ prediction_id: string; status: string; payout_cents: string }>(
       `SELECT prediction_id, status, payout_cents FROM predictions WHERE prediction_id = ANY($1::uuid[])`,
-      [[yesBet, noBet, downBet]],
+      [[w, l]],
     );
     const by = new Map(rows.rows.map((r) => [r.prediction_id, r]));
-    expect(by.get(yesBet)).toMatchObject({ status: 'won', payout_cents: '1900' });
-    expect(by.get(noBet)).toMatchObject({ status: 'lost', payout_cents: '0' });
-    expect(by.get(downBet)).toMatchObject({ status: 'lost', payout_cents: '0' });
-    expect(await cash(yes)).toBe(1_900); // paid once, despite two concurrent sweeps
-    expect(await cash(no)).toBe(0);
+    expect(by.get(w)).toMatchObject({ status: 'won', payout_cents: '1900' });
+    expect(by.get(l)).toMatchObject({ status: 'lost', payout_cents: '0' });
+    expect(await cash(winner)).toBe(1_900); // paid once, despite two concurrent sweeps
   });
 
-  it('voids a market whose snapshot is missing past the grace, and refunds', async () => {
-    const coin = await newCoin(5_000_000);
-    const startSec = Math.floor(HOUR0 / 1000) + 3600;
+  it('voids (refunds) a sealed market whose secret does not match its commitment', async () => {
+    const coin = await newCoin(1_000_000);
     await generateMarkets(ctx, at(3600 + 1), null);
-    const id = `sim:${coin}:5m:${startSec}`;
+    const id = `sim:${coin}:5m:${Math.floor(HOUR0 / 1000) + 3600}`;
+    await pool.query(
+      `UPDATE prediction_markets SET basis = jsonb_set(basis, '{seed}', to_jsonb($2::text)) WHERE market_id = $1`,
+      [id, 'ab'.repeat(32)],
+    );
     const u = await newUser(0);
     const p = await bet(u, id, 'yes', 700);
-    // No generator run at resolves_at, and the resolver comes too late.
-    const late = at(3600 + 300 + predictionsConfig().snapshotGraceSec + 1);
-    await resolveDueMarkets(ctx, late, null);
+    await resolveDueMarkets(ctx, at(3600 + 301), null);
     expect((await market(id)).status).toBe('void');
-    await settleBets(ctx, late);
+    await settleBets(ctx, at(3600 + 302));
     const r = await pool.query(
       `SELECT status, payout_cents FROM predictions WHERE prediction_id = $1`,
       [p],
     );
     expect(r.rows[0]).toEqual({ status: 'cancelled', payout_cents: '700' });
     expect(await cash(u)).toBe(700);
-  });
-});
-
-describe('event markets', () => {
-  it('resolve from stage changes after the window closed', async () => {
-    const c1 = await newCoin(1_000_000);
-    const base = 7200;
-    await generateMarkets(ctx, at(base + 1), null);
-    const startSec = Math.floor(HOUR0 / 1000) + base;
-    const rug = `event:event_rug_1h:${startSec}`;
-    expect((await market(rug)).basis).toMatchObject({
-      coinIds: expect.arrayContaining([c1]),
-      openStages: expect.objectContaining({ [c1]: 'graduated' }),
-    });
-    // The sweep right after closesAt records each coin's stage.
-    const closesSec = predictionsConfig().event.betWindowSec;
-    await resolveDueMarkets(ctx, at(base + closesSec + 3), null);
-    expect((await market(rug)).basis).toMatchObject({ closedStages: { [c1]: 'graduated' } });
-    await pool.query(`UPDATE coins SET stage = 'dead' WHERE coin_id = $1`, [c1]);
-    await newCoin(1_000_000); // not in the set: does not count
-    await resolveDueMarkets(ctx, at(base + 3600), null);
-    expect(await market(rug)).toMatchObject({ status: 'resolved', resolved_outcome_id: 'yes' });
-  });
-
-  it('a rug before the window closed does not resolve the market', async () => {
-    const base = 14_400;
-    const early = await newCoin(1_000_000);
-    await generateMarkets(ctx, at(base + 1), null);
-    const rug = `event:event_rug_1h:${Math.floor(HOUR0 / 1000) + base}`;
-    expect((await market(rug)).basis).toMatchObject({ coinIds: expect.arrayContaining([early]) });
-    // Rugs while bets are still open (a bettor could have seen it).
-    await pool.query(`UPDATE coins SET stage = 'dead' WHERE coin_id = $1`, [early]);
-    await resolveDueMarkets(ctx, at(base + predictionsConfig().event.betWindowSec + 2), null);
-    await resolveDueMarkets(ctx, at(base + 3600), null);
-    expect(await market(rug)).toMatchObject({ status: 'resolved', resolved_outcome_id: 'no' });
-  });
-
-  it('voids when nothing recorded the close in time', async () => {
-    const base = 18_000;
-    await newCoin(1_000_000);
-    await generateMarkets(ctx, at(base + 1), null);
-    const rug = `event:event_rug_1h:${Math.floor(HOUR0 / 1000) + base}`;
-    await resolveDueMarkets(ctx, at(base + 3600), null); // first sweep only at resolution
-    expect((await market(rug)).status).toBe('void');
-  });
-});
-
-describe('sim markets and player trades', () => {
-  it('use only engine-priced coins, so no trade can push the settling price', async () => {
-    const base = 21_600;
-    const onCurve = await newCoin(1_000_000, 'new'); // launchpad buys move its price
-    const playerCoin = await newCoin(1_000_000, 'graduated', true);
-    const house = await newCoin(1_000_000, 'graduated');
-    await generateMarkets(ctx, at(base + 2), null);
-    const s = Math.floor(HOUR0 / 1000) + base;
-    expect(await market(`sim:${onCurve}:5m:${s}`)).toBeUndefined();
-    expect(await market(`sim:${playerCoin}:5m:${s}`)).toBeUndefined();
-    // A launchpad buy, the only player path that writes a price, is refused past the curve.
-    const trader = await newUser(1_000_000);
-    await expect(launchpadBuy(ctx, trader, house, 50_000, 10_000)).rejects.toMatchObject({
-      details: { reason: 'coin already past launchpad' },
-    });
-    // A Terminal Cafe buy executes at the quote and leaves the price alone.
-    await executeTrade(ctx, {
-      userId: trader,
-      coinId: house,
-      side: 'buy',
-      cashCents: 50_000,
-      maxSlippageBps: 10_000,
-    }).catch(() => undefined);
-    const price = await pool.query<{ price_micros: string }>(
-      `SELECT price_micros FROM coins WHERE coin_id = $1`,
-      [house],
-    );
-    expect(price.rows[0]!.price_micros).toBe('1000000');
   });
 });
 
