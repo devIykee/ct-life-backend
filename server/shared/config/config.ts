@@ -254,7 +254,11 @@ export interface Config {
     readonly countryHeader: string;
     /** Request header carrying the edge's region code (lower-case). */
     readonly regionHeader: string;
-    /** When set, the country header is trusted only if this header equals `edgeAuthSecret`. */
+    /**
+     * The country header is trusted only when this header equals `edgeAuthSecret`; with
+     * either empty nothing is trusted (fail closed). Both are required to boot with
+     * realMarkets on outside APP_ENV=local / NODE_ENV=test.
+     */
     readonly edgeAuthHeader: string;
     readonly edgeAuthSecret: string;
     /** Let requests with no trusted country through. Off: fail closed. */
@@ -429,6 +433,26 @@ export function loadConfig(): Config {
     }
   }
 
+  // Real Markets geo gate: the IP-country header is only trustworthy when the edge also
+  // sends a shared secret (Railway's edge adds no country header, so a client could set its
+  // own). Outside local development and tests, refuse to boot with realMarkets on and no
+  // edge secret, rather than serving a gate every request would fail (or a spoofable one).
+  const capabilities = parseCapabilitiesOn(process.env.CAPABILITIES_ON);
+  if (
+    capabilities.on.has('realMarkets') &&
+    appEnv !== 'local' &&
+    nodeEnv !== 'test' &&
+    (optionalEnv('REAL_MARKETS_EDGE_AUTH_HEADER', '') === '' ||
+      optionalEnv('REAL_MARKETS_EDGE_AUTH_SECRET', '') === '')
+  ) {
+    throw new Error(
+      'FATAL: CAPABILITIES_ON has realMarkets but REAL_MARKETS_EDGE_AUTH_HEADER and ' +
+        'REAL_MARKETS_EDGE_AUTH_SECRET are not both set. The geo gate trusts the IP-country ' +
+        'header only with the edge secret (docs/REAL-MARKETS.md, Edge). Set both, or remove ' +
+        'realMarkets from CAPABILITIES_ON.',
+    );
+  }
+
   const cfg: Config = {
     likeness: {
       priceUsdcCents: asInt('LIKENESS_PRICE_USDC_CENTS', 300),
@@ -529,7 +553,7 @@ export function loadConfig(): Config {
     // LIVE_PHASE 1 to 6, default 1 (nothing changes until it is set). Anything else fails the load.
     livePhase: asBoundedInt('LIVE_PHASE', 1, 1, 6),
 
-    capabilities: parseCapabilitiesOn(process.env.CAPABILITIES_ON),
+    capabilities,
 
     helius: {
       apiKey: requireEnv('HELIUS_API_KEY', 'Helius API key'),

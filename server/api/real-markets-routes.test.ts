@@ -187,7 +187,14 @@ interface Player {
   readonly wallet: string;
 }
 
-const NG = { 'cf-ipcountry': 'NG' };
+/** The edge (Cloudflare) adds the country AND the shared secret; only then is the country trusted. */
+const EDGE_SECRET = 'edge-secret-123';
+const EDGE_ENV = {
+  REAL_MARKETS_EDGE_AUTH_HEADER: 'X-Edge-Auth',
+  REAL_MARKETS_EDGE_AUTH_SECRET: EDGE_SECRET,
+};
+const EDGE = { 'x-edge-auth': EDGE_SECRET };
+const NG = { 'cf-ipcountry': 'NG', ...EDGE };
 let api: TestApi | null = null;
 let panta: FakeVenue;
 let jupiter: FakeVenue;
@@ -198,7 +205,7 @@ async function boot(
   env: Record<string, string | undefined> = {},
 ): Promise<TestApi> {
   if (api) await api.stop();
-  api = await bootApi(capabilities, env);
+  api = await bootApi(capabilities, { ...EDGE_ENV, ...env });
   return api;
 }
 
@@ -350,12 +357,14 @@ describe('gate', () => {
   it('refuses blocked, unknown and Tor locations with 451', async () => {
     const p = await player();
     for (const [h, reason] of [
-      [{ 'cf-ipcountry': 'US' }, 'blocked_country'],
-      [{ 'cf-ipcountry': 'KR' }, 'blocked_country'],
+      [{ ...EDGE, 'cf-ipcountry': 'US' }, 'blocked_country'],
+      [{ ...EDGE, 'cf-ipcountry': 'KR' }, 'blocked_country'],
       [{}, 'unknown_country'],
-      [{ 'cf-ipcountry': 'XX' }, 'unknown_country'],
-      [{ 'cf-ipcountry': 'T1' }, 'unknown_country'],
-      [{ 'cf-ipcountry': 'UA', 'cf-region-code': '43' }, 'blocked_region'],
+      [EDGE, 'unknown_country'],
+      [{ 'cf-ipcountry': 'NG' }, 'unknown_country'], // spoofed: no edge secret
+      [{ ...EDGE, 'cf-ipcountry': 'XX' }, 'unknown_country'],
+      [{ ...EDGE, 'cf-ipcountry': 'T1' }, 'unknown_country'],
+      [{ ...EDGE, 'cf-ipcountry': 'UA', 'cf-region-code': '43' }, 'blocked_region'],
     ] as const) {
       const r = await call(p, 'GET', '/v1/real-markets/markets', undefined, h);
       expect(r.status, JSON.stringify(h)).toBe(451);
@@ -368,34 +377,49 @@ describe('gate', () => {
     await boot('realMarkets', { REAL_MARKETS_BLOCKED_COUNTRIES: 'gb' });
     const p = await player();
     const gb = await call(p, 'GET', '/v1/real-markets/markets', undefined, {
+      ...EDGE,
       'cf-ipcountry': 'GB',
     });
     expect(gb.status).toBe(451);
     const us = await call(p, 'GET', '/v1/real-markets/markets', undefined, {
+      ...EDGE,
       'cf-ipcountry': 'US',
     });
     expect(us.status).toBe(451); // the seed list still applies
   });
 
-  it('trusts the country header only with the edge secret when one is configured', async () => {
-    await boot('realMarkets', {
-      REAL_MARKETS_EDGE_AUTH_HEADER: 'X-Edge-Auth',
-      REAL_MARKETS_EDGE_AUTH_SECRET: 'edge-secret-123',
-    });
+  it('refuses a spoofed country header without the edge secret, accepts it with the secret', async () => {
     const p = await player();
-    const spoofed = await call(p, 'GET', '/v1/real-markets/markets');
+    const spoofed = await call(p, 'GET', '/v1/real-markets/markets', undefined, {
+      'cf-ipcountry': 'NG',
+    });
     expect(spoofed.status).toBe(451);
-    expect(details(spoofed).reason).toBe('unknown_country');
+    expect(details(spoofed)).toMatchObject({ country: null, reason: 'unknown_country' });
     const wrong = await call(p, 'GET', '/v1/real-markets/markets', undefined, {
-      ...NG,
+      'cf-ipcountry': 'NG',
       'x-edge-auth': 'nope',
     });
     expect(wrong.status).toBe(451);
     const ok = await call(p, 'GET', '/v1/real-markets/markets', undefined, {
-      ...NG,
-      'x-edge-auth': 'edge-secret-123',
+      'cf-ipcountry': 'NG',
+      'x-edge-auth': EDGE_SECRET,
     });
     expect(ok.status).toBe(200);
+  });
+
+  it('trusts no country header at all when no edge secret is configured (fail closed)', async () => {
+    await boot('realMarkets', {
+      REAL_MARKETS_EDGE_AUTH_HEADER: '',
+      REAL_MARKETS_EDGE_AUTH_SECRET: '',
+    });
+    const p = await player();
+    for (const h of [{ 'cf-ipcountry': 'NG' }, NG]) {
+      const r = await call(p, 'GET', '/v1/real-markets/markets', undefined, h);
+      expect(r.status).toBe(451);
+      expect(details(r).reason).toBe('unknown_country');
+    }
+    const cfg = await call(p, 'GET', '/v1/real-markets/config', undefined, NG);
+    expect(cfg.body.reasons).toContain('unknown_country');
   });
 
   it('requires the 18+ confirmation', async () => {

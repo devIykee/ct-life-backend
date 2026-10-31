@@ -384,7 +384,7 @@ ct-life-backend/
 | `REAL_MARKETS_BLOCKED_REGIONS`       | ISO 3166-2 regions added to the built-in sanctioned-region list                                                  |
 | `REAL_MARKETS_COUNTRY_HEADER`        | Request header with the edge's IP country (default `cf-ipcountry`)                                               |
 | `REAL_MARKETS_REGION_HEADER`         | Request header with the edge's region code (default `cf-region-code`)                                            |
-| `REAL_MARKETS_EDGE_AUTH_HEADER`      | When set with the secret, the country header is trusted only if the edge sent this header                        |
+| `REAL_MARKETS_EDGE_AUTH_HEADER`      | Header the edge adds with the secret; the country header is trusted only with it. Required with `realMarkets` on |
 | `REAL_MARKETS_EDGE_AUTH_SECRET`      | Shared secret the edge sends in `REAL_MARKETS_EDGE_AUTH_HEADER`                                                  |
 | `REAL_MARKETS_ALLOW_UNKNOWN_COUNTRY` | `true` lets requests with no trusted country through (default `false`: fail closed)                              |
 | `REAL_MARKETS_MAX_ORDER_USDC`        | Largest order the server builds, whole USDC (default 100)                                                        |

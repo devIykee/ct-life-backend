@@ -112,6 +112,55 @@ describe('real markets mainnet isolation', () => {
     }
   });
 
+  it('refuses to boot with realMarkets on and no edge secret outside local/test', () => {
+    const keys = [
+      'APP_ENV',
+      'NODE_ENV',
+      'ENABLE_DEV_AUTH',
+      'CAPABILITIES_ON',
+      'REAL_MARKETS_EDGE_AUTH_HEADER',
+      'REAL_MARKETS_EDGE_AUTH_SECRET',
+    ];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    const set = (vars: Record<string, string | undefined>): void => {
+      for (const [k, v] of Object.entries(vars)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+      _resetConfigForTests();
+    };
+    try {
+      set({
+        APP_ENV: 'staging',
+        NODE_ENV: 'development',
+        ENABLE_DEV_AUTH: 'false',
+        CAPABILITIES_ON: 'realMarkets',
+        REAL_MARKETS_EDGE_AUTH_HEADER: undefined,
+        REAL_MARKETS_EDGE_AUTH_SECRET: undefined,
+      });
+      expect(() => loadConfig()).toThrow(/REAL_MARKETS_EDGE_AUTH_SECRET/);
+      set({
+        REAL_MARKETS_EDGE_AUTH_HEADER: 'x-edge-auth',
+        REAL_MARKETS_EDGE_AUTH_SECRET: undefined,
+      });
+      expect(() => loadConfig()).toThrow(/REAL_MARKETS_EDGE_AUTH_SECRET/);
+      set({ REAL_MARKETS_EDGE_AUTH_SECRET: 's3cret' });
+      expect(loadConfig().realMarkets.edgeAuthHeader).toBe('x-edge-auth');
+      // Capability off: no edge secret needed.
+      set({
+        CAPABILITIES_ON: '',
+        REAL_MARKETS_EDGE_AUTH_HEADER: undefined,
+        REAL_MARKETS_EDGE_AUTH_SECRET: undefined,
+      });
+      expect(() => loadConfig()).not.toThrow();
+      // Local development may run without it (every request then reads as unknown_country).
+      set({ APP_ENV: 'local', CAPABILITIES_ON: 'realMarkets' });
+      expect(() => loadConfig()).not.toThrow();
+    } finally {
+      set(saved);
+    }
+  });
+
   it('refuses an RPC that is not mainnet', async () => {
     rpc.genesis = DEVNET_GENESIS_HASH;
     await expect(assertMainnetRpc({ config: loadConfig() })).rejects.toMatchObject({

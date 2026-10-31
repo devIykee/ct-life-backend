@@ -63,21 +63,54 @@ unexpected_signer | already_signed}`) any transaction whose fee payer is not the
 1. **Location** → 451 `REAL_MARKETS_GEO_BLOCKED {country, reason}`.
    - The country comes from a request header set by the edge. The default is Cloudflare's
      `CF-IPCountry`, plus `cf-region-code` for regions.
-   - **The repo had no IP-country source before this PR.** [Unverified] Railway's edge adds no
-     country header: Railway's community forum has an open feature request for one. So the
-     API must be proxied through Cloudflare with **IP geolocation** or the **Add visitor
-     location headers** managed transform turned on. Until then every request reads as
-     `unknown_country` and is refused (fail closed).
+   - **Fail closed: the country header is trusted only together with the edge secret.** A
+     request counts its country only if it also carries `REAL_MARKETS_EDGE_AUTH_HEADER` with
+     the value `REAL_MARKETS_EDGE_AUTH_SECRET` (timing-safe compare). With no secret
+     configured, or a request without the right one, the country is ignored and the request
+     reads as `unknown_country` (451). A player who sends their own `CF-IPCountry` straight
+     to the Railway origin gets nothing.
+   - **Boot guard.** With `realMarkets` in `CAPABILITIES_ON`, the API refuses to start unless
+     both edge variables are set. Only `APP_ENV=local` and `NODE_ENV=test` are exempt; there,
+     every request without the secret reads as `unknown_country`, or set
+     `REAL_MARKETS_ALLOW_UNKNOWN_COUNTRY=true` for local UI work.
    - Cloudflare sends `XX` for "no country data" and `T1` for Tor. Both are refused.
-   - **Spoofing.** If the Railway origin is reachable directly, a client could send its own
-     `CF-IPCountry`. Set `REAL_MARKETS_EDGE_AUTH_HEADER` and `REAL_MARKETS_EDGE_AUTH_SECRET`,
-     and have a Cloudflare Transform Rule add that header. The country is then trusted only
-     when the secret matches (timing-safe compare).
    - IP geolocation is evaded by VPNs. It is a required control, not a guarantee.
-2. **18+** → 403 `AGE_REQUIRED {feature: realMarkets}`. This uses the character's age
-   confirmation (`characters.age_confirmed_at`, `GET /me` `ageConfirmed`).
-3. **Wallet** → 403 `FORBIDDEN {reason: wallet_required}` when the account has no valid
-   linked wallet.
+
+### Edge: where the trusted country comes from
+
+**Railway provides no country header.**
+
+- Railway's public-networking docs list no geolocation header (read 2026-10-31).
+- The community request for one ("Add request country header for incoming traffic", which
+  proposes `x-railway-ip-country`) has been `under_review` since 2026-03-09, with no staff
+  reply.
+- Railway's `X-Forwarded-For` / `X-Real-IP` carry the client IP, not a country.
+- Before this PR the backend had no IP-country source at all.
+
+**The free option: a Cloudflare proxy in front of the API.**
+
+1. Add the API's domain to Cloudflare (Free plan) and proxy it (orange cloud) to the Railway
+   service's domain.
+2. Turn on **Network → IP Geolocation**. It is available on all plans, Free included, and
+   adds `CF-IPCountry`. Optionally turn on the **Add visitor location headers** managed
+   transform for `cf-region-code`.
+3. Add one **Transform Rule → Modify request header → Set static** for all requests to the
+   API host: header `x-edge-auth` (any name not starting with `cf-` / `x-cf-`, which
+   Cloudflare reserves) set to a long random secret. The Free plan allows 10 Transform Rules.
+4. On Railway set `REAL_MARKETS_EDGE_AUTH_HEADER=x-edge-auth` and
+   `REAL_MARKETS_EDGE_AUTH_SECRET=<the same secret>`. Point the client's API base URL at the
+   Cloudflare-proxied hostname.
+5. Check it:
+   - a request through Cloudflare from an allowed country gives `GET
+/v1/real-markets/config` → `country` set;
+   - a request straight to the `*.up.railway.app` URL gives `unknown_country`.
+
+[Unverified] that Cloudflare overwrites a `CF-IPCountry` value a client sends through the
+proxy. The secret already stops direct-to-origin spoofing; confirm this with one request
+during rollout. Rotate the secret by updating the Transform Rule and the Railway variable
+together. 2. **18+** → 403 `AGE_REQUIRED {feature: realMarkets}`. This uses the character's age
+confirmation (`characters.age_confirmed_at`, `GET /me` `ageConfirmed`). 3. **Wallet** → 403 `FORBIDDEN {reason: wallet_required}` when the account has no valid
+linked wallet.
 
 `GET /real-markets/config` runs the same checks but **reports** them in `reasons`. The client
 uses it to hide the terminal entirely when the player is not eligible.
@@ -241,14 +274,17 @@ Every step before "flip" is a **blocker**. Ordered phases, each a submittable bu
      stance, audits and rate limits.
    - For Jupiter: create a Developer Platform key and get the written OK from
      `legal@jup.ag`.
-3. **Edge.** Put the API behind Cloudflare with visitor location headers on. Add the edge
-   secret header with a Transform Rule. Confirm with real requests that `CF-IPCountry`
-   arrives, and check what `cf-region-code` looks like for a Ukrainian IP.
+3. **Edge (required: the API will not boot with `realMarkets` on without it).** Set up the free
+   Cloudflare proxy, IP Geolocation and the secret-header Transform Rule as described in
+   [Edge](#edge-where-the-trusted-country-comes-from). Confirm with real requests that a
+   proxied request gets a country and a direct-to-Railway request gets `unknown_country`.
+   Check what `cf-region-code` looks like for a Ukrainian IP.
 4. **Env (Iyke, on Railway).**
    - `PANTA_API_KEY` (secret).
    - `REAL_MARKETS_RPC_URL_MAINNET` (a paid mainnet RPC is recommended; the public one is
      rate-limited).
-   - `REAL_MARKETS_EDGE_AUTH_HEADER` and `REAL_MARKETS_EDGE_AUTH_SECRET`.
+   - `REAL_MARKETS_EDGE_AUTH_HEADER` and `REAL_MARKETS_EDGE_AUTH_SECRET` (both required to
+     boot with `realMarkets` on).
    - `REAL_MARKETS_BLOCKED_COUNTRIES` (the lawyer's additions).
    - Optionally `REAL_MARKETS_MAX_ORDER_USDC` and `REAL_MARKETS_DAILY_ORDER_CAP`.
    - Later: `JUPITER_API_KEY`.
@@ -265,8 +301,8 @@ answers 503 at once. Positions stay in players' wallets at the venue.
 
 ## Unverified and open items
 
-- [Unverified] Railway adds no geo header. This comes from a community feature request, not
-  documentation.
+- [Unverified] That Cloudflare overwrites a client-sent `CF-IPCountry` on proxied requests (the
+  edge secret already blocks direct-to-origin spoofing).
 - [Unverified] `cf-region-code` format for the sanctioned-region list.
 - [Unverified] Deep links to a market page on panta.market or jup.ag. The API returns no URL,
   so the client links to the provider's home page.

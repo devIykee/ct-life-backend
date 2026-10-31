@@ -3,10 +3,12 @@
  *
  *   1. Location. The edge's IP-country header (Cloudflare `CF-IPCountry` by default) must
  *      name a country that is not on the deny-list (built-in provider restrictions plus
- *      REAL_MARKETS_BLOCKED_COUNTRIES). No trusted country fails closed. When
- *      REAL_MARKETS_EDGE_AUTH_HEADER is set, the country header counts only if the edge
- *      also sent that header with the shared secret, so a client talking to the origin
- *      directly cannot claim a country. -> 451 REAL_MARKETS_GEO_BLOCKED
+ *      REAL_MARKETS_BLOCKED_COUNTRIES). No trusted country fails closed. The country
+ *      header is trusted ONLY when the request also carries REAL_MARKETS_EDGE_AUTH_HEADER
+ *      with REAL_MARKETS_EDGE_AUTH_SECRET (added by the edge, e.g. a Cloudflare Transform
+ *      Rule). Without a configured secret nothing is trusted, so a client talking to the
+ *      origin directly cannot claim a country. Railway's edge adds no country header.
+ *      -> 451 REAL_MARKETS_GEO_BLOCKED
  *   2. 18+. The character's age confirmation (`characters.age_confirmed_at`, `GET /me`
  *      `ageConfirmed`). -> 403 AGE_REQUIRED
  *   3. Wallet. Orders and positions use only the SIWS wallet the player signed in with
@@ -57,10 +59,14 @@ function safeEqual(a: string, b: string): boolean {
  */
 export function readGeo(config: Pick<Config, 'realMarkets'>, headers: Headers): RequestGeo {
   const rm = config.realMarkets;
-  if (rm.edgeAuthHeader !== '') {
-    const sent = header(headers, rm.edgeAuthHeader);
-    const ok = rm.edgeAuthSecret !== '' && sent !== null && safeEqual(sent, rm.edgeAuthSecret);
-    if (!ok) return { country: null, region: null, trusted: false };
+  // Fail closed: with no edge secret configured, or a request without the right one, the
+  // country/region headers are client-controlled and are ignored.
+  if (rm.edgeAuthHeader === '' || rm.edgeAuthSecret === '') {
+    return { country: null, region: null, trusted: false };
+  }
+  const sent = header(headers, rm.edgeAuthHeader);
+  if (sent === null || !safeEqual(sent, rm.edgeAuthSecret)) {
+    return { country: null, region: null, trusted: false };
   }
   return {
     country: header(headers, rm.countryHeader),
