@@ -373,6 +373,22 @@ export class NotInVenueError extends DomainError {
   }
 }
 
+export class NotInAreaError extends DomainError {
+  readonly code = 'NOT_IN_AREA';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You are not on that street. Walk there before connecting to its voice.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class VoiceMinutesExhaustedError extends DomainError {
+  readonly code = 'VOICE_MINUTES_EXHAUSTED';
+  constructor(details: Record<string, unknown> = {}) {
+    super("Today's street voice time is used up. It resets at midnight UTC.", details);
+    this.httpStatus = 429;
+  }
+}
+
 export class SpotTakenError extends DomainError {
   readonly code = 'SPOT_TAKEN';
   constructor(details: Record<string, unknown> = {}) {

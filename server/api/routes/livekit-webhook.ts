@@ -6,7 +6,9 @@
  * Verifies the event with livekit-server-sdk's WebhookReceiver (JWT signature and the
  * body hash, so the raw body is kept exactly), records it, and applies the voice-room
  * bookkeeping (application/livekit-webhook.ts). For a paid call, a participant leaving
- * or the room finishing ends the call and settles it, timed by the server.
+ * or the room finishing ends the call and settles it, timed by the server. Joins and
+ * leaves on street voice rooms (`proximity:*`) count against the daily street voice
+ * minutes (application/street-voice.ts).
  *
  * LiveKit posts `Content-Type: application/webhook+json`; this file registers a raw
  * string parser for that type only.
@@ -16,6 +18,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { applyLiveKitEvent, verifyLiveKitWebhook } from '../../application/livekit-webhook.js';
 import { endPaidCallFromRoom } from '../../application/paid-calls.js';
 import { isCapabilityOn } from '../../application/capabilities.js';
+import { recordStreetVoiceEvent } from '../../application/street-voice.js';
 
 const PAID_ROOM = /^paid_call:([0-9a-f-]{36})$/;
 
@@ -42,6 +45,7 @@ export function registerLiveKitWebhookRoutes(app: FastifyInstance): void {
     ) {
       await endPaidCallFromRoom(req.ctx, paid[1]!, event.event);
     }
+    await recordStreetVoiceEvent(req.ctx, key, event);
     return reply.send(result);
   });
 }

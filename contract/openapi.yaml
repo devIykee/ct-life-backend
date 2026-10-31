@@ -4241,6 +4241,18 @@ paths:
         to connect; LiveKit refreshes a connected participant's token itself).
         Leaving the venue room with your last session disconnects you from its
         LiveKit room; ask for a new token on the next visit.
+        For `proximity` (street voice on CT Island, capability `streetVoice`,
+        otherwise 503 `CAPABILITY_OFF`), `id` is `<district>:<instanceId>`: the
+        street room's district and its instanceId from `welcome`. The LiveKit room
+        is `proximity:<district>:<instanceId>`, one per street instance. A token
+        is minted only while the caller has a session in that street room
+        (otherwise 403 `NOT_IN_AREA`) and has street voice minutes left today
+        (otherwise 429 `VOICE_MINUTES_EXHAUSTED`, `details.scope` `player` or
+        `total`, `details.resetsAt`). Street tokens last 10 minutes; leaving the
+        street room with your last session, or using up the daily minutes while
+        connected, disconnects you from the LiveKit room. There is no
+        cross-district voice: next to a district line you hear only the street
+        room you are in (docs/STREET-VOICE.md).
       x-phase: 3
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -4252,7 +4264,7 @@ paths:
               type: object
               required: [kind, id]
               properties:
-                kind: { type: string, enum: [venue, space, call] }
+                kind: { type: string, enum: [venue, space, call, proximity] }
                 id: { type: string }
       responses:
         '200':
@@ -4271,8 +4283,28 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: >-
-            Not in that venue instance (`NOT_IN_VENUE`), or not a participant of the Space or
-            call (`FORBIDDEN`)
+            Not in that venue instance (`NOT_IN_VENUE`), not in that street instance
+            (`NOT_IN_AREA`), or not a participant of the Space or call (`FORBIDDEN`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                venue:
+                  value:
+                    error:
+                      code: NOT_IN_VENUE
+                      message: 'You are not in that venue. Join it before connecting to its voice.'
+                      details: { instanceId: 'a1B2c3D4e' }
+                street:
+                  value:
+                    error:
+                      code: NOT_IN_AREA
+                      message: 'You are not on that street. Walk there before connecting to its voice.'
+                      details: { district: timeline, instanceId: 'f5G6h7J8k' }
+        '429':
+          description: >-
+            Street voice only: the caller (`scope: player`) or the whole deployment (`scope: total`)
+            has used today's street voice minutes (`VOICE_MINUTES_EXHAUSTED`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -4280,11 +4312,13 @@ paths:
                 {
                   error:
                     {
-                      code: NOT_IN_VENUE,
-                      message: 'You are not in that venue. Join it before connecting to its voice.',
-                      details: { instanceId: 'a1B2c3D4e' },
+                      code: VOICE_MINUTES_EXHAUSTED,
+                      message: "Today's street voice time is used up. It resets at midnight UTC.",
+                      details:
+                        { scope: player, capMinutes: 20, resetsAt: '2026-11-02T00:00:00.000Z' },
                     },
                 }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /spaces:
     get:
@@ -11303,6 +11337,7 @@ components:
                   devnetDrip,
                   realMarkets,
                   realMarketsJupiter,
+                  streetVoice,
                 ]
               properties:
                 beefVoting: { type: boolean }
@@ -11330,6 +11365,11 @@ components:
                 realMarketsJupiter:
                   type: boolean
                   description: Adds Jupiter's Prediction Market API to Real Markets (`provider=jupiter`).
+                streetVoice:
+                  type: boolean
+                  description: >-
+                    Street proximity voice on CT Island (`POST /rtc/token {kind: proximity}` for
+                    `proximity:<district>:<instanceId>`).
         competitionCapabilities:
           type: object
           description: >-

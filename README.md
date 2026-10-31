@@ -375,6 +375,13 @@ ct-life-backend/
 | `TEST_SCHEMA`                     | Schema name used by tests                                                                                                                                                                        |
 | `RUN_MAINNET_TESTS`               | `1` runs the read-only mainnet tests (off by default)                                                                                                                                            |
 
+#### Street voice (docs/STREET-VOICE.md)
+
+| Variable                                | Purpose                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------- |
+| `STREET_VOICE_DAILY_MINUTES_PER_PLAYER` | Street voice minutes per player per UTC day (default 20, `0` = no cap)        |
+| `STREET_VOICE_DAILY_MINUTES_TOTAL`      | Street voice minutes for the deployment per UTC day (default 100, `0` = none) |
+
 #### Real Markets (docs/REAL-MARKETS.md)
 
 | Variable                             | Purpose                                                                                                          |

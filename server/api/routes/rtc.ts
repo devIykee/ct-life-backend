@@ -5,9 +5,12 @@
  *
  * Returns a LiveKit token for proximity voice, Space audio, or call media.
  * B3: Validates user is participant of the room before minting token.
- * Venue (and the legacy `proximity` kind): only for a user who is in that
- * venue instance right now, else 403 NOT_IN_VENUE; the token lasts 10
- * minutes (see application/venue-voice.ts).
+ * Venue: only for a user who is in that venue instance right now, else 403
+ * NOT_IN_VENUE; the token lasts 10 minutes (see application/venue-voice.ts).
+ * Proximity (street voice, capability `streetVoice`): `id` is
+ * `<district>:<instanceId>`; only for a user in that street instance, else
+ * 403 NOT_IN_AREA, and only with street voice minutes left today, else 429
+ * VOICE_MINUTES_EXHAUSTED; 10 minutes (see application/street-voice.ts).
  * Publish permission is always server-derived; client flags are ignored.
  */
 import type { FastifyInstance } from 'fastify';
@@ -18,6 +21,14 @@ import type { RtcKind } from '../../application/livekit.js';
 import { SPACE_TOKEN_TTL_SEC, spaceRtcAccess } from '../../application/spaces.js';
 import { canonicalRoomName } from '../../shared/livekit/token.js';
 import { assertInVenueInstance, VENUE_TOKEN_TTL_SEC } from '../../application/venue-voice.js';
+import { assertCapabilityOn } from '../../application/capabilities.js';
+import {
+  assertInStreetInstance,
+  assertStreetVoiceMinutesLeft,
+  parseStreetVoiceId,
+  STREET_TOKEN_TTL_SEC,
+  streetVoiceId,
+} from '../../application/street-voice.js';
 
 // The contract body is `{kind, id}`. `roomId` is accepted as a
 // deprecated alias so callers written against the old server keep
@@ -61,13 +72,24 @@ export function registerRtcRoutes(app: FastifyInstance): void {
       ttlSec = SPACE_TOKEN_TTL_SEC;
     }
 
-    // Venue voice is for people in that venue instance only. `proximity` is
-    // an older name for the same room kind and gets the same check.
-    if (kind === 'venue' || kind === 'proximity') {
+    // Venue voice is for people in that venue instance only.
+    if (kind === 'venue') {
       const roomName = canonicalRoomName(kind, id);
       if (!roomName) throw new ValidationFailedError({ reason: 'invalid_room_id', kind });
       await assertInVenueInstance(req.ctx, roomName.slice(kind.length + 1), userId);
       ttlSec = VENUE_TOKEN_TTL_SEC;
+    }
+
+    // Street voice: one room per street instance, for people in it, within
+    // today's minutes. Dark until `streetVoice` is on.
+    if (kind === 'proximity') {
+      assertCapabilityOn(req.ctx, 'streetVoice');
+      const where = parseStreetVoiceId(id);
+      if (!where) throw new ValidationFailedError({ reason: 'invalid_room_id', kind });
+      await assertInStreetInstance(req.ctx, where, userId);
+      await assertStreetVoiceMinutesLeft(req.ctx, userId, Date.now());
+      id = streetVoiceId(where.district, where.instanceId);
+      ttlSec = STREET_TOKEN_TTL_SEC;
     }
 
     // B3: Validate user is a participant for call/video kinds

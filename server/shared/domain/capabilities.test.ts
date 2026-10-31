@@ -71,6 +71,7 @@ describe('buildCapabilitiesPayload', () => {
           devnetDrip: false,
           realMarkets: false,
           realMarketsJupiter: false,
+          streetVoice: false,
         },
       },
       competitionCapabilities: { version: 1, beefChallenges: false, targetedCabalInvites: false },
