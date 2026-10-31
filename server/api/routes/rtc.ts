@@ -10,7 +10,7 @@
  * Proximity (street voice, capability `streetVoice`): `id` is
  * `<district>:<instanceId>`; only for a user in that street instance, else
  * 403 NOT_IN_AREA, and only with street voice minutes left today, else 429
- * VOICE_MINUTES_EXHAUSTED; 10 minutes (see application/street-voice.ts).
+ * VOICE_MINUTES_EXHAUSTED; 2 minutes (see application/street-voice.ts).
  * Publish permission is always server-derived; client flags are ignored.
  */
 import type { FastifyInstance } from 'fastify';

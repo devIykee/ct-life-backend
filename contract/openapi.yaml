@@ -4248,9 +4248,11 @@ paths:
         is minted only while the caller has a session in that street room
         (otherwise 403 `NOT_IN_AREA`) and has street voice minutes left today
         (otherwise 429 `VOICE_MINUTES_EXHAUSTED`, `details.scope` `player` or
-        `total`, `details.resetsAt`). Street tokens last 10 minutes; leaving the
+        `total`, `details.resetsAt`; open sessions count). Street tokens last 2
+        minutes: ask for a new one for every join and reconnect. Leaving the
         street room with your last session, or using up the daily minutes while
-        connected, disconnects you from the LiveKit room. There is no
+        connected, disconnects you from the LiveKit room, and a reconnect then
+        (with a kept or LiveKit-refreshed token) is removed on join. There is no
         cross-district voice: next to a district line you hear only the street
         room you are in (docs/STREET-VOICE.md).
       x-phase: 3

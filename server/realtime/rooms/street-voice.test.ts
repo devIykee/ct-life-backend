@@ -38,8 +38,8 @@ class VoiceStreet extends StreetRoom {
   protected override async removeFromVoice(d: string, i: string, u: string): Promise<void> {
     this.removed.push([d, i, u]);
   }
-  protected override async overVoiceCap(userIds: readonly string[]): Promise<string[]> {
-    return userIds.filter((u) => this.over.includes(u));
+  protected override async voiceRemovals(): Promise<string[]> {
+    return this.over;
   }
   sweep(): Promise<void> {
     return this.sweepVoiceMinutes();
@@ -124,14 +124,16 @@ describe('street room voice membership', () => {
     await room.onDispose();
   });
 
-  it('the minutes sweep disconnects only connected members past their cap', async () => {
+  it('the sweep removes whoever the application says should not be connected, members or not', async () => {
     const room = await boot(true);
     await room.onJoin(client('sw-1') as never, { userId: 'u1' });
-    await room.onJoin(client('sw-2') as never, { userId: 'u2' });
-    await room.onJoin(client('sw-3') as never, { userId: 'u2' });
-    room.over = ['u2', 'not-here'];
+    // u2 past its minutes; "gone" left the instance but its removal failed (still connected).
+    room.over = ['u2', 'gone'];
     await room.sweep();
-    expect(room.removed).toEqual([['timeline', room.state.instanceId, 'u2']]);
+    expect(room.removed).toEqual([
+      ['timeline', room.state.instanceId, 'u2'],
+      ['timeline', room.state.instanceId, 'gone'],
+    ]);
     await room.onDispose();
   });
 });

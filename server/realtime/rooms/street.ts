@@ -30,7 +30,8 @@
  * LiveKit room `proximity:<district>:<instanceId>` only for a user counted
  * there. The last session of a user leaving (a ban closes sessions too)
  * removes them from that LiveKit room. Once a minute the room also removes
- * connected members who have used today's street voice minutes.
+ * everyone connected to its voice room (per the LiveKit webhook) who is no
+ * longer in the instance or is out of street voice minutes.
  */
 import { Room, Client } from 'colyseus';
 import { readFileSync } from 'node:fs';
@@ -95,7 +96,7 @@ const EXIT_GRANT_MS = 15_000;
 const EXIT_GRANT_RADIUS_M = 5;
 /** Minimum gap between writes of a player's position to presence. */
 const POS_WRITE_MS = 250;
-/** How often the room checks its connected members against the street voice minutes. */
+/** How often the room checks who is connected to its voice room (presence and minutes). */
 export const STREET_VOICE_SWEEP_MS = 60_000;
 
 interface StreetSession {
@@ -453,29 +454,34 @@ export class StreetRoom extends Room {
   }
 
   /**
-   * The members (of `userIds`) connected to street voice past today's
-   * per-player minutes. Overridden in tests.
-   * @param userIds - The room's distinct members.
-   * @returns The ones to disconnect.
+   * The identities to disconnect from this instance's voice room: connected
+   * per the LiveKit webhook (members or not) and no longer in the instance, or
+   * past the per-player or the deployment's minutes. Overridden in tests.
+   * @returns The LiveKit identities to remove.
    */
-  protected async overVoiceCap(userIds: readonly string[]): Promise<string[]> {
+  protected async voiceRemovals(): Promise<string[]> {
     const { buildContext } = await import('../../application/context.js');
-    const { usersOverStreetVoiceCap } = await import('../../application/street-voice.js');
-    return usersOverStreetVoiceCap(buildContext(), userIds, Date.now());
+    const { streetVoiceRemovals } = await import('../../application/street-voice.js');
+    return streetVoiceRemovals(
+      buildContext(),
+      this.state.district,
+      this.state.instanceId,
+      Date.now(),
+    );
   }
 
   /**
-   * Disconnect connected members who have used today's street voice minutes.
-   * Their next token request answers 429 VOICE_MINUTES_EXHAUSTED.
+   * Once a minute: disconnect whoever should not be in this instance's voice
+   * room (left or kicked and still connected because a removal failed or a
+   * kept token reconnected, or out of minutes). Their next token request is
+   * refused and a reconnect with a kept token is removed by the webhook check.
    */
   protected async sweepVoiceMinutes(): Promise<void> {
-    const users = [...new Set(this.members.values())];
-    if (users.length === 0) return;
     try {
-      const over = await this.overVoiceCap(users);
+      const remove = await this.voiceRemovals();
       const district = this.state.district;
       const instanceId = this.state.instanceId;
-      await Promise.all(over.map((u) => this.removeFromVoice(district, instanceId, u)));
+      await Promise.all(remove.map((u) => this.removeFromVoice(district, instanceId, u)));
     } catch {
       // Best effort; the next sweep tries again.
     }

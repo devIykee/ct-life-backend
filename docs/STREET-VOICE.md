@@ -30,10 +30,19 @@ reasoning, not tested. **[Unverified]** = not confirmed.
   (`details: {district, instanceId}`). Fails closed; a Redis error mints nothing.
 - Malformed ids (unknown district, no instance, an instance with `:` or other characters outside
   `[A-Za-z0-9_-]`) are `400 VALIDATION_FAILED {reason: invalid_room_id}`.
-- Tokens last **10 minutes**. LiveKit checks a token only on connect and refreshes connected
-  participants' tokens itself, so a short TTL never disconnects anyone. Instead the street room calls
-  LiveKit `removeParticipant` on `proximity:<district>:<instanceId>` when a user's **last** session
-  leaves. Bans close sessions with `client.leave(4003)`, so a kick leaves voice too.
+- **Revocation.** LiveKit checks a token only on connect and hands connected participants refreshed
+  tokens itself, so a short TTL alone never disconnects anyone, and a removed participant could come
+  back with a token it still holds. Four layers:
+  1. The street room calls LiveKit `removeParticipant` on `proximity:<district>:<instanceId>` when a
+     user's **last** session leaves. Bans close sessions with `client.leave(4003)`, so a kick leaves
+     voice too.
+  2. Street tokens last **2 minutes**, so a token copied out of the client is soon useless for a new
+     connection. The client asks for a fresh token on every join and reconnect.
+  3. Every `participant_joined` webhook on a `proximity:` room is checked again
+     (`checkStreetVoiceJoin`). A participant who is not in that street instance, or is out of minutes,
+     is removed at once. This catches a reconnect with a kept or LiveKit-refreshed token.
+  4. Once a minute each street room sweeps everyone the webhook says is connected to its voice room,
+     members or not (`streetVoiceRemovals`), so a removal that failed on leave is retried.
 - Grants: `canPublish: true`, `canSubscribe: true`. The client joins listen-only and publishes only
   from the mic gesture.
 
@@ -109,17 +118,23 @@ voice, Spaces and calls. On Ship, or on a self-hosted server, raise them or set 
 How they work:
 
 - Counting comes from the **LiveKit webhook** (`POST /v1/webhooks/livekit`, the one paid calls already
-  rely on): `participant_joined` on a `proximity:` room stores the start in
-  `ctl:voice:street:open:<userId>`; `participant_left` adds the seconds to
-  `ctl:voice:street:sec:<UTC day>:u:<userId>` and `…:total` (kept two days). Each webhook event counts
-  once (`ctl:voice:street:evt:<id>`, a day), since LiveKit retries. An open session counts at most 2 h,
-  so a lost `participant_left` cannot lock a player out for long.
+  rely on). `participant_joined` on a `proximity:` room opens a session in the hash
+  `ctl:voice:street:sessions`, **keyed by the LiveKit participant SID** (value `start|user|room`). Only a
+  `participant_left` with the same SID (and identity) closes it, adding its seconds to
+  `ctl:voice:street:sec:<UTC day>:u:<userId>` and `…:total` (kept two days). So a reconnect whose new
+  participant joins before the old one leaves keeps both sessions apart. A leave that matches no session
+  keeps every entry and leaves a one-day marker, so a late (out-of-order) join for that SID opens nothing.
+- The event-id claim (`ctl:voice:street:evt:<id>`, a day; LiveKit retries) and the session and counter
+  writes run in **one Lua script**, so an event never counts twice, and an event that fails before the
+  script runs is counted on LiveKit's retry.
+- An open session counts at most 2 h, and sessions older than 6 h are dropped, so a lost
+  `participant_left` cannot lock a player out for long.
 - `POST /v1/rtc/token {kind: proximity}` refuses with **`429 VOICE_MINUTES_EXHAUSTED`**
-  `{scope: player | total, capMinutes, resetsAt}` when either cap is used up. The player check includes
-  the open session's time so far; the total check counts closed sessions.
-- Once a minute each street room removes connected members (an open session) who are past the
-  per-player cap from its LiveKit room. Their reconnect then gets the 429. The total cap only stops
-  new connections.
+  `{scope: player | total, capMinutes, resetsAt}` when either cap is used up. **Both checks count open
+  sessions**, the caller's own for the player cap and everyone's for the total.
+- A reconnect past a cap is removed by the join check (layer 3 above). Once a minute each street room
+  removes everyone connected to its voice room who is past the per-player cap, and everyone connected
+  once the deployment's total is used up (open sessions included).
 - **[Unverified] that the LiveKit Cloud project has its webhook pointed at the backend.** Without the
   webhook nothing is counted and the caps never trigger. Check the LiveKit Cloud project settings
   before turning `streetVoice` on.
