@@ -775,3 +775,61 @@ export class AlreadyVotedError extends DomainError {
     this.httpStatus = 409;
   }
 }
+
+// Real Markets (real-money predictions from the player's own wallet; docs/REAL-MARKETS.md) ---
+
+export class RealMarketsGeoBlockedError extends DomainError {
+  readonly code = 'REAL_MARKETS_GEO_BLOCKED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Real Markets are not available where you are.', details);
+    this.httpStatus = 451;
+  }
+}
+
+export class RealMarketsWalletMismatchError extends DomainError {
+  readonly code = 'REAL_MARKETS_WALLET_MISMATCH';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Real Markets orders are built only for the wallet you signed in with.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class RealMarketsProviderUnavailableError extends DomainError {
+  readonly code = 'REAL_MARKETS_PROVIDER_UNAVAILABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The market provider is not reachable right now. Try again shortly.', details);
+    this.httpStatus = 503;
+  }
+}
+
+export class RealMarketsProviderError extends DomainError {
+  readonly code = 'REAL_MARKETS_PROVIDER_ERROR';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The market provider returned an unexpected answer.', details);
+    this.httpStatus = 502;
+  }
+}
+
+export class RealMarketsQuoteExpiredError extends DomainError {
+  readonly code = 'REAL_MARKETS_QUOTE_EXPIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The quote expired or the price moved. Get a new quote.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class RealMarketsOrderRejectedError extends DomainError {
+  readonly code = 'REAL_MARKETS_ORDER_REJECTED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The market provider rejected this order.', details);
+    this.httpStatus = 422;
+  }
+}
+
+export class RealMarketsTxMismatchError extends DomainError {
+  readonly code = 'REAL_MARKETS_TX_MISMATCH';
+  constructor(details: Record<string, unknown> = {}) {
+    super('That signature is not the order that was built for your wallet.', details);
+    this.httpStatus = 422;
+  }
+}

@@ -375,6 +375,25 @@ ct-life-backend/
 | `TEST_SCHEMA`                     | Schema name used by tests                                                                                                                                                                        |
 | `RUN_MAINNET_TESTS`               | `1` runs the read-only mainnet tests (off by default)                                                                                                                                            |
 
+#### Real Markets (docs/REAL-MARKETS.md)
+
+| Variable                             | Purpose                                                                                                          |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `REAL_MARKETS_RPC_URL_MAINNET`       | Read-only mainnet RPC that verifies signatures (default `HELIUS_RPC_URL_MAINNET`); never changes the app cluster |
+| `PANTA_API_KEY`                      | Panta partner API key (secret; server only). Empty = Panta answers 503                                           |
+| `PANTA_API_BASE_URL`                 | Panta API base (default `https://live-api.panta.market/api/v1`)                                                  |
+| `JUPITER_API_KEY`                    | Jupiter Developer Platform key for the Prediction Market API (secret). Empty = Jupiter answers 503               |
+| `JUPITER_PREDICTION_API_BASE_URL`    | Jupiter Prediction API base (default `https://api.jup.ag/prediction/v1`)                                         |
+| `REAL_MARKETS_BLOCKED_COUNTRIES`     | ISO alpha-2 countries added to the built-in deny-list                                                            |
+| `REAL_MARKETS_BLOCKED_REGIONS`       | ISO 3166-2 regions added to the built-in sanctioned-region list                                                  |
+| `REAL_MARKETS_COUNTRY_HEADER`        | Request header with the edge's IP country (default `cf-ipcountry`)                                               |
+| `REAL_MARKETS_REGION_HEADER`         | Request header with the edge's region code (default `cf-region-code`)                                            |
+| `REAL_MARKETS_EDGE_AUTH_HEADER`      | Header the edge adds with the secret; the country header is trusted only with it. Required with `realMarkets` on |
+| `REAL_MARKETS_EDGE_AUTH_SECRET`      | Shared secret the edge sends in `REAL_MARKETS_EDGE_AUTH_HEADER`                                                  |
+| `REAL_MARKETS_ALLOW_UNKNOWN_COUNTRY` | `true` lets requests with no trusted country through (default `false`: fail closed)                              |
+| `REAL_MARKETS_MAX_ORDER_USDC`        | Largest order the server builds, whole USDC (default 100)                                                        |
+| `REAL_MARKETS_DAILY_ORDER_CAP`       | Orders a player may build per rolling 24 h (default 30)                                                          |
+
 ## Testing
 
 ```bash

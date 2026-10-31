@@ -29,6 +29,12 @@ import { config as loadDotenv } from 'dotenv';
 import { readFileSync } from 'node:fs';
 import { parseCapabilitiesOn, type CapabilityName } from '../domain/capabilities.js';
 import {
+  DEFAULT_BLOCKED_COUNTRIES,
+  DEFAULT_BLOCKED_REGIONS,
+  parseCountryList,
+  parseRegionList,
+} from '../domain/real-markets.js';
+import {
   parseCapabilitiesOffByPlatform,
   parseClientBuild,
   parseMinVersionByPlatform,
@@ -259,6 +265,40 @@ export interface Config {
     readonly predictionCryptoSource: 'off' | 'binance' | 'binance_vision';
   };
 
+  /**
+   * Real Markets (docs/REAL-MARKETS.md): real-money predictions the player signs with
+   * their own wallet, on Solana MAINNET. Isolated from `solana`: this block never changes
+   * the app's cluster, so the devnet economy and the D0 mainnet boot guard are untouched.
+   * Nothing here is a signing key; the server only builds unsigned transactions.
+   */
+  readonly realMarkets: {
+    /** Mainnet RPC for verifying player signatures (read-only). Defaults to HELIUS_RPC_URL_MAINNET. */
+    readonly mainnetRpcUrl: string;
+    readonly panta: { readonly apiKey: string; readonly baseUrl: string };
+    readonly jupiter: { readonly apiKey: string; readonly baseUrl: string };
+    /** Built-in provider deny-list plus REAL_MARKETS_BLOCKED_COUNTRIES (ISO alpha-2). */
+    readonly blockedCountries: ReadonlySet<string>;
+    /** Built-in sanctioned regions plus REAL_MARKETS_BLOCKED_REGIONS (ISO 3166-2). */
+    readonly blockedRegions: ReadonlySet<string>;
+    /** Request header carrying the edge's IP country (lower-case). */
+    readonly countryHeader: string;
+    /** Request header carrying the edge's region code (lower-case). */
+    readonly regionHeader: string;
+    /**
+     * The country header is trusted only when this header equals `edgeAuthSecret`; with
+     * either empty nothing is trusted (fail closed). Both are required to boot with
+     * realMarkets on outside APP_ENV=local / NODE_ENV=test.
+     */
+    readonly edgeAuthHeader: string;
+    readonly edgeAuthSecret: string;
+    /** Let requests with no trusted country through. Off: fail closed. */
+    readonly allowUnknownCountry: boolean;
+    /** Largest order the server builds, in whole USDC. */
+    readonly maxOrderUsdc: number;
+    /** Orders a player may build per rolling 24 hours. */
+    readonly dailyOrderCap: number;
+  };
+
   readonly llmModel: string;
   readonly anthropicApiKey: string;
 
@@ -315,6 +355,22 @@ function asCryptoSource(raw: string | undefined): 'off' | 'binance' | 'binance_v
   if (v === '' || v === 'off') return 'off';
   if (v === 'binance' || v === 'binance_vision') return v;
   throw new ConfigError('PREDICTIONS_CRYPTO_SOURCE', 'expected off, binance or binance_vision');
+}
+
+function asCountrySet(name: string, defaults: readonly string[]): ReadonlySet<string> {
+  const { codes, invalid } = parseCountryList(process.env[name]);
+  if (invalid.length > 0) {
+    throw new ConfigError(name, `expected ISO 3166-1 alpha-2 codes, got: ${invalid.join(', ')}`);
+  }
+  return new Set([...defaults, ...codes]);
+}
+
+function asRegionSet(name: string, defaults: readonly string[]): ReadonlySet<string> {
+  const { codes, invalid } = parseRegionList(process.env[name]);
+  if (invalid.length > 0) {
+    throw new ConfigError(name, `expected ISO 3166-2 codes like UA-43, got: ${invalid.join(', ')}`);
+  }
+  return new Set([...defaults, ...codes]);
 }
 
 /**
@@ -429,6 +485,26 @@ export function loadConfig(): Config {
           'Dev auth bypasses signature verification and must only run in development.',
       );
     }
+  }
+
+  // Real Markets geo gate: the IP-country header is only trustworthy when the edge also
+  // sends a shared secret (Railway's edge adds no country header, so a client could set its
+  // own). Outside local development and tests, refuse to boot with realMarkets on and no
+  // edge secret, rather than serving a gate every request would fail (or a spoofable one).
+  const capabilities = parseCapabilitiesOn(process.env.CAPABILITIES_ON);
+  if (
+    capabilities.on.has('realMarkets') &&
+    appEnv !== 'local' &&
+    nodeEnv !== 'test' &&
+    (optionalEnv('REAL_MARKETS_EDGE_AUTH_HEADER', '') === '' ||
+      optionalEnv('REAL_MARKETS_EDGE_AUTH_SECRET', '') === '')
+  ) {
+    throw new Error(
+      'FATAL: CAPABILITIES_ON has realMarkets but REAL_MARKETS_EDGE_AUTH_HEADER and ' +
+        'REAL_MARKETS_EDGE_AUTH_SECRET are not both set. The geo gate trusts the IP-country ' +
+        'header only with the edge secret (docs/REAL-MARKETS.md, Edge). Set both, or remove ' +
+        'realMarkets from CAPABILITIES_ON.',
+    );
   }
 
   const cfg: Config = {
@@ -547,7 +623,7 @@ export function loadConfig(): Config {
     // LIVE_PHASE 1 to 6, default 1 (nothing changes until it is set). Anything else fails the load.
     livePhase: asBoundedInt('LIVE_PHASE', 1, 1, 6),
 
-    capabilities: parseCapabilitiesOn(process.env.CAPABILITIES_ON),
+    capabilities,
 
     helius: {
       apiKey: requireEnv('HELIUS_API_KEY', 'Helius API key'),
@@ -623,6 +699,30 @@ export function loadConfig(): Config {
       oreReader: asBool('ORE_READER_ENABLED', false),
       predictionSettlement: asBool('PREDICTIONS_SETTLEMENT_ENABLED', false),
       predictionCryptoSource: asCryptoSource(process.env.PREDICTIONS_CRYPTO_SOURCE),
+    },
+
+    realMarkets: {
+      mainnetRpcUrl: optionalEnv(
+        'REAL_MARKETS_RPC_URL_MAINNET',
+        requireEnv('HELIUS_RPC_URL_MAINNET', 'Helius mainnet RPC URL'),
+      ),
+      panta: {
+        apiKey: optionalEnv('PANTA_API_KEY', ''),
+        baseUrl: optionalEnv('PANTA_API_BASE_URL', 'https://live-api.panta.market/api/v1'),
+      },
+      jupiter: {
+        apiKey: optionalEnv('JUPITER_API_KEY', ''),
+        baseUrl: optionalEnv('JUPITER_PREDICTION_API_BASE_URL', 'https://api.jup.ag/prediction/v1'),
+      },
+      blockedCountries: asCountrySet('REAL_MARKETS_BLOCKED_COUNTRIES', DEFAULT_BLOCKED_COUNTRIES),
+      blockedRegions: asRegionSet('REAL_MARKETS_BLOCKED_REGIONS', DEFAULT_BLOCKED_REGIONS),
+      countryHeader: optionalEnv('REAL_MARKETS_COUNTRY_HEADER', 'cf-ipcountry').toLowerCase(),
+      regionHeader: optionalEnv('REAL_MARKETS_REGION_HEADER', 'cf-region-code').toLowerCase(),
+      edgeAuthHeader: optionalEnv('REAL_MARKETS_EDGE_AUTH_HEADER', '').toLowerCase(),
+      edgeAuthSecret: optionalEnv('REAL_MARKETS_EDGE_AUTH_SECRET', ''),
+      allowUnknownCountry: asBool('REAL_MARKETS_ALLOW_UNKNOWN_COUNTRY', false),
+      maxOrderUsdc: asBoundedInt('REAL_MARKETS_MAX_ORDER_USDC', 100, 1, 10_000),
+      dailyOrderCap: asBoundedInt('REAL_MARKETS_DAILY_ORDER_CAP', 30, 1, 1_000),
     },
 
     // `||`, not `??`: .env.example ships `LLM_MODEL=` (empty), which must mean "default".

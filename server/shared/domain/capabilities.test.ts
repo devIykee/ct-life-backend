@@ -69,6 +69,8 @@ describe('buildCapabilitiesPayload', () => {
           factory: false,
           projectHq: false,
           devnetDrip: false,
+          realMarkets: false,
+          realMarketsJupiter: false,
         },
       },
       competitionCapabilities: { version: 1, beefChallenges: false, targetedCabalInvites: false },

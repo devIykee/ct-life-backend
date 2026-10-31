@@ -20,6 +20,8 @@ A Cash-only, play-money casino, 18+. Code: `server/application/casino.ts` (servi
 
 The 18+ flag is readable outside the casino too: `GET /v1/casino/state` and `GET /v1/me` both carry
 `ageConfirmed` (the same column), so the Prediction Pit and Factory screens can ask before a bet.
+A player whose flag is not set confirms with `POST /v1/me/age-confirm {confirmed: true}`, which
+sets the same column (idempotent, audited; docs/REAL-MARKETS.md "18+ after character creation").
 
 Caps are counted from the ledger for the UTC day, so they include stakes held in escrow
 and exclude refunded stakes. Casino actions of one player are serialized by a lock

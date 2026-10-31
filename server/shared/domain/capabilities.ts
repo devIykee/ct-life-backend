@@ -36,6 +36,12 @@ export const CAPABILITY_FEATURES = [
   'projectHq',
   // Appended by the chain package (WP-C): the devnet SOL drip + "Get test tokens" card.
   'devnetDrip',
+  // Real-money prediction markets from the player's own wallet (docs/REAL-MARKETS.md).
+  // `realMarkets` opens the terminal with Panta; `realMarketsJupiter` adds Jupiter's
+  // Prediction Market API on top (needs `realMarkets` too; off until Jupiter clears its
+  // licence's gambling clause in writing).
+  'realMarkets',
+  'realMarketsJupiter',
 ] as const;
 
 /**
