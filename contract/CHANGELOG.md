@@ -1,3 +1,11 @@
+## 2026-10-31 - Config ETag: weak comparison for If-None-Match
+
+No migration. Server-side fix; no client change needed.
+
+- `GET /config` now compares `If-None-Match` with the weak comparison (RFC 9110 13.1.2): `W/"<hash>"` matches the strong `"<hash>"` the server sends. Railway's edge gzips the response and rewrites the ETag to the weak form, and a client that echoed that tag back always got the full `200` instead of `304`. A comma-separated list of tags and `*` are accepted too. The tag itself is unchanged.
+- The `304` now repeats `ETag` and `Cache-Control: public, max-age=300` (RFC 9110 15.4.5) alongside `Vary`. The OpenAPI `Cache-Control` example said `max-age=60`; the server has always sent 300.
+- `GET /config` is the only route that answers conditional requests, so no other route changed.
+
 ## 2026-10-31 - Real Markets gaps: 18+ after creation, order reconciliation, provider links, geo trust
 
 Migration 143 (`age_confirmations`; `real_market_orders` + `recent_blockhash`, `ix_fingerprints`, `reconciled_at`). Additive. See docs/REAL-MARKETS.md.
