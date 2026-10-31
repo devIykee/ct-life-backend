@@ -478,6 +478,41 @@
       "code": "ALREADY_VOTED",
       "httpStatus": 409,
       "message": "You already voted in this match."
+    },
+    {
+      "code": "REAL_MARKETS_GEO_BLOCKED",
+      "httpStatus": 451,
+      "message": "Real Markets are not available where you are."
+    },
+    {
+      "code": "REAL_MARKETS_WALLET_MISMATCH",
+      "httpStatus": 403,
+      "message": "Real Markets orders are built only for the wallet you signed in with."
+    },
+    {
+      "code": "REAL_MARKETS_PROVIDER_UNAVAILABLE",
+      "httpStatus": 503,
+      "message": "The market provider is not reachable right now. Try again shortly."
+    },
+    {
+      "code": "REAL_MARKETS_PROVIDER_ERROR",
+      "httpStatus": 502,
+      "message": "The market provider returned an unexpected answer."
+    },
+    {
+      "code": "REAL_MARKETS_QUOTE_EXPIRED",
+      "httpStatus": 409,
+      "message": "The quote expired or the price moved. Get a new quote."
+    },
+    {
+      "code": "REAL_MARKETS_ORDER_REJECTED",
+      "httpStatus": 422,
+      "message": "The market provider rejected this order."
+    },
+    {
+      "code": "REAL_MARKETS_TX_MISMATCH",
+      "httpStatus": 422,
+      "message": "That signature is not the order that was built for your wallet."
     }
   ]
 }

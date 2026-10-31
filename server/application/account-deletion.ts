@@ -8,7 +8,8 @@
  *   erased          wallet / SGT / .skr name, character (alias, look, likeness
  *                   job), X link, push devices and prefs, follows, blocks,
  *                   creator profile, likeness photos/models (rows now, bytes via
- *                   storage_cleanup), unreferenced ad creatives.
+ *                   storage_cleanup), unreferenced ad creatives, Real Markets order
+ *                   records (the trades themselves are public on Solana).
  *   overwritten     DMs the user wrote and feed posts -> '[deleted]'; the alias
  *                   on tombstones -> 'Deleted player'.
  *   retained        ledger_entries, payment_intents, likeness payment records,
@@ -151,6 +152,8 @@ export async function deleteAccount(ctx: AppContext, userId: string): Promise<vo
       'DELETE FROM follows WHERE follower_user_id = $1 OR followee_user_id = $1',
       'DELETE FROM blocks WHERE blocker_user_id = $1 OR blocked_user_id = $1',
       'DELETE FROM voice_speakers WHERE user_id = $1',
+      // Real Markets order records carry the wallet and exist for display/anti-abuse only.
+      'DELETE FROM real_market_orders WHERE user_id = $1',
       `DELETE FROM ad_uploads u WHERE u.user_id = $1
          AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
     ];

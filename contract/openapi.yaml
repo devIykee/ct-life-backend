@@ -66,6 +66,11 @@ tags:
     description: Helius and LiveKit signed webhooks. Backend-only.
   - name: projects
     description: Builder (player projects), VC Row and project HQ. Unlock WP-B.
+  - name: realMarkets
+    description: >-
+      Real-money prediction markets (Panta, then Jupiter) traded from the player's own wallet
+      on Solana mainnet; the server only builds unsigned transactions. Capability
+      `realMarkets`. No Cash. dApp Store build only (docs/REAL-MARKETS.md).
 
 security:
   - bearerAuth: []
@@ -9382,6 +9387,468 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/CapabilityOff' }
 
+  /real-markets/config:
+    get:
+      tags: [realMarkets]
+      operationId: getRealMarketsConfig
+      summary: Real Markets eligibility, chain, providers, attribution, risk copy and limits.
+      description: >-
+        Capability `realMarkets` (else 503 CAPABILITY_OFF). Never refuses for location, age or
+        wallet: it reports them in `reasons` so the client can hide the terminal entirely when
+        `eligible` is false. `reasons` values: `capability_off`, `blocked_country`,
+        `blocked_region`, `unknown_country` (no trusted IP country; fails closed), `age_required`
+        (18+ not confirmed, see `GET /me` `ageConfirmed`), `wallet_required`,
+        `provider_not_configured`. `chain` is the MWA chain to authorize for signing
+        (`solana:mainnet`): the rest of the game stays on devnet, so the client needs a separate
+        mainnet MWA authorization (docs/REAL-MARKETS.md). Real Markets never take, pay or show
+        Cash. dApp Store build only.
+      x-phase: 4
+      responses:
+        '200':
+          description: Eligibility and configuration
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealMarketsConfig' }
+              example:
+                enabled: true
+                eligible: true
+                reasons: []
+                country: NG
+                ageConfirmed: true
+                wallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
+                chain: 'solana:mainnet'
+                cluster: mainnet
+                settlementMint: EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
+                providers:
+                  - id: panta
+                    configured: true
+                    attribution:
+                      {
+                        text: 'Powered by Panta',
+                        url: 'https://panta.market',
+                        required: true,
+                        apiName: 'Panta API',
+                      }
+                    categories:
+                      [sports, crypto, politics, entertainment, finance, science, world, other]
+                    minOrderUsdc: null
+                riskWarning:
+                  {
+                    version: '2026-10-31',
+                    text: 'Real Markets use real USDC on Solana mainnet, from your own wallet. ...',
+                  }
+                limits:
+                  {
+                    maxOrderUsdc: '100',
+                    dailyOrders: 30,
+                    defaultSlippageBps: 100,
+                    maxSlippageBps: 500,
+                  }
+                distribution: dapp_store_only
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /real-markets/markets:
+    get:
+      tags: [realMarkets]
+      operationId: listRealMarkets
+      summary: Live markets from a provider, paginated, filterable by category.
+      description: >-
+        Gate (in this order): 451 REAL_MARKETS_GEO_BLOCKED, 403 AGE_REQUIRED, 403 FORBIDDEN
+        `{reason: wallet_required}`. `provider=jupiter` also needs capability
+        `realMarketsJupiter` (503 CAPABILITY_OFF `{capability: realMarketsJupiter}`). `category`
+        must be one of the provider's categories (`GET /real-markets/config`), else 400
+        `{reason: unknown_category}`. Served from a 30 s cache; `asOf` is when the provider was
+        read, and the client must show it (Panta terms forbid showing stale data as live).
+        Panta list rows carry no prices (`yesPrice` null): read `GET /real-markets/markets/{id}`.
+        For Jupiter, `limit` counts events and each event's markets are flattened into `items`.
+        Show `attribution.text` next to the board. Rate limit: 60 burst, 1/s (429
+        `{reason: real_markets_read}`).
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/RealMarketsProvider'
+        - { name: category, in: query, required: false, schema: { type: string, maxLength: 32 } }
+        - {
+            name: cursor,
+            in: query,
+            required: false,
+            schema: { type: string, maxLength: 128 },
+            description: '`nextCursor` from the previous page.',
+          }
+        - {
+            name: limit,
+            in: query,
+            required: false,
+            schema: { type: integer, minimum: 1, maximum: 50, default: 20 },
+          }
+      responses:
+        '200':
+          description: One page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [provider, items, nextCursor, asOf, attribution]
+                properties:
+                  provider: { type: string, enum: [panta, jupiter] }
+                  items: { type: array, items: { $ref: '#/components/schemas/RealMarket' } }
+                  nextCursor: { type: string, nullable: true }
+                  asOf: { type: string, format: date-time }
+                  attribution: { $ref: '#/components/schemas/RealMarketsAttribution' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '502': { $ref: '#/components/responses/RealMarketsProviderError' }
+        '503': { $ref: '#/components/responses/RealMarketsUnavailable' }
+  /real-markets/markets/{marketId}:
+    get:
+      tags: [realMarkets]
+      operationId: getRealMarket
+      summary: One market with spot prices (5 s cache).
+      description: >-
+        Same gate, capability and rate limit as the list. 404 NOT_FOUND for an unknown market.
+      x-phase: 4
+      parameters:
+        - {
+            name: marketId,
+            in: path,
+            required: true,
+            schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' },
+          }
+        - $ref: '#/components/parameters/RealMarketsProvider'
+      responses:
+        '200':
+          description: The market
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [market, asOf, attribution]
+                properties:
+                  market: { $ref: '#/components/schemas/RealMarket' }
+                  asOf: { type: string, format: date-time }
+                  attribution: { $ref: '#/components/schemas/RealMarketsAttribution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '502': { $ref: '#/components/responses/RealMarketsProviderError' }
+        '503': { $ref: '#/components/responses/RealMarketsUnavailable' }
+  /real-markets/quote:
+    post:
+      tags: [realMarkets]
+      operationId: postRealMarketsQuote
+      summary: Quote a YES/NO buy in USDC for my linked wallet.
+      description: >-
+        Same gate and capabilities. `amountUsdc` is a decimal USDC string (at most 6 decimals);
+        400 `{reason: invalid_amount | amount_above_cap {maxUsdc} | amount_below_minimum
+        {minUsdc}}` (Jupiter's minimum is 5 USDC). Panta returns a `quoteId` that lives about
+        90 s; pass it to build. Jupiter has no quote session (`quoteId` null). Venue refusals:
+        422 REAL_MARKETS_ORDER_REJECTED `{providerCode, providerMessage}` (e.g. Panta
+        `AMOUNT_TOO_SMALL`, `MARKET_NOT_IN_PRIMARY`). Rate limit 20 burst, 20/min (429 `{reason:
+        real_markets_quote}`); venue 429 is passed on as 429 `{reason: provider_rate_limited}`
+        with Retry-After.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [marketId, side, amountUsdc]
+              properties:
+                provider: { type: string, enum: [panta, jupiter], default: panta }
+                marketId: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+                side: { type: string, enum: ['yes', 'no'] }
+                amountUsdc: { type: string, pattern: '^\d{1,12}(\.\d{1,6})?$', example: '10.00' }
+      responses:
+        '200':
+          description: The quote
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [quote, attribution, riskWarning]
+                properties:
+                  quote: { $ref: '#/components/schemas/RealQuote' }
+                  attribution: { $ref: '#/components/schemas/RealMarketsAttribution' }
+                  riskWarning: { $ref: '#/components/schemas/RealMarketsRiskWarning' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/RealMarketsOrderRejected' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '502': { $ref: '#/components/responses/RealMarketsProviderError' }
+        '503': { $ref: '#/components/responses/RealMarketsUnavailable' }
+  /real-markets/order/build:
+    post:
+      tags: [realMarkets]
+      operationId: postRealMarketsOrderBuild
+      summary: Build an UNSIGNED mainnet transaction for my linked wallet to sign.
+      description: >-
+        Same gate and capabilities. `riskAccepted` must be true and `riskWarningVersion` (when
+        sent) must match `GET /real-markets/config` `riskWarning.version`, else 400
+        RISK_NOT_ACCEPTED. The order is always built for the SIWS wallet the player signed in
+        with; an optional `wallet` that differs is 403 REAL_MARKETS_WALLET_MISMATCH. The server
+        never signs: `txBase64` is an unsigned v0 VersionedTransaction whose fee payer and only
+        required signer is that wallet (the server refuses any venue answer that needs another
+        signer: 502 `{reason: unexpected_signer}`). Hand the exact bytes to MWA
+        `sign_and_send_transactions` under a `solana:mainnet` authorization before `expiresAt`
+        (about 60 s, the blockhash life), then call `POST /real-markets/order/submitted`. Panta:
+        pass the quote's `quoteId` (a fresh quote is taken when omitted); 409
+        REAL_MARKETS_QUOTE_EXPIRED `{reason: expired | stale}` means re-quote. `maxSlippageBps`
+        0..500, default 100. Limits: 10 burst, 10/min (429 `{reason: real_markets_build}`), and
+        `REAL_MARKETS_DAILY_ORDER_CAP` builds per rolling 24 h (429 `{reason:
+        real_markets_daily_cap, cap}`). The order is recorded for the player's history and
+        anti-abuse only.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [marketId, side, amountUsdc, riskAccepted]
+              properties:
+                provider: { type: string, enum: [panta, jupiter], default: panta }
+                marketId: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+                side: { type: string, enum: ['yes', 'no'] }
+                amountUsdc: { type: string, pattern: '^\d{1,12}(\.\d{1,6})?$' }
+                quoteId: { type: string, maxLength: 128 }
+                maxSlippageBps: { type: integer, minimum: 0, maximum: 500 }
+                wallet:
+                  { type: string, description: 'Optional echo; must equal the linked wallet.' }
+                riskAccepted: { type: boolean }
+                riskWarningVersion: { type: string, maxLength: 32 }
+      responses:
+        '201':
+          description: The unsigned transaction and the recorded order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealBuiltOrder' }
+              example:
+                orderId: '0193a1c2-7b1e-7cc0-9a51-6d2f3f0f8a10'
+                provider: panta
+                txBase64: 'gAEAAQ...'
+                expiresAt: '2026-10-31T12:01:00.000Z'
+                chain: 'solana:mainnet'
+                wallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
+                marketId: 'EventPda11111111111111111111111111111'
+                side: 'yes'
+                amountUsdc: '10.00'
+                estShares: '19.20'
+                feeUsdc: '0.20'
+                attribution:
+                  {
+                    text: 'Powered by Panta',
+                    url: 'https://panta.market',
+                    required: true,
+                    apiName: 'Panta API',
+                  }
+        '400':
+          description: Validation failed, or the risk warning was not accepted (`RISK_NOT_ACCEPTED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: RISK_NOT_ACCEPTED,
+                      message: 'Accept the risk warning before launching a real token.',
+                      details: { version: '2026-10-31' },
+                    },
+                }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: 'AGE_REQUIRED, FORBIDDEN `{reason: wallet_required}`, or REAL_MARKETS_WALLET_MISMATCH'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: REAL_MARKETS_WALLET_MISMATCH,
+                      message: 'Real Markets orders are built only for the wallet you signed in with.',
+                      details: { linkedWallet: '7xKX...' },
+                    },
+                }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The quote expired or the price moved; quote again
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: REAL_MARKETS_QUOTE_EXPIRED,
+                      message: 'The quote expired or the price moved. Get a new quote.',
+                      details: { provider: panta, reason: stale },
+                    },
+                }
+        '422': { $ref: '#/components/responses/RealMarketsOrderRejected' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '502': { $ref: '#/components/responses/RealMarketsProviderError' }
+        '503': { $ref: '#/components/responses/RealMarketsUnavailable' }
+  /real-markets/order/submitted:
+    post:
+      tags: [realMarkets]
+      operationId: postRealMarketsOrderSubmitted
+      summary: Report the signature my wallet returned; the server verifies it on mainnet.
+      description: >-
+        Same gate; the order must be the caller's (404). Records `signature` (base58) and checks
+        it once on Solana mainnet through the Real Markets RPC: it must have landed from the
+        order's wallet (fee payer), invoked every program the built transaction invokes, and
+        succeeded. Then the server tells the venue (Panta submit and trade attribution). Status
+        in the answer: `submitted` (not landed yet; poll `GET /real-markets/orders/{orderId}`),
+        `confirmed`, `failed` (on-chain error, or the blockhash expired unlanded). 422
+        REAL_MARKETS_TX_MISMATCH `{reason: fee_payer | programs | signature_reused |
+        order_already_submitted}`. Repeating the same signature is safe. 503 CAPABILITY_OFF
+        `{reason: rpc_not_mainnet | rpc_unreachable}` when the Real Markets RPC is not mainnet.
+        Rate limit 20 burst, 20/min.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [orderId, signature]
+              properties:
+                orderId: { type: string, format: uuid }
+                signature: { type: string, pattern: '^[1-9A-HJ-NP-Za-km-z]{64,90}$' }
+      responses:
+        '200':
+          description: The order as it is now
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealOrder' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: The signature is not this order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: REAL_MARKETS_TX_MISMATCH,
+                      message: 'That signature is not the order that was built for your wallet.',
+                      details: { reason: fee_payer },
+                    },
+                }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /real-markets/orders:
+    get:
+      tags: [realMarkets]
+      operationId: listRealMarketsOrders
+      summary: My Real Markets order records, newest first.
+      description: >-
+        Same gate. Records only (no chain calls); `expired` means built and never submitted
+        before `expiresAt`.
+      x-phase: 4
+      parameters:
+        - {
+            name: limit,
+            in: query,
+            required: false,
+            schema: { type: integer, minimum: 1, maximum: 100, default: 20 },
+          }
+      responses:
+        '200':
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orders]
+                properties:
+                  orders: { type: array, items: { $ref: '#/components/schemas/RealOrder' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /real-markets/orders/{orderId}:
+    get:
+      tags: [realMarkets]
+      operationId: getRealMarketsOrder
+      summary: One of my orders; re-verifies on mainnet while it is `submitted`.
+      description: >-
+        Same gate; 404 for someone else's order. While `submitted`, checks the chain again; once
+        `confirmed`, reads the venue's own state into `providerState` (`pending` until
+        Jupiter's keepers fill, `filled`, `failed`). Poll every 2-3 s for up to about 90 s.
+      x-phase: 4
+      parameters:
+        - { name: orderId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RealOrder' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+  /real-markets/positions:
+    get:
+      tags: [realMarkets]
+      operationId: getRealMarketsPositions
+      summary: Positions of my linked wallet at one provider.
+      description: >-
+        Same gate and capabilities. Always the linked SIWS wallet (no wallet parameter).
+        `estValueUsdc` is a display estimate (Panta: shares x spot price for open markets, 1 per
+        winning share, 0 per losing share; Jupiter: its `valueUsd`). Claims and sells are a later
+        phase; send players to the provider's site meanwhile.
+      x-phase: 4
+      parameters:
+        - $ref: '#/components/parameters/RealMarketsProvider'
+      responses:
+        '200':
+          description: Positions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [provider, wallet, positions, asOf, attribution]
+                properties:
+                  provider: { type: string, enum: [panta, jupiter] }
+                  wallet: { type: string }
+                  positions: { type: array, items: { $ref: '#/components/schemas/RealPosition' } }
+                  asOf: { type: string, format: date-time }
+                  attribution: { $ref: '#/components/schemas/RealMarketsAttribution' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/RealMarketsForbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '451': { $ref: '#/components/responses/RealMarketsGeoBlocked' }
+        '502': { $ref: '#/components/responses/RealMarketsProviderError' }
+        '503': { $ref: '#/components/responses/RealMarketsUnavailable' }
 components:
   securitySchemes:
     bearerAuth:
@@ -9417,6 +9884,12 @@ components:
       required: false
       description: Opaque cursor returned by the previous call.
       schema: { type: string }
+    RealMarketsProvider:
+      name: provider
+      in: query
+      required: false
+      description: '`panta` (capability `realMarkets`) or `jupiter` (also needs `realMarketsJupiter`).'
+      schema: { type: string, enum: [panta, jupiter], default: panta }
   responses:
     LikenessUnavailable:
       description: Likeness pipeline is inactive; do not collect photos or initiate payment.
@@ -9581,6 +10054,86 @@ components:
                   code: CAPABILITY_OFF,
                   message: 'This feature is not turned on on this server yet.',
                   details: { capability: 'worldEvents' },
+                },
+            }
+    RealMarketsGeoBlocked:
+      description: >-
+        Real Markets are not available at the request's location (`reason`: `blocked_country`,
+        `blocked_region`, or `unknown_country` when no trusted IP country was sent).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: REAL_MARKETS_GEO_BLOCKED,
+                  message: 'Real Markets are not available where you are.',
+                  details: { country: US, reason: blocked_country },
+                },
+            }
+    RealMarketsForbidden:
+      description: '18+ not confirmed (`AGE_REQUIRED`), or no valid linked wallet (`FORBIDDEN {reason: wallet_required}`)'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: AGE_REQUIRED,
+                  message: 'The Casino is 18+. Confirm your age to play.',
+                  details: { feature: realMarkets },
+                },
+            }
+    RealMarketsUnavailable:
+      description: >-
+        `CAPABILITY_OFF {capability}` while `realMarkets` (or `realMarketsJupiter` for Jupiter)
+        is off, or `REAL_MARKETS_PROVIDER_UNAVAILABLE {provider, reason: not_configured |
+        provider_auth | provider_forbidden | timeout | network | upstream_5xx}`.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: REAL_MARKETS_PROVIDER_UNAVAILABLE,
+                  message: 'The market provider is not reachable right now. Try again shortly.',
+                  details: { provider: panta, reason: timeout },
+                },
+            }
+    RealMarketsProviderError:
+      description: The provider answered something unexpected (`REAL_MARKETS_PROVIDER_ERROR {provider, providerStatus?, providerCode?, reason?}`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: REAL_MARKETS_PROVIDER_ERROR,
+                  message: 'The market provider returned an unexpected answer.',
+                  details: { provider: jupiter, reason: unexpected_signer },
+                },
+            }
+    RealMarketsOrderRejected:
+      description: The provider refused this order (`REAL_MARKETS_ORDER_REJECTED {provider, providerCode, providerMessage}`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example:
+            {
+              error:
+                {
+                  code: REAL_MARKETS_ORDER_REJECTED,
+                  message: 'The market provider rejected this order.',
+                  details:
+                    {
+                      provider: panta,
+                      providerCode: AMOUNT_TOO_SMALL,
+                      providerMessage: 'Amount below minimum fill',
+                    },
                 },
             }
   schemas:
@@ -10552,6 +11105,8 @@ components:
                   factory,
                   projectHq,
                   devnetDrip,
+                  realMarkets,
+                  realMarketsJupiter,
                 ]
               properties:
                 beefVoting: { type: boolean }
@@ -10573,6 +11128,12 @@ components:
                 devnetDrip:
                   type: boolean
                   description: Devnet test tokens (the "Get test tokens" card, `/devnet/*`).
+                realMarkets:
+                  type: boolean
+                  description: Real Markets terminal with Panta (`/real-markets/*`); real USDC on mainnet.
+                realMarketsJupiter:
+                  type: boolean
+                  description: Adds Jupiter's Prediction Market API to Real Markets (`provider=jupiter`).
         competitionCapabilities:
           type: object
           description: >-
@@ -12629,3 +13190,253 @@ components:
             description: "Pass to `joinOrCreate('project_hq', {projectId, token})`.",
           }
         expiresAt: { type: string, format: date-time }
+    RealMarketsAttribution:
+      type: object
+      description: >-
+        Must be shown next to every provider-powered surface (Panta API Terms §6 "Powered by
+        Panta"; Jupiter licence §8.4 "Powered by Jupiter").
+      required: [text, url, required, apiName]
+      properties:
+        text: { type: string, example: 'Powered by Panta' }
+        url: { type: string, format: uri }
+        required: { type: boolean, const: true }
+        apiName: { type: string }
+    RealMarketsRiskWarning:
+      type: object
+      required: [version, text]
+      properties:
+        version: { type: string }
+        text: { type: string }
+    RealMarketsConfig:
+      type: object
+      required:
+        [
+          enabled,
+          eligible,
+          reasons,
+          country,
+          ageConfirmed,
+          wallet,
+          chain,
+          cluster,
+          settlementMint,
+          providers,
+          riskWarning,
+          limits,
+          distribution,
+        ]
+      properties:
+        enabled: { type: boolean }
+        eligible: { type: boolean }
+        reasons:
+          type: array
+          items:
+            {
+              type: string,
+              enum:
+                [
+                  capability_off,
+                  blocked_country,
+                  blocked_region,
+                  unknown_country,
+                  age_required,
+                  wallet_required,
+                  provider_not_configured,
+                ],
+            }
+        country: { type: string, nullable: true }
+        ageConfirmed: { type: boolean }
+        wallet: { type: string, nullable: true }
+        chain: { type: string, const: 'solana:mainnet' }
+        cluster: { type: string, const: mainnet }
+        settlementMint: { type: string }
+        providers:
+          type: array
+          items:
+            type: object
+            required: [id, configured, attribution, categories, minOrderUsdc]
+            properties:
+              id: { type: string, enum: [panta, jupiter] }
+              configured: { type: boolean }
+              attribution: { $ref: '#/components/schemas/RealMarketsAttribution' }
+              categories: { type: array, items: { type: string } }
+              minOrderUsdc: { type: string, nullable: true }
+        riskWarning: { $ref: '#/components/schemas/RealMarketsRiskWarning' }
+        limits:
+          type: object
+          required: [maxOrderUsdc, dailyOrders, defaultSlippageBps, maxSlippageBps]
+          properties:
+            maxOrderUsdc: { type: string }
+            dailyOrders: { type: integer }
+            defaultSlippageBps: { type: integer }
+            maxSlippageBps: { type: integer }
+        distribution: { type: string, const: dapp_store_only }
+    RealMarket:
+      type: object
+      description: One binary market, normalised across providers. Prices are USDC per share as decimal strings. No Cash fields.
+      required:
+        [
+          provider,
+          marketId,
+          eventId,
+          eventTitle,
+          title,
+          description,
+          category,
+          imageUrl,
+          status,
+          providerPhase,
+          tradable,
+          yesPrice,
+          noPrice,
+          sellYesPrice,
+          sellNoPrice,
+          volumeUsdc,
+          closeTime,
+          resolveTime,
+          result,
+          rules,
+        ]
+      properties:
+        provider: { type: string, enum: [panta, jupiter] }
+        marketId: { type: string }
+        eventId: { type: string, nullable: true }
+        eventTitle: { type: string, nullable: true }
+        title: { type: string }
+        description: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        imageUrl: { type: string, nullable: true }
+        status: { type: string, enum: [open, closed, resolved, cancelled] }
+        providerPhase: { type: string, nullable: true }
+        tradable:
+          {
+            type: boolean,
+            description: 'True when a buy can be built now (Panta: primary phase only).',
+          }
+        yesPrice: { type: string, nullable: true }
+        noPrice: { type: string, nullable: true }
+        sellYesPrice: { type: string, nullable: true }
+        sellNoPrice: { type: string, nullable: true }
+        volumeUsdc: { type: string, nullable: true }
+        closeTime: { type: integer, nullable: true, description: Unix seconds }
+        resolveTime: { type: integer, nullable: true, description: Unix seconds }
+        result: { type: string, enum: ['yes', 'no'], nullable: true }
+        rules: { type: string, nullable: true }
+    RealQuote:
+      type: object
+      required:
+        [provider, marketId, side, amountUsdc, quoteId, estShares, avgPrice, feeUsdc, expiresAt]
+      properties:
+        provider: { type: string, enum: [panta, jupiter] }
+        marketId: { type: string }
+        side: { type: string, enum: ['yes', 'no'] }
+        amountUsdc: { type: string }
+        quoteId: { type: string, nullable: true }
+        estShares: { type: string, nullable: true }
+        avgPrice: { type: string, nullable: true }
+        feeUsdc: { type: string, nullable: true }
+        expiresAt: { type: string, format: date-time, nullable: true }
+    RealBuiltOrder:
+      type: object
+      required:
+        [
+          orderId,
+          provider,
+          txBase64,
+          expiresAt,
+          chain,
+          wallet,
+          marketId,
+          side,
+          amountUsdc,
+          estShares,
+          feeUsdc,
+          attribution,
+        ]
+      properties:
+        orderId: { type: string, format: uuid }
+        provider: { type: string, enum: [panta, jupiter] }
+        txBase64:
+          {
+            type: string,
+            description: 'Unsigned v0 VersionedTransaction; fee payer and only signer = `wallet`.',
+          }
+        expiresAt: { type: string, format: date-time }
+        chain: { type: string, const: 'solana:mainnet' }
+        wallet: { type: string }
+        marketId: { type: string }
+        side: { type: string, enum: ['yes', 'no'] }
+        amountUsdc: { type: string }
+        estShares: { type: string, nullable: true }
+        feeUsdc: { type: string, nullable: true }
+        attribution: { $ref: '#/components/schemas/RealMarketsAttribution' }
+    RealOrder:
+      type: object
+      required:
+        [
+          orderId,
+          provider,
+          marketId,
+          side,
+          amountUsdc,
+          wallet,
+          status,
+          providerState,
+          signature,
+          error,
+          estShares,
+          feeUsdc,
+          createdAt,
+          expiresAt,
+          submittedAt,
+          confirmedAt,
+          explorerUrl,
+        ]
+      properties:
+        orderId: { type: string, format: uuid }
+        provider: { type: string, enum: [panta, jupiter] }
+        marketId: { type: string }
+        side: { type: string, enum: ['yes', 'no'] }
+        amountUsdc: { type: string }
+        wallet: { type: string }
+        status: { type: string, enum: [built, expired, submitted, confirmed, failed, mismatch] }
+        providerState: { type: string, enum: [pending, filled, failed, unknown], nullable: true }
+        signature: { type: string, nullable: true }
+        error: { type: string, nullable: true }
+        estShares: { type: string, nullable: true }
+        feeUsdc: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        submittedAt: { type: string, format: date-time, nullable: true }
+        confirmedAt: { type: string, format: date-time, nullable: true }
+        explorerUrl: { type: string, nullable: true }
+    RealPosition:
+      type: object
+      required:
+        [
+          provider,
+          marketId,
+          title,
+          side,
+          shares,
+          status,
+          claimable,
+          claimed,
+          outcome,
+          avgPrice,
+          costUsdc,
+          estValueUsdc,
+        ]
+      properties:
+        provider: { type: string, enum: [panta, jupiter] }
+        marketId: { type: string }
+        title: { type: string, nullable: true }
+        side: { type: string, enum: ['yes', 'no'] }
+        shares: { type: string }
+        status: { type: string, nullable: true }
+        claimable: { type: boolean }
+        claimed: { type: boolean }
+        outcome: { type: string, enum: ['yes', 'no'], nullable: true }
+        avgPrice: { type: string, nullable: true }
+        costUsdc: { type: string, nullable: true }
+        estValueUsdc: { type: string, nullable: true }

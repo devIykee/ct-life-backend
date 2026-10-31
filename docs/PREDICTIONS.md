@@ -1,5 +1,9 @@
 # Prediction Pit (unlock D3)
 
+> The Cash Prediction Pit is play money. Real-money predictions (Panta, Jupiter) are a separate
+> feature with their own routes and capabilities: see [REAL-MARKETS.md](REAL-MARKETS.md). Cash never
+> converts to or from USDC, and the two must never be shown as the same thing.
+
 Play-money binary markets. Players bet in-game Cash, which cannot be bought out or withdrawn
 ([Economy](ECONOMY.md)). The house banks every market at fixed odds, so Cash never moves between
 players: a win is a faucet, a loss is a sink.
