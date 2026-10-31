@@ -25,6 +25,12 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { recordEvent, type SignInMethod } from './analytics.js';
 import type { AppContext, NonceRecord } from './context.js';
 import { NONCE_TTL_MS } from './context.js';
+import {
+  matchWebOrigin,
+  siwsAllowList,
+  siwsBindingForOrigin,
+  type SiwsBinding,
+} from '../shared/domain/web-origins.js';
 
 /** The contract's SIWS challenge shape (contract section 3.1). */
 export interface Challenge {
@@ -57,10 +63,33 @@ export class AuthService {
   }
 
   /**
-   * Issue a SIWS challenge for a wallet. The wallet param is
-   * optional; the nonce is not bound to a wallet until verify.
+   * The SIWS domain / URI for a request's Origin.
+   *
+   * No Origin (the Android app): the native `SIWS_DOMAIN` / `SIWS_URI`. An Origin in
+   * `WEB_ORIGINS`: that origin's host and `<origin>/`, which is what a browser wallet
+   * puts in (and checks against) the sign-in message. Any other Origin: refused, so a
+   * page we do not list never gets a challenge it could ask a user to sign.
+   *
+   * @param origin - The request's Origin header, or null/undefined.
+   * @returns The binding.
    */
-  async issueChallenge(wallet: string | null): Promise<Challenge> {
+  private bindingForOrigin(origin: string | null | undefined): SiwsBinding {
+    const cfg = this.ctx.config;
+    if (origin === undefined || origin === null || origin === '') {
+      return { domain: cfg.siws.domain, uri: cfg.siws.uri };
+    }
+    const match = matchWebOrigin(origin, cfg.web.origins);
+    if (match === null) throw new ForbiddenError({ reason: 'origin_not_allowed' });
+    return siwsBindingForOrigin(match);
+  }
+
+  /**
+   * Issue a SIWS challenge for a wallet. The wallet param is
+   * optional; the nonce is not bound to a wallet until verify. The
+   * nonce is bound to the domain / URI for the request's Origin
+   * (see `bindingForOrigin`), and verify accepts only that pair.
+   */
+  async issueChallenge(wallet: string | null, origin?: string | null): Promise<Challenge> {
     if (wallet !== null) {
       // Validate the wallet format early so the client gets a clear
       // 400 rather than a base64 decode error later.
@@ -71,16 +100,17 @@ export class AuthService {
       }
     }
     // B7 fix: Use alphanumeric nonce (no hyphens) for Seed Vault compatibility
+    const binding = this.bindingForOrigin(origin);
     const nonce = randomUUID().replace(/-/g, '');
     const issuedAt = new Date();
     const expires = new Date(issuedAt.getTime() + NONCE_TTL_MS);
-    await this.ctx.nonces.put(nonce, NONCE_TTL_MS, issuedAt, expires);
+    await this.ctx.nonces.put(nonce, NONCE_TTL_MS, issuedAt, expires, binding);
     const cfg = this.ctx.config;
     return {
       nonce,
-      domain: cfg.siws.domain,
+      domain: binding.domain,
       statement: 'Sign in to CT Life.',
-      uri: cfg.siws.uri,
+      uri: binding.uri,
       version: '1',
       chainId: cfg.solana.cluster === 'mainnet' ? 'solana:mainnet' : 'solana:devnet',
       issuedAt: issuedAt.toISOString(),
@@ -92,8 +122,20 @@ export class AuthService {
    * Verify the signed challenge. Mints the user if the wallet is
    * unseen, runs the SGT check, and returns the access + refresh
    * tokens.
+   *
+   * The message's domain and URI must equal the pair the nonce was
+   * issued for, and that pair must still be on the allow-list
+   * (native + `WEB_ORIGINS`). A message a wallet signed on another
+   * site carries that site's domain (wallets set and check it against
+   * the page) and is refused; the nonce is single-use and server
+   * issued, so a message for another service cannot match either.
+   * When the verify request has an Origin it must be the origin the
+   * nonce was issued for.
    */
-  async verifyAndAuthenticate(input: VerifyInput): Promise<AuthenticatedUser> {
+  async verifyAndAuthenticate(
+    input: VerifyInput,
+    origin?: string | null,
+  ): Promise<AuthenticatedUser> {
     const nonceRec = await this.ctx.nonces.get(input.nonce);
     if (!nonceRec) {
       throw new NonceInvalidError({});
@@ -108,7 +150,8 @@ export class AuthService {
     // B6 fix: Verify the signed message matches the challenge field-for-field
     const cfg = this.ctx.config;
     const chainId = cfg.solana.cluster === 'mainnet' ? 'solana:mainnet' : 'solana:devnet';
-    const siws = { domain: cfg.siws.domain, uri: cfg.siws.uri, chainId };
+    const expected = this.expectedBinding(nonceRec, origin);
+    const siws = { domain: expected.domain, uri: expected.uri, chainId };
     if (!verifySignedMessage(signedMessageText, nonceRec, input.address, siws)) {
       throw new SignatureInvalidError({});
     }
@@ -128,6 +171,35 @@ export class AuthService {
     // B14 fix: Check if user has a character
     const hasCharacter = await this.checkHasCharacter(user.id);
     return { ...user, ...tokens, hasCharacter };
+  }
+
+  /**
+   * The SIWS domain / URI a verify must match: the nonce's own binding (or the native
+   * pair for a record written before bindings), checked against the current allow-list
+   * and, when the request has an Origin, against that origin.
+   *
+   * @param nonceRec - The nonce record.
+   * @param origin - The verify request's Origin header.
+   * @returns The binding.
+   */
+  private expectedBinding(nonceRec: NonceRecord, origin: string | null | undefined): SiwsBinding {
+    const cfg = this.ctx.config;
+    const native = { domain: cfg.siws.domain, uri: cfg.siws.uri };
+    const bound =
+      nonceRec.domain !== undefined && nonceRec.uri !== undefined
+        ? { domain: nonceRec.domain, uri: nonceRec.uri }
+        : native;
+    const allowed = siwsAllowList(native, cfg.web.origins);
+    if (!allowed.some((b) => b.domain === bound.domain && b.uri === bound.uri)) {
+      throw new SignatureInvalidError({ reason: 'domain_not_allowed' });
+    }
+    if (origin !== undefined && origin !== null && origin !== '') {
+      const fromOrigin = this.bindingForOrigin(origin);
+      if (fromOrigin.domain !== bound.domain || fromOrigin.uri !== bound.uri) {
+        throw new SignatureInvalidError({ reason: 'origin_mismatch' });
+      }
+    }
+    return bound;
   }
 
   /**

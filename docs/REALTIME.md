@@ -154,6 +154,23 @@ sequenceDiagram
   Note over C,RT: patches resume
 ```
 
+### Browser clients (Origin check)
+
+The web build reaches Colyseus with a matchmake `POST /matchmake/...` and then a WebSocket
+upgrade; a browser sends `Origin` on both and a page cannot change it
+(`server/realtime/origin-guard.ts`):
+
+- no `Origin`: a native client (the Android app), allowed as before;
+- an `Origin` in `WEB_ORIGINS` (same env as the API): allowed. Matchmake CORS echoes that exact
+  origin with `Access-Control-Allow-Credentials: true` (the Colyseus JS SDK sends matchmake with
+  `credentials: 'include'`), never `*`. Allowed headers include `X-Client-Version`,
+  `X-Client-Platform` and `X-Client-Build`;
+- any other `Origin` (including `null`): the upgrade and `/matchmake/*` answer `403`.
+
+The JWT check in `onAuth` stays the authentication; the Origin check stops another site from
+opening a socket in a visitor's browser. `ctlife-realtime` needs the same `WEB_ORIGINS` as
+`ctlife-api`; without it every browser join is refused (native clients are unaffected).
+
 ## Sharding and overflow
 
 - `city` is sharded at 1,000 clients. A full shard forces a new instance.
