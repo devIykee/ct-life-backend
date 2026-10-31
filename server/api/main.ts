@@ -70,6 +70,7 @@ import { registerLiveKitWebhookRoutes } from './routes/livekit-webhook.js';
 import { registerNftGalleryRoutes } from './routes/nft-gallery.js';
 import { registerImgProxyRoutes } from './routes/img-proxy.js';
 import { registerRealMarketsRoutes } from './routes/real-markets.js';
+import { registerMeAgeRoutes } from './routes/me-age.js';
 
 declare module 'fastify' {
   interface FastifyRequest {
@@ -203,6 +204,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerNftGalleryRoutes(app); // unlock D4
   registerImgProxyRoutes(app); // unlock D4
   registerRealMarketsRoutes(app); // real-money predictions, capability realMarkets
+  registerMeAgeRoutes(app); // POST /v1/me/age-confirm (18+ after character creation)
   const likeness = await buildLikenessRuntime(ctx.config, ctx.db);
   registerLikenessRoutes(app, (_db, userId) => likeness.forOwner(userId));
   registerDevnetDripRoutes(app);

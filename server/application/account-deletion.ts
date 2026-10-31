@@ -154,6 +154,8 @@ export async function deleteAccount(ctx: AppContext, userId: string): Promise<vo
       'DELETE FROM voice_speakers WHERE user_id = $1',
       // Real Markets order records carry the wallet and exist for display/anti-abuse only.
       'DELETE FROM real_market_orders WHERE user_id = $1',
+      // 18+ confirmation audit rows (client version and time; no IP).
+      'DELETE FROM age_confirmations WHERE user_id = $1',
       `DELETE FROM ad_uploads u WHERE u.user_id = $1
          AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
     ];

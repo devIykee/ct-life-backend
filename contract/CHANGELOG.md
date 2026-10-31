@@ -1,3 +1,12 @@
+## 2026-10-31 - Real Markets gaps: 18+ after creation, order reconciliation, provider links, geo trust
+
+Migration 143 (`age_confirmations`; `real_market_orders` + `recent_blockhash`, `ix_fingerprints`, `reconciled_at`). Additive. See docs/REAL-MARKETS.md.
+
+- New `POST /me/age-confirm {confirmed: true}` (Idempotency-Key, optional `X-Client-Version`, no capability) -> `200 {ageConfirmed: true, ageConfirmedAt, alreadyConfirmed}`. Sets `characters.age_confirmed_at`, the same flag character creation sets and `GET /me` / `GET /casino/state` report as `ageConfirmed`, so accounts stuck at `AGE_REQUIRED` can confirm later. Idempotent (a repeat answers the first time with `alreadyConfirmed: true`); the first call writes an audit row (time, client version). Errors: `400 VALIDATION_FAILED {reason: confirm_required | invalid_client_version}`, `404 NOT_FOUND {kind: character}` (no character yet), `429 RATE_LIMITED {reason: age_confirm}` (burst 5, then 1 per 10 min).
+- `GET /real-markets/orders` (and `GET /real-markets/orders/{orderId}` on a `built` order) now reconcile: unsigned orders of the last 24 h are matched against the linked wallet's recent mainnet signatures (same fee payer, every built instruction, landed during the order's life), attached and verified. `RealOrder` gains `reconciled: bool` (true when the server, not the app, found the signature). Bounded: once per 20 s per player, 25 signatures, 8 transactions. Nothing that did not land is attached. Built transactions are unchanged (no memo).
+- `RealMarket` gains `providerUrl` (Panta `https://panta.market/market/{marketId}/{slug}`; Jupiter `https://jup.ag/prediction`). `RealPosition` gains `providerUrl` and `claimUrl` (set only while claimable and unclaimed; Panta: the market page; Jupiter: `https://jup.ag/prediction/profile`).
+- `GET /real-markets/config` gains `geoTrusted: bool` and `geoUntrustedReason: edge_not_configured | not_via_edge | null`. The client's API base URL must be the Cloudflare-proxied host; `not_via_edge` means it is not.
+
 ## 2026-10-31 - Real Markets: real-money predictions from the player's own wallet (Panta, then Jupiter)
 
 Migration 142 (`real_market_orders`). Additive; dark behind two new capabilities, both off. See docs/REAL-MARKETS.md.

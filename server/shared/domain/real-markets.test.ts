@@ -12,7 +12,14 @@ import {
   parseCountryList,
   parseRegionList,
   usdcToBase,
+  type RealPosition,
 } from './real-markets.js';
+import {
+  pantaSlug,
+  providerClaimUrl,
+  providerMarketUrl,
+  withPositionUrls,
+} from './real-markets-links.js';
 
 describe('usdc amounts', () => {
   it('parses decimal strings to base units and back', () => {
@@ -92,5 +99,48 @@ describe('decideGeo', () => {
       reason: 'blocked_region',
     });
     expect(decideGeo({ ...base, country: 'UA', region: '30' }).allowed).toBe(true);
+  });
+});
+
+describe('provider web pages', () => {
+  it("builds panta.market's slug the way its web app does", () => {
+    expect(pantaSlug('SOL above $300 by Dec?')).toBe('sol-above-300-by-dec');
+    expect(pantaSlug('Will Pelé’s record fall?')).toBe('will-pele-s-record-fall');
+    expect(pantaSlug('  ---  ')).toBe('market');
+    expect(pantaSlug(null)).toBe('market');
+    expect(pantaSlug('a'.repeat(79) + ' b')).toBe('a'.repeat(79));
+  });
+
+  it('links Panta markets to /market/{eventPda}/{slug} and Jupiter to Predict', () => {
+    expect(providerMarketUrl('panta', 'Ev3nt111', 'Will it rain?')).toBe(
+      'https://panta.market/market/Ev3nt111/will-it-rain',
+    );
+    expect(providerMarketUrl('jupiter', 'POLY-1', 'x')).toBe('https://jup.ag/prediction');
+    expect(providerClaimUrl('jupiter', 'POLY-1', 'x')).toBe('https://jup.ag/prediction/profile');
+    expect(providerClaimUrl('panta', 'Ev3nt111', 'Will it rain?')).toBe(
+      'https://panta.market/market/Ev3nt111/will-it-rain',
+    );
+  });
+
+  it('sets claimUrl only on a claimable, unclaimed position', () => {
+    const base: RealPosition = {
+      provider: 'panta',
+      marketId: 'Ev3nt111',
+      title: 'Will it rain?',
+      side: 'yes',
+      shares: '3',
+      status: 'resolved',
+      claimable: true,
+      claimed: false,
+      outcome: 'yes',
+      avgPrice: null,
+      costUsdc: null,
+      estValueUsdc: null,
+    };
+    expect(withPositionUrls(base).claimUrl).toBe(
+      'https://panta.market/market/Ev3nt111/will-it-rain',
+    );
+    expect(withPositionUrls({ ...base, claimed: true }).claimUrl).toBeNull();
+    expect(withPositionUrls({ ...base, claimable: false }).claimUrl).toBeNull();
   });
 });

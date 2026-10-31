@@ -33,11 +33,11 @@ import {
   type Attribution,
   type MarketProvider,
   type RealMarket,
-  type RealMarketPage,
   type RealMarketProviderId,
   type RealQuote,
   type RealSide,
 } from '../shared/domain/real-markets.js';
+import { withMarketUrl, type RealMarketView } from '../shared/domain/real-markets-links.js';
 import { perUserTokenBucket } from '../shared/infra/rate-limit.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 
@@ -124,6 +124,11 @@ export async function realMarketsConfig(
     eligible: reasons.length === 0,
     reasons,
     country: g.country,
+    // Whether this request's country came from the trusted edge. False means the location
+    // was ignored: the server has no edge secret (`edge_not_configured`) or the request did
+    // not come through the Cloudflare-proxied host (`not_via_edge`).
+    geoTrusted: geo.trusted,
+    geoUntrustedReason: geo.trusted ? null : geo.untrustedReason,
     ageConfirmed: p.ageConfirmed,
     wallet: p.wallet,
     chain: REAL_MARKETS_CHAIN,
@@ -187,9 +192,13 @@ export async function listRealMarkets(
     cursor: string | null;
     limit: number;
   },
-): Promise<
-  RealMarketPage & { provider: RealMarketProviderId; asOf: string; attribution: Attribution }
-> {
+): Promise<{
+  provider: RealMarketProviderId;
+  items: RealMarketView[];
+  nextCursor: string | null;
+  asOf: string;
+  attribution: Attribution;
+}> {
   const p = venue(ctx, q.provider);
   await passGate(ctx, userId, geo);
   await rateLimit(ctx, userId, 'read');
@@ -202,7 +211,7 @@ export async function listRealMarkets(
   );
   return {
     provider: q.provider,
-    items: page.data.items,
+    items: page.data.items.map(withMarketUrl),
     nextCursor: page.data.nextCursor,
     asOf: page.asOf,
     attribution: ATTRIBUTION[q.provider],
@@ -244,12 +253,12 @@ export async function getRealMarket(
   geo: RequestGeo,
   id: RealMarketProviderId,
   marketId: string,
-): Promise<{ market: RealMarket; asOf: string; attribution: Attribution }> {
+): Promise<{ market: RealMarketView; asOf: string; attribution: Attribution }> {
   venue(ctx, id);
   await passGate(ctx, userId, geo);
   await rateLimit(ctx, userId, 'read');
   const r = await marketDetail(ctx, id, marketId);
-  return { market: r.data, asOf: r.asOf, attribution: ATTRIBUTION[id] };
+  return { market: withMarketUrl(r.data), asOf: r.asOf, attribution: ATTRIBUTION[id] };
 }
 
 // --- Quote and build -----------------------------------------------------------------
@@ -378,8 +387,9 @@ export async function buildRealOrder(
       `INSERT INTO real_market_orders
          (order_id, user_id, wallet, provider, market_id, side, amount_base, est_shares, fee_usdc,
           provider_order_id, provider_quote_id, program_ids, last_valid_block_height, country,
-          risk_warning_version, created_at, expires_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$16)`,
+          risk_warning_version, created_at, expires_at, updated_at, recent_blockhash,
+          ix_fingerprints)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$16,$18,$19)`,
       [
         orderId,
         userId,
@@ -398,6 +408,8 @@ export async function buildRealOrder(
         REAL_MARKETS_RISK_WARNING.version,
         now,
         built.expiresAt,
+        built.recentBlockhash,
+        built.fingerprints,
       ],
     ),
   );

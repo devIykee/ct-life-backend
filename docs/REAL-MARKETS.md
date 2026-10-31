@@ -28,13 +28,13 @@ devnet economy: payments, paid calls, Factory launches and drips.
 Panta and Jupiter exist **only on mainnet** (neither has a devnet). Real Markets therefore
 has its own, separate mainnet configuration:
 
-|                        | Game economy                                              | Real Markets                                                                                          |
-| ---------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Cluster                | `config.solana.cluster` (devnet unless `APP_ENV=prod`)    | always mainnet                                                                                        |
-| RPC                    | `config.solana.rpcUrl`                                    | `config.realMarkets.mainnetRpcUrl` (`REAL_MARKETS_RPC_URL_MAINNET`, default `HELIUS_RPC_URL_MAINNET`) |
-| Server signs or sends? | yes, for some features (devnet only, `assertDevnetChain`) | **never**                                                                                             |
-| RPC methods used       | many                                                      | read-only: `getGenesisHash`, `getSignatureStatuses`, `getTransaction`, `getBlockHeight`               |
-| Guard                  | D0 (`ALLOW_MAINNET=1` for prod)                           | none needed: the server moves no funds                                                                |
+|                        | Game economy                                              | Real Markets                                                                                                                        |
+| ---------------------- | --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Cluster                | `config.solana.cluster` (devnet unless `APP_ENV=prod`)    | always mainnet                                                                                                                      |
+| RPC                    | `config.solana.rpcUrl`                                    | `config.realMarkets.mainnetRpcUrl` (`REAL_MARKETS_RPC_URL_MAINNET`, default `HELIUS_RPC_URL_MAINNET`)                               |
+| Server signs or sends? | yes, for some features (devnet only, `assertDevnetChain`) | **never**                                                                                                                           |
+| RPC methods used       | many                                                      | read-only: `getGenesisHash`, `getSignatureStatuses`, `getTransaction`, `getBlockHeight`, `getSignaturesForAddress` (reconciliation) |
+| Guard                  | D0 (`ALLOW_MAINNET=1` for prod)                           | none needed: the server moves no funds                                                                                              |
 
 - The Real Markets module never reads or writes `config.solana`. Turning it on does not
   switch the app to mainnet, does not need `ALLOW_MAINNET`, and does not trip the D0 guard.
@@ -108,12 +108,92 @@ unexpected_signer | already_signed}`) any transaction whose fee payer is not the
 [Unverified] that Cloudflare overwrites a `CF-IPCountry` value a client sends through the
 proxy. The secret already stops direct-to-origin spoofing; confirm this with one request
 during rollout. Rotate the secret by updating the Transform Rule and the Railway variable
-together. 2. **18+** → 403 `AGE_REQUIRED {feature: realMarkets}`. This uses the character's age
-confirmation (`characters.age_confirmed_at`, `GET /me` `ageConfirmed`). 3. **Wallet** → 403 `FORBIDDEN {reason: wallet_required}` when the account has no valid
-linked wallet.
+together.
+
+### The client's API host must be the Cloudflare-proxied host
+
+Geo works only for requests that pass through Cloudflare, because only Cloudflare adds the
+country and the edge secret. **The client's API base URL must be the Cloudflare-proxied
+hostname, never the `*.up.railway.app` URL.** A client pointed at the Railway URL reads as
+`unknown_country` for every player, and every Real Markets route answers 451.
+
+`GET /real-markets/config` tells the client which case it is in:
+
+| `geoTrusted` | `geoUntrustedReason`  | Meaning                                                                   | What the client shows                                                                          |
+| ------------ | --------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `true`       | `null`                | The country came from the edge. `reasons` decides eligibility.            | The terminal, or the normal "not available in {country}"                                       |
+| `false`      | `edge_not_configured` | This deployment has no edge secret yet (rollout step 3 not done).         | "Real Markets are not available yet."                                                          |
+| `false`      | `not_via_edge`        | The secret is configured, but this request did not come through the edge. | A clear "connection not supported" error; log it as a client misconfiguration (wrong API host) |
+
+2. **18+** → 403 `AGE_REQUIRED {feature: realMarkets}`. This uses the character's age
+   confirmation (`characters.age_confirmed_at`, `GET /me` `ageConfirmed`). A player without
+   it confirms with `POST /v1/me/age-confirm` (below).
+3. **Wallet** → 403 `FORBIDDEN {reason: wallet_required}` when the account has no valid
+   linked wallet.
 
 `GET /real-markets/config` runs the same checks but **reports** them in `reasons`. The client
 uses it to hide the terminal entirely when the player is not eligible.
+
+### 18+ after character creation (`POST /v1/me/age-confirm`)
+
+**How the age gate works.**
+
+- Character creation (`POST /v1/characters`) requires `ageConfirmed: true` and sets
+  `characters.age_confirmed_at = now()`. It has done so since M2.
+- That column is the only 18+ flag. The casino, the Factory, the Prediction Pit and Real
+  Markets read it. `GET /me` and `GET /casino/state` report it as `ageConfirmed`.
+- Before this endpoint, nothing could set it after creation, so an account without it stayed
+  at `AGE_REQUIRED` for good.
+
+**Who is stuck.** [Inference] from the code: through the API alone a character always has the
+flag. Accounts reach Real Markets without it in two ways:
+
+- They have no character, so there is no flag. They must create one, because the flag lives on
+  the character. The endpoint answers them 404.
+- Their character row was written outside `POST /v1/characters` (seed or e2e scripts, manual
+  SQL) with the column null.
+
+The client round reported such accounts.
+
+**The endpoint.** `POST /v1/me/age-confirm {confirmed: true}` with an Idempotency-Key and,
+ideally, `X-Client-Version`.
+
+- It sets the same column.
+- On the first call it writes one row to `age_confirmations`: the time, the client version and
+  `source: me_age_confirm`. No IP is stored.
+- Calling it again changes nothing. It answers `alreadyConfirmed: true` with the original time.
+- It is rate-limited per player: burst 5, then one call per 10 minutes, answering `429
+{reason: age_confirm}`.
+- No capability is needed: the casino and the Factory use it too.
+- `GET /me` `ageConfirmed`, `GET /casino/state` and the Real Markets gate flip on the next
+  request.
+
+**Is there a legal reason the confirmation must happen at creation?**
+
+- I found no source that requires an 18+ self-declaration to be made at account creation.
+  [Inference] For an age-restricted feature, what matters is that the check happens before the
+  feature is used. A later, explicit confirmation before entering Real Markets or the casino
+  does that.
+- I cannot verify this for Nigeria or any other target market. It joins the lawyer's existing
+  question in [Rollout](#rollout), whether self-declared 18+ plus IP gating is enough.
+- [Unverified] Some real-money gambling regulators require verified age, not self-declared
+  age. If so, that applies equally to the creation checkbox and to this endpoint.
+- The FTC's COPPA FAQ (read 2026-10-31) is about collecting personal information from children
+  under 13, not about 18+ features. It says to:
+  - ask age "in a neutral manner", for example by letting users enter their month and year of
+    birth;
+  - "avoid encouraging children to falsify age information" (an "I am over 12" checkbox is not
+    neutral);
+  - use "technical means, such as a cookie, to prevent children from back-buttoning to enter a
+    different age".
+
+**Client rules that follow:**
+
+- Use a neutral screen such as a date of birth. Never use a pre-ticked or "tap to continue"
+  18+ box.
+- Call the endpoint only when the answer is 18 or over.
+- When the answer is under 18, remember it on the device and do not offer the question again
+  there.
 
 ### Deny-list
 
@@ -147,9 +227,29 @@ Full schemas are in `contract/openapi.yaml` (tag `realMarkets`).
 | `POST /quote`                                 | `{provider, marketId, side, amountUsdc}` → quote (Panta `quoteId` lives about 90 s)                                                             |
 | `POST /order/build`                           | `{…, quoteId?, maxSlippageBps?, wallet?, riskAccepted, riskWarningVersion?}` → 201 `{orderId, txBase64, expiresAt, provider, chain, wallet, …}` |
 | `POST /order/submitted`                       | `{orderId, signature}` → records it and verifies it on mainnet                                                                                  |
-| `GET /orders?limit`                           | My order records                                                                                                                                |
-| `GET /orders/{orderId}`                       | One order; re-verifies while `submitted` (the client polls)                                                                                     |
-| `GET /positions?provider`                     | My linked wallet's positions                                                                                                                    |
+| `GET /orders?limit`                           | My order records; reconciles unsigned orders from chain first ([Reconciliation](#reconciliation-the-app-died-before-ordersubmitted))            |
+| `GET /orders/{orderId}`                       | One order; reconciles while `built`, re-verifies while `submitted` (the client polls)                                                           |
+| `GET /positions?provider`                     | My linked wallet's positions, each with `providerUrl` and (when claimable) `claimUrl`                                                           |
+
+Outside `/real-markets`: `POST /v1/me/age-confirm {confirmed: true}` sets the 18+ flag after
+character creation ([above](#18-after-character-creation-post-v1meage-confirm)).
+
+### Provider pages (`providerUrl`, `claimUrl`)
+
+Every market (board and detail) carries `providerUrl`. Every position carries `providerUrl`
+and `claimUrl`, which is set only while the position is claimable and not yet claimed. CT
+Life builds no claims or sells yet, so the client opens these pages instead.
+
+| Provider | `providerUrl`                                   | `claimUrl`                          | Source                                                                                                                                                                                                                                                                                                                    |
+| -------- | ----------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Panta    | `https://panta.market/market/{marketId}/{slug}` | the market page                     | Panta's API docs publish **no** web URL format (docs.panta.market, `llms-full.txt`, read 2026-10-31). The format and the slug rule come from panta.market's own web bundle, which builds `/market/{eventPda}/{slug}`. The API's `marketId` is the event address. [Unverified] that the claim action is on the market page |
+| Jupiter  | `https://jup.ag/prediction`                     | `https://jup.ag/prediction/profile` | Jupiter's user docs name `jup.ag/prediction` (Browse) and `jup.ag/prediction/profile` (claims are made from Profile). [Unverified] a per-event deep link, so the board links to Predict                                                                                                                                   |
+
+The slug is the title, NFKD-normalised, with accents dropped, lower-cased, every run of
+non-alphanumerics turned into `-`, trimmed and cut to 80 characters (`market` when empty)
+(`pantaSlug`, `server/shared/domain/real-markets-links.ts`). Panta's terms (§6) let the attribution
+link to panta.market, and these links are the same kind of outbound link. Show the
+attribution next to them as usual.
 
 ### Order lifecycle
 
@@ -173,6 +273,50 @@ build (unsigned tx, ~60 s)  ->  MWA sign_and_send (mainnet)  ->  submitted  ->  
   after the transaction lands, so a confirmed Jupiter order can be `pending` for a while.
 - Each transition is a conditional `UPDATE … WHERE status = …`, so venue notifications fire
   once even when the client polls concurrently.
+
+### Reconciliation: the app died before `/order/submitted`
+
+MWA `sign_and_send_transactions` broadcasts from the wallet. If the app is killed after that
+but before `POST /order/submitted`, the trade may have landed while the order still reads
+`built`, then `expired`. The server now finds such trades itself.
+
+- **When:** on demand, in `GET /orders` and in `GET /orders/{id}` for a `built` order. There is
+  no background worker: a worker would scan every player's wallet on the paid RPC, while on
+  demand costs nothing for players who never come back to the screen.
+- **What it reads:** the player's `built` orders of the last 24 h that carry fingerprints (at
+  most 20). With none, it makes no RPC call. Otherwise it reads `getSignaturesForAddress(wallet,
+{limit: 25, commitment: confirmed})` on the isolated Real Markets RPC, after the same
+  mainnet genesis check. It skips signatures already attached to an order, without a block
+  time, or older than the oldest pending order. It fetches at most 8 transactions
+  (`getTransaction`, base64).
+- **The match:** the landed transaction must:
+  - be paid by the order's wallet;
+  - contain **every instruction of the built transaction** (program and exact data; the
+    fingerprints are stored at build time);
+  - have landed during the order's life (built-at minus 30 s to expires-at plus 150 s).
+
+  Extra instructions are allowed, because wallets add priority fees or guard assertions.
+  Compute-budget instructions are never part of the fingerprint, because wallets rewrite
+  them. If two identical builds match, the one with the same recent blockhash wins, else the
+  newest.
+
+- **No memo or reference key is added.** The fingerprint is already unique to the order: Panta's
+  instruction data is bound to the quote, and Jupiter's to its order account. Adding an
+  instruction would change transactions the venues built and verify. Panta documents its
+  verification as fail-closed for market creation, and [Unverified] whether an extra
+  instruction trips its primary-order verification.
+- **Then:** the order goes `built → submitted` (conditional; the signature stays unique) with
+  `reconciled_at` set, and the venue is told (Panta submit). The normal verification
+  (`verifyOrderSignature`) alone decides `confirmed` or `failed`. The order view shows
+  `reconciled: true`.
+- **Never a trade that did not land:** only signatures the RPC lists as landed at `confirmed`
+  are considered, and confirmation still requires success on chain. An order whose transaction
+  is not found stays `built` and shows `expired`. A client-reported signature is never
+  overwritten.
+- **Bounds:** one reconcile per player per 20 s (Redis `NX` key), and a deployment-wide token
+  bucket of 120 burst and 2/s for reconcile RPC calls. Any RPC failure is logged and skipped:
+  `GET /orders` still answers.
+- Orders built before migration 143 have no fingerprints and are never reconciled.
 
 ### Limits and errors
 
@@ -208,7 +352,9 @@ and logs never contain API keys (a test asserts it).
 
 ## Data
 
-Migration 142 adds `real_market_orders` (docs/DATA_MODEL.md). It holds one row per built
+Migration 142 adds `real_market_orders` (docs/DATA_MODEL.md). Migration 143 adds its
+`recent_blockhash`, `ix_fingerprints` and `reconciled_at` columns (reconciliation), and the
+`age_confirmations` audit table (`POST /v1/me/age-confirm`; deleted with the account). It holds one row per built
 order: wallet, provider, market, side, amount in USDC base units, estimates, the venue's
 order and quote ids, the programs the transaction invokes, its last valid block height,
 status, venue state, signature (unique), the edge country code (no IP), the risk-warning
@@ -304,8 +450,12 @@ answers 503 at once. Positions stay in players' wallets at the venue.
 - [Unverified] That Cloudflare overwrites a client-sent `CF-IPCountry` on proxied requests (the
   edge secret already blocks direct-to-origin spoofing).
 - [Unverified] `cf-region-code` format for the sanctioned-region list.
-- [Unverified] Deep links to a market page on panta.market or jup.ag. The API returns no URL,
-  so the client links to the provider's home page.
+- [Unverified] Panta's `/market/{eventPda}/{slug}` page format is read from panta.market's web
+  bundle, not from Panta's docs, and could change without notice. Ask Panta to confirm it, or
+  to add a URL to the API. Also unverified: that panta.market shows the claim action on the
+  market page, and Jupiter per-event deep links.
+- [Unverified] Whether an extra (memo) instruction would trip Panta's order verification. Not
+  needed: reconciliation matches on the built instructions.
 - [Unverified] Jupiter `POST /orders` money fields are read as micro USD (the spec says so
   for `orderCostUsd` and fees; the quote's average price is derived as cost / contracts).
 - [Unverified] Whether Panta offers partner revenue share today.

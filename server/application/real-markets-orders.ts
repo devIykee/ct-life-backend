@@ -10,6 +10,9 @@
  * Verification is lazy: `POST .../submitted` checks once, `GET .../orders/{id}` checks
  * again while the order is `submitted` (the client polls). Each transition is a
  * conditional UPDATE, so venue notifications fire once even under concurrent polls.
+ * When the app dies before reporting a signature, `GET .../orders` (and `GET
+ * .../orders/{id}` on a built order) reconcile from chain (real-markets-reconcile.ts).
+ * The row helpers below are exported for that module only.
  *
  * Over the 300-line soft limit: the order state machine, its view and the positions
  * valuation read the same row type and are clearer together.
@@ -19,6 +22,7 @@ import { createLogger } from '../shared/logger/logger.js';
 import { providerFor } from './real-markets-providers.js';
 import { passGate, type RequestGeo } from './real-markets-gate.js';
 import { verifyOrderSignature } from './real-markets-chain.js';
+import { reconcileUnsignedOrders } from './real-markets-reconcile.js';
 import { marketDetail, rateLimit } from './real-markets.js';
 import { assertProviderOn } from './real-markets-providers.js';
 import { NotFoundError, RealMarketsTxMismatchError } from '../shared/domain/errors.js';
@@ -30,8 +34,9 @@ import {
   type RealPosition,
   type SubmittedInput,
 } from '../shared/domain/real-markets.js';
+import { withPositionUrls } from '../shared/domain/real-markets-links.js';
 
-interface OrderRow {
+export interface OrderRow {
   order_id: string;
   user_id: string;
   wallet: string;
@@ -53,6 +58,9 @@ interface OrderRow {
   expires_at: Date;
   submitted_at: Date | null;
   confirmed_at: Date | null;
+  recent_blockhash: string | null;
+  ix_fingerprints: string[];
+  reconciled_at: Date | null;
 }
 
 export interface OrderView {
@@ -74,6 +82,11 @@ export interface OrderView {
   readonly submittedAt: string | null;
   readonly confirmedAt: string | null;
   readonly explorerUrl: string | null;
+  /**
+   * True when the server found this order's transaction on chain itself (the app never
+   * reported the signature, e.g. it was killed after the wallet broadcast).
+   */
+  readonly reconciled: boolean;
 }
 
 function view(r: OrderRow, now: Date): OrderView {
@@ -96,10 +109,17 @@ function view(r: OrderRow, now: Date): OrderView {
     submittedAt: r.submitted_at?.toISOString() ?? null,
     confirmedAt: r.confirmed_at?.toISOString() ?? null,
     explorerUrl: r.signature ? `https://solscan.io/tx/${r.signature}` : null,
+    reconciled: r.reconciled_at !== null,
   };
 }
 
-async function loadOrder(
+/**
+ * @param ctx - The app context.
+ * @param userId - The caller (must own the order).
+ * @param orderId - The order.
+ * @returns The row; 404 NOT_FOUND when it is not the caller's.
+ */
+export async function loadOrder(
   ctx: Pick<AppContext, 'db'>,
   userId: string,
   orderId: string,
@@ -115,7 +135,11 @@ async function loadOrder(
   return row;
 }
 
-function submittedInput(r: OrderRow): SubmittedInput {
+/**
+ * @param r - An order with a signature.
+ * @returns What the venue needs to hear about it.
+ */
+export function submittedInput(r: OrderRow): SubmittedInput {
   return {
     providerOrderId: r.provider_order_id,
     providerQuoteId: r.provider_quote_id,
@@ -126,7 +150,11 @@ function submittedInput(r: OrderRow): SubmittedInput {
 }
 
 /** Run a venue call that must not fail the request; log without secrets. */
-async function bestEffort<T>(what: string, r: OrderRow, fn: () => Promise<T>): Promise<T | null> {
+export async function bestEffort<T>(
+  what: string,
+  r: OrderRow,
+  fn: () => Promise<T>,
+): Promise<T | null> {
   try {
     return await fn();
   } catch (e) {
@@ -142,7 +170,16 @@ async function bestEffort<T>(what: string, r: OrderRow, fn: () => Promise<T>): P
   }
 }
 
-async function transition(
+/**
+ * Conditional status change: applies only while the order is still in `from`.
+ * @param ctx - The app context.
+ * @param orderId - The order.
+ * @param from - The status it must be in.
+ * @param set - SQL SET list ($1 order id, $2 from, $3.. params).
+ * @param params - Extra parameters.
+ * @returns The updated row, or null when another request moved it first.
+ */
+export async function transition(
   ctx: Pick<AppContext, 'db'>,
   orderId: string,
   from: OrderRow['status'],
@@ -165,7 +202,7 @@ async function transition(
  * @param row - The order.
  * @returns The order as it is now.
  */
-async function refresh(ctx: AppContext, row: OrderRow): Promise<OrderRow> {
+export async function refresh(ctx: AppContext, row: OrderRow): Promise<OrderRow> {
   let r = row;
   if (r.status === 'submitted' && r.signature) {
     const v = await verifyOrderSignature(ctx, {
@@ -290,15 +327,21 @@ export async function getOrder(
   orderId: string,
   now: Date = new Date(),
 ): Promise<OrderView> {
-  const row = await loadOrder(ctx, userId, orderId);
+  let row = await loadOrder(ctx, userId, orderId);
   assertProviderOn(ctx, row.provider);
   await passGate(ctx, userId, geo);
   await rateLimit(ctx, userId, 'read');
+  if (row.status === 'built' && (await reconcileUnsignedOrders(ctx, userId, now)) > 0) {
+    row = await loadOrder(ctx, userId, orderId);
+  }
   return view(await refresh(ctx, row), now);
 }
 
 /**
- * The caller's recent orders, newest first (no chain calls).
+ * The caller's recent orders, newest first. Before reading, unsigned orders of the last day
+ * are reconciled against the wallet's recent mainnet signatures (bounded and throttled;
+ * real-markets-reconcile.ts), so an order whose signature the app never reported shows up
+ * as submitted / confirmed.
  * @param ctx - The app context.
  * @param userId - The caller.
  * @param geo - The request location.
@@ -314,6 +357,7 @@ export async function listOrders(
 ): Promise<{ orders: OrderView[] }> {
   await passGate(ctx, userId, geo);
   await rateLimit(ctx, userId, 'read');
+  await reconcileUnsignedOrders(ctx, userId, now);
   const r = await ctx.db.withConnection((c) =>
     c.query<OrderRow>(
       `SELECT * FROM real_market_orders WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
@@ -348,7 +392,7 @@ export async function positionsFor(
   return {
     provider: id,
     wallet: gate.wallet,
-    positions,
+    positions: positions.map(withPositionUrls),
     asOf: new Date().toISOString(),
     attribution: ATTRIBUTION[id],
   };

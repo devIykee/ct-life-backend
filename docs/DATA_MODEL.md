@@ -372,3 +372,17 @@ player's history and anti-abuse only (no Cash, no ledger). Columns: `order_id` (
 per signature), `error`, `country` (edge ISO code at build time; no IP), `risk_warning_version`,
 `created_at`, `expires_at`, `submitted_at`, `confirmed_at`, `updated_at`. Index
 `(user_id, created_at DESC)` serves history and the rolling 24 h build cap.
+
+Migration 143 adds three columns for reconciliation (finding an order's transaction on chain when
+the app never reported its signature): `recent_blockhash` (of the built message), `ix_fingerprints`
+(`text[]`, sha256 of `programId ':' base64(data)` per built instruction, compute budget excluded) and
+`reconciled_at` (set when the server, not the client, attached the signature). Partial index
+`(user_id, created_at DESC) WHERE status = 'built'` serves the reconcile lookup.
+
+## 18+ confirmation audit (migration 143)
+
+`age_confirmations`: one append-only row each time `POST /v1/me/age-confirm` sets the 18+ flag
+(`characters.age_confirmed_at`, which stays the only flag). Columns: `id` (uuid v7), `user_id`
+(ON DELETE CASCADE; account deletion also deletes the rows), `source` (`me_age_confirm`),
+`client_version` (`X-Client-Version`, at most 32 chars, nullable; no IP or device id), `created_at`.
+A repeat call writes nothing. Index `(user_id, created_at DESC)`.
