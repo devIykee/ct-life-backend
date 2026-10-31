@@ -7,7 +7,8 @@
  * `config.realMarkets.mainnetRpcUrl` and NEVER reads or changes `config.solana`, so turning
  * Real Markets on does not move the economy to mainnet and does not need ALLOW_MAINNET.
  * That is safe because Real Markets never sign or send: this client is read-only
- * (`getGenesisHash`, `getSignatureStatuses`, `getTransaction`, `getBlockHeight`).
+ * (`getGenesisHash`, `getSignatureStatuses`, `getTransaction`, `getBlockHeight`, and
+ * `getSignaturesForAddress` for reconciliation, real-markets-reconcile.ts).
  *
  * Before the first verification the RPC must prove it is mainnet (`getGenesisHash`), so a
  * mis-set URL pointing at devnet can never "confirm" a trade that did not happen.

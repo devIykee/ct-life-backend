@@ -288,6 +288,8 @@ export class PantaProvider implements MarketProvider {
       lastValidBlockHeight: num(b.lastValidBlockHeight),
       expiresAt,
       programIds: tx.programIds,
+      recentBlockhash: tx.recentBlockhash,
+      fingerprints: tx.fingerprints,
       estShares: str(b.expectedShares),
       feeUsdc: str(b.feeUsdc),
     };

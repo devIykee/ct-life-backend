@@ -23,6 +23,7 @@ The same wallet signing in again creates a different, empty account.
 | Creator profile and its images                                          | `creator_profiles`; files in the ads bucket                                                                                                                                  |
 | Ad creatives the player uploaded and never booked                       | `ad_uploads`; files in the ads bucket                                                                                                                                        |
 | Voice-room speaker rows                                                 | `voice_speakers`                                                                                                                                                             |
+| Real Markets order records; 18+ confirmation audit (time, app version)  | `real_market_orders`, `age_confirmations`                                                                                                                                    |
 
 ## Overwritten
 

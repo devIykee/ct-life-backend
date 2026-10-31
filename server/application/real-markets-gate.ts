@@ -33,8 +33,13 @@ export interface RequestGeo {
   /** The edge-reported country, or null when absent or untrusted. */
   readonly country: string | null;
   readonly region: string | null;
-  /** False when an edge secret is configured and the request did not carry it. */
+  /** True only when the request carried the configured edge secret. */
   readonly trusted: boolean;
+  /**
+   * Why the location was ignored: no edge secret on this deployment, or a request that did
+   * not come through the edge (e.g. straight to the Railway origin). Null when trusted.
+   */
+  readonly untrustedReason: 'edge_not_configured' | 'not_via_edge' | null;
 }
 
 type Headers = Readonly<Record<string, string | string[] | undefined>>;
@@ -62,16 +67,17 @@ export function readGeo(config: Pick<Config, 'realMarkets'>, headers: Headers): 
   // Fail closed: with no edge secret configured, or a request without the right one, the
   // country/region headers are client-controlled and are ignored.
   if (rm.edgeAuthHeader === '' || rm.edgeAuthSecret === '') {
-    return { country: null, region: null, trusted: false };
+    return { country: null, region: null, trusted: false, untrustedReason: 'edge_not_configured' };
   }
   const sent = header(headers, rm.edgeAuthHeader);
   if (sent === null || !safeEqual(sent, rm.edgeAuthSecret)) {
-    return { country: null, region: null, trusted: false };
+    return { country: null, region: null, trusted: false, untrustedReason: 'not_via_edge' };
   }
   return {
     country: header(headers, rm.countryHeader),
     region: header(headers, rm.regionHeader),
     trusted: true,
+    untrustedReason: null,
   };
 }
 

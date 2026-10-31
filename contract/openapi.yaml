@@ -2232,6 +2232,66 @@ paths:
                     },
                 }
 
+  /me/age-confirm:
+    post:
+      tags: [player]
+      operationId: postMeAgeConfirm
+      summary: Confirm 18+ after character creation.
+      description: >-
+        Sets the 18+ flag (`characters.age_confirmed_at`), the same one character creation sets
+        (`POST /characters` `ageConfirmed: true`) and `GET /me` / `GET /casino/state` report as
+        `ageConfirmed`. The casino, the Factory, the Prediction Pit and Real Markets all read it.
+        For accounts left at `AGE_REQUIRED`. Idempotent: the first call sets it to now and writes
+        one audit row (time, `X-Client-Version`, no IP); a repeat changes nothing and answers the
+        first time with `alreadyConfirmed: true`. Needs a character (`404 NOT_FOUND {kind:
+        character}`). Rate limited per player (burst 5, then one per 10 minutes; `429 {reason:
+        age_confirm}`). Ask with a neutral age screen (for example a date of birth), not a
+        pre-ticked "I am 18+" (docs/REAL-MARKETS.md). No capability.
+      x-phase: 1
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: X-Client-Version
+          in: header
+          required: false
+          description: The app version, recorded in the audit row. 1-32 chars of `[0-9A-Za-z.+_-]`, else 400.
+          schema: { type: string, maxLength: 32 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirmed]
+              properties:
+                confirmed: { type: boolean, enum: [true] }
+            example: { confirmed: true }
+      responses:
+        '200':
+          description: Confirmed (now or earlier)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ageConfirmed, ageConfirmedAt, alreadyConfirmed]
+                properties:
+                  ageConfirmed: { type: boolean, enum: [true] }
+                  ageConfirmedAt: { type: string, format: date-time }
+                  alreadyConfirmed:
+                    {
+                      type: boolean,
+                      description: 'True when the flag was already set (nothing was written).',
+                    }
+              example:
+                {
+                  ageConfirmed: true,
+                  ageConfirmedAt: '2026-10-31T12:00:00.000Z',
+                  alreadyConfirmed: false,
+                }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/RateLimited' }
   /me/first-session:
     post:
       tags: [player]
@@ -9401,7 +9461,12 @@ paths:
         `provider_not_configured`. `chain` is the MWA chain to authorize for signing
         (`solana:mainnet`): the rest of the game stays on devnet, so the client needs a separate
         mainnet MWA authorization (docs/REAL-MARKETS.md). Real Markets never take, pay or show
-        Cash. dApp Store build only.
+        Cash. dApp Store build only. `geoTrusted` is false when the request's location was
+        ignored; `geoUntrustedReason` says why: `edge_not_configured` (this deployment has no
+        edge secret yet: "Real Markets are not available yet") or `not_via_edge` (the request did
+        not come through the Cloudflare-proxied API host: a client misconfiguration). The
+        client's API base URL must be the Cloudflare-proxied host. `age_required` is fixed with
+        `POST /me/age-confirm`.
       x-phase: 4
       responses:
         '200':
@@ -9414,6 +9479,8 @@ paths:
                 eligible: true
                 reasons: []
                 country: NG
+                geoTrusted: true
+                geoUntrustedReason: null
                 ageConfirmed: true
                 wallet: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
                 chain: 'solana:mainnet'
@@ -9767,8 +9834,14 @@ paths:
       operationId: listRealMarketsOrders
       summary: My Real Markets order records, newest first.
       description: >-
-        Same gate. Records only (no chain calls); `expired` means built and never submitted
-        before `expiresAt`.
+        Same gate. `expired` means built and no signature known before `expiresAt`. Before
+        reading, the server reconciles: if the caller has unsigned orders from the last 24 h, it
+        reads the linked wallet's recent mainnet signatures (at most once per 20 s per player, 25
+        signatures, 8 transactions) and attaches any that is one of those orders (same fee payer,
+        every built instruction present, landed during the order's life), then verifies it as
+        `POST /order/submitted` would. Such orders come back `submitted` / `confirmed` / `failed`
+        with `reconciled: true`. Nothing that did not land is ever attached; an RPC problem never
+        fails this call.
       x-phase: 4
       parameters:
         - {
@@ -9798,7 +9871,8 @@ paths:
       operationId: getRealMarketsOrder
       summary: One of my orders; re-verifies on mainnet while it is `submitted`.
       description: >-
-        Same gate; 404 for someone else's order. While `submitted`, checks the chain again; once
+        Same gate; 404 for someone else's order. While `built`, reconciles as `GET
+        /real-markets/orders` does. While `submitted`, checks the chain again; once
         `confirmed`, reads the venue's own state into `providerState` (`pending` until
         Jupiter's keepers fill, `filled`, `failed`). Poll every 2-3 s for up to about 90 s.
       x-phase: 4
@@ -9825,7 +9899,7 @@ paths:
         Same gate and capabilities. Always the linked SIWS wallet (no wallet parameter).
         `estValueUsdc` is a display estimate (Panta: shares x spot price for open markets, 1 per
         winning share, 0 per losing share; Jupiter: its `valueUsd`). Claims and sells are a later
-        phase; send players to the provider's site meanwhile.
+        phase; open `providerUrl` (the market) or `claimUrl` (a claimable win) meanwhile.
       x-phase: 4
       parameters:
         - $ref: '#/components/parameters/RealMarketsProvider'
@@ -13215,6 +13289,8 @@ components:
           eligible,
           reasons,
           country,
+          geoTrusted,
+          geoUntrustedReason,
           ageConfirmed,
           wallet,
           chain,
@@ -13245,6 +13321,18 @@ components:
                 ],
             }
         country: { type: string, nullable: true }
+        geoTrusted:
+          {
+            type: boolean,
+            description: 'True when the country came from the trusted edge (Cloudflare + edge secret).',
+          }
+        geoUntrustedReason:
+          {
+            type: string,
+            enum: [edge_not_configured, not_via_edge],
+            nullable: true,
+            description: 'Why the location was ignored; null when geoTrusted.',
+          }
         ageConfirmed: { type: boolean }
         wallet: { type: string, nullable: true }
         chain: { type: string, const: 'solana:mainnet' }
@@ -13296,10 +13384,19 @@ components:
           resolveTime,
           result,
           rules,
+          providerUrl,
         ]
       properties:
         provider: { type: string, enum: [panta, jupiter] }
         marketId: { type: string }
+        providerUrl:
+          type: string
+          description: >-
+            The provider's web page for this market. Panta:
+            `https://panta.market/market/{marketId}/{slug}` (the slug is built from the title the
+            way panta.market does). Jupiter: `https://jup.ag/prediction` (a per-event deep link is
+            not documented yet).
+          example: 'https://panta.market/market/EventPda11111111111111111111111111111/sol-above-300-by-dec'
         eventId: { type: string, nullable: true }
         eventTitle: { type: string, nullable: true }
         title: { type: string }
@@ -13391,6 +13488,7 @@ components:
           submittedAt,
           confirmedAt,
           explorerUrl,
+          reconciled,
         ]
       properties:
         orderId: { type: string, format: uuid }
@@ -13410,6 +13508,11 @@ components:
         submittedAt: { type: string, format: date-time, nullable: true }
         confirmedAt: { type: string, format: date-time, nullable: true }
         explorerUrl: { type: string, nullable: true }
+        reconciled:
+          {
+            type: boolean,
+            description: 'True when the server found the transaction on chain itself (the app never reported the signature).',
+          }
     RealPosition:
       type: object
       required:
@@ -13426,10 +13529,23 @@ components:
           avgPrice,
           costUsdc,
           estValueUsdc,
+          providerUrl,
+          claimUrl,
         ]
       properties:
         provider: { type: string, enum: [panta, jupiter] }
         marketId: { type: string }
+        providerUrl:
+          {
+            type: string,
+            description: 'The market page at the provider (as RealMarket.providerUrl).',
+          }
+        claimUrl:
+          type: string
+          nullable: true
+          description: >-
+            Where to claim, set only while `claimable` and not `claimed`. Panta: the market page.
+            Jupiter: `https://jup.ag/prediction/profile` (claims are made from Profile).
         title: { type: string, nullable: true }
         side: { type: string, enum: ['yes', 'no'] }
         shares: { type: string }

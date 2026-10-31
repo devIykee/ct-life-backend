@@ -113,6 +113,8 @@ class FakeVenue implements MarketProvider {
       lastValidBlockHeight: 500,
       expiresAt: new Date(Date.now() + 60_000),
       programIds: tx.programIds,
+      recentBlockhash: tx.recentBlockhash,
+      fingerprints: tx.fingerprints,
       estShares: '25.00',
       feeUsdc: '0.20',
     };
@@ -346,11 +348,20 @@ describe('gate', () => {
       wallet: minor.wallet,
       ageConfirmed: false,
       distribution: 'dapp_store_only',
+      // No edge secret on this request: the location was ignored, and the client can say why.
+      geoTrusted: false,
+      geoUntrustedReason: 'not_via_edge',
     });
     expect(r.body.reasons).toEqual(['unknown_country', 'age_required']);
     const adult = await player();
     const ok = await call(adult, 'GET', '/v1/real-markets/config');
-    expect(ok.body).toMatchObject({ eligible: true, reasons: [], country: 'NG' });
+    expect(ok.body).toMatchObject({
+      eligible: true,
+      reasons: [],
+      country: 'NG',
+      geoTrusted: true,
+      geoUntrustedReason: null,
+    });
     expect((ok.body.providers as Array<{ id: string }>).map((x) => x.id)).toEqual(['panta']);
   });
 
@@ -420,6 +431,10 @@ describe('gate', () => {
     }
     const cfg = await call(p, 'GET', '/v1/real-markets/config', undefined, NG);
     expect(cfg.body.reasons).toContain('unknown_country');
+    expect(cfg.body).toMatchObject({
+      geoTrusted: false,
+      geoUntrustedReason: 'edge_not_configured',
+    });
   });
 
   it('requires the 18+ confirmation', async () => {
@@ -450,6 +465,10 @@ describe('markets', () => {
       attribution: { text: 'Powered by Panta', url: 'https://panta.market', required: true },
     });
     expect((r.body.items as RealMarket[])[0]!.marketId).toBe(MARKET);
+    // The venue's own market page (panta.market/market/{eventPda}/{slug}).
+    expect((r.body.items as Array<{ providerUrl: string }>)[0]!.providerUrl).toBe(
+      `https://panta.market/market/${MARKET}/sol-above-300-by-dec`,
+    );
     expect(typeof r.body.asOf).toBe('string');
     await call(p, 'GET', '/v1/real-markets/markets?category=crypto&limit=10');
     expect(panta.listCalls).toBe(1);
@@ -467,7 +486,11 @@ describe('markets', () => {
     const p = await player();
     const r = await call(p, 'GET', `/v1/real-markets/markets/${MARKET}`);
     expect(r.status).toBe(200);
-    expect(r.body.market).toMatchObject({ marketId: MARKET, yesPrice: '0.40' });
+    expect(r.body.market).toMatchObject({
+      marketId: MARKET,
+      yesPrice: '0.40',
+      providerUrl: `https://panta.market/market/${MARKET}/sol-above-300-by-dec`,
+    });
     const missing = await call(
       p,
       'GET',
@@ -748,6 +771,8 @@ describe('positions', () => {
       marketId: MARKET,
       title: 'SOL above 300 by Dec?',
       estValueUsdc: '10.00',
+      providerUrl: `https://panta.market/market/${MARKET}/sol-above-300-by-dec`,
+      claimUrl: null, // not claimable
     });
   });
 });

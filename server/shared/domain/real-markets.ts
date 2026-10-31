@@ -179,6 +179,14 @@ export interface BuiltOrder {
   readonly expiresAt: Date;
   /** Top-level programs the transaction invokes; a confirmed signature must invoke all of them. */
   readonly programIds: readonly string[];
+  /** The built message's recent blockhash (tie-break when reconciling). */
+  readonly recentBlockhash: string;
+  /**
+   * Instruction fingerprints of the built transaction (shared/real-markets/tx.ts). The
+   * server recognises the landed transaction by them when the client never reported its
+   * signature (reconciliation).
+   */
+  readonly fingerprints: readonly string[];
   readonly estShares: string | null;
   readonly feeUsdc: string | null;
 }

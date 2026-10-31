@@ -299,6 +299,8 @@ export class JupiterPredictionProvider implements MarketProvider {
       lastValidBlockHeight: num(obj(b.txMeta).lastValidBlockHeight),
       expiresAt: new Date(this.now().getTime() + BLOCKHASH_SEC * 1000),
       programIds: tx.programIds,
+      recentBlockhash: tx.recentBlockhash,
+      fingerprints: tx.fingerprints,
       estShares: this.estimates(order).estShares,
       feeUsdc: this.estimates(order).feeUsdc,
     };

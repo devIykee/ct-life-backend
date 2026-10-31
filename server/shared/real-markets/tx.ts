@@ -4,6 +4,7 @@
  * payer and the only required signer, so no provider answer can make CT Life a signer,
  * a custodian or a fee payer.
  */
+import { createHash } from 'node:crypto';
 import {
   PublicKey,
   TransactionInstruction,
@@ -27,6 +28,46 @@ export interface WireInstruction {
 export interface UnsignedTx {
   readonly txBase64: string;
   readonly programIds: string[];
+  /** The message's recent blockhash. */
+  readonly recentBlockhash: string;
+  /** Instruction fingerprints (`txFingerprints`), used to find the tx on chain later. */
+  readonly fingerprints: string[];
+}
+
+/** Wallets add or rewrite compute-budget instructions (priority fees), so they are never matched. */
+export const COMPUTE_BUDGET_PROGRAM = 'ComputeBudget111111111111111111111111111111';
+
+/**
+ * Fingerprint of one instruction: sha256 hex of `programId ':' base64(data)`.
+ * @param programId - Base58 program id.
+ * @param data - Raw instruction data.
+ * @returns 64 hex chars.
+ */
+export function instructionFingerprint(programId: string, data: Uint8Array): string {
+  return createHash('sha256')
+    .update(`${programId}:${Buffer.from(data).toString('base64')}`)
+    .digest('hex');
+}
+
+/**
+ * The fingerprints of a transaction's top-level instructions, compute budget excluded.
+ * Program ids are always static keys (v0 lookup tables cannot load them), so this works on
+ * the unsigned build and on the landed transaction alike. A wallet that adds instructions
+ * (priority fee, guard assertions) leaves the built ones, and so their fingerprints, intact.
+ *
+ * @param tx - A versioned transaction (signed or not).
+ * @returns Distinct fingerprints in instruction order.
+ */
+export function txFingerprints(tx: VersionedTransaction): string[] {
+  const keys = tx.message.staticAccountKeys;
+  const out: string[] = [];
+  for (const ix of tx.message.compiledInstructions) {
+    const program = keys[ix.programIdIndex]?.toBase58();
+    if (!program || program === COMPUTE_BUDGET_PROGRAM) continue;
+    const f = instructionFingerprint(program, ix.data);
+    if (!out.includes(f)) out.push(f);
+  }
+  return out;
 }
 
 function bad(provider: RealMarketProviderId, reason: string): RealMarketsProviderError {
@@ -84,6 +125,8 @@ export function compileUnsignedV0(
   return {
     txBase64: Buffer.from(tx.serialize()).toString('base64'),
     programIds: [...new Set(instructions.map((i) => i.programId))],
+    recentBlockhash,
+    fingerprints: txFingerprints(tx),
   };
 }
 
@@ -120,5 +163,10 @@ export function inspectUnsignedTx(
     const p = keys[ix.programIdIndex];
     if (p) programIds.add(p.toBase58());
   }
-  return { txBase64, programIds: [...programIds] };
+  return {
+    txBase64,
+    programIds: [...programIds],
+    recentBlockhash: msg.recentBlockhash,
+    fingerprints: txFingerprints(tx),
+  };
 }
