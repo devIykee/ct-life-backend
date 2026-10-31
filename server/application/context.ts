@@ -90,10 +90,29 @@ export interface NonceRecord {
   readonly expiresAt: number;
   readonly wallet: string | null;
   readonly used: boolean;
+  /**
+   * The SIWS domain and URI this nonce was issued for (the native pair, or a web
+   * origin's). Absent on records written before web sign-in; verify then expects the
+   * native pair.
+   */
+  readonly domain?: string;
+  readonly uri?: string;
+}
+
+/** The SIWS domain / URI a nonce is bound to at issue. */
+export interface NonceBinding {
+  readonly domain: string;
+  readonly uri: string;
 }
 
 export interface NonceStore {
-  put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord>;
+  put(
+    nonce: string,
+    ttlMs: number,
+    issuedAt?: Date,
+    expiresAt?: Date,
+    binding?: NonceBinding,
+  ): Promise<NonceRecord>;
   get(nonce: string): Promise<NonceRecord | null>;
   markUsed(nonce: string, wallet: string): Promise<boolean>;
 }
@@ -110,9 +129,16 @@ export class InMemoryNonceStore implements NonceStore {
    * @param ttlMs - Lifetime in milliseconds, used when expiresAt is omitted.
    * @param issuedAt - Issue time. Defaults to now.
    * @param expiresAt - Expiry time. Defaults to now plus ttlMs.
+   * @param binding - The SIWS domain / URI the nonce is issued for.
    * @returns The stored nonce record.
    */
-  async put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord> {
+  async put(
+    nonce: string,
+    ttlMs: number,
+    issuedAt?: Date,
+    expiresAt?: Date,
+    binding?: NonceBinding,
+  ): Promise<NonceRecord> {
     const now = Date.now();
     const rec: NonceRecord = {
       nonce,
@@ -120,6 +146,7 @@ export class InMemoryNonceStore implements NonceStore {
       expiresAt: expiresAt ? expiresAt.getTime() : now + ttlMs,
       wallet: null,
       used: false,
+      ...(binding ? { domain: binding.domain, uri: binding.uri } : {}),
     };
     this.map.set(nonce, rec);
     // Lazy cleanup.
@@ -165,7 +192,13 @@ export class InMemoryNonceStore implements NonceStore {
 class RedisNonceStore implements NonceStore {
   constructor(private readonly redis: RedisLayer) {}
 
-  async put(nonce: string, ttlMs: number, issuedAt?: Date, expiresAt?: Date): Promise<NonceRecord> {
+  async put(
+    nonce: string,
+    ttlMs: number,
+    issuedAt?: Date,
+    expiresAt?: Date,
+    binding?: NonceBinding,
+  ): Promise<NonceRecord> {
     const now = Date.now();
     const rec: NonceRecord = {
       nonce,
@@ -173,6 +206,7 @@ class RedisNonceStore implements NonceStore {
       expiresAt: expiresAt ? expiresAt.getTime() : now + ttlMs,
       wallet: null,
       used: false,
+      ...(binding ? { domain: binding.domain, uri: binding.uri } : {}),
     };
     const key = `nonce:${nonce}`;
     await this.redis.main.set(key, JSON.stringify(rec), 'PX', ttlMs);

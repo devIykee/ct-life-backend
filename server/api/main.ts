@@ -65,6 +65,8 @@ import { registerLikenessRoutes } from './routes/likeness.js';
 import { registerGroupRoutes } from './routes/groups.js';
 import { buildLikenessRuntime } from '../application/likeness-runtime.js';
 import { idempotencyOnSend } from './middleware/idempotency.js';
+import { registerCors } from './middleware/cors.js';
+import { registerClientPlatformHook } from './middleware/client-platform.js';
 import { registerDevnetDripRoutes } from './routes/devnet-drip.js';
 import { registerLiveKitWebhookRoutes } from './routes/livekit-webhook.js';
 import { registerNftGalleryRoutes } from './routes/nft-gallery.js';
@@ -102,6 +104,13 @@ export async function buildServer(): Promise<ServerHandle> {
     req.ctx = ctx;
     done();
   });
+
+  // CORS for the browser build (WEB_ORIGINS; no wildcard). Answers preflights itself.
+  await registerCors(app, ctx.config.web.origins);
+
+  // X-Client-Platform / X-Client-Build / Origin -> req.client, and the per-platform
+  // capability kill-list on req.ctx. After the ctx hook, before every route.
+  registerClientPlatformHook(app);
 
   // Capture the raw body for signed webhook routes. The body
   // is the same JSON Fastify would otherwise parse; we just

@@ -14,6 +14,22 @@ info:
     All money is `bigint` cents (field names end in `Cents`) or string base
     units (token amounts). Times are ISO-8601 UTC for REST, epoch milliseconds
     for realtime. The week runs Mon 00:00 to Sun 23:59:59 UTC.
+
+    **Browser clients (CORS).** Only the origins in the server env `WEB_ORIGINS` get
+    `Access-Control-Allow-Origin` (the exact origin, never `*`), with
+    `Access-Control-Allow-Credentials: true` and `Vary: Origin`. Allowed request headers:
+    `Authorization, Content-Type, Idempotency-Key, If-None-Match, X-Client-Version,
+    X-Contract-Version, X-Client-Platform, X-Client-Build, X-Request-Id`. Exposed response
+    headers: `ETag, Retry-After, X-Request-Id`. Preflights from an allowed origin answer
+    `204` (max-age 600 s); any other origin gets no CORS headers. Requests without `Origin`
+    (the Android app) are unaffected.
+
+    **Platforms.** Clients send `X-Client-Platform` (`android | web | desktop | ios`) and
+    `X-Client-Build` (the build number) on every call. A request that carries `Origin` is a
+    browser and is treated as `web` whatever it claims. `GET /config` applies the
+    per-platform minimum version and capability kill-list; a route whose capability is
+    killed for the caller's platform answers `503 CAPABILITY_OFF`, exactly as when the
+    capability is off everywhere.
   contact:
     name: deviykee
     url: https://github.com/devIykee/ct-life-backend
@@ -501,6 +517,13 @@ paths:
         Returns a single-use nonce (5 min) and the SIWS message fields. The
         client builds `sign_in_payload` for the wallet, signs it, and posts
         the result to `POST /auth/verify`. Anonymous.
+
+        `domain` and `uri` depend on the request's `Origin`: no Origin (the app) gets
+        the server's `SIWS_DOMAIN` / `SIWS_URI`; an Origin in `WEB_ORIGINS` gets that
+        origin's host (with a non-default port) and `<origin>/`, which is what a browser
+        wallet puts in the message and checks against the page. The nonce is bound to
+        that pair; pass `domain` and `uri` to the wallet unchanged. Any other Origin is
+        refused with `403 FORBIDDEN {reason: origin_not_allowed}`.
       x-phase: 1
       security: []
       responses:
@@ -518,6 +541,20 @@ paths:
                 chainId: 'solana:devnet'
                 issuedAt: '2026-10-05T12:00:00.000Z'
                 expirationTime: '2026-10-05T12:05:00.000Z'
+        '403':
+          description: The request's Origin is not in WEB_ORIGINS
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: 'FORBIDDEN',
+                      message: 'Caller is not allowed to perform this action.',
+                      details: { reason: 'origin_not_allowed' },
+                    },
+                }
         '5xx':
           $ref: '#/components/responses/ServerError'
 
@@ -530,6 +567,15 @@ paths:
         Verifies the Ed25519 signature against the nonce, looks up the Seeker
         Genesis Token on mainnet via Helius, upserts the user, and returns
         `{ accessToken, refreshToken, user }`. Anonymous.
+
+        The message's domain and URI must be the pair the nonce was issued for (see
+        `GET /auth/challenge`) and still on the allow-list (`SIWS_DOMAIN` plus
+        `WEB_ORIGINS`), else `401 SIGNATURE_INVALID` (`details.reason`
+        `domain_not_allowed` when the pair left the list). A message a wallet signed on
+        another site carries that site's domain and is refused. When the request has an
+        Origin it must be the origin the nonce was issued for (`401 SIGNATURE_INVALID
+        {reason: origin_mismatch}`); an Origin not in `WEB_ORIGINS` is `403 FORBIDDEN
+        {reason: origin_not_allowed}`.
       x-phase: 1
       security: []
       parameters:
@@ -730,6 +776,20 @@ paths:
         switches). Clients with `X-Client-Version` below `minClientVersion`
         receive `CLIENT_OUTDATED` and must update.
 
+        **Per platform.** The response is computed for the caller's platform
+        (`X-Client-Platform`; any request with `Origin` is `web`; no header and no
+        Origin is a legacy Android build). `minClientVersion` is that platform's
+        minimum (server env `MIN_CLIENT_VERSION_BY_PLATFORM`, never below 1.0.0) and
+        `minClientVersionByPlatform` lists every platform's. The version check runs
+        before the ETag check, so `426` wins over `304`. The `426` body's
+        `details.action` is `reload` for web (show "A new version is live" and reload
+        the page) and `store` for the apps. `capabilities` (and the blocks that depend
+        on a capability, such as `seasonPass`) have the platform's kill-list removed
+        (server env `CAPABILITIES_OFF_BY_PLATFORM`); an unrecognised platform loses the
+        union of every list. Legacy requests with neither header nor Origin get no
+        kill-list. The response sends `Vary: Origin, X-Client-Platform,
+        X-Client-Version`.
+
         `capabilities` lists the finished-but-dark features this deployment has
         turned on, and `competitionCapabilities` is derived from it. Both come only
         from the server env `CAPABILITIES_ON`: anything not listed is `false`, so a
@@ -739,10 +799,15 @@ paths:
       security: []
       parameters:
         - $ref: '#/components/parameters/XClientVersion'
+        - $ref: '#/components/parameters/XClientPlatform'
+        - $ref: '#/components/parameters/XClientBuild'
       responses:
         '200':
           description: Config
           headers:
+            Vary:
+              schema: { type: string }
+              example: 'Origin, X-Client-Platform, X-Client-Version'
             ETag:
               schema: { type: string }
               description: Strong ETag. Send `If-None-Match` to get 304.
@@ -754,7 +819,11 @@ paths:
               schema: { $ref: '#/components/schemas/ConfigResponse' }
               example:
                 version: '1.0.0-rc1'
-                minClientVersion: '1.0.0-rc1'
+                minClientVersion: '1.6.0'
+                minClientVersionByPlatform:
+                  { android: '1.5.0', web: '1.6.0', desktop: '1.0.0', ios: '1.0.0' }
+                latestWebBuild: 2716521
+                clientPlatform: 'web'
                 livePhase: 1
                 degraded: []
                 venues: { 'timeline_square': { 'name': 'Timeline Square', 'maxClients': 50 } }
@@ -793,8 +862,14 @@ paths:
                   error:
                     {
                       code: 'CLIENT_OUTDATED',
-                      message: 'Update required. X-Client-Version is below minClientVersion.',
-                      details: { 'minClientVersion': '1.0.0-rc1' },
+                      message: 'A new version of CT Life is live. Reload the page.',
+                      details:
+                        {
+                          'minClientVersion': '1.6.0',
+                          'clientVersion': '1.5.2',
+                          'platform': 'web',
+                          'action': 'reload',
+                        },
                     },
                 }
         '5xx': { $ref: '#/components/responses/ServerError' }
@@ -9405,6 +9480,21 @@ components:
       required: false
       description: Client version. Below `minClientVersion` returns `CLIENT_OUTDATED`.
       schema: { type: string }
+    XClientPlatform:
+      name: X-Client-Platform
+      in: header
+      required: false
+      description: >-
+        `android | web | desktop | ios`. Selects the per-platform minimum version and
+        capability kill-list. Ignored when the request has `Origin` (a browser is always
+        `web`); an unrecognised value is `unknown` (fails closed).
+      schema: { type: string, enum: [android, web, desktop, ios] }
+    XClientBuild:
+      name: X-Client-Build
+      in: header
+      required: false
+      description: The client build number (non-negative integer); logged with the request.
+      schema: { type: string, pattern: '^[0-9]{1,15}$' }
     XContractVersion:
       name: X-Contract-Version
       in: header
@@ -10402,10 +10492,42 @@ components:
     ConfigResponse:
       type: object
       required:
-        [version, minClientVersion, livePhase, degraded, capabilities, competitionCapabilities]
+        [
+          version,
+          minClientVersion,
+          minClientVersionByPlatform,
+          latestWebBuild,
+          clientPlatform,
+          livePhase,
+          degraded,
+          capabilities,
+          competitionCapabilities,
+        ]
       properties:
         version: { type: string }
-        minClientVersion: { type: string }
+        minClientVersion:
+          type: string
+          description: >-
+            The minimum version for the caller's platform (max of 1.0.0 and
+            `MIN_CLIENT_VERSION_BY_PLATFORM[platform]`). Old clients compare only this.
+        minClientVersionByPlatform:
+          type: object
+          description: Every platform's minimum version.
+          required: [android, web, desktop, ios]
+          properties:
+            android: { type: string }
+            web: { type: string }
+            desktop: { type: string }
+            ios: { type: string }
+        latestWebBuild:
+          type: [integer, 'null']
+          description: >-
+            Build number of the live web build (server env `LATEST_WEB_BUILD`), or null. A web
+            client whose `X-Client-Build` is lower offers a reload.
+        clientPlatform:
+          type: string
+          enum: [android, web, desktop, ios, unknown]
+          description: The platform this response was computed for.
         livePhase:
           type: integer
           minimum: 1

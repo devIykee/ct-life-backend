@@ -1,3 +1,15 @@
+## 2026-10-31 - Web clients and multi-platform releases (be-web)
+
+No migration. Additive; with the new env unset nothing changes for the Android app.
+
+- **CORS** on the REST API for the origins in `WEB_ORIGINS` (exact origin echoed, never `*`, `Access-Control-Allow-Credentials: true`, `Vary: Origin`). Allowed request headers: `Authorization, Content-Type, Idempotency-Key, If-None-Match, X-Client-Version, X-Contract-Version, X-Client-Platform, X-Client-Build, X-Request-Id`; exposed: `ETag, Retry-After, X-Request-Id`. Preflight from an allowed origin `204` (max-age 600); other origins get no CORS headers; requests without `Origin` are untouched.
+- **Realtime:** the WebSocket upgrade and `/matchmake/*` answer `403` to an `Origin` not in `WEB_ORIGINS`; no `Origin` (native) is allowed. Matchmake CORS echoes only an allowed origin (was: any origin).
+- **New request headers** `X-Client-Platform` (`android | web | desktop | ios`) and `X-Client-Build` (integer). A request with `Origin` is always `web`; no header and no Origin is a legacy Android build.
+- **`GET /config`** gains `minClientVersionByPlatform {android, web, desktop, ios}`, `latestWebBuild` (int or null) and `clientPlatform`. `minClientVersion` is now the caller's platform minimum (env `MIN_CLIENT_VERSION_BY_PLATFORM`, never below 1.0.0). `capabilities` and capability-dependent blocks drop the platform's kill-list (env `CAPABILITIES_OFF_BY_PLATFORM`); an unknown platform loses the union of every list. Sends `Vary: Origin, X-Client-Platform, X-Client-Version`.
+- **`426` on `GET /config`** now uses the contract's code `CLIENT_OUTDATED` (the server sent `UPGRADE_REQUIRED`; the Unity client matches on status `426` or `CLIENT_OUTDATED`, so both keep working). `details: {minClientVersion, clientVersion, platform, action}` with `action` `reload` (web) or `store`, and a per-platform `message`. The version check now runs before the ETag check, so an outdated client holding an ETag gets `426`, not `304`.
+- **Route gates:** a route whose capability is in the caller's platform kill-list answers `503 CAPABILITY_OFF {capability}`, the same as a capability that is off everywhere. Webhook routes (`/v1/webhooks/*`) are never scoped.
+- **SIWS:** `GET /auth/challenge` binds the nonce to the domain / URI for the request's `Origin` (none = `SIWS_DOMAIN` / `SIWS_URI`; a listed origin = its host and `<origin>/`; any other = `403 FORBIDDEN {reason: origin_not_allowed}`). `POST /auth/verify` accepts only the nonce's pair while it is on the allow-list (`401 SIGNATURE_INVALID`, `details.reason` `domain_not_allowed` or `origin_mismatch`).
+
 ## 2026-10-30 - Client contract gaps 2: beef config and eligibility, Factory allowance, drip L2
 
 No migration. Additive only; everything stays behind its existing capability.

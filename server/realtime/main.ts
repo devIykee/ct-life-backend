@@ -26,6 +26,11 @@ import { ProjectHqRoom } from './rooms/project-hq.js';
 import { createRedis } from '../shared/redis/client.js';
 import { buildContext } from '../application/context.js';
 import { renderProcessMetrics, startEventLoopMonitor } from '../shared/infra/process-metrics.js';
+import {
+  installMatchmakeCors,
+  originBeforeUpgrade,
+  refuseDisallowedMatchmake,
+} from './origin-guard.js';
 
 /**
  * Answer /healthz, /readyz and /metrics in front of Colyseus.
@@ -35,12 +40,15 @@ import { renderProcessMetrics, startEventLoopMonitor } from '../shared/infra/pro
  * already-sent response (ERR_HTTP_HEADERS_SENT on every probe), so the
  * Colyseus listeners are moved behind one dispatcher that answers the ops
  * paths itself and hands every other request to Colyseus untouched.
+ * It also refuses `/matchmake/*` from an Origin not in `WEB_ORIGINS` (origin-guard.ts).
  * @param httpServer - The server Colyseus listens on (after listen()).
  * @param pool - The realtime process's Postgres pool, for the pool gauges.
+ * @param webOrigins - The parsed `WEB_ORIGINS`.
  */
 function answerOpsPaths(
   httpServer: ReturnType<typeof createServer>,
   pool: () => import('pg').Pool,
+  webOrigins: readonly string[],
 ): void {
   startEventLoopMonitor();
   const colyseus = httpServer.listeners('request') as ((...a: unknown[]) => void)[];
@@ -56,6 +64,7 @@ function answerOpsPaths(
       res.end(renderProcessMetrics('realtime', pool()));
       return;
     }
+    if (refuseDisallowedMatchmake(req, res, webOrigins)) return;
     for (const l of colyseus) l.call(httpServer, req, res);
   });
 }
@@ -74,8 +83,14 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   const redis = createRedis();
   const port = Number(process.env.PORT_REALTIME ?? cfg.port);
   const httpServer = createServer();
+  // Browser clients: a present Origin must be in WEB_ORIGINS (WebSocket upgrade and
+  // matchmaking); no Origin is a native client. See origin-guard.ts.
+  installMatchmakeCors(cfg.web.origins);
   const gameServer = new Server({
-    transport: new WebSocketTransport({ server: httpServer }),
+    transport: new WebSocketTransport({
+      server: httpServer,
+      beforeUpgrade: originBeforeUpgrade(cfg.web.origins),
+    }),
     driver: new RedisDriver(redis.main),
     presence: new RedisPresence(redis.main),
   });
@@ -99,7 +114,7 @@ export async function buildRealtime(): Promise<RealtimeHandle> {
   // One HQ per Builder project (hackathon_house layout; roomId hq_<projectId>).
   gameServer.define('project_hq', ProjectHqRoom).filterBy(['projectId']);
   await gameServer.listen(port);
-  answerOpsPaths(httpServer, () => buildContext().db.pool);
+  answerOpsPaths(httpServer, () => buildContext().db.pool, cfg.web.origins);
   return {
     app: gameServer,
     start: async () => `ws://0.0.0.0:${port}`,
