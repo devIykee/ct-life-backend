@@ -54,6 +54,27 @@ The game moves real money (USDC, SOL, SKR, ORE) for top-ups, cosmetics, tips, pa
 - `SIWS_DOMAIN` - bare hostname
 - `SIWS_URI` - absolute https URI
 
+### SIWS domain allow-list (web clients)
+
+The browser build signs in with a wallet on its own page (e.g. `https://play.ctlife.fun`), and
+browser wallets put the page's host in the SIWS `domain` and check it against the page
+([Phantom](https://docs.phantom.com/solana/signing-a-message): the exact host, including the
+port). So the backend accepts a list of SIWS bindings: the native `SIWS_DOMAIN` / `SIWS_URI`
+plus one per origin in `WEB_ORIGINS` (`domain` = the origin's host, `uri` = `<origin>/`).
+
+- `GET /auth/challenge` binds the nonce to one pair, chosen by the request's `Origin`: none = the
+  native pair; a listed origin = that origin's pair; any other origin = `403 FORBIDDEN
+{reason: origin_not_allowed}`.
+- `POST /auth/verify` requires the message's `domain` and `URI` to equal the nonce's pair and that
+  pair to still be on the list (`401 SIGNATURE_INVALID`). A verify that carries an `Origin` must
+  come from the origin the nonce was issued for (`origin_mismatch`).
+- Replay: a message signed on another site carries that site's domain and fails the pair check; a
+  message for another SIWS service carries a nonce we never issued; our own nonces are
+  single-use and expire in 5 minutes.
+- [Inference] A phishing page can still fetch a challenge server-side with a forged `Origin` and
+  show it to a user; the protection there is the wallet's own domain check against the page, which
+  is why the domain must be the real page host.
+
 ## Authorization matrix
 
 | Endpoint                         | Anonymous | User (own) | User (other) | Admin                  |

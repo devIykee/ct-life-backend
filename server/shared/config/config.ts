@@ -34,6 +34,15 @@ import {
   parseCountryList,
   parseRegionList,
 } from '../domain/real-markets.js';
+import {
+  parseCapabilitiesOffByPlatform,
+  parseClientBuild,
+  parseMinVersionByPlatform,
+  PlatformEnvError,
+  type CapabilitiesOffByPlatform,
+  type MinVersionByPlatform,
+} from '../domain/client-platform.js';
+import { parseWebOrigins, WebOriginsEnvError } from '../domain/web-origins.js';
 
 loadDotenv();
 
@@ -82,6 +91,27 @@ export interface Config {
   readonly siws: {
     readonly domain: string;
     readonly uri: string;
+  };
+
+  /**
+   * Browser origins allowed to call this backend (env `WEB_ORIGINS`, comma list of
+   * exact origins, no wildcard; empty = no browser client). Drives REST CORS, the
+   * realtime Origin check and the SIWS web domains. See shared/domain/web-origins.ts.
+   */
+  readonly web: {
+    readonly origins: readonly string[];
+  };
+
+  /**
+   * Per-platform client rules. See shared/domain/client-platform.ts.
+   */
+  readonly clients: {
+    /** `MIN_CLIENT_VERSION_BY_PLATFORM` (JSON); empty = only the 1.0.0 floor. */
+    readonly minVersionByPlatform: MinVersionByPlatform;
+    /** `CAPABILITIES_OFF_BY_PLATFORM` (JSON); empty = no platform loses anything. */
+    readonly capabilitiesOffByPlatform: CapabilitiesOffByPlatform;
+    /** `LATEST_WEB_BUILD`: the build number of the live web build; null when unset. */
+    readonly latestWebBuild: number | null;
   };
 
   readonly solana: {
@@ -343,6 +373,30 @@ function asRegionSet(name: string, defaults: readonly string[]): ReadonlySet<str
   return new Set([...defaults, ...codes]);
 }
 
+/**
+ * Run a domain parser and re-throw its error as a ConfigError naming the variable.
+ * @param name - The env var.
+ * @param parse - The parser.
+ * @returns The parsed value.
+ */
+function parseEnvWith<T>(name: string, parse: (raw: string | undefined) => T): T {
+  try {
+    return parse(process.env[name]);
+  } catch (e) {
+    if (e instanceof PlatformEnvError || e instanceof WebOriginsEnvError) {
+      throw new ConfigError(name, e.message);
+    }
+    throw e;
+  }
+}
+
+function asLatestWebBuild(raw: string | undefined): number | null {
+  if (raw === undefined || raw.trim() === '') return null;
+  const n = parseClientBuild(raw);
+  if (n === null) throw new ConfigError('LATEST_WEB_BUILD', 'expected a non-negative integer');
+  return n;
+}
+
 function asBool(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -511,6 +565,22 @@ export function loadConfig(): Config {
       // needs a transition window.
       domain: optionalEnv('SIWS_DOMAIN', 'ctlife.fun'),
       uri: optionalEnv('SIWS_URI', 'https://ctlife.fun/'),
+    },
+
+    web: {
+      origins: parseEnvWith('WEB_ORIGINS', parseWebOrigins),
+    },
+
+    clients: {
+      minVersionByPlatform: parseEnvWith(
+        'MIN_CLIENT_VERSION_BY_PLATFORM',
+        parseMinVersionByPlatform,
+      ),
+      capabilitiesOffByPlatform: parseEnvWith(
+        'CAPABILITIES_OFF_BY_PLATFORM',
+        parseCapabilitiesOffByPlatform,
+      ),
+      latestWebBuild: asLatestWebBuild(process.env.LATEST_WEB_BUILD),
     },
 
     solana: {

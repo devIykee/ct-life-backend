@@ -96,6 +96,35 @@ off. Add a name only after its PR has deployed; a route whose capability
 is off answers `503 CAPABILITY_OFF`. Unknown names are ignored and
 logged at boot. Changing the list needs a redeploy (it is read once).
 
+## Web clients and platform rules (be-web)
+
+Code lands dark: with none of these set, the API and realtime behave exactly as before
+(no CORS headers, no browser can join, every platform gets the 1.0.0 floor and the full
+`CAPABILITIES_ON`). Rollout, staging first:
+
+1. **`WEB_ORIGINS`** on **both** `ctlife-api` and `ctlife-realtime`, e.g.
+   `https://staging.play.ctlife.fun` on staging, `https://play.ctlife.fun` on prod (add
+   `http://localhost:8080` on staging only if someone tests a local WebGL build against it).
+   Exact origins, comma list, no `*` (the boot refuses a wildcard). This turns on REST CORS,
+   lets those origins join Colyseus, and makes them valid SIWS domains.
+2. **`CAPABILITIES_OFF_BY_PLATFORM`** on `ctlife-api`, _before_ the web build is public. It
+   is the switch for the real-money question (casino, coin launches, paid calls, top-ups on
+   web); the legal answer is not an engineering call. A conservative start:
+   `{"web":["paidCalls","seasonPassPurchase","factory","creatorMode"]}`. Names are the
+   `CAPABILITIES_ON` names; unknown ones are ignored and logged at boot.
+3. **`MIN_CLIENT_VERSION_BY_PLATFORM`** on `ctlife-api` when a release must force an update,
+   e.g. `{"android":"1.6.0","web":"1.6.0"}`. Web clients are told to reload; apps to update.
+   Android builds that predate `X-Client-Platform` count as `android`.
+4. **`LATEST_WEB_BUILD`** on `ctlife-api` after each web deploy (the build number the release
+   script stamps), so running web clients offer a reload mid-session.
+5. Check: `curl -si -H 'Origin: https://staging.play.ctlife.fun' -H 'X-Client-Platform: web'
+https://<api>/v1/config` shows `access-control-allow-origin`, `clientPlatform: "web"` and the
+   web `capabilities`; a preflight `curl -si -X OPTIONS -H 'Origin: ...' -H
+'Access-Control-Request-Method: POST' https://<api>/v1/auth/verify` answers `204`.
+
+All four are read once at boot (redeploy to change). `trustProxy` is already on in the API
+(Railway's proxy), so `req.ip` is the client address for the login rate limits.
+
 ## Health and readiness
 
 Each service exposes `/healthz` (liveness) and `/readyz` (readiness).

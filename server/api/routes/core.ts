@@ -47,21 +47,29 @@ import { creatorCard } from '../../application/creator.js';
 import type { AppContext } from '../../application/context.js';
 import { isCapabilityOn } from '../../application/capabilities.js';
 import { nftGalleryConfig } from '../../application/nft-gallery-config.js';
+import {
+  CLIENT_PLATFORMS,
+  isVersionBelow,
+  minClientVersionFor,
+  updateInstructionFor,
+  type ClientPlatform,
+} from '../../shared/domain/client-platform.js';
 
 /**
- * B34: Compare semver versions. Returns true if clientVersion < minVersion.
+ * Append header names to `Vary` without dropping what is already there (CORS adds Origin).
+ * @param current - The current Vary header value.
+ * @param names - The names to add.
+ * @returns The merged value.
  */
-function isVersionOutdated(clientVersion: string, minVersion: string): boolean {
-  const parseVersion = (v: string): number[] => {
-    return v.split('.').map((x) => parseInt(x, 10) || 0);
-  };
-  const client = parseVersion(clientVersion);
-  const min = parseVersion(minVersion);
-  for (let i = 0; i < 3; i++) {
-    if ((client[i] ?? 0) < (min[i] ?? 0)) return true;
-    if ((client[i] ?? 0) > (min[i] ?? 0)) return false;
+function mergeVary(current: unknown, names: readonly string[]): string {
+  const have = String(current ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+  for (const n of names) {
+    if (!have.some((h) => h.toLowerCase() === n.toLowerCase())) have.push(n);
   }
-  return false;
+  return have.join(', ');
 }
 
 const CharacterBody = z.object({
@@ -148,6 +156,24 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       app.log.warn({ ignored }, 'CAPABILITIES_ON: unknown names ignored');
     }
     app.log.info({ on: [...on] }, 'CAPABILITIES_ON: capabilities on');
+    const { web, clients } = loadConfig();
+    const kill = clients.capabilitiesOffByPlatform;
+    if (kill.ignored.length > 0) {
+      app.log.warn(
+        { ignored: kill.ignored },
+        'CAPABILITIES_OFF_BY_PLATFORM: unknown names ignored',
+      );
+    }
+    app.log.info(
+      {
+        webOrigins: web.origins,
+        minClientVersionByPlatform: clients.minVersionByPlatform,
+        capabilitiesOffByPlatform: Object.fromEntries(
+          Object.entries(kill.off).map(([p, names]) => [p, [...(names ?? [])]]),
+        ),
+      },
+      'platform rules',
+    );
   });
 
   // GET /v1/config
@@ -156,9 +182,44 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     // Aggregated response: all registries + game config in one shot.
     // The contract says the client caches by ETag.
     const anims = cache.loadOptional<{ anims?: string[] }>('anims');
+    // Per-platform rules (shared/domain/client-platform.ts). req.ctx is already scoped to
+    // the caller's platform, so `capabilities` below has that platform's kill-list applied.
+    const platform = req.client.platform;
+    const minByPlatform = req.ctx.config.clients.minVersionByPlatform;
+    const minClientVersion = minClientVersionFor(minByPlatform, platform);
+
+    // Vary: the body (capabilities, minClientVersion) and the 426 depend on these.
+    reply.header(
+      'Vary',
+      mergeVary(reply.getHeader('vary'), ['Origin', 'X-Client-Platform', 'X-Client-Version']),
+    );
+
+    // B34: refuse an outdated client with 426 CLIENT_OUTDATED. Checked before the ETag so
+    // an outdated client holding a cached ETag cannot get a 304 instead.
+    const clientVersion = req.headers['x-client-version'] as string | undefined;
+    if (clientVersion && isVersionBelow(clientVersion, minClientVersion)) {
+      const { action, message } = updateInstructionFor(platform);
+      return reply.status(426).send({
+        error: {
+          code: 'CLIENT_OUTDATED',
+          message,
+          details: { minClientVersion, clientVersion, platform, action },
+        },
+      });
+    }
+
     const payload = {
       version: '1.0.0-rc1',
-      minClientVersion: '1.0.0',
+      // The minimum for the caller's platform (old clients compare only this scalar).
+      minClientVersion,
+      // Every platform's minimum, so a client can show what it needs.
+      minClientVersionByPlatform: Object.fromEntries(
+        CLIENT_PLATFORMS.map((p) => [p, minClientVersionFor(minByPlatform, p)]),
+      ) as Record<ClientPlatform, string>,
+      // The live web build (env LATEST_WEB_BUILD); a web client on an older build offers a reload.
+      latestWebBuild: req.ctx.config.clients.latestWebBuild,
+      // The platform this response was computed for.
+      clientPlatform: platform,
       // The release phase this deployment has opened (env LIVE_PHASE, 1 to 6, default 1).
       livePhase: req.ctx.config.livePhase,
       // Kill-switch list. Only `ore_reader` is wired: it is listed when
@@ -217,18 +278,6 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     const clientEtag = req.headers['if-none-match'];
     if (clientEtag === etag) {
       return reply.status(304).send();
-    }
-
-    // B34 fix: Check client version and return 426 if outdated
-    const clientVersion = req.headers['x-client-version'] as string | undefined;
-    if (clientVersion && isVersionOutdated(clientVersion, payload.minClientVersion)) {
-      return reply.status(426).send({
-        error: {
-          code: 'UPGRADE_REQUIRED',
-          message: `Client version ${clientVersion} is below minimum ${payload.minClientVersion}`,
-          details: { minClientVersion: payload.minClientVersion },
-        },
-      });
     }
 
     reply.header('ETag', etag);

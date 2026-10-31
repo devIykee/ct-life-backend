@@ -76,7 +76,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   app.get('/v1/auth/challenge', async (req, reply) => {
     const q = ChallengeQuery.safeParse(req.query);
     if (!q.success) throw new ValidationFailedError({ issues: q.error.issues });
-    const result = await auth(req).issueChallenge(q.data.wallet ?? null);
+    const result = await auth(req).issueChallenge(q.data.wallet ?? null, req.headers.origin);
     return reply.send(result);
   });
 
@@ -140,7 +140,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     async (req, reply) => {
       try {
         const input = VerifyInputSchema.parse(req.body);
-        const user = await auth(req).verifyAndAuthenticate(input);
+        const user = await auth(req).verifyAndAuthenticate(input, req.headers.origin);
         // The service already looked the character up; no second query.
         return reply.send(authResponse(user, user.hasCharacter));
       } finally {
