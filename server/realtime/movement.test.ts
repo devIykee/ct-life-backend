@@ -13,8 +13,10 @@ import {
   encodePos,
   newAnchor,
   pointInPolygon,
+  rejoinReachM,
   stepMove,
   TokenBucket,
+  withinRejoinReach,
 } from './movement.js';
 
 describe('stepMove (distance budget)', () => {
@@ -171,5 +173,26 @@ describe('venue placement', () => {
       checked++;
     }
     expect(checked).toBeGreaterThan(10);
+  });
+});
+
+describe('rejoin reach', () => {
+  it('is 6.5 m/s since the last accepted move plus 0.5 m, capped at 30 s (195 m)', () => {
+    expect(rejoinReachM(0, 10_000)).toBeCloseTo(65.5);
+    expect(rejoinReachM(0, 30_000)).toBeCloseTo(195.5);
+    expect(rejoinReachM(0, 600_000)).toBeCloseTo(195.5);
+    // A stored time in the future (clock skew) grants only the slack.
+    expect(rejoinReachM(60_000, 0)).toBeCloseTo(0.5);
+  });
+
+  it('needs a fresh stored position and a spot within reach', () => {
+    const last = { x: 0, z: 0, at: 0 };
+    expect(withinRejoinReach(last, 65, 0, 10_000)).toBe(true);
+    expect(withinRejoinReach(last, 66, 0, 10_000)).toBe(false);
+    expect(withinRejoinReach(last, 195, 0, 30_000)).toBe(true);
+    expect(withinRejoinReach(last, 196, 0, 30_000)).toBe(false);
+    // Over 30 s old is not a rejoin at all, however close.
+    expect(withinRejoinReach(last, 0, 0, 30_001)).toBe(false);
+    expect(withinRejoinReach(last, 1e308, 1e308, 10_000)).toBe(false);
   });
 });

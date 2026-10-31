@@ -309,7 +309,9 @@ export function setParkingBays(b: readonly ParkingBay[] | null): void {
  * Presence hash holding each user's last accepted island position as
  * "x,z,at". Street rooms write it while walking and the vehicle room
  * writes it while driving, so a player crossing into another district or
- * getting out of a car is checked against where they really were.
+ * getting out of a car is checked against where they really were. `at` is
+ * the time of that accepted move, also when a room writes it on leave, so
+ * a dropped socket noticed late does not make the player look more recent.
  */
 export const POS_HASH = 'ctl:pos';
 /** Presence channel the vehicle room publishes exits on. */
@@ -344,4 +346,36 @@ export function decodePos(s: string | null | undefined): IslandPos | null {
   const [x, z, at] = s.split(',').map(Number);
   if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(at)) return null;
   return { x: x!, z: z!, at: at! };
+}
+
+// --- Rejoin position (after a network drop) ---------------------------
+
+/**
+ * How far from their last accepted position a player may rejoin a room:
+ * what they could have walked since that move (6.5 m/s), counted for at
+ * most POS_FRESH_MS (so at most 195 m), plus the usual 0.5 m slack. A
+ * stored time in the future (clock skew between servers) counts as zero.
+ * @param lastAt - Time of the last accepted move, ms.
+ * @param now - Server time, ms.
+ * @returns The reach in metres.
+ */
+export function rejoinReachM(lastAt: number, now: number): number {
+  const awayS = Math.min(Math.max(0, now - lastAt), POS_FRESH_MS) / 1000;
+  return WALK_SPEED_M_PER_S * awayS + WALK_SLACK_M;
+}
+
+/**
+ * Whether a position a rejoining client asks for is one it could have
+ * walked to since the server last accepted a move from it. Dropping the
+ * connection on purpose therefore gains nothing over walking. Rooms also
+ * check their own bounds; anything that fails keeps today's anchor.
+ * @param last - The player's last accepted island position (`POS_HASH`).
+ * @param x - Asked island x.
+ * @param z - Asked island z.
+ * @param now - Server time, ms.
+ * @returns True when `last` is fresh and the asked spot is within reach.
+ */
+export function withinRejoinReach(last: IslandPos, x: number, z: number, now: number): boolean {
+  if (now - last.at > POS_FRESH_MS) return false;
+  return Math.hypot(x - last.x, z - last.z) <= rejoinReachM(last.at, now);
 }
