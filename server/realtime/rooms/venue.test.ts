@@ -89,9 +89,9 @@ describe('venue room movement', () => {
 
   it('A1: joins on the entrance spot, not the walkable corner', async () => {
     const { player } = await joined();
-    // timeline_square.entrance is (0, -14); walkable[0] starts at (-20, -15).
+    // timeline_square.entrance is (0, -10.9); walkable[0] starts at (-11.5, -12.4).
     expect(player.x).toBe(0);
-    expect(player.z).toBe(-14);
+    expect(player.z).toBe(-10.9);
   });
 
   it('A2: a jittery honest sprint passes, a teleport is clamped and corrected', async () => {
@@ -103,14 +103,14 @@ describe('venue room movement', () => {
       const gaps = [170, 30, 170, 30, 170, 30];
       gaps.forEach((g, i) => {
         now += g;
-        move({ x: 0, z: -14 + 0.6 * (i + 1) });
+        move({ x: 0, z: -10.9 + 0.6 * (i + 1) });
       });
-      expect(player.z).toBeCloseTo(-14 + 3.6);
+      expect(player.z).toBeCloseTo(-10.9 + 3.6);
       expect(sent.some((m) => m.type === 'corrected' || m.type === 'rejected')).toBe(false);
 
       now += 100;
       move({ x: 0, z: 10 });
-      expect(player.z).toBeLessThan(-8);
+      expect(player.z).toBeLessThan(-4.9);
       expect(sent.at(-1)?.type).toBe('corrected');
     } finally {
       spy.mockRestore();
@@ -145,10 +145,10 @@ describe('venue room island coordinates', () => {
       const player = room.state.players.get('s1')!;
 
       now += 200;
-      const [ix, iz] = venueToIsland(placement, 0, -13);
+      const [ix, iz] = venueToIsland(placement, 0, -10);
       move({ x: ix, z: iz, rotY: 1, island: true });
       expect(player.x).toBeCloseTo(0, 3);
-      expect(player.z).toBeCloseTo(-13, 3);
+      expect(player.z).toBeCloseTo(-10, 3);
       expect(player.ix).toBeCloseTo(ix, 3);
       expect(player.iz).toBeCloseTo(iz, 3);
       expect(player.irotY).toBeCloseTo(1, 5);
@@ -288,21 +288,21 @@ describe('venue room rejoin position (island venue)', () => {
   });
 
   it('5b: a spot beyond reach puts the player on the entrance', async () => {
-    // 18 m after 1 s (reach 7 m).
+    // 11.2 m after 1 s (reach 7 m); (10, 5) is walkable.
     const { player } = await rejoin({ lx: 0, lz: 0, ageMs: 1_000 }, (i) => {
-      const [x, z] = i(15, 10);
+      const [x, z] = i(10, 5);
       return { x, z, island: true };
     });
-    expect([player.x, player.z]).toEqual([0, -14]);
+    expect([player.x, player.z]).toEqual([0, -10.9]);
   });
 
   it('keeps the entrance for a spot outside every walkable rectangle', async () => {
-    // Local (25, 0) is 5 m past walkable[0] (x1 = 20) but within reach.
-    const { player } = await rejoin({ lx: 18, lz: 0, ageMs: 10_000 }, (i) => {
-      const [x, z] = i(25, 0);
+    // Local (16.5, 0) is 5 m past walkable[0] (x1 = 11.5) but within reach.
+    const { player } = await rejoin({ lx: 9, lz: 0, ageMs: 10_000 }, (i) => {
+      const [x, z] = i(16.5, 0);
       return { x, z, island: true };
     });
-    expect([player.x, player.z]).toEqual([0, -14]);
+    expect([player.x, player.z]).toEqual([0, -10.9]);
   });
 
   it('keeps the entrance without island: true, with no stored position, or a stale one', async () => {
@@ -310,13 +310,13 @@ describe('venue room rejoin position (island venue)', () => {
       const [x, z] = i(10, 5);
       return { x, z };
     };
-    expect((await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, spot)).player.z).toBe(-14);
+    expect((await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, spot)).player.z).toBe(-10.9);
     const withFlag = (i: (x: number, z: number) => readonly [number, number]): object => ({
       ...spot(i),
       island: true,
     });
-    expect((await rejoin(null, withFlag)).player.z).toBe(-14);
-    expect((await rejoin({ lx: 0, lz: 0, ageMs: 31_000 }, withFlag)).player.z).toBe(-14);
+    expect((await rejoin(null, withFlag)).player.z).toBe(-10.9);
+    expect((await rejoin({ lx: 0, lz: 0, ageMs: 31_000 }, withFlag)).player.z).toBe(-10.9);
   });
 
   it('a huge jump or malformed spot keeps the entrance', async () => {
@@ -325,13 +325,13 @@ describe('venue room rejoin position (island venue)', () => {
       z: 1e9,
       island: true,
     }));
-    expect(huge.player.z).toBe(-14);
+    expect(huge.player.z).toBe(-10.9);
     const bad = await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, () => ({
       x: 'a',
       z: 0,
       island: true,
     }));
-    expect(bad.player.z).toBe(-14);
+    expect(bad.player.z).toBe(-10.9);
     expect(bad.sent.map((m) => m.type)).toEqual(['welcome']);
   });
 
@@ -339,7 +339,7 @@ describe('venue room rejoin position (island venue)', () => {
     const { move, leave, stored } = await rejoin(null, () => ({}));
     now += 200;
     const t0 = now;
-    move({ x: 0, z: -13 });
+    move({ x: 0, z: -10 });
     now += 8_000;
     leave();
     await new Promise((done) => setTimeout(done, 0));
