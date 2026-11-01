@@ -191,13 +191,16 @@ trip id: `joinOrCreate("street", { token, district, tripId })` (`district` = the
 `arrival.district`). The server reads the player's single-use ticket `ctl:travel:<userId>`:
 
 - it must name this `tripId` and this district, and `expiresAt` (`arriveAt` + 120 s) must not have
-  passed; otherwise the join is refused with `ServerError 4410 TRAVEL_TICKET_INVALID` (also for a
+  been reached; otherwise the join is refused with `ServerError 4410 TRAVEL_TICKET_INVALID` (also for a
   used ticket, or another user's trip: tickets are per user);
 - before `arriveAt - 1 s` the join is refused with `4425 TRAVEL_NOT_ARRIVED` and the ticket is
   kept, so killing the ride animation gains nothing; retry at `arriveAt`;
-- on success the ticket is deleted atomically, the player is anchored and shown at once at the
-  arrival point (a street spot 4.6 m outside the destination door, facing it), `ctl:pos` is
-  written there, the trip becomes `arrived`, and `welcome` carries `travel {tripId, x, z, yaw}`.
+- on success the ticket is deleted atomically and the trip must flip to `arrived` in one guarded
+  update (still `booked`, not expired). If it does not (cancelled, refunded, expired, or the update
+  failed) the join is refused with `4410` and nothing is placed: join again without `tripId`
+  (no ride; a trip left booked is refunded by the sweep). Otherwise the player is anchored and
+  shown at once at the arrival point (a street spot 4.6 m outside the destination door, facing it),
+  `ctl:pos` is written there, and `welcome` carries `travel {tripId, x, z, yaw}`.
 
 While a player holds an open ticket, any street join without it is refused with
 `4409 TRAVEL_IN_TRANSIT`. Cancel the ride (`POST /v1/travel/trips/{id}/cancel`) to walk on from

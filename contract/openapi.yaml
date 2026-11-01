@@ -6929,9 +6929,11 @@ paths:
       operationId: postTravelTripsIdCancel
       summary: Cancel a booked ride before it arrives.
       description: >-
-        Capability `travel`. Owner only, while `booked` and before `arriveAt`: full refund
-        (ledger reason `travel_refund`, once per trip) and the ticket is deleted, so street joins
-        work again from where you stood.
+        Capability `travel`. Owner only, while `booked` and before the ticket opens
+        (`arriveAt - arriveEarlySec`, 1 s): the ticket is taken first (it must still exist), then
+        the trip is cancelled and refunded in full (ledger reason `travel_refund`, once per trip),
+        so street joins work again from where you stood. A cancel and an arrival never both
+        succeed.
       x-phase: 1
       parameters:
         - name: id
@@ -6955,7 +6957,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Already arrived, ended or past `arriveAt`
+          description: >-
+            Already arrived or ended, past the cutoff, or the ticket was already used
+            (`details.reason: ticket_gone | not_booked`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

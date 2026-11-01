@@ -30,6 +30,7 @@ import { TRAVEL_JOIN_ERROR_CODES } from '../../contract/realtime/messages.js';
 import { runInTransaction } from '../shared/db/uow.js';
 import {
   InsufficientCashError,
+  JailedError,
   NotFoundError,
   QuoteExpiredError,
   SybilJailedError,
@@ -55,7 +56,7 @@ import {
 } from '../realtime/movement.js';
 import type { AppContext } from './context.js';
 import { isCapabilityOn } from './capabilities.js';
-import { assertNotJailed } from './heat.js';
+import { activeJail, assertNotJailed } from './heat.js';
 import { isSybilJailed } from './sybil-jail.js';
 import { getVenueAccess } from './venues-gating.js';
 import { readContractJson } from './rewards.js';
@@ -669,6 +670,14 @@ export async function bookTrip(
       }
     }
 
+    // Jail checks in the application layer too (the route also has requireNotJailed): CT Jail
+    // and the Barn are refused before anything is charged. A replay above still answers.
+    const custody = await activeJail(client, userId, now);
+    if (custody) {
+      throw new JailedError({ until: custody.until.toISOString(), bailCents: custody.bailCents });
+    }
+    if (await isSybilJailed(client, userId, now)) throw new SybilJailedError({});
+
     if (
       !quote ||
       quote.userId !== userId ||
@@ -810,9 +819,17 @@ export async function currentTrip(
 }
 
 /**
- * Cancel a booked trip before `arriveAt`: full refund, ticket deleted.
+ * Cancel a booked trip before its ticket opens: full refund once.
+ *
+ * Security (review of PR #82): the cancel window ends where the arrival window starts
+ * (`arriveAt - arriveEarlySec`), so the two never overlap, and the ticket is taken first:
+ * it must still exist, name this trip and be deleted by this call (compare-and-delete), or
+ * the cancel is refused. Only then is the row flipped with one guarded UPDATE, and the refund
+ * is credited only when that UPDATE returned the row. A used ticket can therefore never be
+ * refunded, and two cancels refund once. If the transaction fails after the ticket was
+ * taken, the trip stays booked with no ticket: no ride, and the sweep refunds it.
  * @throws NotFoundError for a trip that is not the caller's.
- * @throws TravelNotCancellableError once arrived, ended or past `arriveAt`.
+ * @throws TravelNotCancellableError once arrived, ended, past the cutoff or the ticket is gone.
  */
 export async function cancelTrip(
   ctx: AppContext,
@@ -820,56 +837,68 @@ export async function cancelTrip(
   tripId: string,
   now: Date = new Date(),
 ): Promise<{ tripId: string; refundedCents: number; cashCents: number }> {
+  const cfg = getTravelConfig();
+  const earlyMs = cfg.arriveEarlySec * 1000;
+  const found = await ctx.db.withConnection((c) =>
+    c.query<{ status: TripStatus; arrive_at: Date }>(
+      `SELECT status, arrive_at FROM travel_trips WHERE trip_id = $1 AND user_id = $2`,
+      [tripId, userId],
+    ),
+  );
+  const row = found.rows[0];
+  if (!row) throw new NotFoundError({ resource: 'travel_trip', tripId });
+  if (row.status !== 'booked' || now.getTime() >= row.arrive_at.getTime() - earlyMs) {
+    throw new TravelNotCancellableError({ status: row.status });
+  }
+  if (!(await takeTicket(ctx.redis.main as unknown as TicketRedis, userId, tripId))) {
+    throw new TravelNotCancellableError({ status: row.status, reason: 'ticket_gone' });
+  }
+
   const out = await runInTransaction(async (client) => {
     await client.query(
       `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 0) ON CONFLICT (user_id) DO NOTHING`,
       [userId],
     );
     await client.query(`SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`, [userId]);
-    const r = await client.query<TripRow>(
-      `SELECT ${TRIP_COLS} FROM travel_trips WHERE trip_id = $1 AND user_id = $2 FOR UPDATE`,
-      [tripId, userId],
+    const flipped = await client.query<{ fare_cents: string }>(
+      `UPDATE travel_trips SET status = 'cancelled', ended_at = $3
+        WHERE trip_id = $1 AND user_id = $2 AND status = 'booked'
+          AND arrive_at > $3::timestamptz + make_interval(secs => $4)
+        RETURNING fare_cents`,
+      [tripId, userId, now, cfg.arriveEarlySec],
     );
-    const row = r.rows[0];
-    if (!row) throw new NotFoundError({ resource: 'travel_trip', tripId });
-    if (row.status !== 'booked' || now.getTime() >= row.arrive_at.getTime()) {
-      throw new TravelNotCancellableError({ status: row.status });
-    }
-    const refunded = await refund(client, userId, row, 'cancelled', now);
+    const fare = flipped.rows[0];
+    if (!fare) throw new TravelNotCancellableError({ reason: 'not_booked' });
+    const refunded = await creditRefund(client, userId, tripId, Number(fare.fare_cents));
     const bal = await balanceOf(client, userId);
     return { refunded, cash: bal.cash };
   });
-  await deleteTicketIf(ctx, userId, tripId);
   return { tripId, refundedCents: out.refunded, cashCents: out.cash };
 }
 
-/** Refund a booked trip once (ledger `travel_refund`) and end it with `status`. */
-async function refund(
+/**
+ * Credit a trip's fare back once (ledger `travel_refund`, idempotency_ref
+ * `travel-refund:<tripId>`). Call only after a guarded UPDATE ended the trip.
+ * @returns The cents credited (0 when this trip was already refunded).
+ */
+async function creditRefund(
   client: Pick<PoolClient, 'query'>,
   userId: string,
-  row: TripRow,
-  status: 'cancelled' | 'expired_refunded',
-  now: Date,
+  tripId: string,
+  fare: number,
 ): Promise<number> {
-  const fare = Number(row.fare_cents);
   const ins = await client.query(
     `INSERT INTO ledger_entries (user_id, delta_cents, account, reason, ref_type, ref_id, idempotency_ref)
      VALUES ($1, $2, 'cash', 'travel_refund', 'travel_trip', $3, $4)
      ON CONFLICT (idempotency_ref) DO NOTHING`,
-    [userId, fare, row.trip_id, `travel-refund:${row.trip_id}`],
+    [userId, fare, tripId, `travel-refund:${tripId}`],
   );
-  const credited = (ins.rowCount ?? 0) > 0 ? fare : 0;
-  if (credited > 0) {
-    await client.query(
-      `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now() WHERE user_id = $2`,
-      [credited, userId],
-    );
-  }
+  if ((ins.rowCount ?? 0) === 0 || fare <= 0) return 0;
   await client.query(
-    `UPDATE travel_trips SET status = $2, ended_at = $3 WHERE trip_id = $1 AND status = 'booked'`,
-    [row.trip_id, status, now],
+    `UPDATE balances SET cash_cents = cash_cents + $1, updated_at = now() WHERE user_id = $2`,
+    [fare, userId],
   );
-  return credited;
+  return fare;
 }
 
 // --- Tickets (the street room's arrival) ------------------------------
@@ -894,16 +923,20 @@ async function writeTicket(
   await ctx.redis.main.set(travelTicketKey(userId), JSON.stringify(t), 'PX', ttlMs);
 }
 
-async function deleteTicketIf(ctx: AppContext, userId: string, tripId: string): Promise<void> {
+/**
+ * Delete the caller's ticket only if it names `tripId` and is still exactly what was read.
+ * @returns True when this call deleted it.
+ */
+async function takeTicket(redis: TicketRedis, userId: string, tripId: string): Promise<boolean> {
   const key = travelTicketKey(userId);
-  const raw = await ctx.redis.main.get(key);
-  if (!raw) return;
+  const raw = await redis.get(key);
+  if (!raw) return false;
   try {
-    if ((JSON.parse(raw) as TravelTicket).tripId !== tripId) return;
+    if ((JSON.parse(raw) as TravelTicket).tripId !== tripId) return false;
   } catch {
-    // A malformed ticket is removed below.
+    return false;
   }
-  await ctx.redis.main.eval(COMPARE_AND_DELETE, 1, key, raw);
+  return Number(await redis.eval(COMPARE_AND_DELETE, 1, key, raw)) === 1;
 }
 
 export type TicketResult =
@@ -919,8 +952,9 @@ export const TRAVEL_JOIN_CODES = TRAVEL_JOIN_ERROR_CODES;
 
 /**
  * Use the caller's arrival ticket in `district`'s street room: valid only for this user (the
- * key is per user), this trip and this district, from `arriveAt - arriveEarlySec` until
- * `expiresAt`. Deleted atomically on success, so it works once; an early join keeps it.
+ * key is per user), this trip and this district, from `arriveAt - arriveEarlySec` until just
+ * before `expiresAt`. Deleted atomically on success, so it works once; an early join keeps
+ * it. The caller must then run `markArrived` and place the player only when it returns true.
  * @param redis - Redis.
  * @param cfg - Travel config.
  * @param userId - The joining user.
@@ -951,7 +985,7 @@ export async function consumeTicket(
   const opensAt = t.arriveAt - cfg.arriveEarlySec * 1000;
   if (nowMs < opensAt)
     return { ok: false, code: 'TRAVEL_NOT_ARRIVED', retryAfterMs: opensAt - nowMs };
-  if (nowMs > t.expiresAt) return { ok: false, code: 'TRAVEL_TICKET_INVALID' };
+  if (nowMs >= t.expiresAt) return { ok: false, code: 'TRAVEL_TICKET_INVALID' };
   const deleted = Number(await redis.eval(COMPARE_AND_DELETE, 1, key, raw));
   if (deleted !== 1) return { ok: false, code: 'TRAVEL_TICKET_INVALID' };
   return { ok: true, ticket: t };
@@ -971,48 +1005,60 @@ export async function hasOpenTicket(
   const raw = await redis.get(travelTicketKey(userId));
   if (!raw) return false;
   try {
-    return nowMs <= (JSON.parse(raw) as TravelTicket).expiresAt;
+    return nowMs < (JSON.parse(raw) as TravelTicket).expiresAt;
   } catch {
     return false;
   }
 }
 
 /**
- * Record an arrival: the trip is `arrived` (the sweep never refunds it) and `ctl:pos` is the
- * arrival point now, so the next room and the next quote start from there.
+ * Record an arrival; the database is the source of truth. One guarded UPDATE flips the trip
+ * to `arrived` only while it is still `booked` and unexpired. The street room places the
+ * traveller only when this returns true. Otherwise (cancelled, swept, expired, or the update
+ * failed) it refuses the arrival, and a trip left `booked` is refunded by the sweep, so a
+ * ride and a refund can never both happen.
  * @param ctx - The app context.
  * @param userId - The traveller.
  * @param t - The consumed ticket.
  * @param now - Server time.
+ * @returns True when this call marked the trip arrived.
  */
 export async function markArrived(
-  ctx: AppContext,
+  ctx: Pick<AppContext, 'db'>,
   userId: string,
-  t: TravelTicket,
+  t: Pick<TravelTicket, 'tripId'>,
   now: Date = new Date(),
-): Promise<void> {
-  await ctx.db.withConnection((c) =>
+): Promise<boolean> {
+  const r = await ctx.db.withConnection((c) =>
     c.query(
       `UPDATE travel_trips SET status = 'arrived', arrived_at = $3
-        WHERE trip_id = $1 AND user_id = $2 AND status = 'booked'`,
+        WHERE trip_id = $1 AND user_id = $2 AND status = 'booked' AND expires_at > $3
+        RETURNING trip_id`,
       [t.tripId, userId, now],
     ),
   );
+  return (r.rowCount ?? 0) > 0;
 }
 
 // --- Sweep ------------------------------------------------------------
 
+/** How long after `expiresAt` the sweep waits, so it never races a join near the deadline. */
+export const SWEEP_GRACE_MS = 60_000;
+
 /**
- * Refund every booked trip whose ticket expired unused, once each. Safe to run twice at
- * once: rows are claimed with SKIP LOCKED and the refund is keyed by `travel-refund:<trip>`.
+ * Refund every booked trip whose ticket expired unused (more than SWEEP_GRACE_MS ago), once
+ * each. Each refund is one guarded UPDATE (`status = 'booked'` -> `expired_refunded`) that
+ * must return the row before anything is credited, so an arrived or cancelled trip is never
+ * refunded and two sweeps at once refund once.
  * @returns How many trips were refunded.
  */
 export async function sweepTravelTrips(ctx: AppContext, now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - SWEEP_GRACE_MS);
   const due = await ctx.db.withConnection((c) =>
     c.query<{ trip_id: string; user_id: string }>(
       `SELECT trip_id, user_id FROM travel_trips
         WHERE status = 'booked' AND expires_at < $1 ORDER BY expires_at ASC LIMIT 200`,
-      [now],
+      [cutoff],
     ),
   );
   let refunded = 0;
@@ -1021,20 +1067,20 @@ export async function sweepTravelTrips(ctx: AppContext, now: Date = new Date()):
       await client.query(`SELECT cash_cents FROM balances WHERE user_id = $1 FOR UPDATE`, [
         user_id,
       ]);
-      const r = await client.query<TripRow>(
-        `SELECT ${TRIP_COLS} FROM travel_trips
+      const flipped = await client.query<{ fare_cents: string }>(
+        `UPDATE travel_trips SET status = 'expired_refunded', ended_at = $3
           WHERE trip_id = $1 AND status = 'booked' AND expires_at < $2
-          FOR UPDATE SKIP LOCKED`,
-        [trip_id, now],
+          RETURNING fare_cents`,
+        [trip_id, cutoff, now],
       );
-      const row = r.rows[0];
+      const row = flipped.rows[0];
       if (!row) return false;
-      await refund(client, user_id, row, 'expired_refunded', now);
+      await creditRefund(client, user_id, trip_id, Number(row.fare_cents));
       return true;
     });
     if (done) {
       refunded++;
-      await deleteTicketIf(ctx, user_id, trip_id);
+      await takeTicket(ctx.redis.main as unknown as TicketRedis, user_id, trip_id);
     }
   }
   return refunded;

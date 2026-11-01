@@ -36,6 +36,8 @@ class FakeRedis implements TicketRedis {
 const redis = new FakeRedis();
 const arrivals: Array<{ userId: string; tripId: string }> = [];
 let travelOn = true;
+/** What the guarded `UPDATE ... SET status = 'arrived'` does in this test. */
+let arrivalDb: 'arrived' | 'no_row' | 'throws' = 'arrived';
 
 class TestStreet extends StreetRoom {
   protected override loadPlayer(userId: string): Promise<PlayerState> {
@@ -49,8 +51,11 @@ class TestStreet extends StreetRoom {
   protected override async travelRedis(): Promise<TicketRedis> {
     return redis;
   }
-  protected override async recordArrival(userId: string, t: TravelTicket): Promise<void> {
+  protected override async recordArrival(userId: string, t: TravelTicket): Promise<boolean> {
+    if (arrivalDb === 'throws') throw new Error('db down');
+    if (arrivalDb === 'no_row') return false;
     arrivals.push({ userId, tripId: t.tripId });
+    return true;
   }
   protected override streetVoiceOn(): boolean {
     return false;
@@ -118,6 +123,7 @@ beforeEach(() => {
   redis.kv.clear();
   arrivals.length = 0;
   travelOn = true;
+  arrivalDb = 'arrived';
   setIslandGeometry({ island: [ISLAND], districts: { timeline: TIMELINE } });
   vi.spyOn(Date, 'now').mockImplementation(() => now);
 });
@@ -156,7 +162,6 @@ describe('StreetRoom Map Travel arrival', () => {
       yaw: 1.5,
     });
     expect(redis.kv.has(travelTicketKey('u1'))).toBe(false);
-    await new Promise((r) => setTimeout(r, 0));
     expect(arrivals).toEqual([{ userId: 'u1', tripId: TRIP }]);
 
     // The used ticket cannot be used again.
@@ -211,5 +216,47 @@ describe('StreetRoom Map Travel arrival', () => {
       .players;
     expect(players.size).toBe(0); // placed by the first move, as before
     expect(redis.kv.has(travelTicketKey('u1'))).toBe(true);
+  });
+
+  it.each(['no_row', 'throws'] as const)(
+    'gives no ride when the guarded arrival update finds no booked trip (%s): 4410, nothing placed',
+    async (mode) => {
+      arrivalDb = mode;
+      const presence = new LocalPresence();
+      const room = await boot(presence);
+      redis.kv.set(travelTicketKey('u1'), JSON.stringify(ticket({ arriveAt: now - 100 })));
+      const err = await joinError(room, fakeClient('s1'), { userId: 'u1', tripId: TRIP });
+      expect(err.code).toBe(4410);
+      expect(err.message).toBe('TRAVEL_TICKET_INVALID');
+      const players = (room as unknown as { state: { players: Map<string, PlayerState> } }).state
+        .players;
+      expect(players.size).toBe(0);
+      expect(await presence.hget(POS_HASH, 'u1')).toBeFalsy();
+      // The ticket is spent (the trip stays booked for the sweep to refund); a plain join works.
+      expect(redis.kv.has(travelTicketKey('u1'))).toBe(false);
+      const c = fakeClient('s2');
+      await room.onJoin!(c, { userId: 'u1' });
+      expect(c.sent.find((m) => m.type === 'welcome')?.payload.travel).toBeUndefined();
+      expect(players.size).toBe(0); // normal spawn: placed by the first move
+    },
+  );
+
+  it('refuses an arrival after the trip was cancelled (ticket gone): 4410, nothing placed', async () => {
+    const room = await boot(new LocalPresence());
+    // cancelTrip deleted the ticket.
+    const err = await joinError(room, fakeClient('s1'), { userId: 'u1', tripId: TRIP });
+    expect(err.code).toBe(4410);
+    expect(arrivals).toEqual([]);
+  });
+
+  it('refuses a ticket exactly at expiresAt', async () => {
+    const room = await boot(new LocalPresence());
+    redis.kv.set(
+      travelTicketKey('u1'),
+      JSON.stringify(ticket({ arriveAt: now - 120_000, expiresAt: now })),
+    );
+    expect((await joinError(room, fakeClient('s1'), { userId: 'u1', tripId: TRIP })).code).toBe(
+      4410,
+    );
   });
 });

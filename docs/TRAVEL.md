@@ -45,18 +45,38 @@ default, so instant Go stays). Closing the teleport on the server is phase 2.
    partial unique index allows one `booked` trip per player), cooldown, hourly limit, unlock and
    cash, insert `travel_trips`, debit, write the ledger row (`travel_fare`). After the commit the
    single-use ticket `ctl:travel:<userId>` `{tripId, district, x, z, yaw, arriveAt, expiresAt}` is
-   written. CT Jail (`requireNotJailed`) and the Barn (`SYBIL_JAILED`) refuse.
+   written. CT Jail (`requireNotJailed`, and again in the transaction) and the Barn (`SYBIL_JAILED`)
+   refuse.
 3. The client leaves its street (and venue) room and plays the ride. While the ticket is open, a
    street join without it is refused (`4409 TRAVEL_IN_TRANSIT`).
 4. At `arriveAt` the client joins the street room of `arrival.district` with `{tripId}`. Early is
    `4425 TRAVEL_NOT_ARRIVED` (ticket kept); used, expired, foreign or wrong district is
-   `4410 TRAVEL_TICKET_INVALID`. On success the ticket is deleted atomically, the player is placed
-   and shown at the arrival point, `ctl:pos` is written there and the trip becomes `arrived`
+   `4410 TRAVEL_TICKET_INVALID` (valid until just before `expiresAt`). On success the ticket is
+   deleted atomically and the trip must flip to `arrived` (guarded update) before the player is
+   placed and shown at the arrival point and `ctl:pos` is written there; if it does not, `4410`
    (docs/REALTIME.md "Map Travel arrival").
-5. Cancel before `arriveAt`: `POST /v1/travel/trips/{id}/cancel`, full refund (`travel_refund`),
-   ticket deleted. A ticket never used is refunded by the **travel-sweep** worker every 30 s
-   (`expired_refunded`), exactly once (`travel-refund:<tripId>` is unique in the ledger). An
-   arrived trip is never refunded.
+5. Cancel before the ticket opens (`arriveAt - arriveEarlySec`): `POST /v1/travel/trips/{id}/cancel`,
+   full refund (`travel_refund`). A ticket never used is refunded by the **travel-sweep** worker
+   (every 30 s, for trips whose `expiresAt` passed more than 60 s ago, `expired_refunded`), exactly
+   once (`travel-refund:<tripId>` is unique in the ledger). An arrived trip is never refunded.
+
+## Ride XOR refund (security)
+
+A trip ends exactly one way: `arrived` (the ride) or refunded (`cancelled` / `expired_refunded`).
+
+- The cancel window ends where the arrival window starts (`arriveAt - arriveEarlySec`).
+- Cancel takes the ticket first (compare-and-delete; it must exist and name the trip, else
+  `409 TRAVEL_NOT_CANCELLABLE {reason: ticket_gone}`), then flips the row with one guarded
+  `UPDATE … WHERE status = 'booked' … RETURNING`; the refund is credited only when that returns the
+  row.
+- Arrival takes the ticket, then the guarded `UPDATE … SET status = 'arrived' WHERE status =
+'booked' AND expires_at > now`; the street room places the player only when that returns the
+  row, otherwise it refuses with `4410` (the client joins normally, no ride). A trip left `booked`
+  this way is refunded by the sweep.
+- The sweep refunds with the same guarded `UPDATE … SET status = 'expired_refunded' WHERE status =
+'booked'`, so it can never refund an arrived or cancelled trip, and two sweeps refund once.
+- Booking checks CT Jail and the Barn inside the transaction too (`403 JAILED` / `SYBIL_JAILED`).
+
 6. App killed mid-ride: `GET /v1/travel/trips/current` returns the open trip to finish or cancel.
 
 ## Known gaps

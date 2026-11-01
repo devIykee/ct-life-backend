@@ -33,6 +33,7 @@ import {
   type DistrictId,
 } from '../realtime/movement.js';
 import {
+  SWEEP_GRACE_MS,
   arrivalFor,
   bookTrip,
   cancelTrip,
@@ -429,12 +430,12 @@ describe('arrival ticket', () => {
       code: 'TRAVEL_TICKET_INVALID',
     });
     expect(await hasOpenTicket(redis, u, Date.now())).toBe(false);
-    if (used.ok) await markArrived(ctx, u, used.ticket);
+    expect(used.ok && (await markArrived(ctx, u, used.ticket))).toBe(true);
     expect((await currentTrip(ctx, u)).trip).toBeNull();
 
     // An arrived trip is never cancelled or refunded.
     await expect(cancelTrip(ctx, u, trip.tripId)).rejects.toBeInstanceOf(TravelNotCancellableError);
-    await sweepTravelTrips(ctx, new Date(new Date(trip.expiresAt).getTime() + 60_000));
+    await sweepTravelTrips(ctx, new Date(new Date(trip.expiresAt).getTime() + 61_000));
     expect((await ledgerSum(u, 'travel_refund')).n).toBe(0);
   });
 
@@ -482,7 +483,10 @@ describe('cancel and sweep', () => {
     await sweepTravelTrips(ctx, new Date(trip.arriveAt));
     expect(await cashOf(u)).toBe(10_000 - trip.fareCents);
 
-    const after = new Date(new Date(trip.expiresAt).getTime() + 1_000);
+    // Inside the 60 s grace after expiresAt: still nothing.
+    await sweepTravelTrips(ctx, new Date(new Date(trip.expiresAt).getTime() + 30_000));
+    expect(await cashOf(u)).toBe(10_000 - trip.fareCents);
+    const after = new Date(new Date(trip.expiresAt).getTime() + 61_000);
     await Promise.all([sweepTravelTrips(ctx, after), sweepTravelTrips(ctx, after)]);
     await sweepTravelTrips(ctx, after);
     expect(await cashOf(u)).toBe(10_000);
@@ -494,5 +498,189 @@ describe('cancel and sweep', () => {
     expect(r.rows[0]!.status).toBe('expired_refunded');
     expect(await redis.get(travelTicketKey(u))).toBeNull();
     expect((await currentTrip(ctx, u)).trip).toBeNull();
+  });
+});
+
+describe('security: ride XOR refund (review of PR #82)', () => {
+  const at = (iso: string, deltaMs: number): Date => new Date(new Date(iso).getTime() + deltaMs);
+  const statusOf = async (tripId: string): Promise<string> =>
+    (
+      await pool.query<{ status: string }>(`SELECT status FROM travel_trips WHERE trip_id = $1`, [
+        tripId,
+      ])
+    ).rows[0]!.status;
+
+  it('refuses arrive-then-cancel: the windows do not overlap and a used ticket blocks cancel', async () => {
+    const u = await newUser(10_000);
+    await standAt(u, STOP.x, STOP.z);
+    const trip = await quoteAndBook(u, 'taxi');
+    // Exactly at the cutoff (arriveAt - arriveEarlySec) a cancel is already refused.
+    await expect(cancelTrip(ctx, u, trip.tripId, at(trip.arriveAt, -1_000))).rejects.toBeInstanceOf(
+      TravelNotCancellableError,
+    );
+    const used = await consumeTicket(
+      redis,
+      cfg,
+      u,
+      trip.tripId,
+      trip.arrival.district,
+      new Date(trip.arriveAt).getTime() - 900,
+    );
+    expect(used.ok).toBe(true);
+    expect(await markArrived(ctx, u, { tripId: trip.tripId }, at(trip.arriveAt, -900))).toBe(true);
+    // Even with a clock before the cutoff, an arrived trip cannot be cancelled.
+    await expect(cancelTrip(ctx, u, trip.tripId, new Date())).rejects.toBeInstanceOf(
+      TravelNotCancellableError,
+    );
+    expect(await ledgerSum(u, 'travel_refund')).toEqual({ n: 0, sum: 0 });
+    expect(await cashOf(u)).toBe(10_000 - trip.fareCents);
+  });
+
+  it('refuses a cancel once the ticket was taken, even before the row says arrived', async () => {
+    const u = await newUser(10_000);
+    await standAt(u, STOP.x, STOP.z);
+    const trip = await quoteAndBook(u, 'bus');
+    expect(
+      (
+        await consumeTicket(
+          redis,
+          cfg,
+          u,
+          trip.tripId,
+          trip.arrival.district,
+          new Date(trip.arriveAt).getTime(),
+        )
+      ).ok,
+    ).toBe(true);
+    const err = await cancelTrip(ctx, u, trip.tripId, new Date()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TravelNotCancellableError);
+    expect((err as TravelNotCancellableError).details.reason).toBe('ticket_gone');
+    expect(await statusOf(trip.tripId)).toBe('booked');
+    expect(await cashOf(u)).toBe(10_000 - 200);
+  });
+
+  it('refuses cancel-then-arrive: no ticket and the guarded update finds no booked trip', async () => {
+    const u = await newUser(10_000);
+    await standAt(u, STOP.x, STOP.z);
+    const trip = await quoteAndBook(u, 'taxi');
+    await cancelTrip(ctx, u, trip.tripId);
+    const arriveAt = new Date(trip.arriveAt).getTime();
+    expect(
+      await consumeTicket(redis, cfg, u, trip.tripId, trip.arrival.district, arriveAt),
+    ).toMatchObject({
+      ok: false,
+      code: 'TRAVEL_TICKET_INVALID',
+    });
+    expect(await markArrived(ctx, u, { tripId: trip.tripId }, new Date(arriveAt))).toBe(false);
+    expect(await statusOf(trip.tripId)).toBe('cancelled');
+    expect(await ledgerSum(u, 'travel_refund')).toEqual({ n: 1, sum: trip.fareCents });
+  });
+
+  it('an arrival whose DB update failed gives no ride and the sweep refunds it later', async () => {
+    const u = await newUser(10_000);
+    await standAt(u, STOP.x, STOP.z);
+    const trip = await quoteAndBook(u, 'taxi');
+    // The ticket was taken, then the guarded UPDATE failed (the room refuses the placement).
+    expect(
+      (
+        await consumeTicket(
+          redis,
+          cfg,
+          u,
+          trip.tripId,
+          trip.arrival.district,
+          new Date(trip.arriveAt).getTime(),
+        )
+      ).ok,
+    ).toBe(true);
+    expect(await statusOf(trip.tripId)).toBe('booked');
+    // Too late to mark it arrived after expiresAt.
+    expect(await markArrived(ctx, u, { tripId: trip.tripId }, at(trip.expiresAt, 0))).toBe(false);
+    await sweepTravelTrips(ctx, at(trip.expiresAt, SWEEP_GRACE_MS + 1_000));
+    expect(await statusOf(trip.tripId)).toBe('expired_refunded');
+    expect(await ledgerSum(u, 'travel_refund')).toEqual({ n: 1, sum: trip.fareCents });
+    expect(await cashOf(u)).toBe(10_000);
+  });
+
+  it('a sweep racing an arrival gives exactly one outcome', async () => {
+    for (let i = 0; i < 4; i++) {
+      const u = await newUser(10_000);
+      await standAt(u, STOP.x, STOP.z);
+      const trip = await quoteAndBook(u, 'taxi');
+      // Skewed clocks: the room thinks it is arriveAt, the worker thinks the grace has passed.
+      const [arrived] = await Promise.all([
+        markArrived(ctx, u, { tripId: trip.tripId }, new Date(trip.arriveAt)),
+        sweepTravelTrips(ctx, at(trip.expiresAt, SWEEP_GRACE_MS + 1_000)),
+      ]);
+      const status = await statusOf(trip.tripId);
+      const refunds = await ledgerSum(u, 'travel_refund');
+      if (arrived) {
+        expect(status).toBe('arrived');
+        expect(refunds.n).toBe(0);
+        expect(await cashOf(u)).toBe(10_000 - trip.fareCents);
+      } else {
+        expect(status).toBe('expired_refunded');
+        expect(refunds).toEqual({ n: 1, sum: trip.fareCents });
+        expect(await cashOf(u)).toBe(10_000);
+      }
+    }
+  });
+
+  it('two cancels at once refund once', async () => {
+    const u = await newUser(10_000);
+    await standAt(u, STOP.x, STOP.z);
+    const trip = await quoteAndBook(u, 'taxi');
+    const results = await Promise.allSettled([
+      cancelTrip(ctx, u, trip.tripId),
+      cancelTrip(ctx, u, trip.tripId),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason,
+    ).toBeInstanceOf(TravelNotCancellableError);
+    expect(await ledgerSum(u, 'travel_refund')).toEqual({ n: 1, sum: trip.fareCents });
+    expect(await cashOf(u)).toBe(10_000);
+  });
+
+  it('refuses a ticket at exactly expiresAt', async () => {
+    const u = await newUser(10_000);
+    await standAt(u, STOP.x, STOP.z);
+    const trip = await quoteAndBook(u, 'bus');
+    const exp = new Date(trip.expiresAt).getTime();
+    expect(
+      await consumeTicket(redis, cfg, u, trip.tripId, trip.arrival.district, exp),
+    ).toMatchObject({
+      ok: false,
+      code: 'TRAVEL_TICKET_INVALID',
+    });
+    expect(await hasOpenTicket(redis, u, exp)).toBe(false);
+    expect(
+      (await consumeTicket(redis, cfg, u, trip.tripId, trip.arrival.district, exp - 1)).ok,
+    ).toBe(true);
+  });
+
+  it('refuses booking for a Sybil-jailed or CT-jailed player before charging', async () => {
+    const s = await newUser(10_000);
+    await standAt(s, STOP.x, STOP.z);
+    const q = await quoteTravel(ctx, s, DEST);
+    await pool.query(`UPDATE users SET is_sybil_jailed = true WHERE id = $1`, [s]);
+    await expect(
+      bookTrip(ctx, s, { quoteId: q.quoteId, mode: 'taxi' }, uuidv7()),
+    ).rejects.toBeInstanceOf(SybilJailedError);
+    expect(await cashOf(s)).toBe(10_000);
+
+    const j = await newUser(10_000);
+    await standAt(j, STOP.x, STOP.z);
+    const qj = await quoteTravel(ctx, j, DEST);
+    await pool.query(
+      `INSERT INTO player_jail (user_id, jail_id, jailed_at, jailed_until, bail_cents, heat_at_arrest)
+       VALUES ($1, $2, now(), now() + interval '1 hour', 500, 1)`,
+      [j, uuidv7()],
+    );
+    await expect(
+      bookTrip(ctx, j, { quoteId: qj.quoteId, mode: 'taxi' }, uuidv7()),
+    ).rejects.toBeInstanceOf(JailedError);
+    expect(await cashOf(j)).toBe(10_000);
+    expect((await ledgerSum(j, 'travel_fare')).n).toBe(0);
   });
 });

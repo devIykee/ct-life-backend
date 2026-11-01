@@ -48,9 +48,11 @@
  * ServerError 4425 TRAVEL_NOT_ARRIVED, ticket kept) and closes at
  * `expiresAt` (later, used, foreign or wrong district: 4410
  * TRAVEL_TICKET_INVALID). On success the ticket is deleted atomically, the
- * session is anchored and shown at the arrival point (a street spot outside
- * the destination door), `ctl:pos` is written there, the trip is marked
- * `arrived`, and `welcome` carries `travel {tripId, x, z, yaw}`. While a
+ * trip must flip to `arrived` in one guarded UPDATE (still booked, not
+ * expired) or the arrival is refused with 4410 and nothing is placed; then
+ * the session is anchored and shown at the arrival point (a street spot
+ * outside the destination door), `ctl:pos` is written there, and `welcome`
+ * carries `travel {tripId, x, z, yaw}`. While a
  * user holds an open ticket, a join without it is refused with 4409
  * TRAVEL_IN_TRANSIT: a rider is nowhere until they arrive or cancel.
  */
@@ -271,12 +273,7 @@ export class StreetRoom extends Room {
         // Presence is best effort.
       }
     }
-    if (arrival) {
-      this.placeArrival(client, arrival, now);
-      void this.recordArrival(userId, arrival).catch(() => {
-        // Best effort: an arrived ticket is already used; the trip row only skips the refund.
-      });
-    }
+    if (arrival) this.placeArrival(client, arrival, now);
     client.send('welcome', {
       serverNow: now,
       instanceId: this.state.instanceId,
@@ -314,6 +311,19 @@ export class StreetRoom extends Room {
         now,
       );
       if (!r.ok) throw new ServerError(TRAVEL_JOIN_CODES[r.code], r.code);
+      // The database decides: the guarded UPDATE must flip the trip to `arrived` before the
+      // player is placed. If it does not (cancelled, swept, expired, or the update failed),
+      // the arrival is refused and the client joins normally: no ride, and a trip left
+      // `booked` is refunded by the sweep.
+      let arrived = false;
+      try {
+        arrived = await this.recordArrival(userId, r.ticket);
+      } catch {
+        arrived = false;
+      }
+      if (!arrived) {
+        throw new ServerError(TRAVEL_JOIN_CODES.TRAVEL_TICKET_INVALID, 'TRAVEL_TICKET_INVALID');
+      }
       return r.ticket;
     }
     if (await hasOpenTicket(redis, userId, now)) {
@@ -361,16 +371,18 @@ export class StreetRoom extends Room {
   }
 
   /**
-   * Mark the trip arrived (the sweep then never refunds it). Overridden in tests.
+   * Mark the trip arrived with the guarded UPDATE (the sweep then never refunds it).
+   * Overridden in tests.
    * @param userId - The traveller.
    * @param t - The consumed ticket.
+   * @returns True only when this call flipped a booked, unexpired trip to `arrived`.
    */
-  protected async recordArrival(userId: string, t: TravelTicket): Promise<void> {
+  protected async recordArrival(userId: string, t: TravelTicket): Promise<boolean> {
     const [{ buildContext }, { markArrived }] = await Promise.all([
       import('../../application/context.js'),
       import('../../application/travel.js'),
     ]);
-    await markArrived(buildContext(), userId, t);
+    return markArrived(buildContext(), userId, t);
   }
 
   /**
