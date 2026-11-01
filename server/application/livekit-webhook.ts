@@ -22,7 +22,7 @@ import type { AppContext } from './context.js';
 export interface LiveKitWebhookEvent {
   readonly event: string;
   readonly room?: { readonly name?: string };
-  readonly participant?: { readonly identity?: string };
+  readonly participant?: { readonly identity?: string; readonly sid?: string };
   readonly createdAt?: number;
   readonly id?: string;
 }
@@ -54,7 +54,9 @@ export async function verifyLiveKitWebhook(
     return {
       event: event.event,
       room: event.room ? { name: event.room.name } : undefined,
-      participant: event.participant ? { identity: event.participant.identity } : undefined,
+      participant: event.participant
+        ? { identity: event.participant.identity, sid: event.participant.sid }
+        : undefined,
       createdAt: Number(event.createdAt),
       id: event.id,
     };

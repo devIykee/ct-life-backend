@@ -104,10 +104,11 @@ describe('POST /v1/rtc/token (venue)', () => {
     const res = await tokenFor(listenerId, { kind: 'venue', id: instanceId });
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('NOT_IN_VENUE');
-    // The legacy proximity kind is no way around it.
+    // The proximity kind is street voice now, dark while `streetVoice` is off
+    // (street-voice-rtc.test.ts covers it on), so it is no way around this either.
     const prox = await tokenFor(listenerId, { kind: 'proximity', id: instanceId });
-    expect(prox.statusCode).toBe(403);
-    expect(prox.json().error.code).toBe('NOT_IN_VENUE');
+    expect(prox.statusCode).toBe(503);
+    expect(prox.json().error.code).toBe('CAPABILITY_OFF');
   });
 
   it('mints for a member only while a session of theirs is in that instance', async () => {

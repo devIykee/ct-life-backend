@@ -105,6 +105,16 @@
       "message": "You are not in that venue. Join it before connecting to its voice."
     },
     {
+      "code": "NOT_IN_AREA",
+      "httpStatus": 403,
+      "message": "You are not on that street. Walk there before connecting to its voice."
+    },
+    {
+      "code": "VOICE_MINUTES_EXHAUSTED",
+      "httpStatus": 429,
+      "message": "Today's street voice time is used up. It resets at midnight UTC."
+    },
+    {
       "code": "SPOT_TAKEN",
       "httpStatus": 409,
       "message": "Spot is taken."

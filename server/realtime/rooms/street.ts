@@ -23,6 +23,16 @@
  * on CT Island record positions too, so walking out of a venue is
  * checked like any other move.
  *
+ * Street voice (capability `streetVoice`, read once per room): every joined
+ * session is counted in `ctl:street:members:<district>:<instanceId>` (see
+ * ../street-presence.ts) before `welcome`, and `POST /v1/rtc/token
+ * {kind: 'proximity', id: '<district>:<instanceId>'}` mints a token for the
+ * LiveKit room `proximity:<district>:<instanceId>` only for a user counted
+ * there. The last session of a user leaving (a ban closes sessions too)
+ * removes them from that LiveKit room. Once a minute the room also removes
+ * everyone connected to its voice room (per the LiveKit webhook) who is no
+ * longer in the instance or is out of street voice minutes.
+ *
  * Rejoin after a network drop: the join options may carry `x`, `z`
  * (island metres), the spot the client is standing on. With a recent
  * position on record, the session is anchored there instead if it is in
@@ -68,6 +78,15 @@ import {
   withinRejoinReach,
 } from '../movement.js';
 import { BanGuard } from '../ban-guard.js';
+import { loadConfig } from '../../shared/config/config.js';
+import { isCapabilityOn } from '../../application/capabilities.js';
+import {
+  clearStreetMembers,
+  markStreetJoin,
+  markStreetLeave,
+  touchStreetMembers,
+  STREET_MEMBERS_TOUCH_MS,
+} from '../street-presence.js';
 
 const MoveMessage = z.object({
   x: z.number().finite(),
@@ -88,6 +107,8 @@ const EXIT_GRANT_MS = 15_000;
 const EXIT_GRANT_RADIUS_M = 5;
 /** Minimum gap between writes of a player's position to presence. */
 const POS_WRITE_MS = 250;
+/** How often the room checks who is connected to its voice room (presence and minutes). */
+export const STREET_VOICE_SWEEP_MS = 60_000;
 
 interface StreetSession {
   userId: string;
@@ -111,6 +132,10 @@ export class StreetRoom extends Room {
   private island: readonly Polygon[] = [];
   private anims: readonly string[] = [];
   private sessions = new Map<string, StreetSession>();
+  /** Street voice is on for this room (capability `streetVoice` when it opened). */
+  private voice = false;
+  /** sessionId -> userId of the sessions counted in the street voice member hash. */
+  private members = new Map<string, string>();
   /** userId -> vehicle exit position, from the vehicles room. */
   private exitGrants = new Map<string, IslandPos>();
   private onExit = (data: unknown): void => this.handleVehicleExit(data);
@@ -147,6 +172,14 @@ export class StreetRoom extends Room {
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
     await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
+    this.voice = this.streetVoiceOn();
+    if (this.voice) {
+      // Keep the voice member hash from expiring under a long-lived room.
+      this.clock.setInterval(() => {
+        if (this.presence) touchStreetMembers(this.presence, district, this.state.instanceId);
+      }, STREET_MEMBERS_TOUCH_MS);
+      this.clock.setInterval(() => void this.sweepVoiceMinutes(), STREET_VOICE_SWEEP_MS);
+    }
   }
 
   /**
@@ -157,6 +190,10 @@ export class StreetRoom extends Room {
     await this.presence?.unsubscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.unsubscribe(POLICE_CHANNEL, this.onPolice);
     await this.presence?.unsubscribe(OUTFIT_CHANNEL, this.onOutfit);
+    if (this.voice && this.presence) {
+      clearStreetMembers(this.presence, this.state.district, this.state.instanceId);
+    }
+    this.members.clear();
   }
 
   /**
@@ -185,6 +222,17 @@ export class StreetRoom extends Room {
       posWrittenAt: 0,
       movedAt: 0,
     });
+    // Count the session for street voice before the client hears it joined, so its first
+    // POST /v1/rtc/token already finds it. Best effort: a Redis error costs this player
+    // street voice, never the join.
+    if (this.voice && this.presence) {
+      try {
+        await markStreetJoin(this.presence, this.state.district, this.state.instanceId, userId);
+        this.members.set(client.sessionId, userId);
+      } catch {
+        // Presence is best effort.
+      }
+    }
     client.send('welcome', { serverNow: now, instanceId: this.state.instanceId });
   }
 
@@ -196,6 +244,19 @@ export class StreetRoom extends Room {
     const s = this.sessions.get(client.sessionId);
     this.sessions.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
+    const member = this.members.get(client.sessionId);
+    if (member !== undefined && this.presence) {
+      this.members.delete(client.sessionId);
+      const district = this.state.district;
+      const instanceId = this.state.instanceId;
+      void markStreetLeave(this.presence, district, instanceId, member)
+        .then((left) =>
+          left === 0 ? this.removeFromVoice(district, instanceId, member) : undefined,
+        )
+        .catch(() => {
+          // Best effort; the hash expires on its own and the token is short.
+        });
+    }
     if (!s) return;
     // Stored with the time of the last accepted move, not now (see writePos).
     if (s.placed) this.writePos(s, Date.now(), true);
@@ -372,6 +433,77 @@ export class StreetRoom extends Room {
     if (d.type !== 'police_pursuit' && d.type !== 'police_pursuit_end') return;
     if (![...this.sessions.values()].some((s) => s.userId === d.targetUserId)) return;
     this.broadcast(d.type, d.payload);
+  }
+
+  // --- Street voice ------------------------------------------------
+
+  /**
+   * Whether street voice is on for this deployment. Overridden in tests.
+   * @returns True while `streetVoice` is in CAPABILITIES_ON.
+   */
+  protected streetVoiceOn(): boolean {
+    try {
+      return isCapabilityOn({ config: loadConfig() }, 'streetVoice');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Disconnect a user from this instance's street voice room, so leaving (or
+   * being banned out, or running out of minutes) also ends what they hear.
+   * LiveKit checks a token only on connect, so without this a connected
+   * listener would stay.
+   * @param district - The street room's district.
+   * @param instanceId - The street room id.
+   * @param userId - The LiveKit identity.
+   */
+  protected async removeFromVoice(
+    district: string,
+    instanceId: string,
+    userId: string,
+  ): Promise<void> {
+    const { buildContext } = await import('../../application/context.js');
+    const ctx = buildContext();
+    await ctx.livekit.removeParticipant(ctx, {
+      kind: 'proximity',
+      id: `${district}:${instanceId}`,
+      identity: userId,
+    });
+  }
+
+  /**
+   * The identities to disconnect from this instance's voice room: connected
+   * per the LiveKit webhook (members or not) and no longer in the instance, or
+   * past the per-player or the deployment's minutes. Overridden in tests.
+   * @returns The LiveKit identities to remove.
+   */
+  protected async voiceRemovals(): Promise<string[]> {
+    const { buildContext } = await import('../../application/context.js');
+    const { streetVoiceRemovals } = await import('../../application/street-voice.js');
+    return streetVoiceRemovals(
+      buildContext(),
+      this.state.district,
+      this.state.instanceId,
+      Date.now(),
+    );
+  }
+
+  /**
+   * Once a minute: disconnect whoever should not be in this instance's voice
+   * room (left or kicked and still connected because a removal failed or a
+   * kept token reconnected, or out of minutes). Their next token request is
+   * refused and a reconnect with a kept token is removed by the webhook check.
+   */
+  protected async sweepVoiceMinutes(): Promise<void> {
+    try {
+      const remove = await this.voiceRemovals();
+      const district = this.state.district;
+      const instanceId = this.state.instanceId;
+      await Promise.all(remove.map((u) => this.removeFromVoice(district, instanceId, u)));
+    } catch {
+      // Best effort; the next sweep tries again.
+    }
   }
 
   // --- Helpers -----------------------------------------------------

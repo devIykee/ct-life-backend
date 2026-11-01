@@ -171,6 +171,17 @@ export interface Config {
     readonly apiKey: string;
     readonly apiSecret: string;
     readonly webhookSecret: string;
+    /**
+     * Street voice minutes one player may use per UTC day (`STREET_VOICE_DAILY_MINUTES_PER_PLAYER`,
+     * default 20; 0 = no per-player cap). Counted from the LiveKit webhook.
+     */
+    readonly streetVoiceDailyMinutesPerPlayer: number;
+    /**
+     * Street voice minutes the whole deployment may use per UTC day
+     * (`STREET_VOICE_DAILY_MINUTES_TOTAL`, default 100; 0 = no total cap). Sized for LiveKit
+     * Cloud's free 5,000 participant-minutes a month; set both to 0 on a self-hosted server.
+     */
+    readonly streetVoiceDailyMinutesTotal: number;
   };
 
   readonly s3: {
@@ -637,6 +648,18 @@ export function loadConfig(): Config {
       apiKey: requireEnv('LIVEKIT_API_KEY', 'LiveKit API key'),
       apiSecret: requireEnv('LIVEKIT_API_SECRET', 'LiveKit API secret'),
       webhookSecret: optionalEnv('LIVEKIT_WEBHOOK_SECRET', 'dev-only-livekit-webhook-secret'),
+      streetVoiceDailyMinutesPerPlayer: asBoundedInt(
+        'STREET_VOICE_DAILY_MINUTES_PER_PLAYER',
+        20,
+        0,
+        24 * 60,
+      ),
+      streetVoiceDailyMinutesTotal: asBoundedInt(
+        'STREET_VOICE_DAILY_MINUTES_TOTAL',
+        100,
+        0,
+        10_000_000,
+      ),
     },
 
     s3: {

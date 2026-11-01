@@ -23,7 +23,7 @@ import { NotInVenueError } from '../shared/domain/errors.js';
 import { venueMembersKey } from '../realtime/venue-presence.js';
 import type { AppContext } from './context.js';
 
-/** Venue (and proximity) token lifetime: enough to connect, short enough to go stale. */
+/** Venue token lifetime: enough to connect, short enough to go stale. */
 export const VENUE_TOKEN_TTL_SEC = 10 * 60;
 
 /**

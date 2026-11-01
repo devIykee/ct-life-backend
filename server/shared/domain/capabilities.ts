@@ -42,6 +42,9 @@ export const CAPABILITY_FEATURES = [
   // licence's gambling clause in writing).
   'realMarkets',
   'realMarketsJupiter',
+  // Street proximity voice on CT Island: `POST /v1/rtc/token {kind: proximity}` for
+  // `proximity:<district>:<instanceId>` (docs/STREET-VOICE.md). Off until LiveKit minutes allow it.
+  'streetVoice',
 ] as const;
 
 /**

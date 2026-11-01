@@ -372,11 +372,9 @@ export class VenueRoom extends Room {
   protected async removeFromVoice(instanceId: string, userId: string): Promise<void> {
     const { buildContext } = await import('../../application/context.js');
     const ctx = buildContext();
-    await Promise.all(
-      (['venue', 'proximity'] as const).map((kind) =>
-        ctx.livekit.removeParticipant(ctx, { kind, id: instanceId, identity: userId }),
-      ),
-    );
+    // `proximity` rooms are street voice now (`proximity:<district>:<instanceId>`,
+    // removed by the street room), so only the venue room is left here.
+    await ctx.livekit.removeParticipant(ctx, { kind: 'venue', id: instanceId, identity: userId });
   }
 
   // --- Message handlers -------------------------------------------
