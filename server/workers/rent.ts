@@ -29,6 +29,17 @@ import { createRedis } from '../shared/redis/client.js';
 export const RENT_QUEUE = 'jobs-weekly-rent';
 
 /**
+ * Skip rent for inactive players (env: SKIP_RENT_FOR_INACTIVE=true).
+ * A player is inactive if they have no activity from any source for
+ * RENT_INACTIVE_DAYS_THRESHOLD days (default 7).
+ */
+const SKIP_RENT_FOR_INACTIVE = process.env.SKIP_RENT_FOR_INACTIVE === 'true';
+const RENT_INACTIVE_DAYS_THRESHOLD = parseInt(
+  process.env.RENT_INACTIVE_DAYS_THRESHOLD || '7',
+  10,
+);
+
+/**
  * The rent week `now` falls in, as the date of its Monday (UTC), e.g.
  * '2026-10-26'. Every run inside one week shares the key.
  * @param now - Any instant.
@@ -47,7 +58,34 @@ export function rentWeekKey(now: Date): string {
  */
 export async function handleWeeklyRent(_job: Job, ctx: AppContext): Promise<void> {
   const out = await runWeeklyRent(ctx.db);
-  console.info(`[rent] week ${rentWeekKey(new Date())}: debited=${out.debited} debt=${out.debt}`);
+  console.info(`[rent] week ${rentWeekKey(new Date())}: debited=${out.debited} debt=${out.debt} skipped=${out.skipped}`);
+}
+
+/**
+ * Check if a user is inactive (no activity for N days).
+ * @param db - The database.
+ * @param userId - The user to check.
+ * @param thresholdDays - Days of inactivity to consider inactive.
+ * @returns True if inactive, false otherwise.
+ */
+async function isUserInactive(db: Db, userId: string, thresholdDays: number): Promise<boolean> {
+  const result = await db.withConnection(async (c) => {
+    const r = await c.query<{ last_activity: string }>(
+      `SELECT GREATEST(
+        COALESCE((SELECT last_online_at FROM users WHERE user_id = $1), '1970-01-01'),
+        COALESCE((SELECT MAX(created_at) FROM feed_posts WHERE user_id = $1), '1970-01-01'),
+        COALESCE((SELECT MAX(created_at) FROM dm_messages WHERE from_user_id = $1), '1970-01-01'),
+        COALESCE((SELECT MAX(created_at) FROM trades WHERE user_id = $1), '1970-01-01'),
+        COALESCE((SELECT MAX(created_at) FROM shifts WHERE user_id = $1), '1970-01-01')
+      ) as last_activity`,
+      [userId],
+    );
+    return r.rows[0];
+  });
+
+  const lastActivity = new Date(result.last_activity);
+  const daysSinceActivity = Math.floor((Date.now() - lastActivity.getTime()) / (1000 * 60 * 60 * 24));
+  return daysSinceActivity >= thresholdDays;
 }
 
 /**
@@ -58,10 +96,11 @@ export async function handleWeeklyRent(_job: Job, ctx: AppContext): Promise<void
 export async function runWeeklyRent(
   db: Db,
   now: Date = new Date(),
-): Promise<{ debited: number; debt: number }> {
+): Promise<{ debited: number; debt: number; skipped: number }> {
   const week = rentWeekKey(now);
   let debited = 0;
   let debt = 0;
+  let skipped = 0;
   const evicted: string[] = [];
   const homes = await db.withConnection(async (c) => {
     const r = await c.query<{
@@ -76,6 +115,17 @@ export async function runWeeklyRent(
   });
   for (const row of homes) {
     const rent = Number(row.rent_cents_per_week);
+
+    // Skip rent for inactive players if enabled
+    if (SKIP_RENT_FOR_INACTIVE) {
+      const inactive = await isUserInactive(db, row.owner_user_id, RENT_INACTIVE_DAYS_THRESHOLD);
+      if (inactive) {
+        console.info(`[rent] skipping inactive user ${row.owner_user_id} (home ${row.home_id})`);
+        skipped += 1;
+        continue;
+      }
+    }
+
     try {
       await runInTransaction(async (client) => {
         // The list above is a snapshot. Lock the row and look again: a home
@@ -159,5 +209,5 @@ export async function runWeeklyRent(
     const redis = createRedis().main;
     for (const homeId of evicted) await publishHomeAccess(redis, homeId);
   }
-  return { debited, debt };
+  return { debited, debt, skipped };
 }
