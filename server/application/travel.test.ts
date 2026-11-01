@@ -13,6 +13,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import {
   InsufficientCashError,
   JailedError,
+  ValidationFailedError,
   NotFoundError,
   QuoteExpiredError,
   SybilJailedError,
@@ -25,6 +26,7 @@ import {
   VenueGatedError,
 } from '../shared/domain/errors.js';
 import {
+  setIslandGeometry,
   distanceToPolygon,
   encodePos,
   getIslandGeometry,
@@ -156,8 +158,9 @@ describe('fares, ride times and arrival points', () => {
       const fz = Math.cos(a.arrival.yaw);
       expect(fx * (v.door[0] - x) + fz * (v.door[1] - z)).toBeGreaterThan(4);
     }
-    // ore_refinery's door is outside every district polygon in districts.json.
-    expect(notServed).toEqual(['ore_refinery']);
+    // districts.json 1.1.0 (builder_hills west tab) covers the Ore Refinery: every venue is served.
+    expect(notServed).toEqual([]);
+    expect(arrivalFor(cfg, 'ore_refinery')!.arrival.district).toBe('builder_hills');
     expect(Object.keys(geo.venues ?? {})).toHaveLength(21);
   });
 
@@ -231,7 +234,8 @@ describe('quote', () => {
 
     await standAt(u, STOP.x, STOP.z);
     const ore = await quoteTravel(ctx, u, 'ore_refinery');
-    expect(ore.modes.find((m) => m.mode === 'taxi')!.reason).toBe('NOT_SERVED');
+    expect(ore.modes.find((m) => m.mode === 'taxi')!.available).toBe(false); // only short of cash
+    expect(ore.modes.find((m) => m.mode === 'taxi')!.reason).toBe('INSUFFICIENT_CASH');
 
     setTravelConfigForTests({
       ...cfg,
@@ -246,6 +250,48 @@ describe('quote', () => {
       unlockNetWorthCents: 1_000_000,
     });
     expect(locked.modes.find((m) => m.mode === 'bus')!.available).toBe(true);
+  });
+
+  it('quotes NOT_SERVED and refuses booking (400 not_served) when no street room covers the arrival', async () => {
+    // A synthetic destination whose door (and arrival point) lies in the sea, outside every
+    // district polygon and the island outline: no street room could hold the traveller.
+    const real = getIslandGeometry();
+    setIslandGeometry({
+      ...real,
+      venues: {
+        ...real.venues,
+        test_offshore: {
+          district: 'boardwalk',
+          origin: [5_000, 0, 4_990],
+          yaw: 0,
+          door: [5_000, 5_000],
+        },
+      },
+    });
+    try {
+      expect(arrivalFor(cfg, 'test_offshore')!.served).toBe(false);
+      const u = await newUser(10_000);
+      await standAt(u, STOP.x, STOP.z);
+      const q = await quoteTravel(ctx, u, 'test_offshore');
+      for (const mode of ['bus', 'taxi'] as const) {
+        expect(q.modes.find((m) => m.mode === mode)).toMatchObject({
+          available: false,
+          reason: 'NOT_SERVED',
+        });
+      }
+      expect(q.modes.find((m) => m.mode === 'walk')!.available).toBe(true);
+      const err = await bookTrip(ctx, u, { quoteId: q.quoteId, mode: 'taxi' }, uuidv7()).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(ValidationFailedError);
+      expect((err as ValidationFailedError).details).toMatchObject({
+        reason: 'not_served',
+        to: 'test_offshore',
+      });
+      expect(await cashOf(u)).toBe(10_000);
+    } finally {
+      setIslandGeometry(null);
+    }
   });
 
   it('warns about a gated door by default and refuses it with gatedBooking refuse', async () => {

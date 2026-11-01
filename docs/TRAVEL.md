@@ -81,9 +81,9 @@ A trip ends exactly one way: `arrived` (the ride) or refunded (`cancelled` / `ex
 
 ## Known gaps
 
-- `ore_refinery`'s door is about 70 m outside every district polygon in `districts.json`, so no
-  street room can hold a player there: rides to it are quoted `NOT_SERVED` (walk only) until the
-  frontend's district export covers it.
+- Every venue in `contract/ids/districts.json` 1.1.0 is served (the Builder Hills west tab covers
+  the Ore Refinery). A destination whose arrival point no street room covers would be quoted
+  `NOT_SERVED` (walk only) and refused at booking with `400 VALIDATION_FAILED {reason: not_served}`.
 - No analytics event yet (the `analytics_events` CHECK would need a migration; travel analytics is
   phase 5). Homes are not destinations yet (their doors are not in the contract).
 - Phase 2 (capability `travelAuthority`): venue rooms refuse a join whose entrance is beyond reach
