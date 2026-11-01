@@ -815,10 +815,14 @@ paths:
               example: 'Origin, X-Client-Platform, X-Client-Version'
             ETag:
               schema: { type: string }
-              description: Strong ETag. Send `If-None-Match` to get 304.
+              description: >-
+                Strong ETag (`"<hash>"`); an edge that compresses the response may
+                hand it on as `W/"<hash>"`. Send either form back in `If-None-Match`
+                (weak comparison, RFC 9110 13.1.2; a list of tags or `*` also works)
+                to get 304.
             Cache-Control:
               schema: { type: string }
-              example: 'public, max-age=60'
+              example: 'public, max-age=300'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ConfigResponse' }
@@ -856,7 +860,20 @@ paths:
                     }
                 competitionCapabilities:
                   { version: 1, beefChallenges: false, targetedCabalInvites: false }
-        '304': { description: Not modified; ETag matches. }
+        '304':
+          description: >-
+            Not modified: a tag in `If-None-Match` matches the current ETag under the
+            weak comparison (`W/"x"` matches `"x"`), or it is `*`. Empty body; repeats
+            `ETag`, `Cache-Control` and `Vary`.
+          headers:
+            ETag:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string }
+              example: 'public, max-age=300'
+            Vary:
+              schema: { type: string }
+              example: 'Origin, X-Client-Platform, X-Client-Version'
         '426':
           description: Client outdated
           content:
