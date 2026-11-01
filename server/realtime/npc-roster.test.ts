@@ -58,7 +58,7 @@ const PHASE2_BY_VENUE: Record<string, string[]> = {
   prediction_pit: ['prediction_shark_npc'],
   ratio_arena: ['chain_tribalist', 'chain_tribalist'],
   hackathon_house: ['doxxed_founder'],
-  dubai_marina: ['fake_rich_larp', 'dubai_relocator'],
+  yacht_club: ['fake_rich_larp', 'dubai_relocator'],
   timeline_square: ['thread_boy', 'engagement_farmer', 'laser_eyes_maxi'],
   terminal_cafe: ['ai_agent'],
 };
@@ -156,6 +156,23 @@ describe('npc roster: contract', () => {
     }
   });
 
+  it('every venue has a stand/npc spot of its own for each table NPC (no shared homes)', () => {
+    const kinds = new Set(['npc', 'standing', 'stand']);
+    for (const venueId of venues) {
+      const n = npcArchetypesFor(venueId, 6).length;
+      if (n === 0) continue;
+      const homes = (spots[venueId]?.spots ?? []).filter((s) => kinds.has(s.kind));
+      expect(homes.length, venueId).toBeGreaterThanOrEqual(n);
+    }
+  });
+
+  it('each phase-2 archetype spawns in the venue archetypes.json names', () => {
+    for (const r of registry) {
+      if (!PHASE2_IDS.has(r.id) || r.id === 'normie') continue;
+      expect(roster(r.venueId, 6), `${r.id} -> ${r.venueId}`).toContain(r.id);
+    }
+  });
+
   it('archetypes.json lists exactly the brain archetypes, each pointing at a real venue', () => {
     const brains = [...PHASE1_ARCHETYPES, ...PHASE2_ARCHETYPES, ...DRESSING_ARCHETYPES].sort();
     expect(registry.map((r) => r.id).sort()).toEqual(brains);
@@ -226,6 +243,25 @@ describe('venue room spawns by LIVE_PHASE', () => {
 
     const off = await room('cabal_lounge', '1');
     expect(off.state.npcs.size).toBe(0);
+  });
+
+  it('yacht_club: the Fake-Rich LARP and the Dubai Relocator on distinct spots of the venue', async () => {
+    const on = await room('yacht_club', '6');
+    const npcs = [...on.state.npcs.values()];
+    expect(npcs.map((n) => n.archetypeId)).toEqual(['fake_rich_larp', 'dubai_relocator']);
+    const ids = new Set(spots.yacht_club!.spots.map((s) => s.id));
+    for (const n of npcs) expect(ids).toContain(n.spotId);
+    expect(new Set(npcs.map((n) => n.spotId)).size).toBe(2);
+
+    const marina = await room('dubai_marina', '6');
+    expect(marina.state.npcs.size).toBe(0);
+  });
+
+  it('timeline_square: each of the 8 NPCs has a home spot of its own', async () => {
+    const r = await room('timeline_square', '6');
+    const homes = [...r.state.npcs.values()].map((n) => n.spotId);
+    expect(homes).toHaveLength(8);
+    expect(new Set(homes).size).toBe(8);
   });
 
   it('ratio_arena: two chain tribalists with distinct npcIds', async () => {

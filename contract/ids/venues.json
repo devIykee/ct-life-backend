@@ -1,7 +1,7 @@
 {
   "_owner": "BE (FE adds scene_key)",
   "_provisional": false,
-  "version": "1.0.0-rc1",
+  "version": "1.1.0",
   "venues": [
     {
       "id": "timeline_square",
@@ -153,6 +153,27 @@
     {
       "id": "the_trenches",
       "name": "Downtown",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "yacht_club",
+      "name": "Yacht Club",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "penthouse_row",
+      "name": "Penthouse Row",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "checker_kiosk",
+      "name": "Checker Kiosk",
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"

@@ -92,9 +92,8 @@ const PHASE1_ROSTER: Readonly<Record<string, readonly NpcArchetype[]>> = {
 /**
  * Phase-2 NPCs per venue (spec NPC table; FE ask 2026-11-01). Appended
  * after the phase-1 NPCs, so the phase-1 NPCs keep their npcIds and home
- * spots. `fake_rich_larp` and `dubai_relocator` live in `dubai_marina`:
- * the island's `yacht_club` has no venue room yet (it is not in
- * venues.json / spots.json).
+ * spots. `fake_rich_larp` and `dubai_relocator` live on the island's
+ * `yacht_club` (venues.json / spots.json 2026-11-01).
  */
 const PHASE2_ROSTER: Readonly<Record<string, readonly NpcArchetype[]>> = {
   cabal_lounge: ['alpha_caller', 'cabal_insider'],
@@ -107,7 +106,7 @@ const PHASE2_ROSTER: Readonly<Record<string, readonly NpcArchetype[]>> = {
   // The pair argues; two npcIds give the client two voices.
   ratio_arena: ['chain_tribalist', 'chain_tribalist'],
   hackathon_house: ['doxxed_founder'],
-  dubai_marina: ['fake_rich_larp', 'dubai_relocator'],
+  yacht_club: ['fake_rich_larp', 'dubai_relocator'],
   timeline_square: ['thread_boy', 'engagement_farmer', 'laser_eyes_maxi'],
 };
 

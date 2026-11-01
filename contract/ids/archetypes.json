@@ -1,7 +1,7 @@
 {
   "_owner": "BE",
   "_provisional": false,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "archetypes": [
     {
       "id": "town_crier",
@@ -132,14 +132,14 @@
     {
       "id": "fake_rich_larp",
       "name": "Fake-Rich LARP",
-      "venueId": "dubai_marina",
+      "venueId": "yacht_club",
       "phase": 2,
       "lines": "npc_lines.fake_rich_larp"
     },
     {
       "id": "dubai_relocator",
       "name": "Dubai Relocator",
-      "venueId": "dubai_marina",
+      "venueId": "yacht_club",
       "phase": 2,
       "lines": "npc_lines.dubai_relocator"
     },

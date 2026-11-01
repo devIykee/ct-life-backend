@@ -1,7 +1,7 @@
 {
   "_owner": "FE",
   "_provisional": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "_note": "FE replaces this file. BE only references IDs from it. Additions only after publication; never renames.",
   "units": "metres, radians; venue-local; x right, z forward",
   "venues": {
@@ -131,6 +131,20 @@
           "x": 15,
           "z": -10,
           "rotY": 0
+        },
+        {
+          "id": "timeline_square.crowd_1",
+          "kind": "standing",
+          "x": 6.5,
+          "z": 1.0,
+          "rotY": -1.571
+        },
+        {
+          "id": "timeline_square.crowd_2",
+          "kind": "standing",
+          "x": -6.5,
+          "z": 1.0,
+          "rotY": 1.571
         }
       ]
     },
@@ -1907,6 +1921,319 @@
           "z": 2,
           "rotY": 0,
           "anim": "act_sit"
+        }
+      ]
+    },
+    "yacht_club": {
+      "walkable": [
+        {
+          "x0": -12,
+          "z0": -8,
+          "x1": 12,
+          "z1": 8
+        }
+      ],
+      "spots": [
+        {
+          "id": "yacht_club.entrance",
+          "kind": "exit",
+          "x": 0,
+          "z": -7,
+          "rotY": 0
+        },
+        {
+          "id": "yacht_club.exit",
+          "kind": "exit",
+          "x": 0,
+          "z": -8,
+          "rotY": 3.142
+        },
+        {
+          "id": "yacht_club.center",
+          "kind": "stand",
+          "x": 0,
+          "z": 0,
+          "rotY": 0.0
+        },
+        {
+          "id": "yacht_club.lounger_1",
+          "kind": "seat",
+          "x": -9,
+          "z": 5.4,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.lounger_2",
+          "kind": "seat",
+          "x": -6,
+          "z": 5.4,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.lounger_3",
+          "kind": "seat",
+          "x": -3,
+          "z": 5.4,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.lounger_4",
+          "kind": "seat",
+          "x": 3,
+          "z": 5.4,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.lounger_5",
+          "kind": "seat",
+          "x": 6,
+          "z": 5.4,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.lounger_6",
+          "kind": "seat",
+          "x": 9,
+          "z": 5.4,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.bar_1",
+          "kind": "seat",
+          "x": -9.0,
+          "z": -4,
+          "rotY": -1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.bar_2",
+          "kind": "seat",
+          "x": -9.0,
+          "z": -2.5,
+          "rotY": -1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.bar_3",
+          "kind": "seat",
+          "x": -9.0,
+          "z": -1,
+          "rotY": -1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.bar_4",
+          "kind": "seat",
+          "x": -9.0,
+          "z": 0.5,
+          "rotY": -1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "yacht_club.bartender",
+          "kind": "npc",
+          "x": -11.3,
+          "z": -1.75,
+          "rotY": 1.571
+        },
+        {
+          "id": "yacht_club.gangway",
+          "kind": "stand",
+          "x": 0,
+          "z": 7.3,
+          "rotY": 0.0
+        }
+      ]
+    },
+    "penthouse_row": {
+      "walkable": [
+        {
+          "x0": -12,
+          "z0": -9,
+          "x1": 12,
+          "z1": 9
+        }
+      ],
+      "spots": [
+        {
+          "id": "penthouse_row.entrance",
+          "kind": "exit",
+          "x": 0,
+          "z": -8,
+          "rotY": 0
+        },
+        {
+          "id": "penthouse_row.exit",
+          "kind": "exit",
+          "x": 0,
+          "z": -9,
+          "rotY": 3.142
+        },
+        {
+          "id": "penthouse_row.center",
+          "kind": "stand",
+          "x": 0,
+          "z": 0,
+          "rotY": 0.0
+        },
+        {
+          "id": "penthouse_row.door_1",
+          "kind": "stand",
+          "x": -7,
+          "z": 8.2,
+          "rotY": 0.0
+        },
+        {
+          "id": "penthouse_row.door_2",
+          "kind": "stand",
+          "x": 0,
+          "z": 8.2,
+          "rotY": 0.0
+        },
+        {
+          "id": "penthouse_row.door_3",
+          "kind": "stand",
+          "x": 7,
+          "z": 8.2,
+          "rotY": 0.0
+        },
+        {
+          "id": "penthouse_row.lounger_1",
+          "kind": "seat",
+          "x": 3.4,
+          "z": -4.6,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "penthouse_row.lounger_2",
+          "kind": "seat",
+          "x": 3.4,
+          "z": -3.0,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "penthouse_row.lounger_3",
+          "kind": "seat",
+          "x": 3.4,
+          "z": -1.4,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "penthouse_row.lounger_4",
+          "kind": "seat",
+          "x": 3.4,
+          "z": 0.2,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "penthouse_row.sofa_1",
+          "kind": "seat",
+          "x": -9.6,
+          "z": -3.0,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "penthouse_row.sofa_2",
+          "kind": "seat",
+          "x": -9.6,
+          "z": -1.2,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "penthouse_row.concierge",
+          "kind": "npc",
+          "x": -5,
+          "z": -5.4,
+          "rotY": 3.142
+        }
+      ]
+    },
+    "checker_kiosk": {
+      "walkable": [
+        {
+          "x0": -8,
+          "z0": -6,
+          "x1": 8,
+          "z1": 6
+        }
+      ],
+      "spots": [
+        {
+          "id": "checker_kiosk.entrance",
+          "kind": "exit",
+          "x": 0,
+          "z": -5,
+          "rotY": 0
+        },
+        {
+          "id": "checker_kiosk.exit",
+          "kind": "exit",
+          "x": 0,
+          "z": -6,
+          "rotY": 3.142
+        },
+        {
+          "id": "checker_kiosk.center",
+          "kind": "stand",
+          "x": 0,
+          "z": -0.8,
+          "rotY": 0.0
+        },
+        {
+          "id": "checker_kiosk.kiosk_1",
+          "kind": "stand",
+          "x": -4,
+          "z": 3.4,
+          "rotY": 0.0
+        },
+        {
+          "id": "checker_kiosk.kiosk_2",
+          "kind": "stand",
+          "x": 0,
+          "z": 3.4,
+          "rotY": 0.0
+        },
+        {
+          "id": "checker_kiosk.kiosk_3",
+          "kind": "stand",
+          "x": 4,
+          "z": 3.4,
+          "rotY": 0.0
+        },
+        {
+          "id": "checker_kiosk.bench_1",
+          "kind": "seat",
+          "x": -6,
+          "z": -2,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "checker_kiosk.bench_2",
+          "kind": "seat",
+          "x": 6,
+          "z": -2,
+          "rotY": -1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "checker_kiosk.attendant",
+          "kind": "npc",
+          "x": 6.5,
+          "z": 3.5,
+          "rotY": -1.571
         }
       ]
     }
