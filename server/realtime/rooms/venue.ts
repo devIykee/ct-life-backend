@@ -95,6 +95,7 @@ import {
 } from '../movement.js';
 import { BanGuard } from '../ban-guard.js';
 import { MAX_NPCS_PER_INSTANCE, npcArchetypesFor, npcSpawnPlan } from '../npc-roster.js';
+import { hostsNormieWaves, NormieWaves, type FreeSpot, type LeaveReason } from '../normie-waves.js';
 import { loadConfig } from '../../shared/config/config.js';
 import {
   clearVenueMembers,
@@ -163,6 +164,7 @@ interface VenueSpots {
     readonly x?: number;
     readonly z?: number;
     readonly rotY?: number;
+    readonly anim?: string;
   }>;
 }
 
@@ -171,7 +173,12 @@ interface VenueConfig {
   readonly anims: readonly string[];
   /** archetype -> line ids (`<archetype>.<index>`) of its slot-free lines. */
   readonly lineIds: ReadonlyMap<string, readonly string[]>;
+  /** Normie lines for leaving when the market dumps (`normie.<index>`). */
+  readonly normieDumpLineIds: readonly string[];
 }
+
+/** Spot kinds a normie can sit or type at, after the free stand spots. */
+const NORMIE_SEAT_KINDS = new Set(['seat', 'terminal']);
 
 /** Spot kinds an NPC can stand on (home spots and ambient wandering). */
 const NPC_SPOT_KINDS = new Set(['npc', 'standing', 'stand']);
@@ -192,6 +199,8 @@ export class VenueRoom extends Room {
   private npcHomeSpots: Map<string, string> = new Map();
   /** npcId -> the anim the NPC plays while it holds its home spot. */
   private npcHomeAnims: Map<string, string> = new Map();
+  /** Market-peak normie waves; null in venues without them (../normie-waves.ts). */
+  private normies: NormieWaves | null = null;
   /** Latest world pulse, refreshed off the tick so the tick stays sync. */
   private moodBps = 0;
   private recentEvents: NpcEvent[] = [];
@@ -558,6 +567,14 @@ export class VenueRoom extends Room {
     }
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
+    // A normie on the seat gives it up (exit liquidity always makes way).
+    if (this.normies !== null) {
+      for (const [npcId, npc] of this.state.npcs) {
+        if (npc.spotId === parsed.data.spotId && this.normies.yieldSpot(npcId, Date.now())) {
+          this.sendNormieOut(npcId, Date.now(), 'yield');
+        }
+      }
+    }
     if (player.spotId) this.spotOccupants.delete(player.spotId);
     player.spotId = parsed.data.spotId;
     // B33 fix: Use spot.anim if present, otherwise fallback based on kind
@@ -731,6 +748,7 @@ export class VenueRoom extends Room {
 
   private spawnNpcBrains(): void {
     const livePhase = this.livePhase();
+    if (hostsNormieWaves(this.state.venueId, livePhase)) this.normies = new NormieWaves();
     // Venues with a seating plan put each NPC on a fixed spot.
     const plan = npcSpawnPlan(this.state.venueId, livePhase);
     if (plan.length > 0) {
@@ -881,6 +899,104 @@ export class VenueRoom extends Room {
       npc.targetUserId = out.followUserId ?? '';
       npc.startedAt = ctx.nowMs;
     }
+    this.stepNormies(ctx.nowMs);
+  }
+
+  // --- Normie waves -----------------------------------------------
+
+  /**
+   * Spawn, send out and remove normies for this tick (../normie-waves.ts).
+   * @param nowMs - The tick time.
+   */
+  private stepNormies(nowMs: number): void {
+    if (this.normies === null) return;
+    const step = this.normies.step({
+      nowMs,
+      moodBps: this.moodBps,
+      npcCount: this.state.npcs.size,
+      freeSpots: this.freeNormieSpots(),
+      rng: this.rng,
+    });
+    for (const id of step.remove) this.removeNpc(id);
+    for (const l of step.leave) this.sendNormieOut(l.npcId, nowMs, l.reason);
+    for (const s of step.spawn) {
+      const npc = new NpcState();
+      npc.archetypeId = 'normie';
+      npc.state = 'idle';
+      npc.spotId = s.spotId;
+      npc.animId = s.animId;
+      npc.startedAt = nowMs;
+      this.npcHomeSpots.set(s.npcId, s.spotId);
+      this.npcHomeAnims.set(s.npcId, s.animId);
+      this.state.npcs.set(s.npcId, npc);
+      this.brains.set(
+        s.npcId,
+        createBrain('normie', {
+          lineIds: this.spotsCfg.lineIds.get('normie') ?? [],
+          homeAnim: s.animId === 'loco_idle' ? undefined : s.animId,
+        }),
+      );
+    }
+  }
+
+  /**
+   * Spots a normie can take: free stand/npc spots first, then seats and
+   * terminals, skipping any spot a player or another NPC holds.
+   * @returns Free spots with the anim a normie holds there.
+   */
+  private freeNormieSpots(): FreeSpot[] {
+    const held = new Set<string>(this.spotOccupants.keys());
+    for (const npc of this.state.npcs.values()) held.add(npc.spotId);
+    const spots = (this.spotsCfg.venues[this.state.venueId]?.spots ?? []).filter(
+      (sp) => !held.has(sp.id),
+    );
+    const stand = spots
+      .filter((sp) => NPC_SPOT_KINDS.has(sp.kind))
+      .map((sp) => ({ spotId: sp.id, animId: 'loco_idle' }));
+    const seats = spots
+      .filter((sp) => NORMIE_SEAT_KINDS.has(sp.kind))
+      .map((sp) => ({
+        spotId: sp.id,
+        animId: sp.anim ?? (sp.kind === 'terminal' ? 'act_type' : 'act_sit'),
+      }));
+    return [...stand, ...seats];
+  }
+
+  /**
+   * A normie walks to the exit; the wave removes it once it gets there.
+   * @param npcId - The normie.
+   * @param nowMs - The time.
+   * @param reason - `mood`: the market dropped (it says a dump line).
+   */
+  private sendNormieOut(npcId: string, nowMs: number, reason: LeaveReason): void {
+    const npc = this.state.npcs.get(npcId);
+    this.brains.delete(npcId);
+    this.npcHomeSpots.delete(npcId);
+    this.npcHomeAnims.delete(npcId);
+    if (!npc) return;
+    const valid = this.venueSpotIds();
+    const exit = [`${this.state.venueId}.exit`, `${this.state.venueId}.entrance`].find((id) =>
+      valid.has(id),
+    );
+    const dump = this.spotsCfg.normieDumpLineIds;
+    npc.state = 'leave';
+    if (exit !== undefined) npc.spotId = exit;
+    npc.animId = 'loco_walk';
+    npc.lineId = reason === 'mood' && dump.length > 0 ? dump[this.rng.int(dump.length)]! : '';
+    npc.emoteId = '';
+    npc.targetUserId = '';
+    npc.startedAt = nowMs;
+  }
+
+  /**
+   * Drop an NPC from the room state and its brain.
+   * @param npcId - The NPC.
+   */
+  private removeNpc(npcId: string): void {
+    this.state.npcs.delete(npcId);
+    this.brains.delete(npcId);
+    this.npcHomeSpots.delete(npcId);
+    this.npcHomeAnims.delete(npcId);
   }
 
   private richestPlayers(): Array<{ userId: string; netWorthCents: number }> {
@@ -903,7 +1019,12 @@ export class VenueRoom extends Room {
     const lines = JSON.parse(
       readFileSync(join(repoRoot, 'contract', 'config', 'npc_lines.json'), 'utf8'),
     ) as Record<string, unknown>;
-    return { venues: spots.venues, anims: anims.anims, lineIds: slotFreeLineIds(lines) };
+    return {
+      venues: spots.venues,
+      anims: anims.anims,
+      lineIds: slotFreeLineIds(lines),
+      normieDumpLineIds: matchingLineIds(lines, 'normie', /\b(down|red|dip|cliff|dump)/i),
+    };
   }
 }
 
@@ -924,6 +1045,29 @@ export function slotFreeLineIds(lines: Record<string, unknown>): Map<string, str
     });
     out.set(archetype, ids);
   }
+  return out;
+}
+
+/**
+ * Slot-free line ids of one archetype whose text matches a pattern.
+ * @param lines - contract/config/npc_lines.json.
+ * @param archetype - The archetype.
+ * @param pattern - What the line must say.
+ * @returns `<archetype>.<index>` ids.
+ */
+export function matchingLineIds(
+  lines: Record<string, unknown>,
+  archetype: string,
+  pattern: RegExp,
+): string[] {
+  const set = lines[archetype];
+  if (!Array.isArray(set)) return [];
+  const out: string[] = [];
+  set.forEach((line, i) => {
+    if (typeof line === 'string' && !line.includes('{') && pattern.test(line)) {
+      out.push(`${archetype}.${i}`);
+    }
+  });
   return out;
 }
 
