@@ -154,6 +154,35 @@ sequenceDiagram
   Note over C,RT: patches resume
 ```
 
+### Rejoining after a network drop (position)
+
+When the SDK gives up on the reconnection window (for example leave code 4003) the client joins
+the room again. It may send the spot it is standing on so the player does not snap back to where
+the connection dropped (`server/realtime/movement.ts` `withinRejoinReach`):
+
+- **Street:** `joinOrCreate("street", { token, district, x, z })`, island metres.
+- **Venue placed on CT Island:** `joinOrCreate("venue", { token, venueId, x, z, island: true })`,
+  island metres (`island: true` is required; venue-local coordinates are not accepted on join).
+
+The server uses the spot only when all of these hold; otherwise it ignores it without an error
+and behaves as before (street: anchor on the stored position, then clamp and `corrected`; venue:
+the entrance spot):
+
+- the player's last accepted position in `ctl:pos` is at most 30 s old;
+- the spot is within `6.5 m/s x (now - that position's at) + 0.5 m` of it, the time counted for at
+  most 30 s (so at most 195.5 m) and a future `at` counted as zero. That is what an honest walk
+  covers, so dropping the connection on purpose gains nothing over walking;
+- street: inside the island outline and within 30 m of the district polygon, as for every move;
+  venue: inside one of the venue's walkable rectangles after converting to the venue frame.
+
+A street session accepted this way is anchored on the spot (0.5 m of budget), and the player is
+shown once their first move arrives, as for every street join. A venue player starts on the spot.
+The rate limit and distance budget are unchanged after the join.
+
+`ctl:pos` stores the time of the player's last accepted move as `at`, also when a street or venue
+room writes it on leave. A dropped socket the server notices seconds later therefore does not make
+the player look more recent than they were.
+
 ### Browser clients (Origin check)
 
 The web build reaches Colyseus with a matchmake `POST /matchmake/...` and then a WebSocket

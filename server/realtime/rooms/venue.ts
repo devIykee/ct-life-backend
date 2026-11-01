@@ -27,6 +27,14 @@
  * the venue's walkable rectangles from `contract/ids/spots.json`.
  * A move outside any rectangle is rejected.
  *
+ * Join spot: the entrance spot, except for a client rejoining a venue
+ * placed on CT Island after a drop. Its join options may carry
+ * `{ x, z, island: true }` (island metres); the player starts there if
+ * that point is inside a walkable rectangle and no farther than they
+ * could have walked since the server last accepted a move from them
+ * (`withinRejoinReach` against `ctl:pos`). Otherwise the entrance, as
+ * before, without an error.
+ *
  * Spot sit/stand: spots are looked up from spots.json. SPOT_TAKEN
  * if another player already occupies the spot.
  *
@@ -70,6 +78,7 @@ import {
 import {
   OUTFIT_CHANNEL,
   POS_HASH,
+  decodePos,
   encodePos,
   getIslandGeometry,
   islandToVenue,
@@ -77,6 +86,8 @@ import {
   stepMove,
   TokenBucket,
   venueToIsland,
+  withinRejoinReach,
+  type IslandPos,
   type MoveAnchor,
   type VenuePlacement,
 } from '../movement.js';
@@ -99,6 +110,13 @@ const MoveMessage = z.object({
 
 /** Minimum gap between writes of a player's island position to presence. */
 const POS_WRITE_MS = 250;
+
+/** Optional island spot in the join options of a client rejoining after a drop. */
+const JoinPos = z.object({
+  x: z.number().finite(),
+  z: z.number().finite(),
+  island: z.literal(true),
+});
 
 const SitMessage = z.object({
   spotId: z.string().min(1),
@@ -177,8 +195,10 @@ export class VenueRoom extends Room {
   private lastSayAt = new Map<string, number>();
   /** Where this venue sits on CT Island, or null if it is not placed. */
   private placement: VenuePlacement | null = null;
-  /** sessionId -> last presence write; only set once the player has moved here. */
+  /** sessionId -> wall time of the last presence write (throttle). */
   private posWrittenAt = new Map<string, number>();
+  /** sessionId -> time of the last accepted move; only set once the player has moved here. */
+  private movedAt = new Map<string, number>();
   /** sessionId -> userId, for sessions counted in the voice member hash. */
   private members = new Map<string, string>();
   private brainClock: SimulatedClock = new SimulatedClock();
@@ -249,7 +269,9 @@ export class VenueRoom extends Room {
   }
 
   /**
-   *
+   * @param client - The joining client.
+   * @param options - `{ token, venueId, x?, z?, island? }`; `x`/`z` with
+   *   `island: true` is the spot a client rejoining after a drop stands on.
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     // Identity and look come from the database, never from join options.
@@ -261,16 +283,20 @@ export class VenueRoom extends Room {
       throw new Error('JAILED');
     }
     const player = await loadPlayerState(userId);
+    const last = this.placement ? await this.readPos(userId) : null;
     // Last check, no await before the player is stored.
     await this.ban.confirm(userId);
 
-    // Place the player on the venue's entrance spot. Joining a second
-    // venue (or a street room) while still in another is allowed; rooms
-    // do not de-duplicate users.
+    // Place the player on their own spot when rejoining after a drop, else
+    // on the venue's entrance spot. Joining a second venue (or a street
+    // room) while still in another is allowed; rooms do not de-duplicate users.
     const venueSpots = this.spotsCfg.venues[this.state.venueId];
     const entrance = venueSpots?.spots.find((s) => s.id.endsWith('.entrance'));
     const fallback = venueSpots?.walkable[0];
-    if (entrance && typeof entrance.x === 'number' && typeof entrance.z === 'number') {
+    const rejoin = this.rejoinSpot(last, options, Date.now());
+    if (rejoin) {
+      [player.x, player.z] = rejoin;
+    } else if (entrance && typeof entrance.x === 'number' && typeof entrance.z === 'number') {
       player.x = entrance.x;
       player.z = entrance.z;
       if (typeof entrance.rotY === 'number') player.rotY = entrance.rotY;
@@ -312,9 +338,12 @@ export class VenueRoom extends Room {
     if (player && player.spotId) {
       this.spotOccupants.delete(player.spotId);
     }
-    // Hand the street rooms the spot the player walked out from.
-    if (player && this.posWrittenAt.has(client.sessionId)) this.writePos(player, Date.now());
+    // Hand the street rooms the spot the player walked out from, with the
+    // time of their last accepted move (not now: a dropped socket is noticed late).
+    const movedAt = this.movedAt.get(client.sessionId);
+    if (player && movedAt !== undefined) this.writePos(player, movedAt);
     this.posWrittenAt.delete(client.sessionId);
+    this.movedAt.delete(client.sessionId);
     const member = this.members.get(client.sessionId);
     if (member !== undefined && this.presence) {
       this.members.delete(client.sessionId);
@@ -377,9 +406,7 @@ export class VenueRoom extends Room {
       const [ix, iz] = venueToIsland(p!, x, z);
       return { x: ix, z: iz, island: true };
     };
-    const rects = this.spotsCfg.venues[this.state.venueId]?.walkable ?? [];
-    const inside = (x: number, z: number): boolean =>
-      rects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1);
+    const inside = (x: number, z: number): boolean => this.inWalkable(x, z);
     if (!inside(tx, tz)) {
       client.send('rejected', { type: 'move', code: 'OUT_OF_BOUNDS', ...out(player.x, player.z) });
       return;
@@ -402,6 +429,7 @@ export class VenueRoom extends Room {
       player.rotY = island && p ? parsed.data.rotY - (p.yaw * Math.PI) / 180 : parsed.data.rotY;
     }
     this.syncIsland(player);
+    this.movedAt.set(client.sessionId, now);
     if (now - (this.posWrittenAt.get(client.sessionId) ?? 0) >= POS_WRITE_MS) {
       this.posWrittenAt.set(client.sessionId, now);
       this.writePos(player, now);
@@ -412,6 +440,49 @@ export class VenueRoom extends Room {
       player.spotId = '';
     }
     player.anim = dist > 0 ? 'loco_walk' : 'loco_idle';
+  }
+
+  /**
+   * @param x - Venue-local x.
+   * @param z - Venue-local z.
+   * @returns True when the point is inside one of the venue's walkable rectangles.
+   */
+  private inWalkable(x: number, z: number): boolean {
+    const rects = this.spotsCfg.venues[this.state.venueId]?.walkable ?? [];
+    return rects.some((r) => x >= r.x0 && x <= r.x1 && z >= r.z0 && z <= r.z1);
+  }
+
+  /**
+   * The venue-local spot a client rejoining after a drop may start on: its
+   * island spot from the join options, when this venue is placed on CT
+   * Island, the spot is walkable here and within walking reach of the
+   * player's last accepted position.
+   * @param last - The player's last accepted island position, or null.
+   * @param options - The join options.
+   * @param now - Server time, ms.
+   * @returns Venue-local [x, z], or null to use the entrance.
+   */
+  private rejoinSpot(
+    last: IslandPos | null,
+    options: unknown,
+    now: number,
+  ): readonly [number, number] | null {
+    const p = this.placement;
+    if (!p || !last) return null;
+    const asked = JoinPos.safeParse(options);
+    if (!asked.success) return null;
+    const { x, z: iz } = asked.data;
+    if (!withinRejoinReach(last, x, iz, now)) return null;
+    const [lx, lz] = islandToVenue(p, x, iz);
+    return this.inWalkable(lx, lz) ? [lx, lz] : null;
+  }
+
+  private async readPos(userId: string): Promise<IslandPos | null> {
+    try {
+      return decodePos(await this.presence?.hget(POS_HASH, userId));
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -430,11 +501,11 @@ export class VenueRoom extends Room {
   /**
    * Record the player's island position for the street and vehicles rooms.
    * @param player - The player.
-   * @param now - Server time in ms.
+   * @param at - Time of the move that put them there, ms.
    */
-  private writePos(player: PlayerState, now: number): void {
+  private writePos(player: PlayerState, at: number): void {
     if (!this.placement) return;
-    const value = encodePos({ x: player.ix, z: player.iz, at: now });
+    const value = encodePos({ x: player.ix, z: player.iz, at });
     void Promise.resolve(this.presence?.hset(POS_HASH, player.userId, value)).catch(() => {
       // Presence is best effort.
     });

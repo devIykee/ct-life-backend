@@ -13,6 +13,7 @@ import { getDreamProgress } from '../../application/world-pulse.js';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DELETE_CONFIRMATION, deleteAccount } from '../../application/account-deletion.js';
+import { ifNoneMatchHits } from '../conditional-get.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
 import {
@@ -275,13 +276,13 @@ export function registerCoreRoutes(app: FastifyInstance): void {
     // 304 forever and never saw an edited economy.json or registry.
     const body = JSON.stringify(payload);
     const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 32)}"`;
-    const clientEtag = req.headers['if-none-match'];
-    if (clientEtag === etag) {
-      return reply.status(304).send();
-    }
-
     reply.header('ETag', etag);
     reply.header('Cache-Control', 'public, max-age=300'); // 5 min cache
+    // Weak comparison (RFC 9110 13.1.2): the edge hands clients `W/"<hash>"`. The 304
+    // repeats ETag and Cache-Control (RFC 9110 15.4.5), set just above.
+    if (ifNoneMatchHits(req.headers['if-none-match'], etag)) {
+      return reply.status(304).send();
+    }
     return reply.send(payload);
   });
 
