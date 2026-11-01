@@ -1,3 +1,12 @@
+## 2026-11-01 - Normie waves at market peaks (LIVE_PHASE >= 2)
+
+No migration. Realtime only; stacked on the phase-2 NPC change.
+
+- `timeline_square`, `terminal_cafe` and `launchpad_tower` venue rooms spawn a wave of 2-4 `normie` NPCs while the market mood (the city room's `mood`, from `getMoodBps`) is at or above +300 bps. Never past 12 NPCs in the room or 4 normies (`archetypes.json` 1.3.0: `normie.maxPerInstance: 4`).
+- Their npcIds are `npc-normie-<n>`, new for every normie. They take free stand/npc spots first, then free seats and terminals (`animId` `act_sit` / `act_type`, held while they talk), never a spot a player or another NPC holds. Lines are `normie.<index>`, FOMO lines from the existing set.
+- They leave after 3-5 minutes, or all at once when the mood falls below +100 bps (with a "number went down" line). Leaving is `state: leave`, `spotId: <venue>.exit`, `animId: loco_walk`; the NPC is removed from `npcs` 5 s later. A player who `sit`s on a normie's seat gets it and the normie leaves.
+- One wave at a time, and at least 15 minutes between wave starts.
+
 ## 2026-11-01 - Island venues yacht_club, penthouse_row, checker_kiosk; two more timeline_square NPC spots
 
 No migration. Contract ids only (FE-owned `spots.json`, BE `venues.json`); realtime roster follows.
