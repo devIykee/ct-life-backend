@@ -156,6 +156,27 @@
       "maxClients": 50,
       "patchHz": 10,
       "kind": "social"
+    },
+    {
+      "id": "yacht_club",
+      "name": "Yacht Club",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "penthouse_row",
+      "name": "Penthouse Row",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
+    },
+    {
+      "id": "checker_kiosk",
+      "name": "Checker Kiosk",
+      "maxClients": 50,
+      "patchHz": 10,
+      "kind": "social"
     }
   ]
 }
