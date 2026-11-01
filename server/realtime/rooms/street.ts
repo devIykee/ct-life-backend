@@ -22,6 +22,14 @@
  * in-bounds move. They are not shown to others until then. Venue rooms
  * on CT Island record positions too, so walking out of a venue is
  * checked like any other move.
+ *
+ * Rejoin after a network drop: the join options may carry `x`, `z`
+ * (island metres), the spot the client is standing on. With a recent
+ * position on record, the session is anchored there instead if it is in
+ * bounds and no farther than the player could have walked since the
+ * server last accepted a move from them (see `withinRejoinReach`). A far,
+ * out-of-bounds or malformed spot is ignored without an error, and the
+ * session is anchored on the stored position as before.
  */
 import { Room, Client } from 'colyseus';
 import { readFileSync } from 'node:fs';
@@ -57,6 +65,7 @@ import {
   type IslandPos,
   type MoveAnchor,
   type Polygon,
+  withinRejoinReach,
 } from '../movement.js';
 import { BanGuard } from '../ban-guard.js';
 
@@ -68,6 +77,8 @@ const MoveMessage = z.object({
 const EmoteMessage = z.object({ emoteId: z.string().min(1) });
 const SayMessage = z.object({ text: z.string().min(1).max(140) });
 const TalkingMessage = z.object({ on: z.boolean() });
+/** Optional spot in the join options of a client rejoining after a drop (island metres). */
+const JoinPos = z.object({ x: z.number().finite(), z: z.number().finite() });
 
 /** How far outside its polygon a district room still tracks a player. */
 export const STREET_BORDER_M = 30;
@@ -87,7 +98,10 @@ interface StreetSession {
   bucket: TokenBucket;
   lastEmoteAt: number;
   lastSayAt: number;
+  /** Wall time of the last presence write (throttle). */
   posWrittenAt: number;
+  /** Time of the last accepted move; stored as the position's `at`. */
+  movedAt: number;
 }
 
 export class StreetRoom extends Room {
@@ -146,7 +160,9 @@ export class StreetRoom extends Room {
   }
 
   /**
-   *
+   * @param client - The joining client.
+   * @param options - `{ token, district, x?, z? }`; `x`/`z` is the spot a
+   *   client rejoining after a drop stands on (island metres).
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     const userId = await authenticateJoin(options);
@@ -161,12 +177,13 @@ export class StreetRoom extends Room {
     this.sessions.set(client.sessionId, {
       userId,
       player,
-      anchor: fresh ? newAnchor(last.x, last.z, last.at) : null,
+      anchor: fresh ? this.joinAnchor(last, options, now) : null,
       placed: false,
       bucket: new TokenBucket(10, 5),
       lastEmoteAt: 0,
       lastSayAt: 0,
       posWrittenAt: 0,
+      movedAt: 0,
     });
     client.send('welcome', { serverNow: now, instanceId: this.state.instanceId });
   }
@@ -180,6 +197,7 @@ export class StreetRoom extends Room {
     this.sessions.delete(client.sessionId);
     this.state.players.delete(client.sessionId);
     if (!s) return;
+    // Stored with the time of the last accepted move, not now (see writePos).
     if (s.placed) this.writePos(s, Date.now(), true);
     if (![...this.sessions.values()].some((o) => o.userId === s.userId)) {
       this.exitGrants.delete(s.userId);
@@ -245,6 +263,7 @@ export class StreetRoom extends Room {
       s.placed = true;
       this.state.players.set(client.sessionId, s.player);
     }
+    s.movedAt = now;
     this.writePos(s, now, false);
   }
 
@@ -357,6 +376,26 @@ export class StreetRoom extends Room {
 
   // --- Helpers -----------------------------------------------------
 
+  /**
+   * Where a session with a fresh stored position starts: the client's own
+   * spot from the join options when it passes the walking and bounds
+   * checks, otherwise the stored position (today's behaviour).
+   * @param last - The player's last accepted island position.
+   * @param options - The join options.
+   * @param now - Server time, ms.
+   * @returns The session's movement anchor.
+   */
+  private joinAnchor(last: IslandPos, options: unknown, now: number): MoveAnchor {
+    const asked = JoinPos.safeParse(options);
+    if (asked.success) {
+      const { x, z: zz } = asked.data;
+      if (withinRejoinReach(last, x, zz, now) && this.inBounds(x, zz)) {
+        return newAnchor(x, zz, now);
+      }
+    }
+    return newAnchor(last.x, last.z, last.at);
+  }
+
   private inBounds(x: number, z: number): boolean {
     return onLand(this.island, x, z) && distanceToPolygon(this.polygon, x, z) <= STREET_BORDER_M;
   }
@@ -369,10 +408,18 @@ export class StreetRoom extends Room {
     }
   }
 
+  /**
+   * Record the player's position for the other rooms. `at` is the time of
+   * the last accepted move, so a write on leave (which may come seconds
+   * after a dropped socket) does not shrink the player's rejoin reach.
+   * @param s - The session.
+   * @param now - Wall time, for the write throttle.
+   * @param force - Write even inside the throttle window.
+   */
   private writePos(s: StreetSession, now: number, force: boolean): void {
     if (!force && now - s.posWrittenAt < POS_WRITE_MS) return;
     s.posWrittenAt = now;
-    const value = encodePos({ x: s.player.x, z: s.player.z, at: now });
+    const value = encodePos({ x: s.player.x, z: s.player.z, at: s.movedAt });
     void Promise.resolve(this.presence?.hset(POS_HASH, s.userId, value)).catch(() => {
       // Presence is best effort; the next move writes again.
     });

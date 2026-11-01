@@ -8,7 +8,7 @@
  * npc_tap) require a fully wired Colyseus matchmaker with a Redis
  * presence layer and land in M3 alongside the load test (M2 #35).
  */
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { VenueRoom } from './venue.js';
 import { VenueState, NpcState, PlayerState } from '../../../contract/realtime/states.js';
 import { createBrain } from '../../../packages/npc-brain/src/index.js';
@@ -210,5 +210,139 @@ describe('venue room voice membership', () => {
     } finally {
       await redis.del(key);
     }
+  });
+});
+
+describe('venue room rejoin position (island venue)', () => {
+  type Sent = Array<{ type: string; payload: Record<string, unknown> }>;
+  /**
+   * Join timeline_square (placed on CT Island) with the player's last
+   * accepted position in presence and the given join options.
+   */
+  async function rejoin(
+    last: { lx: number; lz: number; ageMs: number } | null,
+    options: (toIsland: (x: number, z: number) => readonly [number, number]) => object,
+  ): Promise<{
+    room: VenueRoom;
+    player: PlayerState;
+    sent: Sent;
+    move: (m: unknown) => void;
+    leave: () => void;
+    stored: () => Promise<{ x: number; z: number; at: number } | null>;
+  }> {
+    const { LocalPresence } = await import('colyseus');
+    const { venueToIsland, getIslandGeometry, POS_HASH, encodePos, decodePos } =
+      await import('../movement.js');
+    const placement = getIslandGeometry().venues!['timeline_square']!;
+    const toIsland = (x: number, z: number): readonly [number, number] =>
+      venueToIsland(placement, x, z);
+    const presence = new LocalPresence();
+    if (last) {
+      const [ix, iz] = toIsland(last.lx, last.lz);
+      await presence.hset(POS_HASH, 'u1', encodePos({ x: ix, z: iz, at: Date.now() - last.ageMs }));
+    }
+    const room = new VenueRoom();
+    const r = room as unknown as Record<string, unknown>;
+    r.setSimulationInterval = () => undefined;
+    r.presence = presence;
+    await room.onCreate({ venueId: 'timeline_square' });
+    const sent: Sent = [];
+    const client = {
+      sessionId: 's1',
+      send: (type: string, payload: Record<string, unknown>) => sent.push({ type, payload }),
+    };
+    await room.onJoin(client as never, {
+      token: 't',
+      venueId: 'timeline_square',
+      ...options(toIsland),
+    });
+    return {
+      room,
+      player: room.state.players.get('s1')!,
+      sent,
+      move: (m) => (r.handleMove as (c: unknown, m: unknown) => void).call(room, client, m),
+      leave: () => room.onLeave(client as never),
+      stored: async () => decodePos(await presence.hget(POS_HASH, 'u1')),
+    };
+  }
+
+  let now = 3_000_000;
+  let spy: ReturnType<typeof vi.spyOn> | null = null;
+  beforeEach(() => {
+    now = 3_000_000;
+    spy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  });
+  afterEach(() => spy?.mockRestore());
+
+  it('5a: a walkable island spot within reach puts the player there', async () => {
+    // 11.2 m from the stored spot after 10 s (reach 65.5 m); (10, 5) is in walkable[0].
+    const { player, sent, move } = await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, (i) => {
+      const [x, z] = i(10, 5);
+      return { x, z, island: true };
+    });
+    expect(player.x).toBeCloseTo(10, 3);
+    expect(player.z).toBeCloseTo(5, 3);
+    now += 100;
+    move({ x: 10, z: 5 });
+    expect(sent.some((m) => m.type === 'corrected' || m.type === 'rejected')).toBe(false);
+  });
+
+  it('5b: a spot beyond reach puts the player on the entrance', async () => {
+    // 18 m after 1 s (reach 7 m).
+    const { player } = await rejoin({ lx: 0, lz: 0, ageMs: 1_000 }, (i) => {
+      const [x, z] = i(15, 10);
+      return { x, z, island: true };
+    });
+    expect([player.x, player.z]).toEqual([0, -14]);
+  });
+
+  it('keeps the entrance for a spot outside every walkable rectangle', async () => {
+    // Local (25, 0) is 5 m past walkable[0] (x1 = 20) but within reach.
+    const { player } = await rejoin({ lx: 18, lz: 0, ageMs: 10_000 }, (i) => {
+      const [x, z] = i(25, 0);
+      return { x, z, island: true };
+    });
+    expect([player.x, player.z]).toEqual([0, -14]);
+  });
+
+  it('keeps the entrance without island: true, with no stored position, or a stale one', async () => {
+    const spot = (i: (x: number, z: number) => readonly [number, number]): object => {
+      const [x, z] = i(10, 5);
+      return { x, z };
+    };
+    expect((await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, spot)).player.z).toBe(-14);
+    const withFlag = (i: (x: number, z: number) => readonly [number, number]): object => ({
+      ...spot(i),
+      island: true,
+    });
+    expect((await rejoin(null, withFlag)).player.z).toBe(-14);
+    expect((await rejoin({ lx: 0, lz: 0, ageMs: 31_000 }, withFlag)).player.z).toBe(-14);
+  });
+
+  it('a huge jump or malformed spot keeps the entrance', async () => {
+    const huge = await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, () => ({
+      x: 1e9,
+      z: 1e9,
+      island: true,
+    }));
+    expect(huge.player.z).toBe(-14);
+    const bad = await rejoin({ lx: 0, lz: 0, ageMs: 10_000 }, () => ({
+      x: 'a',
+      z: 0,
+      island: true,
+    }));
+    expect(bad.player.z).toBe(-14);
+    expect(bad.sent.map((m) => m.type)).toEqual(['welcome']);
+  });
+
+  it('onLeave stores the time of the last accepted move, not the leave time', async () => {
+    const { move, leave, stored } = await rejoin(null, () => ({}));
+    now += 200;
+    const t0 = now;
+    move({ x: 0, z: -13 });
+    now += 8_000;
+    leave();
+    await new Promise((done) => setTimeout(done, 0));
+    expect((await stored())?.at).toBe(t0);
   });
 });

@@ -1,3 +1,11 @@
+## 2026-10-31 - Rejoin position after a network drop (street and island venues)
+
+No migration. Additive; clients that send nothing get today's behaviour. See docs/REALTIME.md "Rejoining after a network drop".
+
+- `street` join options accept optional `x`, `z` (island metres). With a stored `ctl:pos` position at most 30 s old, the session is anchored on that spot instead when it is inside the island and within 30 m of the district polygon, and within `6.5 m/s x (now - at) + 0.5 m` of the stored position (time capped at 30 s, so at most 195.5 m). The first move there is accepted without `corrected`. A far, out-of-bounds or malformed spot is ignored silently (anchor on the stored position, clamp and `corrected`, as before).
+- `venue` join options accept optional `x`, `z`, `island: true` (island metres) in venues placed on CT Island. Under the same reach rule, and when the point is inside one of the venue's walkable rectangles, the player starts there instead of on the entrance spot. Otherwise the entrance, as before.
+- `ctl:pos` `at` is now the time of the last accepted move also when a street or venue room writes it on leave (it was the leave time, which after a dropped socket is seconds late and shrank the rejoin reach). A player who was standing still before leaving therefore has an older stored position.
+
 ## 2026-10-31 - Real Markets gaps: 18+ after creation, order reconciliation, provider links, geo trust
 
 Migration 143 (`age_confirmations`; `real_market_orders` + `recent_blockhash`, `ix_fingerprints`, `reconciled_at`). Additive. See docs/REAL-MARKETS.md.
