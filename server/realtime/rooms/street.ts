@@ -40,8 +40,21 @@
  * server last accepted a move from them (see `withinRejoinReach`). A far,
  * out-of-bounds or malformed spot is ignored without an error, and the
  * session is anchored on the stored position as before.
+ *
+ * Map Travel arrival (capability `travel`, read once per room; docs/TRAVEL.md):
+ * the join options may carry `tripId`. The player's single-use ticket
+ * (`ctl:travel:<userId>`, written when the trip was booked) must name that
+ * trip and this district; it opens at `arriveAt - arriveEarlySec` (earlier:
+ * ServerError 4425 TRAVEL_NOT_ARRIVED, ticket kept) and closes at
+ * `expiresAt` (later, used, foreign or wrong district: 4410
+ * TRAVEL_TICKET_INVALID). On success the ticket is deleted atomically, the
+ * session is anchored and shown at the arrival point (a street spot outside
+ * the destination door), `ctl:pos` is written there, the trip is marked
+ * `arrived`, and `welcome` carries `travel {tripId, x, z, yaw}`. While a
+ * user holds an open ticket, a join without it is refused with 4409
+ * TRAVEL_IN_TRANSIT: a rider is nowhere until they arrive or cancel.
  */
-import { Room, Client } from 'colyseus';
+import { Room, Client, ServerError } from 'colyseus';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -81,6 +94,14 @@ import { BanGuard } from '../ban-guard.js';
 import { loadConfig } from '../../shared/config/config.js';
 import { isCapabilityOn } from '../../application/capabilities.js';
 import {
+  consumeTicket,
+  getTravelConfig,
+  hasOpenTicket,
+  TRAVEL_JOIN_CODES,
+  type TicketRedis,
+  type TravelTicket,
+} from '../../application/travel.js';
+import {
   clearStreetMembers,
   markStreetJoin,
   markStreetLeave,
@@ -98,6 +119,8 @@ const SayMessage = z.object({ text: z.string().min(1).max(140) });
 const TalkingMessage = z.object({ on: z.boolean() });
 /** Optional spot in the join options of a client rejoining after a drop (island metres). */
 const JoinPos = z.object({ x: z.number().finite(), z: z.number().finite() });
+/** Map Travel arrival: the booked trip whose ticket places the player. */
+const JoinTrip = z.object({ tripId: z.string().uuid() });
 
 /** How far outside its polygon a district room still tracks a player. */
 export const STREET_BORDER_M = 30;
@@ -134,6 +157,8 @@ export class StreetRoom extends Room {
   private sessions = new Map<string, StreetSession>();
   /** Street voice is on for this room (capability `streetVoice` when it opened). */
   private voice = false;
+  /** Map Travel arrivals are checked (capability `travel` when it opened). */
+  private travel = false;
   /** sessionId -> userId of the sessions counted in the street voice member hash. */
   private members = new Map<string, string>();
   /** userId -> vehicle exit position, from the vehicles room. */
@@ -172,6 +197,7 @@ export class StreetRoom extends Room {
     await this.presence?.subscribe(VEHICLE_EXIT_CHANNEL, this.onExit);
     await this.presence?.subscribe(POLICE_CHANNEL, this.onPolice);
     await this.presence?.subscribe(OUTFIT_CHANNEL, this.onOutfit);
+    this.travel = this.travelOn();
     this.voice = this.streetVoiceOn();
     if (this.voice) {
       // Keep the voice member hash from expiring under a long-lived room.
@@ -198,13 +224,21 @@ export class StreetRoom extends Room {
 
   /**
    * @param client - The joining client.
-   * @param options - `{ token, district, x?, z? }`; `x`/`z` is the spot a
-   *   client rejoining after a drop stands on (island metres).
+   * @param options - `{ token, district, x?, z?, tripId? }`; `x`/`z` is the spot a
+   *   client rejoining after a drop stands on (island metres); `tripId` is a
+   *   Map Travel arrival.
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     const userId = await authenticateJoin(options);
     // No await between the token check and track(): a ban published from here on finds us.
     this.ban.track(client, userId);
+    let arrival: TravelTicket | null;
+    try {
+      arrival = await this.travelArrival(userId, options, Date.now());
+    } catch (e) {
+      this.ban.untrack(client);
+      throw e;
+    }
     const player = await this.loadPlayer(userId);
     const last = await this.readPos(userId);
     const now = Date.now();
@@ -214,7 +248,11 @@ export class StreetRoom extends Room {
     this.sessions.set(client.sessionId, {
       userId,
       player,
-      anchor: fresh ? this.joinAnchor(last, options, now) : null,
+      anchor: arrival
+        ? newAnchor(arrival.x, arrival.z, now)
+        : fresh
+          ? this.joinAnchor(last, options, now)
+          : null,
       placed: false,
       bucket: new TokenBucket(10, 5),
       lastEmoteAt: 0,
@@ -233,7 +271,106 @@ export class StreetRoom extends Room {
         // Presence is best effort.
       }
     }
-    client.send('welcome', { serverNow: now, instanceId: this.state.instanceId });
+    if (arrival) {
+      this.placeArrival(client, arrival, now);
+      void this.recordArrival(userId, arrival).catch(() => {
+        // Best effort: an arrived ticket is already used; the trip row only skips the refund.
+      });
+    }
+    client.send('welcome', {
+      serverNow: now,
+      instanceId: this.state.instanceId,
+      ...(arrival
+        ? { travel: { tripId: arrival.tripId, x: arrival.x, z: arrival.z, yaw: arrival.yaw } }
+        : {}),
+    });
+  }
+
+  // --- Map Travel --------------------------------------------------
+
+  /**
+   * The ticket check of a join (nothing while `travel` is off).
+   * @param userId - The joining user.
+   * @param options - The join options (`tripId?`).
+   * @param now - Server time, ms.
+   * @returns The consumed ticket for an arrival, or null for an ordinary join.
+   * @throws ServerError 4409 / 4410 / 4425 (TRAVEL_JOIN_CODES).
+   */
+  private async travelArrival(
+    userId: string,
+    options: unknown,
+    now: number,
+  ): Promise<TravelTicket | null> {
+    if (!this.travel) return null;
+    const redis = await this.travelRedis();
+    const trip = JoinTrip.safeParse(options);
+    if (trip.success) {
+      const r = await consumeTicket(
+        redis,
+        getTravelConfig(),
+        userId,
+        trip.data.tripId,
+        this.state.district,
+        now,
+      );
+      if (!r.ok) throw new ServerError(TRAVEL_JOIN_CODES[r.code], r.code);
+      return r.ticket;
+    }
+    if (await hasOpenTicket(redis, userId, now)) {
+      throw new ServerError(TRAVEL_JOIN_CODES.TRAVEL_IN_TRANSIT, 'TRAVEL_IN_TRANSIT');
+    }
+    return null;
+  }
+
+  /** Show an arriving traveller at the ticket point and record it as their position. */
+  private placeArrival(client: Client, t: TravelTicket, now: number): void {
+    const s = this.sessions.get(client.sessionId);
+    if (!s) return;
+    s.player.x = t.x;
+    s.player.z = t.z;
+    s.player.rotY = t.yaw;
+    s.player.ix = t.x;
+    s.player.iz = t.z;
+    s.player.irotY = t.yaw;
+    s.player.anim = 'loco_idle';
+    s.placed = true;
+    s.movedAt = now;
+    this.state.players.set(client.sessionId, s.player);
+    this.writePos(s, now, true);
+  }
+
+  /**
+   * Whether Map Travel is on for this deployment. Overridden in tests.
+   * @returns True while `travel` is in CAPABILITIES_ON.
+   */
+  protected travelOn(): boolean {
+    try {
+      return isCapabilityOn({ config: loadConfig() }, 'travel');
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The Redis holding the travel tickets. Overridden in tests.
+   * @returns The shared Redis client.
+   */
+  protected async travelRedis(): Promise<TicketRedis> {
+    const { buildContext } = await import('../../application/context.js');
+    return buildContext().redis.main as unknown as TicketRedis;
+  }
+
+  /**
+   * Mark the trip arrived (the sweep then never refunds it). Overridden in tests.
+   * @param userId - The traveller.
+   * @param t - The consumed ticket.
+   */
+  protected async recordArrival(userId: string, t: TravelTicket): Promise<void> {
+    const [{ buildContext }, { markArrived }] = await Promise.all([
+      import('../../application/context.js'),
+      import('../../application/travel.js'),
+    ]);
+    await markArrived(buildContext(), userId, t);
   }
 
   /**

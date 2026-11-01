@@ -441,3 +441,41 @@ export const RATE_LIMITS = {
   say: { perMs: 2000 },
   emote: { perSecond: 1 },
 } as const;
+
+// ---------------------------------------------------------------------------
+// Street room: Map Travel arrival (capability `travel`; docs/TRAVEL.md)
+// ---------------------------------------------------------------------------
+
+/**
+ * Join refusals of the `street` room while `travel` is on, as Colyseus
+ * `ServerError {code, message}` with `message` = the name:
+ * 4409 'TRAVEL_IN_TRANSIT' (a booked ride is under way; join with its
+ * `tripId`), 4410 'TRAVEL_TICKET_INVALID' (no ticket for this trip, user and
+ * district, or it expired or was used), 4425 'TRAVEL_NOT_ARRIVED' (before
+ * `arriveAt - arriveEarlySec`; the ticket is kept, retry).
+ */
+export const TravelJoinError = z.enum([
+  'TRAVEL_IN_TRANSIT',
+  'TRAVEL_TICKET_INVALID',
+  'TRAVEL_NOT_ARRIVED',
+]);
+export type TravelJoinError = z.infer<typeof TravelJoinError>;
+
+/** Numeric `ServerError` codes for `TravelJoinError`. */
+export const TRAVEL_JOIN_ERROR_CODES: Readonly<Record<TravelJoinError, number>> = {
+  TRAVEL_IN_TRANSIT: 4409,
+  TRAVEL_TICKET_INVALID: 4410,
+  TRAVEL_NOT_ARRIVED: 4425,
+};
+
+/**
+ * `welcome.travel` of a street join that used a ticket: where the server
+ * placed the traveller (island metres; `yaw` radians, facing the door).
+ */
+export const TravelArrivalMessage = z.object({
+  tripId: z.string().uuid(),
+  x: z.number().finite(),
+  z: z.number().finite(),
+  yaw: z.number().finite(),
+});
+export type TravelArrivalMessage = z.infer<typeof TravelArrivalMessage>;

@@ -1,3 +1,15 @@
+## 2026-11-01 - Map Travel phase 1: server-priced bus and taxi rides (capability travel)
+
+Migration 144 (`travel_trips`). Additive; dark behind the new capability `travel` (off). See docs/TRAVEL.md.
+
+- New capabilities `travel` and `travelInstantGoOff`; `GET /config` `capabilities.features` gains both keys. `travelInstantGoOff` (off = the classic instant "Go" stays offered) only tells the client to hide instant Go while `travel` is on; nothing enforces it server-side yet.
+- New `contract/config/travel.json` (+ schema): fares, ride times, net-worth unlocks, cooldowns, quote and ticket windows, `arrivalOffsetM`, `gatedBooking`, `walk.speedMps` and 11 `busStops`. `GET /config` gains `travel` (walk speed, stops, mode rules; null while off).
+- New `GET /travel/quote?to=<venueId>` -> `{quoteId, to, toKind, distanceM, serverNow, expiresAt, cashCents, from, arrival {district, x, z, yaw (radians)}, gate {open, code?, message?}, modes [{mode: walk|bus|taxi, available, reason?, reasonMessage?, fareCents, durationSec, stop?, unlockNetWorthCents?, retryAfterSec?}]}`. Reasons: `TOO_CLOSE`, `NOT_AT_STOP`, `INSUFFICIENT_CASH`, `LOCKED`, `COOLDOWN`, `TRAVEL_IN_PROGRESS`, `VENUE_GATED`, `NOT_SERVED`.
+- New `POST /travel/trips {quoteId, mode: bus|taxi}` (Idempotency-Key) -> `201 TravelTrip {tripId, status, mode, to, fareCents, cashCents, departAt, arriveAt, expiresAt, serverNow, origin, arrival, pickup?}`; ledger `travel_fare`. New `GET /travel/trips/current` -> `{trip | null, serverNow}`; new `POST /travel/trips/{id}/cancel` (Idempotency-Key) -> `{tripId, refundedCents, cashCents}`; ledger `travel_refund`.
+- `street` join options accept `tripId`: the single-use arrival ticket anchors and shows the player at the arrival point; `welcome` gains `travel {tripId, x, z, yaw}`. Join refusals (`ServerError`): 4409 `TRAVEL_IN_TRANSIT`, 4410 `TRAVEL_TICKET_INVALID`, 4425 `TRAVEL_NOT_ARRIVED` (`TravelJoinError` in realtime/messages.ts). Venue rooms unchanged.
+- New worker `travel-sweep` (every 30 s): refunds trips whose ticket expired unused, once.
+- New error codes: `TRAVEL_IN_PROGRESS` (409), `TRAVEL_COOLDOWN` (429, `Retry-After`), `TRAVEL_NOT_IN_WORLD` (409), `TRAVEL_NOT_AT_STOP` (409), `TRAVEL_LOCKED` (403), `TRAVEL_NOT_CANCELLABLE` (409), `QUOTE_EXPIRED` (409), `VENUE_GATED` (403), `TRAVEL_IN_TRANSIT` (409), `TRAVEL_TICKET_INVALID` (410), `TRAVEL_NOT_ARRIVED` (425).
+
 ## 2026-11-01 - Street voice: one proximity room per street instance (capability streetVoice)
 
 No migration. Dark behind the new capability `streetVoice` (off). See docs/STREET-VOICE.md.

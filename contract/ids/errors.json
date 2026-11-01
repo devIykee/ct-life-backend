@@ -523,6 +523,61 @@
       "code": "REAL_MARKETS_TX_MISMATCH",
       "httpStatus": 422,
       "message": "That signature is not the order that was built for your wallet."
+    },
+    {
+      "code": "TRAVEL_IN_PROGRESS",
+      "httpStatus": 409,
+      "message": "You already have a ride booked. Finish or cancel it first."
+    },
+    {
+      "code": "TRAVEL_COOLDOWN",
+      "httpStatus": 429,
+      "message": "Too many rides. Wait a moment before booking another."
+    },
+    {
+      "code": "TRAVEL_NOT_IN_WORLD",
+      "httpStatus": 409,
+      "message": "Your position on CT Island is not known yet. Walk a few steps and try again."
+    },
+    {
+      "code": "TRAVEL_NOT_AT_STOP",
+      "httpStatus": 409,
+      "message": "The bus only picks up at a bus stop. Walk to the nearest stop first."
+    },
+    {
+      "code": "TRAVEL_LOCKED",
+      "httpStatus": 403,
+      "message": "This ride unlocks at a higher net worth."
+    },
+    {
+      "code": "TRAVEL_NOT_CANCELLABLE",
+      "httpStatus": 409,
+      "message": "This ride can no longer be cancelled."
+    },
+    {
+      "code": "QUOTE_EXPIRED",
+      "httpStatus": 409,
+      "message": "The quote expired or you moved. Get a new quote."
+    },
+    {
+      "code": "VENUE_GATED",
+      "httpStatus": 403,
+      "message": "This venue's door is gated for you; the ride is not offered."
+    },
+    {
+      "code": "TRAVEL_IN_TRANSIT",
+      "httpStatus": 409,
+      "message": "You are riding to another place. Join with your trip id when you arrive."
+    },
+    {
+      "code": "TRAVEL_TICKET_INVALID",
+      "httpStatus": 410,
+      "message": "This ride ticket is not valid (used, expired or not yours)."
+    },
+    {
+      "code": "TRAVEL_NOT_ARRIVED",
+      "httpStatus": 425,
+      "message": "The ride has not arrived yet."
     }
   ]
 }

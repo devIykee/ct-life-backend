@@ -81,6 +81,7 @@ import { CASINO_SWEEP_QUEUE, handleCasinoSweep } from './casino-sweep.js';
 import { NPC_CALLERS_QUEUE, handleNpcCallers } from './npc-callers.js';
 import { ACCOUNT_PURGE_QUEUE, handleAccountPurge } from './account-purge.js';
 import { REKT_SWEEP_QUEUE, handleRektSweep } from './rekt-sweep.js';
+import { TRAVEL_SWEEP_QUEUE, handleTravelSweep } from './travel-sweep.js';
 import { LIQUIDATION_QUEUE, handleLiquidation } from './liquidation.js';
 import { PREDICTIONS_QUEUE, handlePredictions } from './predictions.js';
 import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
@@ -175,6 +176,7 @@ export async function buildWorkers(likeness?: {
   const callersQueue = new Queue(NPC_CALLERS_QUEUE, { connection: conn });
   const purgeQueue = new Queue(ACCOUNT_PURGE_QUEUE, { connection: conn });
   const rektQueue = new Queue(REKT_SWEEP_QUEUE, { connection: conn });
+  const travelQueue = new Queue(TRAVEL_SWEEP_QUEUE, { connection: conn });
   const liquidationQueue = new Queue(LIQUIDATION_QUEUE, { connection: conn });
   const predictionsQueue = new Queue(PREDICTIONS_QUEUE, { connection: conn });
   const alphaQueue = new Queue(ALPHA_GRADING_QUEUE, { connection: conn });
@@ -292,6 +294,13 @@ export async function buildWorkers(likeness?: {
   });
   rektWorker.on('failed', (job, err) =>
     log.error({ jobId: job?.id, err: err.message }, 'rekt-sweep failed'),
+  );
+
+  const travelWorker = new Worker(TRAVEL_SWEEP_QUEUE, async (job) => handleTravelSweep(job, ctx), {
+    connection: newClient(redis),
+  });
+  travelWorker.on('failed', (job, err) =>
+    log.error({ jobId: job?.id, err: err.message }, 'travel-sweep failed'),
   );
 
   const liquidationWorker = new Worker(
@@ -451,6 +460,12 @@ export async function buildWorkers(likeness?: {
     await predictionsQueue.removeJobScheduler('predictions');
     log.info('prediction settlement off (PREDICTIONS_SETTLEMENT_ENABLED unset)');
   }
+  // Map Travel: refund booked trips whose arrival ticket expired unused.
+  await travelQueue.upsertJobScheduler(
+    'travel-sweep',
+    { every: 30_000 },
+    { name: 'sweep', data: {}, opts: sweepJobOpts },
+  );
   // Alpha calls: grade hit target / hit stop / expired.
   await alphaQueue.upsertJobScheduler(
     'alpha-grading',
@@ -536,6 +551,7 @@ export async function buildWorkers(likeness?: {
   void purgeWorker;
   void purgeQueue;
   void rektWorker;
+  void travelWorker;
   void liquidationWorker;
   void predictionsWorker;
   void alphaWorker;
@@ -554,6 +570,7 @@ export async function buildWorkers(likeness?: {
   void casinoQueue;
   void callersQueue;
   void rektQueue;
+  void travelQueue;
   void log;
 
   return {
@@ -576,6 +593,7 @@ export async function buildWorkers(likeness?: {
       await callersWorker.close();
       await purgeWorker.close();
       await rektWorker.close();
+      await travelWorker.close();
       await liquidationWorker.close();
       await predictionsWorker.close();
       await alphaWorker.close();
@@ -596,6 +614,7 @@ export async function buildWorkers(likeness?: {
       await callersQueue.close();
       await purgeQueue.close();
       await rektQueue.close();
+      await travelQueue.close();
       await liquidationQueue.close();
       await predictionsQueue.close();
       await alphaQueue.close();

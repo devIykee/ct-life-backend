@@ -47,6 +47,7 @@ import { chainConfigPayload } from '../../application/chain-config.js';
 import { creatorCard } from '../../application/creator.js';
 import type { AppContext } from '../../application/context.js';
 import { isCapabilityOn } from '../../application/capabilities.js';
+import { travelClientConfig } from '../../application/travel.js';
 import { nftGalleryConfig } from '../../application/nft-gallery-config.js';
 import {
   CLIENT_PLATFORMS,
@@ -266,6 +267,8 @@ export function registerCoreRoutes(app: FastifyInstance): void {
       projects: projectsClientConfig(req.ctx),
       // CT Beef (unlock A6): topics, reward, eligibility gates; null while `beef` is off.
       beef: beefClientConfig(req.ctx),
+      // Map Travel (docs/TRAVEL.md): walk speed, bus stops and mode rules; null while `travel` is off.
+      travel: travelClientConfig(req.ctx),
       // Unlock D4: where the client may load gallery images from (only while on).
       ...nftConfigPayload(req.ctx),
     };
