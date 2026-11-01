@@ -1,7 +1,7 @@
 {
   "_owner": "BE",
   "_provisional": false,
-  "version": "1.0.2",
+  "version": "1.1.0",
   "archetypes": [
     {
       "id": "town_crier",
@@ -118,14 +118,14 @@
     {
       "id": "farmer",
       "name": "Farmer",
-      "venueId": "airdrop_farm",
+      "venueId": "airdrop_fields",
       "phase": 2,
       "lines": "npc_lines.farmer"
     },
     {
       "id": "sybil_farmer",
       "name": "Sybil Farmer",
-      "venueId": "airdrop_farm",
+      "venueId": "airdrop_fields",
       "phase": 2,
       "lines": "npc_lines.sybil_farmer"
     },
@@ -181,14 +181,14 @@
     {
       "id": "normie",
       "name": "Normie",
-      "venueId": "market_room",
+      "venueId": "terminal_cafe",
       "phase": 2,
       "lines": "npc_lines.normie"
     },
     {
       "id": "doxxed_founder",
       "name": "Doxxed Founder",
-      "venueId": "builder_hills",
+      "venueId": "hackathon_house",
       "phase": 2,
       "lines": "npc_lines.doxxed_founder"
     },
@@ -198,6 +198,21 @@
       "venueId": "prediction_pit",
       "phase": 2,
       "lines": "npc_lines.prediction_shark_npc"
+    },
+    {
+      "id": "laser_eyes_maxi",
+      "name": "Laser-Eyes Maxi",
+      "venueId": "timeline_square",
+      "phase": 2,
+      "lines": "npc_lines.laser_eyes_maxi"
+    },
+    {
+      "id": "chain_tribalist",
+      "name": "Chain Tribalist",
+      "venueId": "ratio_arena",
+      "phase": 2,
+      "maxPerInstance": 2,
+      "lines": "npc_lines.chain_tribalist"
     },
     {
       "id": "barista",

@@ -1,3 +1,13 @@
+## 2026-11-01 - Phase-2 NPCs spawn (LIVE_PHASE >= 2)
+
+No migration. Realtime and config only. At `LIVE_PHASE` 1 every venue spawns exactly what it did before.
+
+- Venue rooms now spawn the phase-2 NPCs of the spec table while `LIVE_PHASE` is 2 or more: `cabal_lounge` alpha_caller, cabal_insider; `launchpad_tower` rug_dev, sniper_bot; `audit_row` sleuth, auditor; `vc_row` vc; `airdrop_fields` farmer, sybil_farmer; `discord_heights` drainer, community_mod; `prediction_pit` prediction_shark_npc; `ratio_arena` two chain_tribalist (`npc-0-chain_tribalist`, `npc-1-chain_tribalist`); `hackathon_house` doxxed_founder; `dubai_marina` fake_rich_larp, dubai_relocator; `timeline_square` + thread_boy, engagement_farmer, laser_eyes_maxi (5 -> 8); `terminal_cafe` + ai_agent on `terminal_cafe.center` (8 -> 9). The new NPCs come after the phase-1 NPCs, so phase-1 npcIds and home spots do not change. At most 12 NPCs per venue instance. `normie` does not spawn yet (spec: waves at market peaks).
+- The new NPCs idle on a stand/npc spot of the venue, walk to a free one now and then (`wander`, `spotId` always a spot of that venue), and `talk` every 20-40 s. Their `lineId` is `<archetypeId>.<index>` into `npc_lines.<archetypeId>`, only lines without `{slots}`; `animId` and `lineId` stay the same for the whole state.
+- Brain ids `vc_npc` and `builder_npc` are now `vc` and `doxxed_founder` (the registry ids); the old ids still create the same brains. Neither was ever spawned.
+- `ids/archetypes.json` 1.1.0: adds `laser_eyes_maxi` (timeline_square, phase 2) and `chain_tribalist` (ratio_arena, phase 2, `maxPerInstance: 2`). `venueId` fixes: farmer and sybil_farmer `airdrop_farm` -> `airdrop_fields`, doxxed_founder `builder_hills` -> `hackathon_house`, normie `market_room` -> `terminal_cafe`. fake_rich_larp and dubai_relocator stay on `dubai_marina`: the island's `yacht_club` is not in `venues.json` / `spots.json`, so it has no venue room.
+- `config/npc_lines.json` 1.1.0: line sets for the 21 phase-2 archetypes (32 lines each, from the FE world-life proposal; parody names only, approved display names: VIP Lounge, Discord HQ, Debate Arena, News Reader, police).
+
 ## 2026-11-01 - Street voice: one proximity room per street instance (capability streetVoice)
 
 No migration. Dark behind the new capability `streetVoice` (off). See docs/STREET-VOICE.md.

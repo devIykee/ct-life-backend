@@ -45,7 +45,9 @@
  *
  * NPC brain: each venue runs at 1 Hz. The brain is fed the
  * `VenueCtx` (mood, richest players, recent events) and the room
- * applies the `BrainOutput` to the NpcState for that NPC.
+ * applies the `BrainOutput` to the NpcState for that NPC. Who spawns
+ * where is in ../npc-roster.ts (phase-2 NPCs only at LIVE_PHASE >= 2,
+ * at most 12 per instance).
  */
 import { Room, Client } from 'colyseus';
 import { readFileSync } from 'node:fs';
@@ -92,6 +94,8 @@ import {
   type VenuePlacement,
 } from '../movement.js';
 import { BanGuard } from '../ban-guard.js';
+import { MAX_NPCS_PER_INSTANCE, npcArchetypesFor, npcSpawnPlan } from '../npc-roster.js';
+import { loadConfig } from '../../shared/config/config.js';
 import {
   clearVenueMembers,
   markVenueJoin,
@@ -165,7 +169,12 @@ interface VenueSpots {
 interface VenueConfig {
   readonly venues: Record<string, VenueSpots>;
   readonly anims: readonly string[];
+  /** archetype -> line ids (`<archetype>.<index>`) of its slot-free lines. */
+  readonly lineIds: ReadonlyMap<string, readonly string[]>;
 }
+
+/** Spot kinds an NPC can stand on (home spots and ambient wandering). */
+const NPC_SPOT_KINDS = new Set(['npc', 'standing', 'stand']);
 
 export class VenueRoom extends Room {
   private readonly ban = new BanGuard(this);
@@ -721,14 +730,14 @@ export class VenueRoom extends Room {
   // --- NPC brains -------------------------------------------------
 
   private spawnNpcBrains(): void {
-    // Each venue has a small set of archetypes. For M2 we spawn
-    // a single NPC per archetype at a fixed seed spot; M3+ spawns
-    // the right count per venue layout.
-    const plan = this.npcSpawnPlan(this.state.venueId);
+    const livePhase = this.livePhase();
+    // Venues with a seating plan put each NPC on a fixed spot.
+    const plan = npcSpawnPlan(this.state.venueId, livePhase);
     if (plan.length > 0) {
       const valid = this.venueSpotIds();
       for (let i = 0; i < plan.length; i++) {
         const seat = plan[i]!;
+        if (this.state.npcs.size >= MAX_NPCS_PER_INSTANCE) break;
         // Never publish a spot the client cannot resolve.
         if (!valid.has(seat.spotId)) continue;
         const npc = new NpcState();
@@ -739,11 +748,14 @@ export class VenueRoom extends Room {
         this.npcHomeSpots.set(npcId, seat.spotId);
         this.npcHomeAnims.set(npcId, seat.animId);
         this.state.npcs.set(npcId, npc);
-        this.brains.set(npcId, createBrain(seat.archetype));
+        this.brains.set(npcId, this.brainFor(seat.archetype));
       }
       return;
     }
-    const archetypes: NpcArchetype[] = this.npcArchetypesFor(this.state.venueId);
+    const archetypes: NpcArchetype[] = npcArchetypesFor(this.state.venueId, livePhase).slice(
+      0,
+      MAX_NPCS_PER_INSTANCE,
+    );
     // Give every NPC a home spot up front. Spawning them with spotId ''
     // left the client to guess, and it used the entrance, which is also
     // where players spawn, so arriving players landed inside a crowd.
@@ -758,7 +770,27 @@ export class VenueRoom extends Room {
       npc.animId = 'loco_idle';
       if (home !== '') this.npcHomeSpots.set(npcId, home);
       this.state.npcs.set(npcId, npc);
-      this.brains.set(npcId, createBrain(archetype));
+      this.brains.set(npcId, this.brainFor(archetype));
+    }
+  }
+
+  /**
+   * A brain for one NPC, with the line ids of its archetype's set.
+   * @param archetype - The NPC's archetype.
+   */
+  private brainFor(archetype: NpcArchetype): NpcBrain {
+    return createBrain(archetype, { lineIds: this.spotsCfg.lineIds.get(archetype) ?? [] });
+  }
+
+  /**
+   * The deployment's release phase (LIVE_PHASE). Phase 1 if the config
+   * cannot be read, which spawns only the phase-1 NPCs.
+   */
+  private livePhase(): number {
+    try {
+      return loadConfig().livePhase;
+    } catch {
+      return 1;
     }
   }
 
@@ -767,9 +799,8 @@ export class VenueRoom extends Room {
    * @returns Global spot ids of the standing kinds, or [] if the venue has none.
    */
   private npcHomeSpotIds(): string[] {
-    const kinds = new Set(['npc', 'standing', 'stand']);
     return (this.spotsCfg.venues[this.state.venueId]?.spots ?? [])
-      .filter((sp) => kinds.has(sp.kind))
+      .filter((sp) => NPC_SPOT_KINDS.has(sp.kind))
       .map((sp) => sp.id);
   }
 
@@ -779,68 +810,6 @@ export class VenueRoom extends Room {
    */
   private venueSpotIds(): Set<string> {
     return new Set((this.spotsCfg.venues[this.state.venueId]?.spots ?? []).map((sp) => sp.id));
-  }
-
-  /**
-   * B17 venue patrons: who stands where, per the FE seating table.
-   *
-   * Spot ids are the global ids from spots.json and the anims come from
-   * anims.json, so the client can walk a seated NPC to the seat's approach
-   * point. Venues without a plan fall back to the round-robin below.
-   * @param venueId - The venue being created.
-   * @returns The spawn plan, or [] when the venue has none.
-   */
-  private npcSpawnPlan(
-    venueId: string,
-  ): Array<{ archetype: NpcArchetype; spotId: string; animId: string }> {
-    switch (venueId) {
-      case 'terminal_cafe':
-        return [
-          { archetype: 'barista', spotId: 'terminal_cafe.counter', animId: 'loco_idle' },
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_1', animId: 'act_type' },
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_2', animId: 'act_type' },
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_3', animId: 'act_type' },
-          // The twin-monitor desks are the traders' side of the room.
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_5', animId: 'act_type' },
-          { archetype: 'patron', spotId: 'terminal_cafe.table_1', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'terminal_cafe.table_2', animId: 'act_sit' },
-          // The wallet tracker keeps its own brain and its own terminal.
-          {
-            archetype: 'wallet_tracker',
-            spotId: 'terminal_cafe.pulse_screen',
-            animId: 'loco_idle',
-          },
-        ];
-      case 'spaces_studio':
-        return [
-          { archetype: 'spaces_host', spotId: 'spaces_studio.stage_host', animId: 'loco_idle' },
-          { archetype: 'patron', spotId: 'spaces_studio.stage_4', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.stage_5', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_1', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_2', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_3', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_4', animId: 'act_sit' },
-        ];
-      default:
-        return [];
-    }
-  }
-
-  private npcArchetypesFor(venueId: string): NpcArchetype[] {
-    switch (venueId) {
-      case 'timeline_square':
-        return ['town_crier', 'giveaway_guy', 'reply_guy', 'doomposter', 'spaces_host'];
-      case 'perp_pit':
-        return ['perp_degen_npc'];
-      case 'rekt_clinic':
-        return ['rekt_guy'];
-      case 'terminal_cafe':
-        return ['wallet_tracker'];
-      case 'ore_refinery':
-        return ['ore_miner'];
-      default:
-        return [];
-    }
   }
 
   /**
@@ -891,8 +860,13 @@ export class VenueRoom extends Room {
     // resolve spots of the room it is in, so anything else falls back to
     // the NPC's home spot.
     const validSpots = this.venueSpotIds();
+    const standSpots = this.npcHomeSpotIds();
     for (const [npcId, brain] of this.brains) {
-      const out: BrainOutput = brain.tick(ctx);
+      // The stand/npc spots no other NPC holds right now (ambient wandering).
+      const held = new Set<string>();
+      for (const [otherId, other] of this.state.npcs) if (otherId !== npcId) held.add(other.spotId);
+      const free = standSpots.filter((id) => !held.has(id));
+      const out: BrainOutput = brain.tick({ ...ctx, venue: { ...venue, standSpots: free } });
       const npc = this.state.npcs.get(npcId);
       if (!npc) continue;
       npc.state = out.state;
@@ -926,8 +900,31 @@ export class VenueRoom extends Room {
     const anims = JSON.parse(
       readFileSync(join(repoRoot, 'contract', 'ids', 'anims.json'), 'utf8'),
     ) as { anims: string[] };
-    return { venues: spots.venues, anims: anims.anims };
+    const lines = JSON.parse(
+      readFileSync(join(repoRoot, 'contract', 'config', 'npc_lines.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    return { venues: spots.venues, anims: anims.anims, lineIds: slotFreeLineIds(lines) };
   }
+}
+
+/**
+ * Line ids the NPCs can speak without lineParams: `<archetype>.<index>` for
+ * every line of `npc_lines.<archetype>` that has no `{slot}` (the room does
+ * not fill lineParams yet, and the client skips a line it cannot fill).
+ * @param lines - contract/config/npc_lines.json.
+ * @returns archetype -> line ids.
+ */
+export function slotFreeLineIds(lines: Record<string, unknown>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [archetype, set] of Object.entries(lines)) {
+    if (!Array.isArray(set)) continue;
+    const ids: string[] = [];
+    set.forEach((line, i) => {
+      if (typeof line === 'string' && !line.includes('{')) ids.push(`${archetype}.${i}`);
+    });
+    out.set(archetype, ids);
+  }
+  return out;
 }
 
 /**
