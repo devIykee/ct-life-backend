@@ -6,7 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LocalPresence } from 'colyseus';
 import { Encoder, type Schema } from '@colyseus/schema';
 import { PlayerState, VehicleState } from '../../../contract/realtime/states.js';
-import { setIslandGeometry, setParkingBays, POS_HASH, encodePos, DISTRICTS } from '../movement.js';
+import {
+  setIslandGeometry,
+  setParkingBays,
+  POS_HASH,
+  decodePos,
+  encodePos,
+  DISTRICTS,
+} from '../movement.js';
 
 vi.mock('../player.js', async (orig) => {
   const real = await orig<typeof import('../player.js')>();
@@ -206,6 +213,130 @@ describe('StreetRoom', () => {
     c.sent.length = 0;
     msg(room, 'move', c, { x: -301, z: 1 });
     expect(c.sent.some((s) => s.type === 'corrected')).toBe(false);
+  });
+});
+
+describe('StreetRoom rejoin position', () => {
+  type Sess = { anchor: { x: number; z: number; at: number } | null; placed: boolean };
+  const players = (room: AnyRoom): Map<string, PlayerState> =>
+    (room as unknown as { state: { players: Map<string, PlayerState> } }).state.players;
+  const session = (room: AnyRoom, id: string): Sess =>
+    (room as unknown as { sessions: Map<string, Sess> }).sessions.get(id)!;
+
+  /** Presence holding the player's last accepted move, a room, and a joined client. */
+  async function rejoin(
+    last: { x: number; z: number; at: number } | null,
+    options: Record<string, unknown>,
+  ): Promise<{ room: AnyRoom; c: ReturnType<typeof fakeClient>; presence: LocalPresence }> {
+    const presence = new LocalPresence();
+    if (last) await presence.hset(POS_HASH, 'r1', encodePos(last));
+    const room = await boot(TestStreet, presence, { district: 'timeline' });
+    const c = fakeClient('r1');
+    await room.onJoin!(c, { userId: 'r1', token: 't', district: 'timeline', ...options });
+    return { room, c, presence };
+  }
+
+  it('1: accepts a join spot within walking reach; the first move there is not corrected', async () => {
+    // 50 m away after 10 s: reach is 6.5 x 10 + 0.5 = 65.5 m.
+    const { room, c } = await rejoin({ x: -60, z: 0, at: now - 10_000 }, { x: -10, z: 0 });
+    expect(session(room, 'r1').anchor).toMatchObject({ x: -10, z: 0, at: now });
+    now += 100;
+    msg(room, 'move', c, { x: -10, z: 0 });
+    expect(players(room).get('r1')?.x).toBe(-10);
+    expect(c.sent.some((s) => s.type === 'corrected' || s.type === 'rejected')).toBe(false);
+  });
+
+  it('2: ignores a join spot beyond the reach; the first move is clamped near the stored spot', async () => {
+    // 190 m away after 10 s.
+    const { room, c } = await rejoin({ x: -200, z: 0, at: now - 10_000 }, { x: -10, z: 0 });
+    now += 100;
+    msg(room, 'move', c, { x: -10, z: 0 });
+    const p = players(room).get('r1')!;
+    expect(Math.hypot(p.x + 200, p.z)).toBeLessThanOrEqual(7 + 1e-9);
+    expect(c.sent.some((s) => s.type === 'corrected')).toBe(true);
+  });
+
+  it('3: ignores a join spot in reach but outside the district border', async () => {
+    // 23 m away, but x = 33 is past the 30 m border of TIMELINE (x <= 0).
+    const { room, c } = await rejoin({ x: 10, z: 0, at: now - 10_000 }, { x: 33, z: 0 });
+    expect(session(room, 'r1').anchor).toMatchObject({ x: 10, z: 0, at: now - 10_000 });
+    expect(c.sent.some((s) => s.type === 'rejected')).toBe(false);
+  });
+
+  it('4: onLeave stores the time of the last accepted move, not the leave time', async () => {
+    const { room, c, presence } = await rejoin(null, {});
+    const t0 = now;
+    msg(room, 'move', c, { x: -100, z: 0 });
+    now += 100; // inside the 250 ms write throttle: accepted but not written yet
+    const t1 = now;
+    msg(room, 'move', c, { x: -100, z: 0.5 });
+    now += 8_000; // the dropped socket is only noticed now
+    room.onLeave!(c);
+    await new Promise((r) => setTimeout(r, 0));
+    const pos = decodePos(await presence.hget(POS_HASH, 'r1'));
+    expect(pos).toEqual({ x: -100, z: 0.5, at: t1 });
+    expect(pos?.at).not.toBe(t0 + 8_100);
+  });
+
+  it('abuse: a huge in-bounds jump is ignored', async () => {
+    // About 1,800 m across the district after 10 s.
+    const { room, c } = await rejoin({ x: -990, z: 900, at: now - 10_000 }, { x: -10, z: -900 });
+    expect(session(room, 'r1').anchor).toMatchObject({ x: -990, z: 900 });
+    now += 100;
+    msg(room, 'move', c, { x: -10, z: -900 });
+    expect(c.sent.some((s) => s.type === 'corrected')).toBe(true);
+    expect(players(room).get('r1')!.z).toBeGreaterThan(890);
+  });
+
+  it('abuse: a spot in reach but off the island is ignored', async () => {
+    const { room } = await rejoin({ x: -990, z: 0, at: now - 10_000 }, { x: -1010, z: 0 });
+    expect(session(room, 'r1').anchor).toMatchObject({ x: -990, z: 0 });
+  });
+
+  it('abuse: the reach counts from the stored move time, so a short drop allows only a short walk', async () => {
+    // 2 s since the last accepted move: reach 13.5 m, asked 50 m.
+    const { room } = await rejoin({ x: -60, z: 0, at: now - 2_000 }, { x: -10, z: 0 });
+    expect(session(room, 'r1').anchor).toMatchObject({ x: -60, z: 0 });
+  });
+
+  it('abuse: a stored time in the future grants only the slack', async () => {
+    const { room } = await rejoin({ x: -60, z: 0, at: now + 60_000 }, { x: -59, z: 0 });
+    expect(session(room, 'r1').anchor).toMatchObject({ x: -60, z: 0 });
+    const near = await rejoin({ x: -60, z: 0, at: now + 60_000 }, { x: -59.6, z: 0 });
+    expect(session(near.room, 'r1').anchor).toMatchObject({ x: -59.6, z: 0 });
+  });
+
+  it('abuse: an old stored position (over 30 s) is not a rejoin; the spot is not used', async () => {
+    const { room, c } = await rejoin({ x: -60, z: 0, at: now - 31_000 }, { x: -10, z: 0 });
+    // Today's stale case: no anchor, not shown until the first in-bounds move.
+    expect(session(room, 'r1').anchor).toBeNull();
+    expect(players(room).size).toBe(0);
+    msg(room, 'move', c, { x: 40, z: 0 });
+    expect(c.sent.at(-1)?.payload.code).toBe('OUT_OF_BOUNDS');
+    expect(players(room).size).toBe(0);
+  });
+
+  it('abuse: malformed join spots fall back silently', async () => {
+    const bad: Array<Record<string, unknown>> = [
+      { x: 'abc', z: 0 },
+      { x: Number.NaN, z: 0 },
+      { x: Number.POSITIVE_INFINITY, z: 0 },
+      { x: -10 },
+      { x: -10, z: null },
+    ];
+    for (const options of bad) {
+      const { room, c } = await rejoin({ x: -60, z: 0, at: now - 10_000 }, options);
+      expect(session(room, 'r1').anchor).toMatchObject({ x: -60, z: 0, at: now - 10_000 });
+      expect(c.sent.map((s) => s.type)).toEqual(['welcome']);
+    }
+  });
+
+  it('abuse: joining without moving does not move the stored position', async () => {
+    const at = now - 10_000;
+    const first = await rejoin({ x: -60, z: 0, at }, { x: -10, z: 0 });
+    first.room.onLeave!(first.c); // never moved, so nothing is written
+    await new Promise((r) => setTimeout(r, 0));
+    expect(decodePos(await first.presence.hget(POS_HASH, 'r1'))).toEqual({ x: -60, z: 0, at });
   });
 });
 
