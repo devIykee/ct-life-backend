@@ -1,3 +1,12 @@
+## 2026-11-01 - Venue gates in venues.json; Yacht Club and Penthouse Row gated
+
+No migration. Stacked on the phase-2 NPC change (which adds the three island venues).
+
+- `ids/venues.json` 1.2.0: optional `access` per venue, the entry gate `GET /v1/venues/{venueId}/access` checks. `{gate: "net_worth", minNetWorthCents, orHomeKinds?}`, `{gate: "membership"}` (VIP Lounge invite) or `{gate: "jailed"}`. No `access` = open. The server reads the gate from this file instead of a hard-coded list; dubai_marina, cabal_lounge and sybil_barn behave exactly as before.
+- `yacht_club`: net worth >= $100,000 (10000000 cents), like `dubai_marina`. `penthouse_row`: the same bar, or a live (`active`/`overdue`) `penthouse` or `marina_villa` home, so residents can always reach their own building. `checker_kiosk` stays open.
+- `GET /v1/venues/{venueId}/access` gains `orHomeKinds` (string array, `[]` unless the gate lets residents in). Refusals keep the existing codes (`NET_WORTH_TOO_LOW` with `requiredNetWorthCents`).
+- As before, the gate is the REST check the client makes before joining; the venue room itself does not refuse a join on these codes.
+
 ## 2026-11-01 - Island venues yacht_club, penthouse_row, checker_kiosk; two more timeline_square NPC spots
 
 No migration. Contract ids only (FE-owned `spots.json`, BE `venues.json`); realtime roster follows.

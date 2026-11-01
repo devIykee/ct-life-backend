@@ -416,11 +416,35 @@ function rowToInvite(r: CabalInviteDbRow, callerId: string, now: Date): CabalInv
   };
 }
 
+/** A venue's entry gate (`access` in contract/ids/venues.json). */
+export interface VenueGate {
+  readonly gate: 'net_worth' | 'membership' | 'jailed';
+  /** net_worth: cash minus debt needed to enter. */
+  readonly minNetWorthCents?: number;
+  /** net_worth: a live home of one of these kinds lets a resident in regardless. */
+  readonly orHomeKinds?: readonly string[];
+}
+
+/**
+ * The entry gate of a venue, from venues.json.
+ * @param ctx - The application context (config cache).
+ * @param venueId - The venue.
+ * @returns The gate, or null for an open venue.
+ */
+export function venueGate(ctx: Pick<AppContext, 'configCache'>, venueId: string): VenueGate | null {
+  const file = ctx.configCache.load<{ venues: Array<{ id: string; access?: VenueGate }> }>(
+    'venues',
+  );
+  return file.venues.find((v) => v.id === venueId)?.access ?? null;
+}
+
 export interface VenueAccessRow {
   readonly venueId: string;
   readonly allowed: boolean;
   readonly reasonCode: string | null;
   readonly requiredNetWorthCents: number | null;
+  /** Home kinds whose residents enter without the net worth ([] if none). */
+  readonly orHomeKinds: readonly string[];
   readonly netWorthCents: number;
   readonly membershipRequired: boolean;
   readonly isMember: boolean;
@@ -431,7 +455,9 @@ export interface VenueAccessRow {
 /**
  * Whether the caller may enter a gated venue, and why not.
  *
- * dubai_marina is net-worth gated, cabal_lounge needs membership and
+ * The gate comes from venues.json `access`: dubai_marina and yacht_club are
+ * net-worth gated, penthouse_row too unless the player lives there (a live
+ * penthouse or marina_villa home), cabal_lounge needs membership and
  * sybil_barn is only for jailed players. Everything else is open. The
  * client calls this before joinOrCreate so it can explain a refusal
  * instead of failing the join blind.
@@ -445,6 +471,8 @@ export async function getVenueAccess(
   userId: string,
   venueId: string,
 ): Promise<VenueAccessRow> {
+  const gate = venueGate(ctx, venueId);
+  const homeKinds = gate?.gate === 'net_worth' ? (gate.orHomeKinds ?? []) : [];
   const state = await ctx.db.withConnection(async (c) => {
     const bal = await c.query<BalanceRow>(
       'SELECT cash_cents, debt_cents FROM balances WHERE user_id = $1',
@@ -458,10 +486,21 @@ export async function getVenueAccess(
         LIMIT 1`,
       [userId],
     );
+    const home =
+      homeKinds.length === 0
+        ? null
+        : await c.query<{ home_id: string }>(
+            `SELECT home_id FROM homes
+              WHERE owner_user_id = $1 AND kind = ANY($2::text[])
+                AND status IN ('active', 'overdue')
+              LIMIT 1`,
+            [userId, homeKinds],
+          );
     return {
       netWorth: Number(bal.rows[0]?.cash_cents ?? '0') - Number(bal.rows[0]?.debt_cents ?? '0'),
       jailed,
       isMember: (member.rowCount ?? 0) > 0,
+      resident: (home?.rowCount ?? 0) > 0,
     };
   });
 
@@ -473,6 +512,7 @@ export async function getVenueAccess(
     careerAreas,
     netWorthCents: state.netWorth,
     requiredNetWorthCents: null as number | null,
+    orHomeKinds: [] as readonly string[],
     membershipRequired: false,
     isMember: state.isMember,
   };
@@ -480,31 +520,36 @@ export async function getVenueAccess(
   if (custody && venueId !== JAIL_VENUE_ID) {
     return { ...base, allowed: false, reasonCode: 'JAILED' };
   }
-  if (venueId === 'dubai_marina') {
-    const allowed = state.netWorth >= MARINA_GATE_CENTS;
-    return {
-      ...base,
-      requiredNetWorthCents: MARINA_GATE_CENTS,
-      allowed,
-      reasonCode: allowed ? null : 'NET_WORTH_TOO_LOW',
-    };
+  if (gate === null) return { ...base, allowed: true, reasonCode: null };
+  switch (gate.gate) {
+    case 'net_worth': {
+      const required = gate.minNetWorthCents ?? MARINA_GATE_CENTS;
+      const allowed = state.netWorth >= required || state.resident;
+      return {
+        ...base,
+        requiredNetWorthCents: required,
+        orHomeKinds: homeKinds,
+        allowed,
+        reasonCode: allowed ? null : 'NET_WORTH_TOO_LOW',
+      };
+    }
+    case 'membership':
+      return {
+        ...base,
+        membershipRequired: true,
+        allowed: state.isMember,
+        reasonCode: state.isMember ? null : 'NOT_A_MEMBER',
+      };
+    case 'jailed':
+      return {
+        ...base,
+        allowed: state.jailed,
+        reasonCode: state.jailed ? null : 'NOT_JAILED',
+      };
+    default:
+      // A gate this server does not know stays shut rather than open.
+      return { ...base, allowed: false, reasonCode: 'VENUE_GATED' };
   }
-  if (venueId === 'cabal_lounge') {
-    return {
-      ...base,
-      membershipRequired: true,
-      allowed: state.isMember,
-      reasonCode: state.isMember ? null : 'NOT_A_MEMBER',
-    };
-  }
-  if (venueId === 'sybil_barn') {
-    return {
-      ...base,
-      allowed: state.jailed,
-      reasonCode: state.jailed ? null : 'NOT_JAILED',
-    };
-  }
-  return { ...base, allowed: true, reasonCode: null };
 }
 
 export interface CabalMembershipRow {
