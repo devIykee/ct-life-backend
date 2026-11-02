@@ -578,6 +578,16 @@
       "code": "TRAVEL_NOT_ARRIVED",
       "httpStatus": 425,
       "message": "The ride has not arrived yet."
+    },
+    {
+      "code": "NEEDS_HELIPAD",
+      "httpStatus": 403,
+      "message": "Helicopter rides need a home with a helipad."
+    },
+    {
+      "code": "TRAVEL_NOT_AT_PAD",
+      "httpStatus": 409,
+      "message": "The helicopter boards at a helipad. Walk to your home pad or a public pad first."
     }
   ]
 }

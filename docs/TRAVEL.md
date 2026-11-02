@@ -79,6 +79,36 @@ A trip ends exactly one way: `arrived` (the ride) or refunded (`cancelled` / `ex
 
 6. App killed mid-ride: `GET /v1/travel/trips/current` returns the open trip to finish or cancel.
 
+## Helicopter (phase 3, capability `travelHeli`)
+
+Off by default. The heli row is quoted and bookable only while both `travel` and `travelHeli` are
+on; with `travelHeli` off the quote has no heli row and `POST /travel/trips {mode: heli}` is
+`503 CAPABILITY_OFF {capability: travelHeli}`. GET /config `travel` gains `heli` (true while on),
+`heliPads`, `homePads`, `heliPadRadiusM`, `heliHomeKinds` and `modes.heli`.
+
+| Setting (`travel.json` 1.1.0) | Default                                        | Meaning                                                                                |
+| ----------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `modes.heli`                  | $150 flat, `10 s + d / 80 m/s`                 | `pickup: pad`; `d` is pad to pad, straight line (no road factor)                       |
+| `heliHomeKinds`               | `penthouse`, `marina_villa`                    | a live (`active` / `overdue`) home of one of these kinds owns a pad and the helicopter |
+| `heliPadRadiusM`              | 15                                             | boarding only within 15 m of a pad (fresh `ctl:pos`)                                   |
+| `heliPads`                    | `pad_mountain`, `pad_marina`, `pad_breakpoint` | the island's three public pads (the plan's `helipads`); every flight lands on one      |
+| `homePads`                    | penthouse, marina villa                        | the pad the client builds beside each pad home; only its owner boards there            |
+
+- Eligibility: no live pad home -> `NEEDS_HELIPAD`.
+- Pickup: the caller's own home pad within the radius first, else the nearest public pad within it;
+  none -> `NOT_AT_PAD` with `stop {id, x, z, distanceM}` = the nearest pad the caller may use.
+- Landing: the public pad nearest the destination door (never a home pad, never a venue), at the
+  pad centre facing the door: the heli row's own `arrival`. Standing on that pad -> `TOO_CLOSE`.
+- Booking runs in the same locked transaction as bus and taxi and re-checks the live pad home
+  (`403 NEEDS_HELIPAD`, also when the quoted home pad belongs to a kind no longer owned) and that
+  the caller stands within the radius of the quoted pickup pad (`409 TRAVEL_NOT_AT_PAD`), plus jail,
+  Barn, cooldown and cash. The trip's `origin` is the pickup pad, `arrival` the landing pad,
+  `pickup {id, x, z}`; the ticket and the street-room arrival place the player on the landing pad
+  (pads are in the street rooms of their districts). Cancel, arrival and sweep follow the same
+  ride-XOR-refund rules as every trip. The trip row stores the pickup pad id in `pickup_stop_id`.
+- From the landing pad the player walks to the door (up to a few hundred metres downtown: the
+  public pads are outside the city centre).
+
 ## Known gaps
 
 - Every venue in `contract/ids/districts.json` 1.1.0 is served (the Builder Hills west tab covers
