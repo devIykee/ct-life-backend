@@ -249,6 +249,8 @@ export const RejectedMessage = z.object({
     'JAILED',
     'VEHICLE_NOT_STEALABLE',
     'STEAL_REQUIRED',
+    'VEHICLE_KIND_NOT_ALLOWED',
+    'VEHICLE_NOT_REGISTRABLE',
   ]),
 });
 export type RejectedMessage = z.infer<typeof RejectedMessage>;

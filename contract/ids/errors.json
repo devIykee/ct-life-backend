@@ -197,7 +197,17 @@
     {
       "code": "NOT_ENTITLED",
       "httpStatus": 403,
-      "message": "The player does not own the entitlement this needs (e.g. vehicle.hovercar for the roadstar)."
+      "message": "The player does not own the entitlement this needs (e.g. vehicle.hovercar for the roadstar or the drone)."
+    },
+    {
+      "code": "VEHICLE_KIND_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "Realtime: no client may register a vehicle of this kind (e.g. a helicopter), or an NPC traffic car of a non-street kind."
+    },
+    {
+      "code": "VEHICLE_NOT_REGISTRABLE",
+      "httpStatus": 403,
+      "message": "Realtime: no such parked car at that spot (the id must name a decor car in contract/ids/parked_cars.json, with a kind it parks, reported where it stands)."
     },
     {
       "code": "NO_FREE_UNIT",
