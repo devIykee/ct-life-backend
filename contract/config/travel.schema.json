@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "travel.json",
-  "description": "Map Travel fares, ride times, limits and bus stops (docs/TRAVEL.md).",
+  "description": "Map Travel fares, ride times, limits, bus stops and helipads (docs/TRAVEL.md).",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,11 @@
     "walk",
     "busStopRadiusM",
     "modes",
-    "busStops"
+    "busStops",
+    "heliPadRadiusM",
+    "heliHomeKinds",
+    "heliPads",
+    "homePads"
   ],
   "properties": {
     "version": {
@@ -86,7 +90,7 @@
     "modes": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["bus", "taxi"],
+      "required": ["bus", "taxi", "heli"],
       "properties": {
         "bus": {
           "type": "object",
@@ -131,7 +135,7 @@
               "minimum": 0
             },
             "pickup": {
-              "enum": ["stop", "anywhere"]
+              "enum": ["stop", "anywhere", "pad"]
             }
           }
         },
@@ -181,6 +185,53 @@
               "enum": ["stop", "anywhere"]
             }
           }
+        },
+        "heli": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "baseCents",
+            "perHundredMCents",
+            "minCents",
+            "capCents",
+            "baseSec",
+            "speedMps",
+            "unlockNetWorthCents",
+            "pickup"
+          ],
+          "properties": {
+            "baseCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "perHundredMCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "minCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "capCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "baseSec": {
+              "type": "number",
+              "minimum": 0
+            },
+            "speedMps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "unlockNetWorthCents": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pickup": {
+              "enum": ["stop", "anywhere", "pad"]
+            }
+          }
         }
       }
     },
@@ -214,6 +265,67 @@
             "enum": ["baked", "kit"]
           }
         }
+      }
+    },
+    "heliPadRadiusM": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "heliHomeKinds": {
+      "type": "array",
+      "items": {
+        "enum": ["parents_basement", "hacker_house", "studio", "penthouse", "marina_villa"]
+      },
+      "uniqueItems": true
+    },
+    "heliPads": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "district", "x", "z"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "district": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "z": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    "homePads": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "district", "x", "z"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9_]+$"
+          },
+          "district": {
+            "type": "string"
+          },
+          "x": {
+            "type": "number"
+          },
+          "z": {
+            "type": "number"
+          }
+        }
+      },
+      "propertyNames": {
+        "enum": ["parents_basement", "hacker_house", "studio", "penthouse", "marina_villa"]
       }
     }
   }

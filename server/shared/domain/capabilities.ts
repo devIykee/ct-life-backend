@@ -52,6 +52,8 @@ export const CAPABILITY_FEATURES = [
   // server-side yet; closing the teleport is Map Travel phase 2.
   'travel',
   'travelInstantGoOff',
+  // Map Travel phase 3: the helicopter mode (needs `travel` too; docs/TRAVEL.md).
+  'travelHeli',
 ] as const;
 
 /**
