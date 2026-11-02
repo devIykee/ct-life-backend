@@ -1,3 +1,12 @@
+## 2026-11-02 - travel.json 1.2.1: bus stops on walkable ground, at their shelters
+
+No migration. Config only (Map Travel, capability `travel`). Found by the frontend's world smoke test (docs/progress/world-smoke-test.md in the frontend repo).
+
+- `contract/config/travel.json` `version` 1.2.0 -> 1.2.1. The schema is unchanged.
+- `stop_mountain` moves from (x -85.33, z 384.68) to (x -87.3, z 385.4). The mountain road has no sidewalk, so the old point was on the verge, 2.1 m off the walkable NavMesh. NPCs could not path to it. Its yaw is unchanged.
+- The two islandgen-built shelter stops move to where the shelters stand on the current island: `stop_timeline_shelter1` (252.45, 51.06, yaw 189.5) -> (263.55, 49.96, yaw 181.5) and `stop_airdrop_farm_shelter2` (435.28, 64.62, yaw 358.3) -> (431.39, 64.47, yaw 357.3). The old points were 11.2 m and 3.9 m from them.
+- Every stop stays in its district's street room: `stop_mountain` is inside the polygon, and the two shelters are 19.2 m and 24.2 m outside it, within the 30 m street border (`STREET_BORDER_M`). `GET /config` `travel.busStops` returns the new points. The bus picks up within `busStopRadiusM` of them.
+
 ## 2026-11-02 - travel.json 1.2.0: two downtown helipads
 
 No migration. Config only; behind `travelHeli` (off).
