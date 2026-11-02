@@ -86,13 +86,13 @@ on; with `travelHeli` off the quote has no heli row and `POST /travel/trips {mod
 `503 CAPABILITY_OFF {capability: travelHeli}`. GET /config `travel` gains `heli` (true while on),
 `heliPads`, `homePads`, `heliPadRadiusM`, `heliHomeKinds` and `modes.heli`.
 
-| Setting (`travel.json` 1.1.0) | Default                                        | Meaning                                                                                |
-| ----------------------------- | ---------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `modes.heli`                  | $150 flat, `10 s + d / 80 m/s`                 | `pickup: pad`; `d` is pad to pad, straight line (no road factor)                       |
-| `heliHomeKinds`               | `penthouse`, `marina_villa`                    | a live (`active` / `overdue`) home of one of these kinds owns a pad and the helicopter |
-| `heliPadRadiusM`              | 15                                             | boarding only within 15 m of a pad (fresh `ctl:pos`)                                   |
-| `heliPads`                    | `pad_mountain`, `pad_marina`, `pad_breakpoint` | the island's three public pads (the plan's `helipads`); every flight lands on one      |
-| `homePads`                    | penthouse, marina villa                        | the pad the client builds beside each pad home; only its owner boards there            |
+| Setting (`travel.json` 1.2.0) | Default                                                                             | Meaning                                                                                                                                  |
+| ----------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `modes.heli`                  | $150 flat, `10 s + d / 80 m/s`                                                      | `pickup: pad`; `d` is pad to pad, straight line (no road factor)                                                                         |
+| `heliHomeKinds`               | `penthouse`, `marina_villa`                                                         | a live (`active` / `overdue`) home of one of these kinds owns a pad and the helicopter                                                   |
+| `heliPadRadiusM`              | 15                                                                                  | boarding only within 15 m of a pad (fresh `ctl:pos`)                                                                                     |
+| `heliPads`                    | `pad_mountain`, `pad_marina`, `pad_breakpoint`, `pad_genesis_park`, `pad_boardwalk` | the island plan's three helipads plus two downtown pads (Genesis Park's lawn; the boardwalk south of CT Jail); every flight lands on one |
+| `homePads`                    | penthouse, marina villa                                                             | the pad the client builds beside each pad home; only its owner boards there                                                              |
 
 - Eligibility: no live pad home -> `NEEDS_HELIPAD`.
 - Pickup: the caller's own home pad within the radius first, else the nearest public pad within it;
@@ -106,8 +106,11 @@ on; with `travelHeli` off the quote has no heli row and `POST /travel/trips {mod
   `pickup {id, x, z}`; the ticket and the street-room arrival place the player on the landing pad
   (pads are in the street rooms of their districts). Cancel, arrival and sweep follow the same
   ride-XOR-refund rules as every trip. The trip row stores the pickup pad id in `pickup_stop_id`.
-- From the landing pad the player walks to the door (up to a few hundred metres downtown: the
-  public pads are outside the city centre).
+- From the landing pad the player walks to the door. The downtown pads keep that short for the
+  timeline venues: Times Square 82 m, Discord Heights 113 m, Spaces Studio 123 m (via
+  `pad_genesis_park`) and CT Jail 132 m (via `pad_boardwalk`). One pad cannot serve all four:
+  Spaces Studio and CT Jail are 252 m apart. Elsewhere it is up to a few hundred metres (Trenches
+  venues about 370 to 460 m, via `pad_boardwalk`).
 
 ## Known gaps
 

@@ -134,6 +134,27 @@ describe('helicopter config', () => {
 });
 
 describe('helicopter quote', () => {
+  it.each([
+    ['timeline_square', 'pad_genesis_park', 82],
+    ['spaces_studio', 'pad_genesis_park', 123],
+    ['discord_heights', 'pad_genesis_park', 113],
+    ['ct_jail', 'pad_boardwalk', 132],
+  ])(
+    'lands downtown flights close: %s on %s (~%i m from the door)',
+    async (venue, padId, metres) => {
+      const u = await newUser(1_000_000, 'penthouse');
+      await standAt(u, HOME_PH.x, HOME_PH.z);
+      const h = heliRow((await quoteTravel(ctx, u, venue)).modes)!;
+      const landing = pad(padId);
+      expect(h.available).toBe(true);
+      expect(h.arrival).toMatchObject({ x: landing.x, z: landing.z, district: landing.district });
+      const door = getIslandGeometry().venues![venue]!.door;
+      const d = Math.hypot(door[0] - landing.x, door[1] - landing.z);
+      expect(d).toBeLessThanOrEqual(150);
+      expect(Math.round(d)).toBe(metres);
+    },
+  );
+
   it('needs a pad home: a non-owner on a public pad gets NEEDS_HELIPAD', async () => {
     const u = await newUser(1_000_000);
     await standAt(u, BREAKPOINT.x, BREAKPOINT.z);

@@ -1,3 +1,11 @@
+## 2026-11-02 - travel.json 1.2.0: two downtown helipads
+
+No migration. Config only; behind `travelHeli` (off).
+
+- `contract/config/travel.json` `version` 1.1.0 -> 1.2.0. `heliPads` gains `pad_genesis_park` (timeline, x 24.0, z 66.0, Genesis Park's open lawn) and `pad_boardwalk` (boardwalk, x 67.0, z -233.0, the boardwalk south of CT Jail). Both are inside the street room of their district. The schema is unchanged.
+- Flights still land on the public pad nearest the destination door, so downtown flights now land within 150 m of it: Times Square 82 m, Discord Heights 113 m, Spaces Studio 123 m (pad_genesis_park), CT Jail 132 m (pad_boardwalk). They used to land at pad_breakpoint, 262 to 513 m away. Trenches venues and the Prediction Pit now land at pad_boardwalk; Audit Row, VC Row and the Ore Refinery at pad_genesis_park.
+- `GET /config` `travel.heliPads` lists five pads.
+
 ## 2026-11-02 - Map Travel phase 3: helicopter rides for pad homes (capability travelHeli)
 
 Migration 145 (`travel_trips.mode` accepts `heli`). Additive; dark behind the new capability `travelHeli` (off; it also needs `travel`). See docs/TRAVEL.md "Helicopter".
