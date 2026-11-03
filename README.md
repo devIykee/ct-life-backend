@@ -375,6 +375,11 @@ ct-life-backend/
 | `TEST_SCHEMA`                     | Schema name used by tests                                                                                                                                                                        |
 | `RUN_MAINNET_TESTS`               | `1` runs the read-only mainnet tests (off by default)                                                                                                                                            |
 
+Weekly rent tuning: `SKIP_RENT_FOR_INACTIVE` defaults to `false`; only the exact
+value `true` enables skipping rent for inactive players. When enabled,
+`RENT_INACTIVE_DAYS_THRESHOLD` is the inactivity threshold in whole days (default
+`7`). These example defaults do not enable the feature in a deployment.
+
 #### Street voice (docs/STREET-VOICE.md)
 
 | Variable                                | Purpose                                                                       |
