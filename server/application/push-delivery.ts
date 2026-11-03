@@ -18,8 +18,9 @@
  * Only FCM tokens (android and web devices) are reachable; an iOS device holding only an
  * APNs token is skipped. A token FCM reports as UNREGISTERED is disabled in `push_devices`.
  *
- * Every payload carries `type` and `deep_link` in the FCM `data` map, so a tap opens the
- * right screen (e.g. `ctlife://quests`).
+ * Every payload carries `type`, `deep_link`, and the server-selected `recipient_id` in
+ * the FCM `data` map. Browser workers can reject queued messages for a signed-out account
+ * before displaying them; a tap still opens the same screen (e.g. `ctlife://quests`).
  */
 import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -389,7 +390,7 @@ export async function sendPush(
         token: d.fcm_token,
         title: msg.title,
         body: msg.body,
-        data: { type, deep_link: msg.deepLink },
+        data: { type, deep_link: msg.deepLink, recipient_id: userId },
       });
       if (res.ok) {
         delivered = true;

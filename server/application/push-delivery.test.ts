@@ -106,7 +106,7 @@ describe('push is off until configured', () => {
 });
 
 describe('gates', () => {
-  it("sends to the player's FCM device with type and deep_link in the data map", async () => {
+  it("sends to the player's FCM device with recipient_id, type and deep_link in the data map", async () => {
     const u = await newUser();
     const { transport, send } = fakeTransport();
     const out = await sendPush(ctx, u.id, 'streak_ending', MSG, {
@@ -119,7 +119,7 @@ describe('gates', () => {
       token: u.token,
       title: 'T',
       body: 'B',
-      data: { type: 'streak_ending', deep_link: 'ctlife://quests' },
+      data: { type: 'streak_ending', deep_link: 'ctlife://quests', recipient_id: u.id },
     });
     const row = await pool.query(`SELECT status FROM push_log WHERE user_id = $1`, [u.id]);
     expect(row.rows).toEqual([{ status: 'sent' }]);
@@ -409,7 +409,11 @@ describe('notifications', () => {
     expect(send.mock.calls[0]![0].body).toContain('$123.45');
     expect(await notifyHomeVisit(ctx, a.id, 'home:1', { now, transport })).toBe('sent');
     expect(await notifyHomeVisit(ctx, a.id, 'home:1', { now, transport })).toBe('duplicate'); // once per home per day
-    expect(send.mock.calls[1]![0].data).toEqual({ type: 'home_visit', deep_link: 'ctlife://home' });
+    expect(send.mock.calls[1]![0].data).toEqual({
+      type: 'home_visit',
+      deep_link: 'ctlife://home',
+      recipient_id: a.id,
+    });
     const n = await notifyEventStarting(
       ctx,
       { eventId: `ev-${uuidv7()}`, title: 'Breakpoint' },
