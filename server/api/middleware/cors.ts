@@ -32,6 +32,9 @@ export const CORS_ALLOWED_HEADERS = [
   'X-Client-Platform',
   'X-Client-Build',
   'X-Request-Id',
+  'X-Likeness-Consent-Version',
+  'X-Likeness-Own-Photo',
+  'X-Likeness-Share-With-Provider',
 ] as const;
 
 /** Response headers a browser client may read. */
