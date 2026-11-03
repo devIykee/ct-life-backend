@@ -16,7 +16,36 @@ const PHOTO_HEADERS = [
   'x-likeness-share-with-provider',
 ];
 
-describe('likeness photo browser preflight', () => {
+describe('likeness browser CORS', () => {
+  it('exposes the likeness checksum to the allowed browser without widening origin access', async () => {
+    const app = Fastify();
+    try {
+      await registerCors(app, [WEB]);
+      app.get('/v1/likeness/test/reference', (_request, reply) =>
+        reply.header('X-Content-Sha256', 'a'.repeat(64)).send('synthetic-image'),
+      );
+      const response = await app.inject({
+        method: 'GET',
+        url: '/v1/likeness/test/reference',
+        headers: { origin: WEB },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.headers['access-control-allow-origin']).toBe(WEB);
+      expect(
+        String(response.headers['access-control-expose-headers']).toLowerCase().split(/,\s*/),
+      ).toContain('x-content-sha256');
+      expect(response.headers['x-content-sha256']).toBe('a'.repeat(64));
+      const denied = await app.inject({
+        method: 'GET',
+        url: '/v1/likeness/test/reference',
+        headers: { origin: 'https://attacker.example' },
+      });
+      expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+    } finally {
+      await app.close();
+    }
+  });
+
   it('permits the complete upload header set without invoking an upload', async () => {
     const app = Fastify();
     try {

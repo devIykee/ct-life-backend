@@ -38,7 +38,12 @@ export const CORS_ALLOWED_HEADERS = [
 ] as const;
 
 /** Response headers a browser client may read. */
-export const CORS_EXPOSED_HEADERS = ['ETag', 'Retry-After', 'X-Request-Id'] as const;
+export const CORS_EXPOSED_HEADERS = [
+  'ETag',
+  'Retry-After',
+  'X-Request-Id',
+  'X-Content-Sha256',
+] as const;
 
 export const CORS_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
 
