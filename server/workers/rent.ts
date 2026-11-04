@@ -34,10 +34,7 @@ export const RENT_QUEUE = 'jobs-weekly-rent';
  * RENT_INACTIVE_DAYS_THRESHOLD days (default 7).
  */
 const SKIP_RENT_FOR_INACTIVE = process.env.SKIP_RENT_FOR_INACTIVE === 'true';
-const RENT_INACTIVE_DAYS_THRESHOLD = parseInt(
-  process.env.RENT_INACTIVE_DAYS_THRESHOLD || '7',
-  10,
-);
+const RENT_INACTIVE_DAYS_THRESHOLD = parseInt(process.env.RENT_INACTIVE_DAYS_THRESHOLD || '7', 10);
 
 /**
  * The rent week `now` falls in, as the date of its Monday (UTC), e.g.
@@ -58,7 +55,9 @@ export function rentWeekKey(now: Date): string {
  */
 export async function handleWeeklyRent(_job: Job, ctx: AppContext): Promise<void> {
   const out = await runWeeklyRent(ctx.db);
-  console.info(`[rent] week ${rentWeekKey(new Date())}: debited=${out.debited} debt=${out.debt} skipped=${out.skipped}`);
+  console.info(
+    `[rent] week ${rentWeekKey(new Date())}: debited=${out.debited} debt=${out.debt} skipped=${out.skipped}`,
+  );
 }
 
 /**
@@ -83,8 +82,11 @@ async function isUserInactive(db: Db, userId: string, thresholdDays: number): Pr
     return r.rows[0];
   });
 
+  if (!result) throw new Error('Rent activity query returned no result');
   const lastActivity = new Date(result.last_activity);
-  const daysSinceActivity = Math.floor((Date.now() - lastActivity.getTime()) / (1000 * 60 * 60 * 24));
+  const daysSinceActivity = Math.floor(
+    (Date.now() - lastActivity.getTime()) / (1000 * 60 * 60 * 24),
+  );
   return daysSinceActivity >= thresholdDays;
 }
 
