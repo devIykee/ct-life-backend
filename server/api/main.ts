@@ -12,6 +12,9 @@ import { randomUUID } from 'node:crypto';
 import { buildContext, type AppContext, _resetContextForTests } from '../application/context.js';
 import { toErrorEnvelope, type MappedError } from '../shared/infra/error-envelope.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerWalletLinkRoutes } from './routes/wallet-links.js';
+import { registerEconomyRoutes } from './routes/economy.js';
+import { buildEconomyChain } from '../application/economy-runtime.js';
 import { registerCoreRoutes } from './routes/core.js';
 import { registerSocialRoutes } from './routes/social.js';
 import { registerModerationRoutes } from './routes/moderation.js';
@@ -185,6 +188,8 @@ export async function buildServer(): Promise<ServerHandle> {
   registerBankRoutes(app);
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
+  registerWalletLinkRoutes(app);
+  registerEconomyRoutes(app, buildEconomyChain(ctx.config));
   registerShopRoutes(app);
   registerEventRoutes(app);
   registerCasinoRoutes(app);

@@ -92,6 +92,592 @@ security:
   - bearerAuth: []
 
 paths:
+  /economy/catalog:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getEconomyCatalog',
+          'summary': 'List explicitly priced and active native-asset offers',
+          'security': [{ 'bearerAuth': [] }],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Offers; empty until merchant terms are configured',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['offers'],
+                              'properties':
+                                {
+                                  'offers':
+                                    {
+                                      'type': 'array',
+                                      'items': { '$ref': '#/components/schemas/EconomyOffer' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'createEconomyOrder',
+          'summary': 'Snapshot price, payer, recipient and delivery terms',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['offerId', 'walletLinkId'],
+                          'properties':
+                            {
+                              'offerId': { 'type': 'string', 'format': 'uuid' },
+                              'walletLinkId': { 'type': 'string', 'format': 'uuid' },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getEconomyOrder',
+          'summary': 'Read order and reconcile one durable pending attempt',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+            ],
+          'description': 'Reconciles one pending transaction without signing or broadcasting. Per-player limit: burst 5, refill one request per 2 seconds. A permanent bad reference does not block later attempts.',
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/payment-request:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'prepareEconomyPayment',
+          'summary': 'Prepare the exact unsigned native payment',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Narrow wallet request; preparation never signs or sends funds',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyPaymentRequest' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/payment:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'recordEconomyPayment',
+          'summary': 'Verify a submitted payment and deliver once',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['transactionId'],
+                          'properties': { 'transactionId': { 'type': 'string', 'maxLength': 200 } },
+                        },
+                    },
+                },
+            },
+          'description': 'Finalized exact-price transfers only. Pending remains awaiting_payment. Cancelled or late incoming money becomes refund_due. Additional exact-price transfers create separate refundDueReceiptIds even after fulfilment. Wrong-amount transfers require operator investigation.',
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/cancel:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'cancelEconomyOrder',
+          'summary': 'Cancel an unpaid order without discarding incoming-money obligations',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': [],
+                          'properties': {},
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/refund:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'recordEconomyRefund',
+          'summary': 'Verify an already-sent merchant refund',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'description': 'Does not send money. Verifies merchant-to-original-payer transfer and allocates it to the oldest outstanding exact-price receipt. Every chain event can be consumed only once.',
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['transactionId'],
+                          'properties': { 'transactionId': { 'type': 'string', 'maxLength': 200 } },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getWalletLinks',
+          'summary': 'List verified player wallet identities',
+          'security': [{ 'bearerAuth': [] }],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Identity proofs grant no spending authority',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['links'],
+                              'properties':
+                                {
+                                  'links':
+                                    {
+                                      'type': 'array',
+                                      'items': { '$ref': '#/components/schemas/EconomyWalletLink' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links/challenges:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'issueWalletLinkChallenge',
+          'summary': 'Issue a five-minute domain-bound wallet proof challenge',
+          'security': [{ 'bearerAuth': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['network', 'address'],
+                          'properties':
+                            {
+                              'network': { '$ref': '#/components/schemas/EconomyNetwork' },
+                              'address': { 'type': 'string', 'minLength': 2, 'maxLength': 128 },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Exact message to sign; NEAR includes NEP-413 payload',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyWalletChallenge' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links/verify:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'verifyWalletLink',
+          'summary': 'Consume a wallet proof once and bind it to this player',
+          'security': [{ 'bearerAuth': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['challengeId', 'signature'],
+                          'properties':
+                            {
+                              'challengeId': { 'type': 'string', 'format': 'uuid' },
+                              'signature': { 'type': 'string', 'minLength': 1, 'maxLength': 256 },
+                              'publicKey': { 'type': 'string', 'maxLength': 64 },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Verified ownership; no allowance or spend session',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['link'],
+                              'properties':
+                                { 'link': { '$ref': '#/components/schemas/EconomyWalletLink' } },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links/{id}:
+    {
+      'delete':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'revokeWalletLink',
+          'summary': 'Revoke a link without transferring ownership to another player',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+            ],
+          'responses':
+            {
+              '204': { 'description': 'Revoked' },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
   /likeness:
     get:
       tags: [player]
@@ -10354,6 +10940,322 @@ components:
                 },
             }
   schemas:
+    EconomyNetwork:
+      {
+        'type': 'string',
+        'enum': ['eip155:4663', 'near:mainnet', 'solana:mainnet'],
+        'description': 'Internal network identifiers; Solana value is not a CAIP-2 claim.',
+      }
+    EconomyAsset:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['chainId', 'assetId', 'symbol', 'decimals'],
+        'properties':
+          {
+            'chainId': { '$ref': '#/components/schemas/EconomyNetwork' },
+            'assetId': { 'type': 'string' },
+            'symbol': { 'type': 'string', 'enum': ['WIF', 'NEAR', 'SOL', 'ORE'] },
+            'decimals': { 'type': 'integer', 'enum': [18, 24, 9, 11] },
+          },
+      }
+    EconomyFulfilment:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['kind', 'itemId'],
+        'properties':
+          {
+            'kind': { 'type': 'string', 'const': 'cosmetic' },
+            'itemId': { 'type': 'string', 'format': 'uuid' },
+          },
+      }
+    EconomyOffer:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          ['offerId', 'title', 'asset', 'amount', 'recipient', 'termsVersion', 'fulfilment'],
+        'properties':
+          {
+            'offerId': { 'type': 'string', 'format': 'uuid' },
+            'title': { 'type': 'string' },
+            'asset': { '$ref': '#/components/schemas/EconomyAsset' },
+            'amount': { 'type': 'string', 'pattern': '^[1-9][0-9]{0,77}$' },
+            'recipient': { 'type': 'string' },
+            'termsVersion': { 'type': 'string' },
+            'fulfilment': { '$ref': '#/components/schemas/EconomyFulfilment' },
+          },
+      }
+    EconomyOrder:
+      {
+        'type': 'object',
+        'required':
+          [
+            'orderId',
+            'offerId',
+            'userId',
+            'walletLinkId',
+            'asset',
+            'payer',
+            'recipient',
+            'amount',
+            'termsVersion',
+            'fulfilment',
+            'status',
+            'createdAt',
+            'expiresAt',
+            'refundDueReceiptIds',
+            'paymentReceipts',
+          ],
+        'properties':
+          {
+            'orderId': { 'type': 'string', 'format': 'uuid' },
+            'offerId': { 'type': 'string', 'format': 'uuid' },
+            'userId': { 'type': 'string', 'format': 'uuid' },
+            'walletLinkId': { 'type': 'string', 'format': 'uuid' },
+            'asset': { '$ref': '#/components/schemas/EconomyAsset' },
+            'payer': { 'type': 'string' },
+            'recipient': { 'type': 'string' },
+            'amount': { 'type': 'string', 'pattern': '^[1-9][0-9]{0,77}$' },
+            'termsVersion': { 'type': 'string' },
+            'fulfilment': { '$ref': '#/components/schemas/EconomyFulfilment' },
+            'status':
+              {
+                'type': 'string',
+                'enum':
+                  [
+                    'awaiting_payment',
+                    'cancelled',
+                    'expired',
+                    'paid',
+                    'fulfilled',
+                    'refund_due',
+                    'refunded',
+                  ],
+              },
+            'createdAt': { 'type': 'string', 'format': 'date-time' },
+            'expiresAt': { 'type': 'string', 'format': 'date-time' },
+            'paymentTransactionId': { 'type': 'string' },
+            'refundTransactionId': { 'type': 'string' },
+            'refundDueReceiptIds':
+              { 'type': 'array', 'items': { 'type': 'string', 'format': 'uuid' } },
+            'paymentReceipts':
+              {
+                'type': 'array',
+                'items': { '$ref': '#/components/schemas/EconomyPaymentReceipt' },
+              },
+          },
+      }
+    EconomyPaymentReceipt:
+      type: object
+      required: [receiptId, transactionId, disposition]
+      properties:
+        receiptId: { type: string, format: uuid }
+        transactionId: { type: string }
+        disposition: { type: string, enum: [applied, refund_due, refunded] }
+      description: Verified incoming payment only. A pending POST 200 is not acknowledgement; match the exact retained transactionId here before clearing recovery state.
+    EconomyPaymentRequest:
+      {
+        'oneOf':
+          [
+            {
+              'type': 'object',
+              'additionalProperties': false,
+              'required': ['kind', 'chainId', 'transactionBase64'],
+              'properties':
+                {
+                  'kind': { 'const': 'solana' },
+                  'chainId': { 'const': 'solana:mainnet' },
+                  'transactionBase64': { 'type': 'string' },
+                },
+            },
+            {
+              'type': 'object',
+              'additionalProperties': false,
+              'required': ['kind', 'chainId', 'transaction'],
+              'properties':
+                {
+                  'kind': { 'const': 'evm' },
+                  'chainId': { 'const': 'eip155:4663' },
+                  'transaction':
+                    {
+                      'type': 'object',
+                      'additionalProperties': false,
+                      'required': ['from', 'to', 'data', 'value', 'chainId'],
+                      'properties':
+                        {
+                          'from': { 'type': 'string' },
+                          'to': { 'type': 'string' },
+                          'data': { 'type': 'string' },
+                          'value': { 'type': 'string', 'const': '0x0' },
+                          'chainId': { 'type': 'string', 'const': '0x1237' },
+                        },
+                    },
+                },
+            },
+            {
+              'type': 'object',
+              'additionalProperties': false,
+              'required': ['kind', 'chainId', 'signerId', 'receiverId', 'actions'],
+              'properties':
+                {
+                  'kind': { 'const': 'near' },
+                  'chainId': { 'const': 'near:mainnet' },
+                  'signerId': { 'type': 'string' },
+                  'receiverId': { 'type': 'string' },
+                  'actions':
+                    {
+                      'type': 'array',
+                      'minItems': 1,
+                      'maxItems': 1,
+                      'items':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['type', 'params'],
+                          'properties':
+                            {
+                              'type': { 'const': 'Transfer' },
+                              'params':
+                                {
+                                  'type': 'object',
+                                  'additionalProperties': false,
+                                  'required': ['deposit'],
+                                  'properties':
+                                    {
+                                      'deposit':
+                                        { 'type': 'string', 'pattern': '^[1-9][0-9]{0,38}$' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+          ],
+      }
+    EconomyWalletLink:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          ['id', 'userId', 'network', 'address', 'proofScheme', 'verifiedAt', 'spendingAuthorized'],
+        'properties':
+          {
+            'id': { 'type': 'string', 'format': 'uuid' },
+            'userId': { 'type': 'string', 'format': 'uuid' },
+            'network': { '$ref': '#/components/schemas/EconomyNetwork' },
+            'address': { 'type': 'string' },
+            'proofScheme':
+              { 'type': 'string', 'enum': ['eip4361-eoa', 'nep413-ed25519', 'solana-ed25519'] },
+            'verifiedAt': { 'type': 'string', 'format': 'date-time' },
+            'spendingAuthorized': { 'type': 'boolean', 'const': false },
+          },
+      }
+    EconomyWalletChallenge:
+      {
+        'type': 'object',
+        'required': ['id', 'network', 'address', 'message', 'expiresAt'],
+        'properties':
+          {
+            'id': { 'type': 'string', 'format': 'uuid' },
+            'userId': { 'type': 'string', 'format': 'uuid' },
+            'network': { '$ref': '#/components/schemas/EconomyNetwork' },
+            'address': { 'type': 'string' },
+            'proofScheme': { 'type': 'string' },
+            'nonce': { 'type': 'string' },
+            'message': { 'type': 'string' },
+            'domain': { 'type': 'string' },
+            'uri': { 'type': 'string' },
+            'origin': { 'type': ['string', 'null'] },
+            'issuedAt': { 'type': 'string', 'format': 'date-time' },
+            'expiresAt': { 'type': 'string', 'format': 'date-time' },
+            'nearSignMessage':
+              {
+                'type': 'object',
+                'additionalProperties': false,
+                'required': ['message', 'nonceBase64', 'recipient', 'callbackUrl', 'state'],
+                'properties':
+                  {
+                    'message': { 'type': 'string' },
+                    'nonceBase64': { 'type': 'string' },
+                    'recipient': { 'type': 'string' },
+                    'callbackUrl': { 'type': 'string' },
+                    'state': { 'type': 'string' },
+                  },
+              },
+          },
+      }
+    EconomyError:
+      {
+        'type': 'object',
+        'properties':
+          {
+            'error':
+              {
+                'type': 'object',
+                'required': ['code', 'message', 'details'],
+                'properties':
+                  {
+                    'code': { 'type': 'string' },
+                    'message': { 'type': 'string' },
+                    'details': { 'type': 'object' },
+                  },
+              },
+          },
+        'examples':
+          [
+            {
+              'error':
+                {
+                  code: ECONOMY_CONFLICT,
+                  'message': 'The economic action cannot proceed in its current state.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_PRIMARY_REQUIRED,
+                  'message': "Only the player's primary Solana wallet can be linked.",
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_CHALLENGE_INVALID,
+                  'message': 'Wallet-link challenge is missing, expired, consumed or belongs to another player.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_CHALLENGE_LIMIT,
+                  'message': 'Too many pending wallet-link requests. Wait for them to expire.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_PROOF_INVALID,
+                  'message': 'Wallet identity proof could not be verified.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_IDENTITY_CONFLICT,
+                  'message': 'This wallet is already linked to another player.',
+                  'details': {},
+                },
+            },
+          ],
+      }
     FactoryToken:
       type: object
       properties:

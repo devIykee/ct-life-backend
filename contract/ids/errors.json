@@ -5,6 +5,36 @@
   "_note": "Every error code used in the API or realtime protocol. The contract:check tool asserts every code here is referenced in openapi.yaml and every realtime message documents the codes it can return. Add codes here first, then use them.",
   "codes": [
     {
+      "code": "ECONOMY_CONFLICT",
+      "httpStatus": 409,
+      "message": "The economic action cannot proceed in its current state."
+    },
+    {
+      "code": "WALLET_LINK_PRIMARY_REQUIRED",
+      "httpStatus": 409,
+      "message": "Only the player's primary Solana wallet can be linked."
+    },
+    {
+      "code": "WALLET_LINK_CHALLENGE_INVALID",
+      "httpStatus": 401,
+      "message": "Wallet-link challenge is missing, expired, consumed or belongs to another player."
+    },
+    {
+      "code": "WALLET_LINK_CHALLENGE_LIMIT",
+      "httpStatus": 429,
+      "message": "Too many pending wallet-link requests. Wait for them to expire."
+    },
+    {
+      "code": "WALLET_LINK_PROOF_INVALID",
+      "httpStatus": 401,
+      "message": "Wallet identity proof could not be verified."
+    },
+    {
+      "code": "WALLET_LINK_IDENTITY_CONFLICT",
+      "httpStatus": 409,
+      "message": "This wallet is already linked to another player."
+    },
+    {
       "code": "LIKENESS_UNAVAILABLE",
       "httpStatus": 503,
       "message": "Character likeness is not available. No purchase or upload is accepted."

@@ -1,3 +1,14 @@
+## 2026-11-05 - Universal economy foundation
+
+Additive migrations 150 and 151; existing Cash, SIWS and Solana feature endpoints retain their contracts.
+
+- Verified identity links: `GET /me/wallet-links`, `POST /me/wallet-links/challenges`, `POST /me/wallet-links/verify`, `DELETE /me/wallet-links/{id}`. These proofs grant no spending permission. Primary Solana wallet only; EVM EOAs and NEAR Ed25519 FullAccess keys.
+- Native-asset catalog and immutable orders under `/economy`. Initial assets are RH WIF, native NEAR, native SOL and ORE. Prices are positive integer strings with asset-specific limits. No real prices or treasury addresses are seeded.
+- `POST /economy/orders` permanently deduplicates a player UUID key. Payment and refund submissions are naturally idempotent by globally unique chain event; pending responses are never cached as completion. GET reconciles one pending attempt with a separate per-player rate limit.
+- `paymentReceipts` acknowledges the exact verified incoming transaction. A successful HTTP response or an already-fulfilled order alone does not acknowledge an additional submitted transaction. `refundDueReceiptIds` tracks additional exact-price payments independently of the original entitlement.
+- Cancellation and actual late payments retain verified refund obligations. Refund endpoint verifies an already-sent merchant refund; it does not sign or send money. Wrong-amount external transfers remain an operator investigation case.
+- Errors: `ECONOMY_CONFLICT` (409); `WALLET_LINK_PRIMARY_REQUIRED` (409), `WALLET_LINK_CHALLENGE_INVALID` (401), `WALLET_LINK_CHALLENGE_LIMIT` (429), `WALLET_LINK_PROOF_INVALID` (401), `WALLET_LINK_IDENTITY_CONFLICT` (409).
+
 ## 2026-11-01 - Street voice: one proximity room per street instance (capability streetVoice)
 
 No migration. Dark behind the new capability `streetVoice` (off). See docs/STREET-VOICE.md.

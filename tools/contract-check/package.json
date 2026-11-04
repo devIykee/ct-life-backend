@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "pnpm run typecheck",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }
