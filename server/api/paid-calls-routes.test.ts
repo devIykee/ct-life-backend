@@ -4,9 +4,9 @@
  * GET /users/:id; booking builds the fan's tx for the right deposit; funding is
  * verified against the Session account; accept, server-timed end and settle; decline
  * and unanswered calls are refunded by the sweep once the window passes; a live call is
- * ended at its booked minutes. Real DB; no RPC and no keys.
+ * ended at its booked minutes. Real DB; fake escrow chain and media inventory, no provider RPC.
  */
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { Pool } from 'pg';
 import { Keypair } from '@solana/web3.js';
@@ -115,6 +115,7 @@ const fakeChain: EscrowChain = {
 
 let app: Awaited<ReturnType<typeof buildServer>>['app'];
 let stop: (() => Promise<void>) | null = null;
+const mediaRooms: string[] = [];
 
 async function boot(caps: string | undefined): Promise<void> {
   if (caps === undefined) delete process.env.CAPABILITIES_ON;
@@ -124,6 +125,10 @@ async function boot(caps: string | undefined): Promise<void> {
   _resetContextForTests();
   const handle = await buildServer();
   app = handle.app;
+  // Provider absence is explicit fixture state; CI must not depend on a running LiveKit server.
+  const ctx = buildContext();
+  vi.spyOn(ctx.livekit, 'participants').mockResolvedValue([]);
+  vi.spyOn(ctx.livekit, 'endRoom').mockResolvedValue();
   await app.ready();
   stop = handle.stop;
 }
@@ -239,6 +244,13 @@ beforeEach(() => {
 afterEach(async () => {
   if (stop) await stop();
   stop = null;
+  if (mediaRooms.length) {
+    await pool.query('DELETE FROM media_access_grants WHERE room_name=ANY($1::text[])', [
+      mediaRooms,
+    ]);
+    mediaRooms.length = 0;
+  }
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -460,18 +472,22 @@ describe('paid calls and creator mode', () => {
     expect(sent).toContain('settle:180');
   }, 30_000);
 
-  it('a signed LiveKit participant_left ends and settles the live call; unsigned is 400', async () => {
+  it('a signed departure settles only after verified absence; unsigned and unavailable inventory do not', async () => {
     await boot(ON);
     const ctx = buildContext();
     const c = await creator();
     const fan = await devAuth();
     const id = await ringing(fan, c, 3);
     await call(c, 'POST', `/v1/paid-calls/${id}/accept`);
+    mediaRooms.push(`paid_call:${id}`);
+    const grant = await call(c, 'POST', '/v1/rtc/token', { kind: 'paid_call', id });
+    expect(grant.status, JSON.stringify(grant.body)).toBe(200);
+    expect(grant.body.identity).toMatch(/^ct1:/);
     const body = JSON.stringify({
       event: 'participant_left',
       id: `EV_${uuidv7()}`,
       room: { name: `paid_call:${id}` },
-      participant: { identity: c.id },
+      participant: { identity: grant.body.identity, sid: 'PA_departed' },
       createdAt: Math.floor(Date.now() / 1000),
     });
     const unsigned = await app.inject({
@@ -487,10 +503,24 @@ describe('paid calls and creator mode', () => {
       ttl: '5m',
     });
     at.sha256 = createHash('sha256').update(body).digest('base64');
+    const headers = { 'content-type': 'application/webhook+json', authorization: await at.toJwt() };
+    vi.mocked(ctx.livekit.participants).mockRejectedValueOnce(
+      new Error('provider inventory unavailable'),
+    );
+    const unavailable = await app.inject({
+      method: 'POST',
+      url: '/v1/webhooks/livekit',
+      headers,
+      payload: body,
+    });
+    expect(unavailable.statusCode).toBe(500);
+    expect((await call(fan, 'GET', `/v1/paid-calls/${id}`)).body.status).toBe('live');
+    expect(sent.some((operation) => operation.startsWith('settle:'))).toBe(false);
+    // Retry the exact event after inventory recovers; recording a failed attempt must not lose settlement.
     const signed = await app.inject({
       method: 'POST',
       url: '/v1/webhooks/livekit',
-      headers: { 'content-type': 'application/webhook+json', authorization: await at.toJwt() },
+      headers,
       payload: body,
     });
     expect(signed.statusCode, signed.body).toBe(200);
