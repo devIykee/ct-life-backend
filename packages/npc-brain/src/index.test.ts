@@ -8,7 +8,17 @@
 import { describe, it, expect } from 'vitest';
 import { SimulatedClock } from './clock.js';
 import { SeededRng } from './rng.js';
-import { createBrain, type NpcBrain, type TickCtx, type VenueCtx, type NpcEvent } from './index.js';
+import {
+  createBrain,
+  canonicalArchetype,
+  DRESSING_ARCHETYPES,
+  PHASE1_ARCHETYPES,
+  PHASE2_ARCHETYPES,
+  type NpcBrain,
+  type TickCtx,
+  type VenueCtx,
+  type NpcEvent,
+} from './index.js';
 
 const T0 = 1_700_000_000_000;
 
@@ -197,9 +207,9 @@ describe('reproducibility', () => {
   });
 });
 
-describe('vc_npc', () => {
+describe('vc (was vc_npc)', () => {
   it('starts by hunting the richest player', () => {
-    const { brain, ctx } = setup('vc_npc');
+    const { brain, ctx } = setup('vc');
     // Provide a richest player so the brain has someone to follow.
     const ctx2 = (): TickCtx => ({
       ...ctx(),
@@ -211,13 +221,13 @@ describe('vc_npc', () => {
   });
 
   it('falls back to vc_idle when nobody is around', () => {
-    const { brain, ctx } = setup('vc_npc');
+    const { brain, ctx } = setup('vc');
     const out = brain.tick(ctx());
     expect(out.lineId).toBe('vc_idle');
   });
 
   it('queues a vc_dibs line on a launch notify', () => {
-    const { brain, ctx } = setup('vc_npc');
+    const { brain, ctx } = setup('vc');
     brain.notify({ kind: 'launch', coin: 'X', spotId: 'vc_row' }, ctx());
     const out = brain.tick(ctx());
     expect(out.state).toBe('talk');
@@ -225,9 +235,9 @@ describe('vc_npc', () => {
   });
 });
 
-describe('builder_npc', () => {
+describe('doxxed_founder (was builder_npc)', () => {
   it('alternates between wander and talk in its tick loop', () => {
-    const { brain, ctx } = setup('builder_npc');
+    const { brain, ctx } = setup('doxxed_founder');
     const first = brain.tick(ctx());
     expect(['wander', 'talk']).toContain(first.state);
     // After the first tick, dwellUntilMs is set; subsequent ticks
@@ -237,10 +247,108 @@ describe('builder_npc', () => {
   });
 
   it('reacts with a wave emote on a launch notify', () => {
-    const { brain, ctx } = setup('builder_npc');
+    const { brain, ctx } = setup('doxxed_founder');
     const out = brain.notify({ kind: 'launch', coin: 'X', spotId: 'bh' }, ctx());
     expect(out.state).toBe('react');
     expect(out.emoteId).toBe('emote_wave');
     expect(out.lineId).toBe('builder_ship');
+  });
+});
+
+describe('legacy brain ids', () => {
+  it('vc_npc and builder_npc still create brains, under the registry ids', () => {
+    expect(createBrain('vc_npc').archetype).toBe('vc');
+    expect(createBrain('builder_npc').archetype).toBe('doxxed_founder');
+    expect(canonicalArchetype('vc_npc')).toBe('vc');
+    expect(canonicalArchetype('builder_npc')).toBe('doxxed_founder');
+    expect(canonicalArchetype('sleuth')).toBe('sleuth');
+  });
+});
+
+describe('every registry archetype has a brain', () => {
+  it('creates one per id, reporting that id (dressing reports patron)', () => {
+    for (const a of [...PHASE1_ARCHETYPES, ...PHASE2_ARCHETYPES]) {
+      expect(createBrain(a).archetype).toBe(a);
+    }
+    for (const a of DRESSING_ARCHETYPES) expect(createBrain(a).archetype).toBe('patron');
+    expect(PHASE2_ARCHETYPES).toHaveLength(21);
+  });
+});
+
+describe('ambient brain (phase-2 NPCs)', () => {
+  const ambient = PHASE2_ARCHETYPES.filter((a) => a !== 'vc' && a !== 'doxxed_founder');
+
+  function run(
+    archetype: (typeof PHASE2_ARCHETYPES)[number],
+    standSpots: readonly string[],
+    seconds: number,
+  ): ReturnType<NpcBrain['tick']>[] {
+    const clock = new SimulatedClock();
+    clock.set(T0);
+    const rng = new SeededRng(7);
+    const lineIds = [`${archetype}.0`, `${archetype}.3`];
+    const brain = createBrain(archetype, { lineIds });
+    const outs: ReturnType<NpcBrain['tick']>[] = [];
+    for (let s = 0; s < seconds; s++) {
+      clock.set(T0 + s * 1000);
+      outs.push(
+        brain.tick({
+          clock,
+          rng,
+          nowMs: clock.now(),
+          dtMs: 1000,
+          venue: baseVenue({ currentSpotId: null, standSpots }),
+        }),
+      );
+    }
+    return outs;
+  }
+
+  it('talks a line of its own set every 20-40 s, and only lines it was given', () => {
+    for (const a of ambient) {
+      const outs = run(a, ['v.spot_1', 'v.spot_2'], 200);
+      const talkStarts = outs
+        .map((o, i) => ({ o, i }))
+        .filter(({ o, i }) => o.state === 'talk' && (i === 0 || outs[i - 1]!.state !== 'talk'));
+      expect(talkStarts.length, a).toBeGreaterThanOrEqual(4);
+      expect(talkStarts[0]!.i, a).toBeLessThanOrEqual(21);
+      for (let k = 1; k < talkStarts.length; k++) {
+        const gap = talkStarts[k]!.i - talkStarts[k - 1]!.i;
+        expect(gap, a).toBeGreaterThanOrEqual(20);
+        expect(gap, a).toBeLessThanOrEqual(41);
+      }
+      for (const { o } of talkStarts) expect([`${a}.0`, `${a}.3`]).toContain(o.lineId);
+    }
+  });
+
+  it('only walks to the free stand spots it is given, and holds each output for its dwell', () => {
+    const outs = run('chain_tribalist', ['v.spot_1', 'v.spot_2'], 300);
+    const spots = new Set(outs.map((o) => o.targetSpotId));
+    for (const s of spots) expect([null, 'v.spot_1', 'v.spot_2']).toContain(s);
+    expect(outs.some((o) => o.state === 'wander')).toBe(true);
+    // A talk keeps its line on every tick of the talk, not just the first.
+    outs.forEach((o, i) => {
+      if (o.state === 'talk' && i > 0 && outs[i - 1]!.state === 'talk') {
+        expect(o.lineId).toBe(outs[i - 1]!.lineId);
+      }
+    });
+  });
+
+  it('stays home with no free spot, and the AI Agent never wanders', () => {
+    expect(run('drainer', [], 200).every((o) => o.targetSpotId === null)).toBe(true);
+    expect(run('ai_agent', ['v.spot_1'], 200).every((o) => o.state !== 'wander')).toBe(true);
+  });
+
+  it('sends the archetype id as the line when it has no line ids', () => {
+    const clock = new SimulatedClock();
+    clock.set(T0);
+    const brain = createBrain('normie');
+    const rng = new SeededRng(1);
+    let line: string | null = null;
+    for (let s = 0; s < 60 && line === null; s++) {
+      const o = brain.tick({ clock, rng, nowMs: T0 + s * 1000, dtMs: 1000, venue: baseVenue() });
+      if (o.state === 'talk') line = o.lineId;
+    }
+    expect(line).toBe('normie');
   });
 });
