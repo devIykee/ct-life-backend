@@ -17,6 +17,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAuth } from '../middleware/auth.js';
 import { ForbiddenError, ValidationFailedError } from '../../shared/domain/errors.js';
+import { mintMediaGrant } from '../../application/media-access.js';
 import type { RtcKind } from '../../application/livekit.js';
 import { SPACE_TOKEN_TTL_SEC, spaceRtcAccess } from '../../application/spaces.js';
 import { canonicalRoomName } from '../../shared/livekit/token.js';
@@ -111,8 +112,7 @@ export function registerRtcRoutes(app: FastifyInstance): void {
       }
     }
 
-    const result = await req.ctx.livekit.mintRtcToken({
-      userId,
+    const result = await mintMediaGrant(req.ctx, req.user!, {
       kind: kind as RtcKind,
       id,
       canPublish,

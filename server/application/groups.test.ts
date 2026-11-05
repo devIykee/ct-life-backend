@@ -113,10 +113,10 @@ describe('creating and joining (free, invite-only)', () => {
     // Fill to 12 at once: exactly 11 more fit, whatever the timing.
     const others = await Promise.all(Array.from({ length: 13 }, () => player()));
     const results = await Promise.allSettled(others.map((u) => acceptInvite(ctx, u, link.code)));
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(11);
     for (const r of results) {
       if (r.status === 'rejected') expect(r.reason).toBeInstanceOf(ConflictError);
     }
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(11);
     expect((await getGroup(ctx, owner, g.groupId)).memberCount).toBe(12);
   });
 

@@ -175,10 +175,11 @@ function toHolding(ctx: AppContext, a: DasAsset, network: Network): Holding | nu
 
 async function walletOf(ctx: AppContext, userId: string): Promise<string> {
   const r = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string }>(`SELECT wallet FROM users WHERE id = $1`, [userId]),
+    c.query<{ wallet: string | null }>(`SELECT wallet FROM users WHERE id = $1`, [userId]),
   );
   const w = r.rows[0]?.wallet;
-  if (!w) throw new NotFoundError({ resource: 'user', id: userId });
+  if (w === undefined) throw new NotFoundError({ resource: 'user', id: userId });
+  if (!w) throw new ForbiddenError({ reason: 'wallet_required' });
   return w;
 }
 
@@ -491,7 +492,7 @@ export async function recheckFrames(
   maxOwners = 200,
 ): Promise<number> {
   const owners = await ctx.db.withConnection((c) =>
-    c.query<{ owner_user_id: string; wallet: string }>(
+    c.query<{ owner_user_id: string; wallet: string | null }>(
       `SELECT DISTINCT f.owner_user_id, u.wallet
          FROM home_gallery_frames f JOIN users u ON u.id = f.owner_user_id
         WHERE f.checked_at < $1::timestamptz - interval '20 hours'

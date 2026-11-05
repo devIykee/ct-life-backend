@@ -14,6 +14,8 @@
  * `ended`. On `participant_left` we mark the matching
  * voice_speakers row `left_at = now()`.
  */
+import { mediaPlayerId } from '../shared/livekit/identity.js';
+import { isPlayerMediaDeparture } from './media-access.js';
 import { WebhookReceiver } from 'livekit-server-sdk';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import { ValidationFailedError } from '../shared/domain/errors.js';
@@ -112,12 +114,13 @@ export async function applyLiveKitEvent(
   } else if (event.event === 'participant_left') {
     const roomName = event.room?.name;
     const identity = event.participant?.identity;
-    if (roomName && identity) {
+    const player = identity ? mediaPlayerId(identity) : null;
+    if (roomName && player && identity && (await isPlayerMediaDeparture(ctx, roomName, identity))) {
       await ctx.db.withConnection(async (c) => {
         await c.query(
           `UPDATE voice_speakers SET left_at = now()
            WHERE room_id = $1 AND user_id = $2 AND left_at IS NULL`,
-          [roomName, identity],
+          [roomName, player],
         );
       });
     }

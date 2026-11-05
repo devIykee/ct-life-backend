@@ -8,8 +8,7 @@
 import { Room, Client } from 'colyseus';
 import { MapSchema } from '@colyseus/schema';
 import { MarketState, CoinState } from '../../../contract/realtime/states.js';
-import { createJwtIssuer } from '../../shared/auth/jwt.js';
-import { loadConfig } from '../../shared/config/config.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { listMarketCoins } from '../../application/world-pulse.js';
 import { BanGuard } from '../ban-guard.js';
 
@@ -83,22 +82,10 @@ export class MarketRoom extends Room {
    * B5 fix: Verify JWT token before allowing join
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    const tokenStr = String((options as { token?: string })?.token ?? '');
-    // Reject if no token provided and not in dev mode
-    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
-      throw new Error('AUTH_REQUIRED');
-    }
-    // Verify the token
-    if (tokenStr !== '') {
-      try {
-        const jwtIssuer = createJwtIssuer();
-        const claims = await jwtIssuer.verifyAccess(tokenStr);
-        this.ban.track(client, claims.sub ?? '');
-        await this.ban.confirm(claims.sub ?? '');
-      } catch (err) {
-        if ((err as Error).message === 'ACCOUNT_BANNED') throw err;
-        throw new Error('INVALID_TOKEN', { cause: err });
-      }
+    const identity = await authenticateJoinIdentity(options, '');
+    if (identity.userId !== '') {
+      this.ban.track(client, identity);
+      await this.ban.confirm(client);
     }
   }
 

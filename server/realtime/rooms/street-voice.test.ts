@@ -11,7 +11,13 @@ import { streetMembersKey } from '../street-presence.js';
 
 vi.mock('../player.js', async (orig) => {
   const real = await orig<typeof import('../player.js')>();
-  return { ...real, authenticateJoin: async (o: { userId: string }) => o.userId };
+  return {
+    ...real,
+    authenticateJoinIdentity: async (o: { userId: string }) => ({
+      userId: o.userId,
+      credential: null,
+    }),
+  };
 });
 
 const { StreetRoom } = await import('./street.js');

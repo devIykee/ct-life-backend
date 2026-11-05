@@ -399,7 +399,7 @@ async function loadMe(req: import('fastify').FastifyRequest, userId: string) {
     // One round trip: characters, needs, skills and balances are each at most one row per user.
     const r = await c.query<{
       id: string;
-      wallet: string;
+      wallet: string | null;
       is_seeker: boolean;
       skr_name: string | null;
       is_sybil_jailed: boolean;

@@ -310,10 +310,13 @@ describe('POST /v1/rtc/token (proximity, street voice on)', () => {
       const remove = vi.spyOn(ctx.livekit, 'removeParticipant').mockResolvedValue(undefined);
       try {
         await markStreetJoin(presence, 'timeline', id, a.sub);
+        const issued = await token(api, a, `timeline:${id}`);
+        expect(issued.status).toBe(200);
+        const mediaIdentity = issued.body.identity as string;
         const member = await webhook({
           event: 'participant_joined',
           room: { name: room },
-          participant: { identity: a.sub, sid: `PA_${uuidv7()}` },
+          participant: { identity: mediaIdentity, sid: `PA_${uuidv7()}` },
         });
         expect(member.statusCode, member.body).toBe(200);
         expect(remove).not.toHaveBeenCalled();
@@ -322,13 +325,14 @@ describe('POST /v1/rtc/token (proximity, street voice on)', () => {
         const back = await webhook({
           event: 'participant_joined',
           room: { name: room },
-          participant: { identity: a.sub, sid: `PA_${uuidv7()}` },
+          participant: { identity: mediaIdentity, sid: `PA_${uuidv7()}` },
         });
         expect(back.statusCode, back.body).toBe(200);
         expect(remove).toHaveBeenCalledWith(expect.anything(), {
           kind: 'proximity',
           id: `timeline:${id}`,
-          identity: a.sub,
+          identity: mediaIdentity,
+          exact: true,
         });
         expect(await checkStreetVoiceJoin(ctx, room, a.sub, Date.now())).toBe('not_in_area');
         // Venue rooms are not this check's business.
@@ -346,12 +350,15 @@ describe('POST /v1/rtc/token (proximity, street voice on)', () => {
       const remove = vi.spyOn(ctx.livekit, 'removeParticipant').mockResolvedValue(undefined);
       try {
         await markStreetJoin(presence, 'timeline', id, a.sub);
+        const issued = await token(api, a, `timeline:${id}`);
+        expect(issued.status).toBe(200);
+        const mediaIdentity = issued.body.identity as string;
         await session(a.sub, room, nowSec() - 400, nowSec() - 250); // 150 s > 2 min
         expect(await checkStreetVoiceJoin(ctx, room, a.sub, Date.now())).toBe('minutes_player');
         const r = await webhook({
           event: 'participant_joined',
           room: { name: room },
-          participant: { identity: a.sub, sid: `PA_${uuidv7()}` },
+          participant: { identity: mediaIdentity, sid: `PA_${uuidv7()}` },
         });
         expect(r.statusCode, r.body).toBe(200);
         expect(remove).toHaveBeenCalledTimes(1);
@@ -369,7 +376,7 @@ describe('POST /v1/rtc/token (proximity, street voice on)', () => {
       try {
         await markStreetJoin(presence, 'timeline', id, a.sub);
         await markStreetJoin(presence, 'timeline', id, b.sub);
-        const stranger = `u-${uuidv7()}`;
+        const stranger = uuidv7();
         // Connected and members, under the caps: nobody to remove.
         for (const u of [a.sub, b.sub]) {
           await recordStreetVoiceEvent(

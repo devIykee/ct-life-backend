@@ -45,6 +45,7 @@
  * the street room disconnects connected players past either cap. Without the
  * webhook nothing is counted and the caps never trigger.
  */
+import { mediaPlayerId } from '../shared/livekit/identity.js';
 import type { Redis } from 'ioredis';
 import { NotInAreaError, VoiceMinutesExhaustedError } from '../shared/domain/errors.js';
 import { streetMembersKey } from '../realtime/street-presence.js';
@@ -323,12 +324,13 @@ export async function recordStreetVoiceEvent(
   nowMs: number = Date.now(),
 ): Promise<boolean> {
   const room = event.room?.name ?? '';
-  const identity = event.participant?.identity ?? '';
+  const rawIdentity = event.participant?.identity ?? '';
+  const identity = mediaPlayerId(rawIdentity) ?? '';
   if (!room.startsWith(`${STREET_VOICE_KIND}:`) || identity === '' || identity.includes('|')) {
     return false;
   }
   if (event.event !== 'participant_joined' && event.event !== 'participant_left') return false;
-  const sid = event.participant?.sid || `${identity}|${room}`;
+  const sid = event.participant?.sid || `${rawIdentity}|${room}`;
   const at =
     typeof event.createdAt === 'number' && Number.isFinite(event.createdAt) && event.createdAt > 0
       ? event.createdAt * 1000

@@ -1,5 +1,7 @@
 /** Exercise the registered HTTP/auth boundary with the real application context. */
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { Keypair } from '@solana/web3.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer, type ServerHandle } from './main.js';
 import { buildContext } from '../application/context.js';
@@ -18,6 +20,24 @@ const input = {
 
 beforeAll(async () => {
   fixture = await likenessFixture();
+  // Use the actual auth migrations in this isolated schema, rather than bypassing middleware.
+  await fixture.pool.query('ALTER TABLE users ADD COLUMN deleted_at timestamptz');
+  for (const filename of [
+    '1700000150000_economy_wallet_links.sql',
+    '1700000153000_login_identities.sql',
+    '1700000154000_login_identity_lifecycle.sql',
+  ]) {
+    const sql = readFileSync(new URL(`../../db/migrations/${filename}`, import.meta.url), 'utf8');
+    await fixture.pool.query(sql.split('-- Down Migration')[0]!);
+  }
+  const userId = await fixture.user();
+  const wallet = Keypair.generate().publicKey.toBase58();
+  const identityId = randomUUID();
+  await fixture.pool.query('UPDATE users SET wallet=$2 WHERE id=$1', [userId, wallet]);
+  await fixture.pool.query(
+    "INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,'solana:mainnet',$3)",
+    [identityId, userId, wallet],
+  );
   createDb({
     connectionString: fixture.pool.options.connectionString,
     options: fixture.pool.options.options,
@@ -26,11 +46,7 @@ beforeAll(async () => {
   await handle.app.ready();
   // A signed pre-character account is sufficient for availability. No fake
   // entitlement or generation is created, and the token is never logged.
-  token = await buildContext().jwt.signAccess(
-    randomUUID(),
-    '11111111111111111111111111111111',
-    false,
-  );
+  token = await buildContext().jwt.signAccess(userId, wallet, false, identityId);
 });
 afterAll(async () => {
   if (handle) await handle.stop();

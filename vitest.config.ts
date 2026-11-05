@@ -17,7 +17,8 @@ export default defineConfig({
     testTimeout: 15_000,
     hookTimeout: 15_000,
     pool: 'forks',
-    poolOptions: { forks: { singleFork: true } },
+    // Keep shared-database suites serial, while each isolated fork releases its file-owned pools.
+    fileParallelism: false,
     env: {
       // Forward the loaded .env values to the test workers.
       ...(process.env as Record<string, string>),

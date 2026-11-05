@@ -67,7 +67,7 @@ import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
 import { BEEF_CHANNEL } from '../../application/beef-events.js';
 import {
   applyOutfitMessage,
-  authenticateJoin,
+  authenticateJoinIdentity,
   loadPlayerState,
   filterSay,
   loadSayPolicy,
@@ -275,8 +275,10 @@ export class VenueRoom extends Room {
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     // Identity and look come from the database, never from join options.
-    const userId = await authenticateJoin(options);
-    this.ban.track(client, userId);
+    const identity = await authenticateJoinIdentity(options);
+    const userId = identity.userId;
+    this.ban.track(client, identity);
+    const assertCurrent = this.ban.checkpoint(client);
     // Police custody: a jailed player may only be in CT Jail. Fails open if the
     // database cannot be reached; the REST gates still hold.
     if (this.state.venueId !== 'ct_jail' && (await isInPoliceCustody(userId))) {
@@ -285,7 +287,8 @@ export class VenueRoom extends Room {
     const player = await loadPlayerState(userId);
     const last = this.placement ? await this.readPos(userId) : null;
     // Last check, no await before the player is stored.
-    await this.ban.confirm(userId);
+    await this.ban.confirm(client);
+    assertCurrent();
 
     // Place the player on their own spot when rejoining after a drop, else
     // on the venue's entrance spot. Joining a second venue (or a street
@@ -312,21 +315,47 @@ export class VenueRoom extends Room {
     // Count the session for voice before the client hears it joined, so its
     // first POST /v1/rtc/token already finds it. Best effort: a Redis error
     // costs this player venue voice, never the join.
-    if (this.presence) {
-      try {
-        await markVenueJoin(this.presence, this.state.instanceId, userId);
-        this.members.set(client.sessionId, userId);
-      } catch {
-        // Presence is best effort.
+    let marked = false;
+    try {
+      if (this.presence) {
+        try {
+          await markVenueJoin(this.presence, this.state.instanceId, userId, () => {
+            marked = true;
+          });
+        } catch {
+          // Presence is best effort; cancellation checks below are not swallowed.
+        }
+        try {
+          assertCurrent();
+        } catch (error) {
+          if (marked)
+            await markVenueLeave(this.presence, this.state.instanceId, userId)
+              .then((left) =>
+                left === 0 ? this.removeFromVoice(this.state.instanceId, userId) : undefined,
+              )
+              .catch(() => {
+                /* The existing presence TTL remains the Redis-failure fallback. */
+              });
+          throw error;
+        }
+        if (marked) this.members.set(client.sessionId, userId);
       }
+      assertCurrent();
+      const p = this.placement;
+      client.send('welcome', {
+        serverNow: Date.now(),
+        instanceId: this.state.instanceId,
+        ...(p ? { island: { x: p.origin[0], y: p.origin[1], z: p.origin[2], yaw: p.yaw } } : {}),
+      });
+    } catch (error) {
+      if (this.state.players.get(client.sessionId) === player) this.onLeave(client);
+      throw error;
     }
-    // Welcome the joiner.
-    const p = this.placement;
-    client.send('welcome', {
-      serverNow: Date.now(),
-      instanceId: this.state.instanceId,
-      ...(p ? { island: { x: p.origin[0], y: p.origin[1], z: p.origin[2], yaw: p.yaw } } : {}),
-    });
+  }
+
+  /** Subclass continuations must not restore state after an inherited join was cancelled. */
+  protected assertJoinCurrent(client: Client): void {
+    this.ban.checkpoint(client)();
   }
 
   /**

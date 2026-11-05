@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { Pool } from 'pg';
+import { Keypair } from '@solana/web3.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildServer, type ServerHandle } from './main.js';
 import { buildContext } from '../application/context.js';
@@ -28,7 +29,7 @@ beforeAll(async () => {
   const db = createDb({ connectionString: database, options: `-c search_path=${schema}` });
   await db.withConnection(async (c) => {
     await c.query(
-      'CREATE TABLE users(id uuid PRIMARY KEY,wallet text,lottery_rolled_at timestamptz)',
+      'CREATE TABLE users(id uuid PRIMARY KEY,wallet text,lottery_rolled_at timestamptz,deleted_at timestamptz)',
     );
     for (const filename of [
       '1700000002000_characters.sql',
@@ -38,6 +39,9 @@ beforeAll(async () => {
       '1700000076000_likeness_pipeline.sql',
       '1700000077000_likeness_delivery.sql',
       '1700000078000_character_likeness.sql',
+      '1700000150000_economy_wallet_links.sql',
+      '1700000153000_login_identities.sql',
+      '1700000154000_login_identity_lifecycle.sql',
     ]) {
       const sql = readFileSync(new URL(`../../db/migrations/${filename}`, import.meta.url), 'utf8');
       await c.query(sql.split('-- Down Migration')[0]!);
@@ -53,13 +57,7 @@ beforeAll(async () => {
   });
   handle = await buildServer();
   await handle.app.ready();
-  await buildContext().db.withConnection((c) =>
-    c.query('INSERT INTO users (id,wallet,lottery_rolled_at) VALUES ($1,$2,now())', [
-      userId,
-      `palette-fixture-${userId}`,
-    ]),
-  );
-  token = await buildContext().jwt.signAccess(userId, '11111111111111111111111111111111', false);
+  token = await signedInPlayer(userId);
 });
 afterAll(async () => {
   if (handle) {
@@ -123,22 +121,30 @@ function validIdentity() {
       .map((t) => t.id),
   };
 }
+
+/** Exercise the real auth boundary with a persisted player and the matching active credential. */
+async function signedInPlayer(id: string): Promise<string> {
+  const wallet = Keypair.generate().publicKey.toBase58();
+  const identityId = randomUUID();
+  await buildContext().db.withConnection(async (c) => {
+    await c.query('INSERT INTO users (id,wallet,lottery_rolled_at) VALUES ($1,$2,now())', [
+      id,
+      wallet,
+    ]);
+    await c.query(
+      "INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,'solana:mainnet',$3)",
+      [identityId, id, wallet],
+    );
+  });
+  return buildContext().jwt.signAccess(id, wallet, false, identityId);
+}
+
 describe('character palette HTTP capability', () => {
   it.each(legacyLooks)(
     'keeps existing authored look $headId creatable and persistent',
     async (look) => {
       const id = randomUUID();
-      await buildContext().db.withConnection((c) =>
-        c.query('INSERT INTO users (id,wallet,lottery_rolled_at) VALUES ($1,$2,now())', [
-          id,
-          `legacy-palette-fixture-${id}`,
-        ]),
-      );
-      const access = await buildContext().jwt.signAccess(
-        id,
-        '11111111111111111111111111111111',
-        false,
-      );
+      const access = await signedInPlayer(id);
       const result = await handle.app.inject({
         method: 'POST',
         url: '/v1/characters',

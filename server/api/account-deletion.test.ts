@@ -11,7 +11,8 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import { createDb } from '../shared/db/pool.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { buildContext } from '../application/context.js';
-import { purgeStorage } from '../application/account-deletion.js';
+import { deletedFlagKey, purgeStorage } from '../application/account-deletion.js';
+import { assertJoinAllowed } from '../realtime/player.js';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -145,12 +146,12 @@ describe('DELETE /v1/me', () => {
     expect(r.statusCode, r.body).toBe(204);
 
     const user = await q<{
-      wallet: string;
+      wallet: string | null;
       sgt_mint: string | null;
       skr_name: string | null;
       deleted_at: Date;
     }>('SELECT wallet, sgt_mint, skr_name, deleted_at FROM users WHERE id = $1', [u.sub]);
-    expect(user[0]!.wallet).toBe(`deleted:${u.sub}`);
+    expect(user[0]!.wallet).toBeNull();
     expect(user[0]!.sgt_mint).toBeNull();
     expect(user[0]!.deleted_at).not.toBeNull();
 
@@ -170,6 +171,12 @@ describe('DELETE /v1/me', () => {
     expect(await count('SELECT count(*) n FROM push_devices WHERE user_id = $1')).toBe(0);
     expect(await count('SELECT count(*) n FROM likeness_uploads WHERE user_id = $1')).toBe(0);
     expect(await count('SELECT count(*) n FROM ad_uploads WHERE user_id = $1')).toBe(0);
+    expect(await count('SELECT count(*) n FROM login_identities WHERE user_id = $1')).toBe(0);
+    expect(
+      await count(
+        'SELECT count(*) n FROM login_identity_challenges WHERE user_id = $1 OR account_hint = $1',
+      ),
+    ).toBe(0);
     // Money stays.
     expect(await count('SELECT count(*) n FROM ledger_entries WHERE user_id = $1')).toBe(1);
     // What the user wrote is overwritten; what others wrote to them is not touched.
@@ -254,6 +261,24 @@ describe('DELETE /v1/me', () => {
       headers: { authorization: `Bearer ${second.accessToken}` },
     });
     expect(me.statusCode).toBe(200);
+  });
+
+  it('refuses the deleted player after its Redis flag is lost, including room joins', async () => {
+    const first = await devAuth();
+    expect((await del(first, { confirm: 'DELETE' })).statusCode).toBe(204);
+    await buildContext().redis.main.del(deletedFlagKey(first.sub));
+    const request = () =>
+      app.inject({
+        method: 'GET',
+        url: '/v1/me',
+        headers: { authorization: `Bearer ${first.accessToken}` },
+      });
+    expect((await request()).statusCode).toBe(401);
+    await expect(assertJoinAllowed(first.sub)).rejects.toMatchObject({ code: 'SIGNATURE_INVALID' });
+    const fresh = await devAuth(first.wallet);
+    expect(fresh.sub).not.toBe(first.sub);
+    expect((await request()).statusCode).toBe(401);
+    await expect(assertJoinAllowed(fresh.sub)).resolves.toBeUndefined();
   });
 
   it("cannot be used to erase someone else's file: foreign avatar keys are refused and never queued", async () => {

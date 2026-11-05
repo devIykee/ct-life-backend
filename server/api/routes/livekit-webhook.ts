@@ -15,6 +15,12 @@
  * LiveKit posts `Content-Type: application/webhook+json`; this file registers a raw
  * string parser for that type only.
  */
+import { mediaPlayerId } from '../../shared/livekit/identity.js';
+import {
+  isPlayerMediaDeparture,
+  isGameMediaRoom,
+  reconcileMediaParticipant,
+} from '../../application/media-access.js';
 import { createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { applyLiveKitEvent, verifyLiveKitWebhook } from '../../application/livekit-webhook.js';
@@ -42,30 +48,43 @@ export function registerLiveKitWebhookRoutes(app: FastifyInstance): void {
     const raw = (req as unknown as { rawBody?: string }).rawBody ?? JSON.stringify(req.body);
     const event = await verifyLiveKitWebhook(req.ctx, raw, req.headers.authorization);
     const key = event.id ?? createHash('sha256').update(raw).digest('hex');
+    const room = event.room?.name ?? '';
+    const identity = event.participant?.identity;
+    let mediaAccepted = true;
+    if (event.event === 'participant_joined' && identity && isGameMediaRoom(room))
+      mediaAccepted = await reconcileMediaParticipant(req.ctx, room, identity);
     const result = await applyLiveKitEvent(req.ctx, key, event);
     const paid = PAID_ROOM.exec(event.room?.name ?? '');
     if (
       paid &&
       isCapabilityOn(req.ctx, 'paidCalls') &&
-      (event.event === 'participant_left' || event.event === 'room_finished')
+      (event.event === 'room_finished' ||
+        (event.event === 'participant_left' &&
+          identity &&
+          (await isPlayerMediaDeparture(req.ctx, room, identity))))
     ) {
       await endPaidCallFromRoom(req.ctx, paid[1]!, event.event);
     }
     await recordStreetVoiceEvent(req.ctx, key, event);
-    const room = event.room?.name ?? '';
-    const identity = event.participant?.identity;
     if (
+      mediaAccepted &&
       event.event === 'participant_joined' &&
       identity &&
       room.startsWith(`${STREET_VOICE_KIND}:`)
     ) {
-      const refusal = await checkStreetVoiceJoin(req.ctx, room, identity, Date.now());
+      const refusal = await checkStreetVoiceJoin(
+        req.ctx,
+        room,
+        mediaPlayerId(identity) ?? '',
+        Date.now(),
+      );
       if (refusal) {
         req.log.info({ room, refusal }, 'street voice: participant removed on join');
         await req.ctx.livekit.removeParticipant(req.ctx, {
           kind: STREET_VOICE_KIND,
           id: room.slice(STREET_VOICE_KIND.length + 1),
           identity,
+          exact: true,
         });
       }
     }
