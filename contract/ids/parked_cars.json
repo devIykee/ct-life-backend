@@ -1,0 +1,1989 @@
+{
+  "_owner": "FE",
+  "_provisional": false,
+  "version": "1.0.0",
+  "_note": "Decor parked cars on CT Island, exported from the baked cell prefabs by tools/world/export_parked_cars.py (frontend repo). The vehicles room lets a client register a parked car (vehicle_enter with an id the server does not know) only as park_<kind>_<round(x*10)>_<round(z*10)> at one of these spots, with a kind listed for it. Island metres. kinds are wire kinds (contract/realtime/messages.ts).",
+  "spots": [
+    {
+      "id": "parked_s066_l10",
+      "cell": "cell_3_3",
+      "x": -155.44,
+      "z": -160.63,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s066_l16",
+      "cell": "cell_3_3",
+      "x": -149.47,
+      "z": -160.0,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s066_l22",
+      "cell": "cell_3_3",
+      "x": -143.51,
+      "z": -159.37,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s067_r10",
+      "cell": "cell_3_3",
+      "x": -99.72,
+      "z": -163.82,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s067_r16",
+      "cell": "cell_3_3",
+      "x": -93.75,
+      "z": -163.19,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s067_r22",
+      "cell": "cell_3_3",
+      "x": -87.79,
+      "z": -162.57,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s067_r28",
+      "cell": "cell_3_3",
+      "x": -81.82,
+      "z": -161.94,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s067_r34",
+      "cell": "cell_3_3",
+      "x": -75.85,
+      "z": -161.31,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s067_r40",
+      "cell": "cell_3_3",
+      "x": -69.89,
+      "z": -160.68,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s067_r46",
+      "cell": "cell_3_3",
+      "x": -63.92,
+      "z": -160.06,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s071_r10",
+      "cell": "cell_3_3",
+      "x": -94.85,
+      "z": -113.03,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s071_r16",
+      "cell": "cell_3_3",
+      "x": -88.88,
+      "z": -112.4,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s071_r22",
+      "cell": "cell_3_3",
+      "x": -82.91,
+      "z": -111.78,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s071_r28",
+      "cell": "cell_3_3",
+      "x": -76.94,
+      "z": -111.15,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s071_r34",
+      "cell": "cell_3_3",
+      "x": -70.98,
+      "z": -110.53,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s071_r40",
+      "cell": "cell_3_3",
+      "x": -65.01,
+      "z": -109.9,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s072_r10",
+      "cell": "cell_3_3",
+      "x": -22.4,
+      "z": -105.42,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s072_r16",
+      "cell": "cell_3_3",
+      "x": -16.44,
+      "z": -104.79,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s072_r22",
+      "cell": "cell_3_3",
+      "x": -10.47,
+      "z": -104.17,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s072_r28",
+      "cell": "cell_3_3",
+      "x": -4.5,
+      "z": -103.54,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s075_r10",
+      "cell": "cell_3_3",
+      "x": -179.84,
+      "z": -61.63,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s075_r16",
+      "cell": "cell_3_3",
+      "x": -173.88,
+      "z": -61.01,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s075_r22",
+      "cell": "cell_3_3",
+      "x": -167.91,
+      "z": -60.38,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s075_r28",
+      "cell": "cell_3_3",
+      "x": -161.94,
+      "z": -59.75,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s075_r34",
+      "cell": "cell_3_3",
+      "x": -155.97,
+      "z": -59.12,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s076_l10",
+      "cell": "cell_3_3",
+      "x": -112.16,
+      "z": -45.47,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s076_l16",
+      "cell": "cell_3_3",
+      "x": -106.2,
+      "z": -44.85,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s076_l22",
+      "cell": "cell_3_3",
+      "x": -100.23,
+      "z": -44.22,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s076_l28",
+      "cell": "cell_3_3",
+      "x": -94.26,
+      "z": -43.59,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s076_l34",
+      "cell": "cell_3_3",
+      "x": -88.29,
+      "z": -42.97,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s076_r10",
+      "cell": "cell_3_3",
+      "x": -111.22,
+      "z": -54.42,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s076_r16",
+      "cell": "cell_3_3",
+      "x": -105.26,
+      "z": -53.8,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s076_r22",
+      "cell": "cell_3_3",
+      "x": -99.29,
+      "z": -53.17,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s076_r28",
+      "cell": "cell_3_3",
+      "x": -93.32,
+      "z": -52.54,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s076_r34",
+      "cell": "cell_3_3",
+      "x": -87.35,
+      "z": -51.92,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s077_l10",
+      "cell": "cell_3_3",
+      "x": -29.61,
+      "z": -36.8,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l16",
+      "cell": "cell_3_3",
+      "x": -23.65,
+      "z": -36.17,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l22",
+      "cell": "cell_3_3",
+      "x": -17.68,
+      "z": -35.55,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l28",
+      "cell": "cell_3_3",
+      "x": -11.71,
+      "z": -34.92,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l34",
+      "cell": "cell_3_3",
+      "x": -5.74,
+      "z": -34.29,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s077_r10",
+      "cell": "cell_3_3",
+      "x": -28.67,
+      "z": -45.75,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s077_r16",
+      "cell": "cell_3_3",
+      "x": -22.71,
+      "z": -45.12,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_r22",
+      "cell": "cell_3_3",
+      "x": -16.74,
+      "z": -44.5,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_r28",
+      "cell": "cell_3_3",
+      "x": -10.77,
+      "z": -43.87,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_r34",
+      "cell": "cell_3_3",
+      "x": -4.8,
+      "z": -43.24,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s094_l10",
+      "cell": "cell_3_3",
+      "x": -190.03,
+      "z": -205.75,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s094_l16",
+      "cell": "cell_3_3",
+      "x": -190.66,
+      "z": -199.79,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s094_l22",
+      "cell": "cell_3_3",
+      "x": -191.29,
+      "z": -193.82,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s094_r22",
+      "cell": "cell_3_3",
+      "x": -182.34,
+      "z": -192.88,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s095_l10",
+      "cell": "cell_3_3",
+      "x": -196.77,
+      "z": -141.69,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s097_r10",
+      "cell": "cell_3_3",
+      "x": -198.58,
+      "z": -38.3,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s097_r16",
+      "cell": "cell_3_3",
+      "x": -199.21,
+      "z": -32.35,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s097_r22",
+      "cell": "cell_3_3",
+      "x": -199.83,
+      "z": -26.41,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s097_r28",
+      "cell": "cell_3_3",
+      "x": -200.46,
+      "z": -20.47,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s097_r34",
+      "cell": "cell_3_3",
+      "x": -201.08,
+      "z": -14.52,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s097_r40",
+      "cell": "cell_3_3",
+      "x": -201.71,
+      "z": -8.58,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s103_r10",
+      "cell": "cell_3_3",
+      "x": -129.97,
+      "z": -31.05,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s103_r16",
+      "cell": "cell_3_3",
+      "x": -130.59,
+      "z": -25.09,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s103_r22",
+      "cell": "cell_3_3",
+      "x": -131.22,
+      "z": -19.12,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s103_r28",
+      "cell": "cell_3_3",
+      "x": -131.85,
+      "z": -13.15,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s103_r34",
+      "cell": "cell_3_3",
+      "x": -132.47,
+      "z": -7.18,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s103_r40",
+      "cell": "cell_3_3",
+      "x": -133.1,
+      "z": -1.22,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s107_l10",
+      "cell": "cell_3_3",
+      "x": -50.1,
+      "z": -82.99,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s107_l16",
+      "cell": "cell_3_3",
+      "x": -50.73,
+      "z": -77.03,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s085_l10",
+      "cell": "cell_3_4",
+      "x": -83.44,
+      "z": 79.21,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_l16",
+      "cell": "cell_3_4",
+      "x": -89.4,
+      "z": 78.59,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_l22",
+      "cell": "cell_3_4",
+      "x": -95.37,
+      "z": 77.96,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_l28",
+      "cell": "cell_3_4",
+      "x": -101.34,
+      "z": 77.33,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_l34",
+      "cell": "cell_3_4",
+      "x": -107.31,
+      "z": 76.71,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_l40",
+      "cell": "cell_3_4",
+      "x": -113.27,
+      "z": 76.08,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s085_l46",
+      "cell": "cell_3_4",
+      "x": -119.24,
+      "z": 75.45,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s085_r10",
+      "cell": "cell_3_4",
+      "x": -84.38,
+      "z": 88.16,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_r16",
+      "cell": "cell_3_4",
+      "x": -90.34,
+      "z": 87.54,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_r22",
+      "cell": "cell_3_4",
+      "x": -96.31,
+      "z": 86.91,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_r28",
+      "cell": "cell_3_4",
+      "x": -102.28,
+      "z": 86.28,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s085_r34",
+      "cell": "cell_3_4",
+      "x": -108.25,
+      "z": 85.66,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s086_l10",
+      "cell": "cell_3_4",
+      "x": -165.98,
+      "z": 70.54,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s086_l16",
+      "cell": "cell_3_4",
+      "x": -171.95,
+      "z": 69.91,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s086_l22",
+      "cell": "cell_3_4",
+      "x": -177.92,
+      "z": 69.28,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s086_l28",
+      "cell": "cell_3_4",
+      "x": -183.89,
+      "z": 68.66,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s086_l34",
+      "cell": "cell_3_4",
+      "x": -189.85,
+      "z": 68.03,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s091_l10",
+      "cell": "cell_3_4",
+      "x": -49.06,
+      "z": 148.18,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_l16",
+      "cell": "cell_3_4",
+      "x": -43.09,
+      "z": 148.81,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_l22",
+      "cell": "cell_3_4",
+      "x": -37.12,
+      "z": 149.43,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s091_l28",
+      "cell": "cell_3_4",
+      "x": -31.15,
+      "z": 150.06,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s091_l34",
+      "cell": "cell_3_4",
+      "x": -25.19,
+      "z": 150.69,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_l40",
+      "cell": "cell_3_4",
+      "x": -19.22,
+      "z": 151.31,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s091_l46",
+      "cell": "cell_3_4",
+      "x": -13.25,
+      "z": 151.94,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s091_l52",
+      "cell": "cell_3_4",
+      "x": -7.28,
+      "z": 152.57,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_l58",
+      "cell": "cell_3_4",
+      "x": -1.32,
+      "z": 153.2,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_r22",
+      "cell": "cell_3_4",
+      "x": -36.18,
+      "z": 140.48,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s091_r28",
+      "cell": "cell_3_4",
+      "x": -30.21,
+      "z": 141.11,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_r34",
+      "cell": "cell_3_4",
+      "x": -24.25,
+      "z": 141.74,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_r40",
+      "cell": "cell_3_4",
+      "x": -18.28,
+      "z": 142.36,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s091_r46",
+      "cell": "cell_3_4",
+      "x": -12.31,
+      "z": 142.99,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_r52",
+      "cell": "cell_3_4",
+      "x": -6.34,
+      "z": 143.62,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s091_r58",
+      "cell": "cell_3_4",
+      "x": -0.38,
+      "z": 144.25,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s098_r10",
+      "cell": "cell_3_4",
+      "x": -207.38,
+      "z": 45.37,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s099_l10",
+      "cell": "cell_3_4",
+      "x": -221.13,
+      "z": 90.06,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s099_l16",
+      "cell": "cell_3_4",
+      "x": -221.75,
+      "z": 96.03,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s099_l22",
+      "cell": "cell_3_4",
+      "x": -222.38,
+      "z": 101.99,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s104_l10",
+      "cell": "cell_3_4",
+      "x": -147.2,
+      "z": 46.77,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s104_l16",
+      "cell": "cell_3_4",
+      "x": -147.82,
+      "z": 52.73,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s104_r10",
+      "cell": "cell_3_4",
+      "x": -138.25,
+      "z": 47.71,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s104_r16",
+      "cell": "cell_3_4",
+      "x": -138.87,
+      "z": 53.68,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s109_l10",
+      "cell": "cell_3_4",
+      "x": -64.65,
+      "z": 55.45,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s109_l16",
+      "cell": "cell_3_4",
+      "x": -65.28,
+      "z": 61.42,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s109_r10",
+      "cell": "cell_3_4",
+      "x": -55.7,
+      "z": 56.39,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s109_r16",
+      "cell": "cell_3_4",
+      "x": -56.33,
+      "z": 62.36,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s049_l10",
+      "cell": "cell_3_5",
+      "x": -107.41,
+      "z": 327.31,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s049_l16",
+      "cell": "cell_3_5",
+      "x": -101.73,
+      "z": 329.32,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s049_l22",
+      "cell": "cell_3_5",
+      "x": -96.0,
+      "z": 331.28,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s049_l28",
+      "cell": "cell_3_5",
+      "x": -90.23,
+      "z": 333.17,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s049_l34",
+      "cell": "cell_3_5",
+      "x": -84.4,
+      "z": 334.94,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s049_l40",
+      "cell": "cell_3_5",
+      "x": -78.52,
+      "z": 336.57,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s049_l46",
+      "cell": "cell_3_5",
+      "x": -72.58,
+      "z": 338.03,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s049_l52",
+      "cell": "cell_3_5",
+      "x": -66.65,
+      "z": 339.31,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s049_l58",
+      "cell": "cell_3_5",
+      "x": -60.72,
+      "z": 340.49,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s049_l64",
+      "cell": "cell_3_5",
+      "x": -54.74,
+      "z": 341.56,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s049_l70",
+      "cell": "cell_3_5",
+      "x": -48.73,
+      "z": 342.5,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s049_l76",
+      "cell": "cell_3_5",
+      "x": -42.68,
+      "z": 343.29,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s049_l82",
+      "cell": "cell_3_5",
+      "x": -36.59,
+      "z": 343.91,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s049_l88",
+      "cell": "cell_3_5",
+      "x": -30.48,
+      "z": 344.32,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s050_l10",
+      "cell": "cell_3_5",
+      "x": -9.61,
+      "z": 343.86,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s050_l16",
+      "cell": "cell_3_5",
+      "x": -3.52,
+      "z": 343.13,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s050_r10",
+      "cell": "cell_3_5",
+      "x": -10.51,
+      "z": 334.9,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s050_r16",
+      "cell": "cell_3_5",
+      "x": -4.73,
+      "z": 334.21,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s072_r34",
+      "cell": "cell_4_3",
+      "x": 1.47,
+      "z": -102.91,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s072_r40",
+      "cell": "cell_4_3",
+      "x": 7.43,
+      "z": -102.29,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s072_r46",
+      "cell": "cell_4_3",
+      "x": 13.4,
+      "z": -101.66,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s072_r52",
+      "cell": "cell_4_3",
+      "x": 19.37,
+      "z": -101.03,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s072_r58",
+      "cell": "cell_4_3",
+      "x": 25.33,
+      "z": -100.4,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s072_r64",
+      "cell": "cell_4_3",
+      "x": 31.3,
+      "z": -99.78,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s072_r70",
+      "cell": "cell_4_3",
+      "x": 37.27,
+      "z": -99.15,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s073_l10",
+      "cell": "cell_4_3",
+      "x": 85.26,
+      "z": -85.05,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s073_l16",
+      "cell": "cell_4_3",
+      "x": 91.23,
+      "z": -84.43,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s073_l22",
+      "cell": "cell_4_3",
+      "x": 97.19,
+      "z": -83.8,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s073_l28",
+      "cell": "cell_4_3",
+      "x": 103.16,
+      "z": -83.17,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s073_l34",
+      "cell": "cell_4_3",
+      "x": 109.13,
+      "z": -82.54,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s074_r10",
+      "cell": "cell_4_3",
+      "x": 156.61,
+      "z": -86.6,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s074_r16",
+      "cell": "cell_4_3",
+      "x": 162.58,
+      "z": -85.98,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s074_r22",
+      "cell": "cell_4_3",
+      "x": 168.54,
+      "z": -85.35,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s074_r28",
+      "cell": "cell_4_3",
+      "x": 174.51,
+      "z": -84.72,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s074_r34",
+      "cell": "cell_4_3",
+      "x": 180.48,
+      "z": -84.09,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s074_r40",
+      "cell": "cell_4_3",
+      "x": 186.44,
+      "z": -83.47,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s074_r46",
+      "cell": "cell_4_3",
+      "x": 192.41,
+      "z": -82.84,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l40",
+      "cell": "cell_4_3",
+      "x": 0.22,
+      "z": -33.67,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s077_l46",
+      "cell": "cell_4_3",
+      "x": 6.19,
+      "z": -33.04,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l52",
+      "cell": "cell_4_3",
+      "x": 12.16,
+      "z": -32.41,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s077_l58",
+      "cell": "cell_4_3",
+      "x": 18.12,
+      "z": -31.78,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_l64",
+      "cell": "cell_4_3",
+      "x": 24.09,
+      "z": -31.16,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s077_l70",
+      "cell": "cell_4_3",
+      "x": 30.06,
+      "z": -30.53,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s077_r40",
+      "cell": "cell_4_3",
+      "x": 1.16,
+      "z": -42.62,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_r46",
+      "cell": "cell_4_3",
+      "x": 7.13,
+      "z": -41.99,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s077_r52",
+      "cell": "cell_4_3",
+      "x": 13.1,
+      "z": -41.36,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s077_r58",
+      "cell": "cell_4_3",
+      "x": 19.06,
+      "z": -40.73,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s077_r64",
+      "cell": "cell_4_3",
+      "x": 25.03,
+      "z": -40.11,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s077_r70",
+      "cell": "cell_4_3",
+      "x": 31.0,
+      "z": -39.48,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s078_l10",
+      "cell": "cell_4_3",
+      "x": 78.99,
+      "z": -25.38,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s078_l16",
+      "cell": "cell_4_3",
+      "x": 84.96,
+      "z": -24.76,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s078_l22",
+      "cell": "cell_4_3",
+      "x": 90.92,
+      "z": -24.13,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s078_l28",
+      "cell": "cell_4_3",
+      "x": 96.89,
+      "z": -23.5,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s078_l34",
+      "cell": "cell_4_3",
+      "x": 102.86,
+      "z": -22.87,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s079_l10",
+      "cell": "cell_4_3",
+      "x": 149.4,
+      "z": -17.98,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s079_l16",
+      "cell": "cell_4_3",
+      "x": 155.36,
+      "z": -17.35,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s079_l22",
+      "cell": "cell_4_3",
+      "x": 161.33,
+      "z": -16.73,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s079_l28",
+      "cell": "cell_4_3",
+      "x": 167.3,
+      "z": -16.1,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s079_l34",
+      "cell": "cell_4_3",
+      "x": 173.27,
+      "z": -15.47,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s079_l40",
+      "cell": "cell_4_3",
+      "x": 179.23,
+      "z": -14.85,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s079_l46",
+      "cell": "cell_4_3",
+      "x": 185.2,
+      "z": -14.22,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s118_r10",
+      "cell": "cell_4_3",
+      "x": 143.09,
+      "z": -112.96,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s118_r16",
+      "cell": "cell_4_3",
+      "x": 142.46,
+      "z": -107.0,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s119_l10",
+      "cell": "cell_4_3",
+      "x": 128.91,
+      "z": -64.17,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s119_l16",
+      "cell": "cell_4_3",
+      "x": 128.28,
+      "z": -58.21,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s119_l22",
+      "cell": "cell_4_3",
+      "x": 127.66,
+      "z": -52.24,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s119_l28",
+      "cell": "cell_4_3",
+      "x": 127.03,
+      "z": -46.27,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s119_r10",
+      "cell": "cell_4_3",
+      "x": 137.86,
+      "z": -63.23,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s119_r16",
+      "cell": "cell_4_3",
+      "x": 137.23,
+      "z": -57.27,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s119_r22",
+      "cell": "cell_4_3",
+      "x": 136.61,
+      "z": -51.3,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s119_r28",
+      "cell": "cell_4_3",
+      "x": 135.98,
+      "z": -45.33,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s120_l10",
+      "cell": "cell_4_3",
+      "x": 122.64,
+      "z": -4.5,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s120_r10",
+      "cell": "cell_4_3",
+      "x": 131.59,
+      "z": -3.56,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s124_l10",
+      "cell": "cell_4_3",
+      "x": 212.83,
+      "z": -116.39,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s124_l16",
+      "cell": "cell_4_3",
+      "x": 212.2,
+      "z": -110.43,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s124_l22",
+      "cell": "cell_4_3",
+      "x": 211.58,
+      "z": -104.46,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s124_l28",
+      "cell": "cell_4_3",
+      "x": 210.95,
+      "z": -98.49,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s124_r22",
+      "cell": "cell_4_3",
+      "x": 220.53,
+      "z": -103.52,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s124_r28",
+      "cell": "cell_4_3",
+      "x": 219.9,
+      "z": -97.55,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s125_l10",
+      "cell": "cell_4_3",
+      "x": 206.49,
+      "z": -56.02,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s125_l16",
+      "cell": "cell_4_3",
+      "x": 205.86,
+      "z": -50.06,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s125_l22",
+      "cell": "cell_4_3",
+      "x": 205.23,
+      "z": -44.09,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s125_l28",
+      "cell": "cell_4_3",
+      "x": 204.6,
+      "z": -38.12,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s087_r10",
+      "cell": "cell_4_4",
+      "x": 172.21,
+      "z": 115.13,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s087_r16",
+      "cell": "cell_4_4",
+      "x": 166.25,
+      "z": 114.51,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s087_r22",
+      "cell": "cell_4_4",
+      "x": 160.28,
+      "z": 113.88,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s087_r28",
+      "cell": "cell_4_4",
+      "x": 154.31,
+      "z": 113.25,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s087_r34",
+      "cell": "cell_4_4",
+      "x": 148.34,
+      "z": 112.63,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s088_l10",
+      "cell": "cell_4_4",
+      "x": 85.46,
+      "z": 96.97,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s088_l16",
+      "cell": "cell_4_4",
+      "x": 79.49,
+      "z": 96.34,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s088_l22",
+      "cell": "cell_4_4",
+      "x": 73.53,
+      "z": 95.71,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s088_l28",
+      "cell": "cell_4_4",
+      "x": 67.56,
+      "z": 95.08,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s088_r10",
+      "cell": "cell_4_4",
+      "x": 84.52,
+      "z": 105.92,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s088_r16",
+      "cell": "cell_4_4",
+      "x": 78.55,
+      "z": 105.29,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s091_l64",
+      "cell": "cell_4_4",
+      "x": 4.65,
+      "z": 153.82,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s091_l70",
+      "cell": "cell_4_4",
+      "x": 10.62,
+      "z": 154.45,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s091_r64",
+      "cell": "cell_4_4",
+      "x": 5.59,
+      "z": 144.87,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s091_r70",
+      "cell": "cell_4_4",
+      "x": 11.56,
+      "z": 145.5,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s092_l10",
+      "cell": "cell_4_4",
+      "x": 59.54,
+      "z": 159.6,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s092_l16",
+      "cell": "cell_4_4",
+      "x": 65.51,
+      "z": 160.22,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s092_l22",
+      "cell": "cell_4_4",
+      "x": 71.47,
+      "z": 160.85,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s092_l28",
+      "cell": "cell_4_4",
+      "x": 77.44,
+      "z": 161.48,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s092_l34",
+      "cell": "cell_4_4",
+      "x": 83.41,
+      "z": 162.11,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s093_l10",
+      "cell": "cell_4_4",
+      "x": 129.95,
+      "z": 167.0,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s093_l16",
+      "cell": "cell_4_4",
+      "x": 135.92,
+      "z": 167.63,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s093_l22",
+      "cell": "cell_4_4",
+      "x": 141.89,
+      "z": 168.25,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s093_l28",
+      "cell": "cell_4_4",
+      "x": 147.85,
+      "z": 168.88,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s120_l16",
+      "cell": "cell_4_4",
+      "x": 122.01,
+      "z": 1.46,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s120_l22",
+      "cell": "cell_4_4",
+      "x": 121.39,
+      "z": 7.43,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s120_l28",
+      "cell": "cell_4_4",
+      "x": 120.76,
+      "z": 13.4,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s120_l34",
+      "cell": "cell_4_4",
+      "x": 120.13,
+      "z": 19.36,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s120_l40",
+      "cell": "cell_4_4",
+      "x": 119.51,
+      "z": 25.33,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s120_r16",
+      "cell": "cell_4_4",
+      "x": 130.97,
+      "z": 2.4,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s120_r22",
+      "cell": "cell_4_4",
+      "x": 130.34,
+      "z": 8.37,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s120_r28",
+      "cell": "cell_4_4",
+      "x": 129.71,
+      "z": 14.34,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s120_r34",
+      "cell": "cell_4_4",
+      "x": 129.09,
+      "z": 20.31,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s120_r40",
+      "cell": "cell_4_4",
+      "x": 128.46,
+      "z": 26.27,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s126_r10",
+      "cell": "cell_4_4",
+      "x": 209.16,
+      "z": 4.59,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s126_r16",
+      "cell": "cell_4_4",
+      "x": 208.53,
+      "z": 10.55,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s126_r22",
+      "cell": "cell_4_4",
+      "x": 207.91,
+      "z": 16.52,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s126_r28",
+      "cell": "cell_4_4",
+      "x": 207.28,
+      "z": 22.49,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s126_r34",
+      "cell": "cell_4_4",
+      "x": 206.65,
+      "z": 28.45,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s126_r40",
+      "cell": "cell_4_4",
+      "x": 206.03,
+      "z": 34.42,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s127_l10",
+      "cell": "cell_4_4",
+      "x": 191.94,
+      "z": 82.41,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s127_l16",
+      "cell": "cell_4_4",
+      "x": 191.31,
+      "z": 88.38,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s128_l10",
+      "cell": "cell_4_4",
+      "x": 186.63,
+      "z": 132.92,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s128_l16",
+      "cell": "cell_4_4",
+      "x": 186.01,
+      "z": 138.86,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s050_l22",
+      "cell": "cell_4_5",
+      "x": 2.53,
+      "z": 342.21,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s050_l28",
+      "cell": "cell_4_5",
+      "x": 8.53,
+      "z": 341.14,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s050_l34",
+      "cell": "cell_4_5",
+      "x": 14.48,
+      "z": 339.97,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s050_l40",
+      "cell": "cell_4_5",
+      "x": 20.38,
+      "z": 338.72,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s050_r22",
+      "cell": "cell_4_5",
+      "x": 1.06,
+      "z": 333.33,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s050_r28",
+      "cell": "cell_4_5",
+      "x": 6.86,
+      "z": 332.3,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s050_r34",
+      "cell": "cell_4_5",
+      "x": 12.67,
+      "z": 331.15,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s050_r40",
+      "cell": "cell_4_5",
+      "x": 18.48,
+      "z": 329.92,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s053_r10",
+      "cell": "cell_4_5",
+      "x": 102.95,
+      "z": 297.45,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s053_r16",
+      "cell": "cell_4_5",
+      "x": 108.38,
+      "z": 294.84,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s053_r22",
+      "cell": "cell_4_5",
+      "x": 113.72,
+      "z": 292.26,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s053_r28",
+      "cell": "cell_4_5",
+      "x": 118.99,
+      "z": 289.63,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s053_r34",
+      "cell": "cell_4_5",
+      "x": 124.13,
+      "z": 286.89,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s053_r40",
+      "cell": "cell_4_5",
+      "x": 129.12,
+      "z": 283.97,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s053_r46",
+      "cell": "cell_4_5",
+      "x": 133.92,
+      "z": 280.85,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s053_r52",
+      "cell": "cell_4_5",
+      "x": 138.48,
+      "z": 277.46,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s053_r58",
+      "cell": "cell_4_5",
+      "x": 142.85,
+      "z": 273.77,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s053_r64",
+      "cell": "cell_4_5",
+      "x": 147.06,
+      "z": 269.82,
+      "kinds": ["compact", "police", "taxi"]
+    },
+    {
+      "id": "parked_s053_r70",
+      "cell": "cell_4_5",
+      "x": 151.15,
+      "z": 265.68,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s053_r76",
+      "cell": "cell_4_5",
+      "x": 155.15,
+      "z": 261.39,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s036_r10",
+      "cell": "cell_5_2",
+      "x": 369.94,
+      "z": -296.17,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s036_r16",
+      "cell": "cell_5_2",
+      "x": 374.2,
+      "z": -300.64,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s036_r22",
+      "cell": "cell_5_2",
+      "x": 378.58,
+      "z": -304.86,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s036_r28",
+      "cell": "cell_5_2",
+      "x": 382.86,
+      "z": -309.0,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l10",
+      "cell": "cell_5_2",
+      "x": 423.69,
+      "z": -316.36,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_l16",
+      "cell": "cell_5_2",
+      "x": 429.52,
+      "z": -316.42,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_l40",
+      "cell": "cell_5_2",
+      "x": 453.27,
+      "z": -315.67,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l46",
+      "cell": "cell_5_2",
+      "x": 459.31,
+      "z": -315.49,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l64",
+      "cell": "cell_5_2",
+      "x": 477.6,
+      "z": -315.78,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l70",
+      "cell": "cell_5_2",
+      "x": 483.63,
+      "z": -316.07,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_l76",
+      "cell": "cell_5_2",
+      "x": 489.63,
+      "z": -316.4,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l100",
+      "cell": "cell_6_2",
+      "x": 513.52,
+      "z": -317.61,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s037_l106",
+      "cell": "cell_6_2",
+      "x": 519.46,
+      "z": -317.8,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l112",
+      "cell": "cell_6_2",
+      "x": 525.37,
+      "z": -317.89,
+      "kinds": ["compact", "police", "sports"]
+    },
+    {
+      "id": "parked_s037_l118",
+      "cell": "cell_6_2",
+      "x": 531.26,
+      "z": -317.85,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_l124",
+      "cell": "cell_6_2",
+      "x": 537.13,
+      "z": -317.65,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l130",
+      "cell": "cell_6_2",
+      "x": 543.08,
+      "z": -317.3,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_l136",
+      "cell": "cell_6_2",
+      "x": 549.09,
+      "z": -316.98,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_l154",
+      "cell": "cell_6_2",
+      "x": 566.78,
+      "z": -315.7,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_r142",
+      "cell": "cell_6_2",
+      "x": 555.59,
+      "z": -325.63,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_r148",
+      "cell": "cell_6_2",
+      "x": 561.66,
+      "z": -325.22,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_r154",
+      "cell": "cell_6_2",
+      "x": 567.77,
+      "z": -324.65,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_r160",
+      "cell": "cell_6_2",
+      "x": 573.94,
+      "z": -323.82,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_r166",
+      "cell": "cell_6_2",
+      "x": 580.17,
+      "z": -322.58,
+      "kinds": ["compact", "police"]
+    },
+    {
+      "id": "parked_s037_r184",
+      "cell": "cell_6_2",
+      "x": 598.04,
+      "z": -313.47,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_r190",
+      "cell": "cell_6_2",
+      "x": 602.56,
+      "z": -308.5,
+      "kinds": ["compact", "police", "sedan"]
+    },
+    {
+      "id": "parked_s037_r196",
+      "cell": "cell_6_2",
+      "x": 606.24,
+      "z": -302.97,
+      "kinds": ["compact", "police"]
+    }
+  ]
+}
