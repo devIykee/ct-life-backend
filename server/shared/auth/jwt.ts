@@ -32,6 +32,7 @@ import {
 } from 'jose';
 import { createPublicKey, type KeyObject } from 'node:crypto';
 import { loadConfig } from '../config/config.js';
+import { SignatureInvalidError } from '../domain/errors.js';
 
 export type AuthMethod = 'siws' | 'dev' | 'wallet';
 
@@ -39,6 +40,7 @@ export interface AccessClaims extends JWTPayload {
   readonly sub: string;
   readonly wal: string | null;
   readonly lid?: string | null;
+  readonly liv?: number;
   readonly am?: AuthMethod;
   readonly auth_time?: number;
   readonly skr: boolean;
@@ -50,6 +52,7 @@ export interface RefreshClaims extends JWTPayload {
   readonly jti: string;
   readonly typ: 'refresh';
   readonly lid?: string | null;
+  readonly liv?: number;
   readonly am?: AuthMethod;
   readonly auth_time?: number;
 }
@@ -62,6 +65,7 @@ export interface JwtIssuer {
     identityId?: string | null,
     authMethod?: AuthMethod,
     authTime?: number,
+    identityVersion?: number,
   ): Promise<string>;
   signRefresh(
     userId: string,
@@ -69,6 +73,7 @@ export interface JwtIssuer {
     identityId?: string | null,
     authMethod?: AuthMethod,
     authTime?: number,
+    identityVersion?: number,
   ): Promise<string>;
   verifyAccess(token: string): Promise<AccessClaims>;
   verifyRefresh(token: string): Promise<RefreshClaims>;
@@ -112,6 +117,7 @@ export function createJwtIssuer(): JwtIssuer {
       identityId = null,
       authMethod = 'siws',
       authTime?: number,
+      identityVersion = 0,
     ) {
       const key = await privateKeyPromise;
       const now = Math.floor(Date.now() / 1000);
@@ -120,6 +126,7 @@ export function createJwtIssuer(): JwtIssuer {
         skr: isSeeker,
         typ: 'access',
         lid: identityId,
+        liv: identityVersion,
         am: authMethod,
         ...(authTime === undefined ? {} : { auth_time: authTime }),
       })
@@ -131,12 +138,20 @@ export function createJwtIssuer(): JwtIssuer {
         .setExpirationTime(now + cfg.jwt.accessTtlSec)
         .sign(key);
     },
-    async signRefresh(userId, jti, identityId = null, authMethod = 'siws', authTime?: number) {
+    async signRefresh(
+      userId,
+      jti,
+      identityId = null,
+      authMethod = 'siws',
+      authTime?: number,
+      identityVersion = 0,
+    ) {
       const key = await privateKeyPromise;
       const now = Math.floor(Date.now() / 1000);
       return await new SignJWT({
         typ: 'refresh',
         lid: identityId,
+        liv: identityVersion,
         am: authMethod,
         ...(authTime === undefined ? {} : { auth_time: authTime }),
       })
@@ -163,7 +178,7 @@ export function createJwtIssuer(): JwtIssuer {
         typeof payload.skr !== 'boolean' ||
         !validIdentityClaims(payload)
       ) {
-        throw new Error('Not an access token');
+        throw new SignatureInvalidError({ reason: 'invalid_access_claims' });
       }
       return payload;
     },
@@ -180,7 +195,7 @@ export function createJwtIssuer(): JwtIssuer {
         typeof payload.jti !== 'string' ||
         !validIdentityClaims(payload)
       ) {
-        throw new Error('Not a refresh token');
+        throw new SignatureInvalidError({ reason: 'invalid_refresh_claims' });
       }
       return payload;
     },
@@ -207,6 +222,10 @@ export function createJwtIssuer(): JwtIssuer {
 
 function validIdentityClaims(payload: JWTPayload): boolean {
   return (
+    (payload.liv === undefined ||
+      (Number.isSafeInteger(payload.liv) &&
+        Number(payload.liv) >= 0 &&
+        Number(payload.liv) <= 2147483647)) &&
     (payload.auth_time === undefined ||
       (Number.isSafeInteger(payload.auth_time) && Number(payload.auth_time) > 0)) &&
     (payload.am === undefined ||

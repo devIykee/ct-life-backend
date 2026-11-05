@@ -593,6 +593,41 @@
       "code": "REAL_MARKETS_TX_MISMATCH",
       "httpStatus": 422,
       "message": "That signature is not the order that was built for your wallet."
+    },
+    {
+      "code": "AUTH_IDENTITY_REVOKED",
+      "httpStatus": 401,
+      "message": "This sign-in session is no longer active. Sign in again."
+    },
+    {
+      "code": "AUTH_IDENTITY_NOT_FOUND",
+      "httpStatus": 404,
+      "message": "Sign-in wallet not found."
+    },
+    {
+      "code": "AUTH_LAST_IDENTITY",
+      "httpStatus": 409,
+      "message": "Keep at least one sign-in wallet."
+    },
+    {
+      "code": "AUTH_USE_ANOTHER_IDENTITY",
+      "httpStatus": 409,
+      "message": "Sign in with a wallet you are keeping before removing this one."
+    },
+    {
+      "code": "AUTH_PRIMARY_WALLET_IMMUTABLE",
+      "httpStatus": 409,
+      "message": "The primary Solana wallet cannot be removed."
+    },
+    {
+      "code": "AUTH_PRIMARY_WALLET_EXISTS",
+      "httpStatus": 409,
+      "message": "This player already has a primary Solana wallet."
+    },
+    {
+      "code": "AUTH_STATE_UNAVAILABLE",
+      "httpStatus": 503,
+      "message": "Account access could not be checked. Try again shortly."
     }
   ]
 }

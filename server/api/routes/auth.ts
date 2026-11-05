@@ -1,10 +1,16 @@
 import {
   LOGIN_NETWORKS,
-  authWalletError,
   issueLoginChallenge,
   completeLoginChallenge,
   listLoginIdentities,
+  listAccountAccessEvents,
 } from '../../application/wallet-auth.js';
+import { assertRecentAuthentication } from '../../application/login-credentials.js';
+import {
+  revokeLoginIdentity,
+  issuePrimarySolanaChallenge,
+  completePrimarySolanaChallenge,
+} from '../../application/wallet-auth-lifecycle.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withRateLimit } from '../middleware/rate-limit.js';
 import type { AuthMethod } from '../../shared/auth/jwt.js';
@@ -59,6 +65,8 @@ function authResponse(
     wallet: string | null;
     authMethod: AuthMethod;
     loginIdentity: SessionIdentity;
+    loginIdentityVersion: number;
+    authenticatedAt: number | null;
     isSeeker: boolean;
     accessToken: string;
     refreshToken: string;
@@ -75,6 +83,8 @@ function authResponse(
       wallet: user.wallet,
       authMethod: user.authMethod,
       loginIdentity: user.loginIdentity,
+      loginIdentityVersion: user.loginIdentityVersion,
+      authenticatedAt: user.authenticatedAt,
       isSeeker: user.isSeeker,
       hasCharacter,
     },
@@ -107,24 +117,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
   };
   const recentAuth = async (req: FastifyRequest): Promise<void> => {
-    const time = req.user?.auth_time,
-      now = Math.floor(Date.now() / 1000);
-    const devAllowed =
-      req.user?.am !== 'dev' ||
-      (req.ctx.config.auth.devAuthEnabled && ['local', 'mock'].includes(req.ctx.config.appEnv));
-    if (
-      time === undefined ||
-      !Number.isSafeInteger(time) ||
-      time <= 0 ||
-      time > now + 30 ||
-      now - time > 600 ||
-      !devAllowed
-    )
-      throw authWalletError(
-        'AUTH_REAUTH_REQUIRED',
-        'Sign in again before adding a login wallet.',
-        403,
-      );
+    assertRecentAuthentication(req.ctx.config, req.user!);
   };
   for (const purpose of ['login', 'enrolment'] as const) {
     const path = purpose === 'login' ? '/v1/auth/wallet' : '/v1/auth/identities';
@@ -142,6 +135,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
             purpose === 'login' ? null : req.user!.sub,
             body.data,
             req.headers.origin,
+            purpose === 'login' ? undefined : req.user,
           ),
         );
     });
@@ -174,6 +168,8 @@ export function registerAuthRoutes(app: FastifyInstance): void {
           body.data.challengeId,
           proof,
           req.headers.origin,
+          undefined,
+          req.user,
         );
         return reply.send({ identity: result.identity });
       } finally {
@@ -183,7 +179,71 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   }
   app.get('/v1/auth/identities', { preHandler: [requireAuth, withRateLimit()] }, async (req) => ({
     identities: await listLoginIdentities(req.ctx, req.user!.sub),
+    securityEvents: await listAccountAccessEvents(req.ctx, req.user!.sub),
   }));
+
+  app.delete(
+    '/v1/auth/identities/:id',
+    { preHandler: [requireAuth, recentAuth, withRateLimit()] },
+    async (req, reply) => {
+      const params = z.object({ id: z.string().uuid() }).strict().safeParse(req.params);
+      if (!params.success || req.body !== undefined)
+        throw new ValidationFailedError({ reason: 'invalid_identity_revocation' });
+      await revokeLoginIdentity(req.ctx, req.user!, params.data.id, req.headers.origin);
+      return reply.code(204).send();
+    },
+  );
+  app.post(
+    '/v1/auth/primary-solana/challenge',
+    { preHandler: [requireAuth, recentAuth, withRateLimit(), limit] },
+    async (req, reply) => {
+      const body = z
+        .object({ address: z.string().min(32).max(44) })
+        .strict()
+        .safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      return reply
+        .code(201)
+        .send(
+          await issuePrimarySolanaChallenge(
+            req.ctx,
+            req.user!,
+            body.data.address,
+            req.headers.origin,
+          ),
+        );
+    },
+  );
+  app.post(
+    '/v1/auth/primary-solana/verify',
+    { preHandler: [requireAuth, recentAuth, withRateLimit(), limit] },
+    async (req, reply) => {
+      const body = z
+        .object({ challengeId: z.string().uuid(), signature: z.string().length(88) })
+        .strict()
+        .safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const sem = new GlobalLoginSemaphore(
+        req.ctx.redis.main,
+        req.ctx.config.rateLimits.loginGlobalConcurrent,
+      );
+      const acquired = await sem.tryAcquire();
+      if (!acquired.acquired) throw new ServerBusyError(acquired.retryAfterMs);
+      try {
+        return reply.send(
+          await completePrimarySolanaChallenge(
+            req.ctx,
+            req.user!,
+            body.data.challengeId,
+            body.data.signature,
+            req.headers.origin,
+          ),
+        );
+      } finally {
+        await sem.release();
+      }
+    },
+  );
 
   // GET /v1/auth/challenge
   app.get('/v1/auth/challenge', async (req, reply) => {
@@ -274,8 +334,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
       try {
         const out = await auth(req).refresh(body.data.refreshToken);
-        const hasCharacter = await checkHasCharacter(req, out.id);
-        return reply.send(authResponse(out, hasCharacter));
+        return reply.send(authResponse(out, out.hasCharacter));
       } catch (e) {
         // The JWT layer throws plain Errors for malformed/invalid
         // tokens ("Invalid Compact JWS", "Not a refresh token",
@@ -323,11 +382,4 @@ export function registerAuthRoutes(app: FastifyInstance): void {
     const jwks = await req.ctx.jwt.jwks();
     return reply.send(jwks);
   });
-}
-
-async function checkHasCharacter(req: FastifyRequest, userId: string): Promise<boolean> {
-  const r = await req.ctx.db.withConnection((c: import('pg').PoolClient) =>
-    c.query<{ id: string }>('SELECT id FROM characters WHERE user_id = $1', [userId]),
-  );
-  return (r.rowCount ?? 0) > 0;
 }

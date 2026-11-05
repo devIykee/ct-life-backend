@@ -16,7 +16,7 @@ import { ConfigCache, InMemoryNonceStore, type AppContext } from './context.js';
 import { AuthService } from './auth.js';
 import { deleteAccount } from './account-deletion.js';
 import {
-  completeLoginChallenge,
+  completeLoginChallenge as completeLoginChallengeRaw,
   issueLoginChallenge,
   listLoginIdentities,
   type LoginChallenge,
@@ -26,6 +26,15 @@ import * as proofs from './wallet-links-proofs.js';
 import { registerAuthRoutes } from '../api/routes/auth.js';
 import { registerCoreRoutes } from '../api/routes/core.js';
 import { idempotencyOnSend } from '../api/middleware/idempotency.js';
+import {
+  resolveLoginCredential,
+  invalidLoginCredentials,
+  LOGIN_IDENTITY_REVOKED_CHANNEL,
+} from './login-credentials.js';
+import {
+  completePrimarySolanaChallenge,
+  type PrimarySolanaChallenge,
+} from './wallet-auth-lifecycle.js';
 
 let ctx: AppContext, app: FastifyInstance;
 let admin: Pool;
@@ -57,7 +66,11 @@ const redis = {
   publish: vi.fn(async () => 1),
   expire: async () => 1,
   pttl: async () => 60000,
-  eval: async () => [1, '99'],
+  eval: async (script: string, _keys: number, key?: string, owner?: string) => {
+    if (script.includes('ctl-refresh-release'))
+      return key && values.get(key) === owner ? Number(values.delete(key)) : 0;
+    return [1, '99'];
+  },
 };
 beforeAll(async () => {
   const cfg = loadConfig();
@@ -110,6 +123,11 @@ afterAll(async () => {
   if (created) await admin.query(`DROP SCHEMA ${schema} CASCADE`);
   if (admin) await admin.end();
 });
+const actors = new Map<string, import('../shared/auth/jwt.js').AccessClaims>();
+const completeLoginChallenge = (...args: Parameters<typeof completeLoginChallengeRaw>) => {
+  if (args[1] === 'enrolment' && args[7] === undefined) args[7] = actors.get(args[2] ?? '');
+  return completeLoginChallengeRaw(...args);
+};
 const account = () => {
   const a = privateKeyToAccount(generatePrivateKey());
   addresses.add(a.address.toLowerCase());
@@ -126,6 +144,7 @@ async function issue(
     owner,
     { network: 'eip155:4663', address: a.address },
     origin,
+    owner === null ? undefined : actors.get(owner),
   );
   return { a, c, proof: { signature: await a.signMessage({ message: c.message }) } };
 }
@@ -133,9 +152,10 @@ async function login(a = account()) {
   const f = await issue(a);
   const u = await new AuthService(ctx).walletAuthenticate(f.c.id, f.proof, origin);
   users.add(u.id);
+  actors.set(u.id, await ctx.jwt.verifyAccess(u.accessToken));
   return { ...f, u };
 }
-const call = (method: 'GET' | 'POST', url: string, payload?: object, token?: string) =>
+const call = (method: 'GET' | 'POST' | 'DELETE', url: string, payload?: object, token?: string) =>
   app.inject({
     method,
     url,
@@ -820,4 +840,732 @@ describe('wallet auth HTTP contract and playable first session', () => {
       }
     },
   );
+});
+
+async function enrolWithToken(token: string, a = account()) {
+  const issued = await call(
+    'POST',
+    '/v1/auth/identities/challenge',
+    { network: 'eip155:4663', address: a.address },
+    token,
+  );
+  expect(issued.statusCode, issued.body).toBe(201);
+  const c = issued.json<LoginChallenge>();
+  const verified = await call(
+    'POST',
+    '/v1/auth/identities/verify',
+    { challengeId: c.id, signature: await a.signMessage({ message: c.message }) },
+    token,
+  );
+  expect(verified.statusCode, verified.body).toBe(200);
+  return { a, identity: verified.json().identity };
+}
+function solanaKey() {
+  const key = generateKeyPairSync('ed25519');
+  return {
+    key,
+    address: new PublicKey(
+      key.publicKey.export({ format: 'der', type: 'spki' }).subarray(-32),
+    ).toBase58(),
+  };
+}
+async function primaryProof(token: string, key = solanaKey()) {
+  const issued = await call(
+    'POST',
+    '/v1/auth/primary-solana/challenge',
+    { address: key.address },
+    token,
+  );
+  expect(issued.statusCode, issued.body).toBe(201);
+  const c = issued.json<PrimarySolanaChallenge>();
+  return {
+    ...key,
+    c,
+    signature: sign(null, Buffer.from(c.message), key.key.privateKey).toString('base64'),
+  };
+}
+
+describe('credential lifecycle and durable session generations', () => {
+  it('returns retryable503 for durable REST/refresh outage without consuming the existing refresh', async () => {
+    const f = await login();
+    const lookup = vi
+      .spyOn(ctx.db, 'withConnection')
+      .mockRejectedValueOnce(Error('fixture DB unavailable'));
+    const response = await call('GET', '/v1/auth/identities', undefined, f.u.accessToken);
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json().error.code).toBe('AUTH_STATE_UNAVAILABLE');
+    lookup.mockRejectedValueOnce(Error('fixture DB unavailable'));
+    const rotated = await call('POST', '/v1/auth/refresh', { refreshToken: f.u.refreshToken });
+    expect(rotated.statusCode, rotated.body).toBe(503);
+    expect(rotated.json().error.code).toBe('AUTH_STATE_UNAVAILABLE');
+    lookup.mockRestore();
+    expect((await new AuthService(ctx).refresh(f.u.refreshToken)).id).toBe(f.u.id);
+  });
+  it('releases only its own failed pre-response refresh reservation, including a lost commit acknowledgement', async () => {
+    const f = await login();
+    const client = await ctx.db.connect();
+    const actualQuery = client.query.bind(client);
+    const query = vi.spyOn(client, 'query').mockImplementation((async (...args: unknown[]) => {
+      const result = await (actualQuery as (...a: unknown[]) => Promise<unknown>)(...args);
+      if (args[0] === 'COMMIT') throw Error('fixture commit acknowledgement lost');
+      return result;
+    }) as typeof client.query);
+    const connect = vi.spyOn(ctx.db, 'connect').mockResolvedValueOnce(client);
+    const response = await call('POST', '/v1/auth/refresh', { refreshToken: f.u.refreshToken });
+    expect(response.statusCode, response.body).toBe(503);
+    expect(response.json().error.code).toBe('AUTH_STATE_UNAVAILABLE');
+    query.mockRestore();
+    connect.mockRestore();
+    expect((await new AuthService(ctx).refresh(f.u.refreshToken)).id).toBe(f.u.id);
+  });
+  it('a concurrent refresh loser cannot clear the successful attempt single-use marker', async () => {
+    const f = await login();
+    const results = await Promise.allSettled(
+      [1, 2].map(() => new AuthService(ctx).refresh(f.u.refreshToken)),
+    );
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(
+      (results.find((r) => r.status === 'rejected') as PromiseRejectedResult).reason,
+    ).toMatchObject({ code: 'SIGNATURE_INVALID' });
+    await expect(new AuthService(ctx).refresh(f.u.refreshToken)).rejects.toMatchObject({
+      code: 'SIGNATURE_INVALID',
+    });
+  });
+
+  it('returns 401 for a signed refresh with malformed generation claims', async () => {
+    const f = await login();
+    const token = await ctx.jwt.signRefresh(
+      f.u.id,
+      uuidv7(),
+      f.u.loginIdentity.id,
+      'wallet',
+      f.u.authenticatedAt!,
+      -1,
+    );
+    const response = await call('POST', '/v1/auth/refresh', { refreshToken: token });
+    expect(response.statusCode, response.body).toBe(401);
+    expect(response.json().error.code).toBe('SIGNATURE_INVALID');
+  });
+
+  it('refuses the last credential, current credential, primary Solana and another player target', async () => {
+    const f = await login();
+    expect(
+      (
+        await call(
+          'DELETE',
+          `/v1/auth/identities/${f.u.loginIdentity.id}`,
+          undefined,
+          f.u.accessToken,
+        )
+      ).json().error.code,
+    ).toBe('AUTH_LAST_IDENTITY');
+    await enrolWithToken(f.u.accessToken);
+    expect(
+      (
+        await call(
+          'DELETE',
+          `/v1/auth/identities/${f.u.loginIdentity.id}`,
+          undefined,
+          f.u.accessToken,
+        )
+      ).json().error.code,
+    ).toBe('AUTH_USE_ANOTHER_IDENTITY');
+    const other = await login();
+    expect(
+      (
+        await call(
+          'DELETE',
+          `/v1/auth/identities/${other.u.loginIdentity.id}`,
+          undefined,
+          f.u.accessToken,
+        )
+      ).statusCode,
+    ).toBe(404);
+    const legacy = await siwsLogin();
+    expect(
+      (
+        await call(
+          'DELETE',
+          `/v1/auth/identities/${legacy.u.loginIdentity.id}`,
+          undefined,
+          legacy.u.accessToken,
+        )
+      ).json().error.code,
+    ).toBe('AUTH_PRIMARY_WALLET_IMMUTABLE');
+  });
+  it('revokes only the target sessions, preserves payment ownership, and re-enrolment never revives old tokens', async () => {
+    const owner = await login(),
+      added = await enrolWithToken(owner.u.accessToken),
+      target = await login(added.a);
+    const payment = await paymentLink(owner.u.id, added.a);
+    const targetClaims = await ctx.jwt.verifyAccess(target.u.accessToken),
+      ownerClaims = await ctx.jwt.verifyAccess(owner.u.accessToken);
+    const before = await resolveLoginCredential(ctx.db, targetClaims),
+      retained = await resolveLoginCredential(ctx.db, ownerClaims);
+    const removed = await call(
+      'DELETE',
+      `/v1/auth/identities/${added.identity.id}`,
+      undefined,
+      owner.u.accessToken,
+    );
+    expect(removed.statusCode, removed.body).toBe(204);
+    expect(redis.publish).toHaveBeenCalledWith(
+      LOGIN_IDENTITY_REVOKED_CHANNEL,
+      JSON.stringify({ userId: owner.u.id, identityId: added.identity.id, minVersion: 1 }),
+    );
+    const rejected = await call('GET', '/v1/auth/identities', undefined, target.u.accessToken);
+    expect(rejected.statusCode).toBe(401);
+    expect(rejected.json().error.code).toBe('AUTH_IDENTITY_REVOKED');
+    await expect(new AuthService(ctx).refresh(target.u.refreshToken)).rejects.toMatchObject({
+      code: 'AUTH_IDENTITY_REVOKED',
+    });
+    expect(await invalidLoginCredentials(ctx.db, [before, retained, before])).toEqual([before]);
+    expect(
+      (await call('GET', '/v1/auth/identities', undefined, owner.u.accessToken)).json().identities,
+    ).toHaveLength(1);
+    const old = await issue(added.a);
+    await expect(
+      new AuthService(ctx).walletAuthenticate(old.c.id, old.proof, origin),
+    ).rejects.toMatchObject({ code: 'AUTH_IDENTITY_REVOKED' });
+    expect(
+      (
+        await ctx.db.pool.query(
+          'SELECT user_id,revoked_at,ownership_released_at FROM economy_wallet_links WHERE id=$1',
+          [payment.id],
+        )
+      ).rows[0],
+    ).toEqual({ user_id: owner.u.id, revoked_at: null, ownership_released_at: null });
+    const again = await enrolWithToken(owner.u.accessToken, added.a),
+      fresh = await login(added.a);
+    expect(again.identity.id).toBe(added.identity.id);
+    expect(fresh.u.id).toBe(owner.u.id);
+    expect(fresh.u.loginIdentityVersion).toBe(1);
+    expect((await ctx.jwt.verifyAccess(fresh.u.accessToken)).liv).toBe(1);
+    await expect(resolveLoginCredential(ctx.db, targetClaims)).rejects.toMatchObject({
+      code: 'AUTH_IDENTITY_REVOKED',
+    });
+    const legacyClaims = { ...targetClaims };
+    delete legacyClaims.liv;
+    await expect(resolveLoginCredential(ctx.db, legacyClaims)).rejects.toMatchObject({
+      code: 'AUTH_IDENTITY_REVOKED',
+    });
+    expect(
+      await resolveLoginCredential(ctx.db, await ctx.jwt.verifyAccess(fresh.u.accessToken)),
+    ).toMatchObject({ version: 1 });
+    const refresh = await new AuthService(ctx).refresh(fresh.u.refreshToken);
+    expect(refresh.loginIdentityVersion).toBe(1);
+    expect(refresh.authenticatedAt).toBe(fresh.u.authenticatedAt);
+  });
+  it('serializes mutual revocation so one retained credential remains', async () => {
+    const a = await login(),
+      b = await enrolWithToken(a.u.accessToken),
+      signedB = await login(b.a);
+    const results = await Promise.all([
+      call('DELETE', `/v1/auth/identities/${b.identity.id}`, undefined, a.u.accessToken),
+      call(
+        'DELETE',
+        `/v1/auth/identities/${a.u.loginIdentity.id}`,
+        undefined,
+        signedB.u.accessToken,
+      ),
+    ]);
+    expect(results.filter((r) => r.statusCode === 204)).toHaveLength(1);
+    expect(results.filter((r) => r.statusCode === 401)).toHaveLength(1);
+    expect(await listLoginIdentities(ctx, a.u.id)).toHaveLength(1);
+  });
+  it('binds pending enrolment to its initiating credential and invalidates it on revocation', async () => {
+    const owner = await login(),
+      b = await enrolWithToken(owner.u.accessToken),
+      signedB = await login(b.a),
+      c = account();
+    const issued = await call(
+      'POST',
+      '/v1/auth/identities/challenge',
+      { network: 'eip155:4663', address: c.address },
+      signedB.u.accessToken,
+    );
+    const challenge = issued.json<LoginChallenge>(),
+      body = {
+        challengeId: challenge.id,
+        signature: await c.signMessage({ message: challenge.message }),
+      };
+    expect(
+      (await call('POST', '/v1/auth/identities/verify', body, owner.u.accessToken)).json().error
+        .code,
+    ).toBe('AUTH_CHALLENGE_INVALID');
+    await call('DELETE', `/v1/auth/identities/${b.identity.id}`, undefined, owner.u.accessToken);
+    expect(
+      (await call('POST', '/v1/auth/identities/verify', body, signedB.u.accessToken)).json().error
+        .code,
+    ).toBe('AUTH_IDENTITY_REVOKED');
+    expect(
+      (await call('POST', '/v1/auth/identities/verify', body, owner.u.accessToken)).json().error
+        .code,
+    ).toBe('AUTH_CHALLENGE_INVALID');
+    expect(await listLoginIdentities(ctx, owner.u.id)).toHaveLength(1);
+  });
+  it('requires recent authentication for removal and does not renew it on refresh', async () => {
+    const owner = await login(),
+      b = await enrolWithToken(owner.u.accessToken),
+      now = Math.floor(Date.now() / 1000);
+    for (const time of [undefined, now - 601, now + 31]) {
+      const token = await ctx.jwt.signAccess(
+        owner.u.id,
+        null,
+        false,
+        owner.u.loginIdentity.id,
+        'wallet',
+        time,
+      );
+      const result = await call('DELETE', `/v1/auth/identities/${b.identity.id}`, undefined, token);
+      expect(result.statusCode).toBe(403);
+      expect(result.json().error.code).toBe('AUTH_REAUTH_REQUIRED');
+    }
+  });
+  it('commits despite pubsub failure, repeated removal does not advance generation, and events remain owner-scoped', async () => {
+    const owner = await login(),
+      b = await enrolWithToken(owner.u.accessToken),
+      other = await login();
+    redis.publish.mockRejectedValueOnce(Error('fixture pubsub unavailable'));
+    for (let i = 0; i < 2; i++)
+      expect(
+        (
+          await call(
+            'DELETE',
+            `/v1/auth/identities/${b.identity.id}`,
+            undefined,
+            owner.u.accessToken,
+          )
+        ).statusCode,
+      ).toBe(204);
+    expect(
+      (
+        await ctx.db.pool.query('SELECT session_version FROM login_identities WHERE id=$1', [
+          b.identity.id,
+        ])
+      ).rows[0].session_version,
+    ).toBe(1);
+    const events = (await call('GET', '/v1/auth/identities', undefined, owner.u.accessToken)).json()
+      .securityEvents;
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      identityId: b.identity.id,
+      kind: 'identity_revoked',
+      network: 'eip155:4663',
+    });
+    expect(Object.keys(events[0]).sort()).toEqual([
+      'createdAt',
+      'id',
+      'identityId',
+      'kind',
+      'network',
+    ]);
+    expect(
+      (await call('GET', '/v1/auth/identities', undefined, other.u.accessToken)).json()
+        .securityEvents,
+    ).toEqual([]);
+  });
+  it('batches bounded distinct scopes and propagates database failures', async () => {
+    const owner = await login(),
+      scope = await resolveLoginCredential(ctx.db, await ctx.jwt.verifyAccess(owner.u.accessToken));
+    const scopes = Array.from({ length: 260 }, (_, version) => ({ ...scope, version }));
+    expect(await invalidLoginCredentials(ctx.db, [...scopes, scope])).toHaveLength(259);
+    const broken = {
+      ...ctx.db,
+      withConnection: vi.fn(async () => {
+        throw Error('fixture database down');
+      }),
+    };
+    await expect(invalidLoginCredentials(broken, [scope])).rejects.toThrow('fixture database down');
+  });
+});
+
+describe('explicit primary Solana attachment', () => {
+  it('can remove a NEAR credential after fresh login with a retained EVM identity', async () => {
+    const near = await nearHttpLogin(),
+      retained = await enrolWithToken(near.u.accessToken),
+      signed = await login(retained.a);
+    expect(
+      (
+        await call(
+          'DELETE',
+          `/v1/auth/identities/${near.u.loginIdentity.id}`,
+          undefined,
+          signed.u.accessToken,
+        )
+      ).statusCode,
+    ).toBe(204);
+    expect(
+      (await call('GET', '/v1/auth/identities', undefined, near.u.accessToken)).json().error.code,
+    ).toBe('AUTH_IDENTITY_REVOKED');
+    expect((await listLoginIdentities(ctx, near.u.id))[0]!.id).toBe(signed.u.loginIdentity.id);
+  });
+  it('a deleted owner releases a Solana address without moving its historical payment link', async () => {
+    const old = await siwsLogin();
+    const challenge = await issueWalletLinkChallenge(
+      ctx,
+      old.u.id,
+      { network: 'solana:mainnet', address: old.u.wallet! },
+      origin,
+    );
+    const link = await completeWalletLink(
+      ctx,
+      old.u.id,
+      challenge.id,
+      {
+        signature: sign(null, Buffer.from(challenge.message), old.key.privateKey).toString(
+          'base64',
+        ),
+      },
+      origin,
+    );
+    await deleteAccount(ctx, old.u.id);
+    const fresh = await login(),
+      p = await primaryProof(fresh.u.accessToken, { key: old.key, address: old.u.wallet! });
+    const receipt = await call(
+      'POST',
+      '/v1/auth/primary-solana/verify',
+      { challengeId: p.c.id, signature: p.signature },
+      fresh.u.accessToken,
+    );
+    expect(receipt.statusCode, receipt.body).toBe(200);
+    expect(receipt.json().userId).toBe(fresh.u.id);
+    const historic = (
+      await ctx.db.pool.query(
+        'SELECT user_id,ownership_released_at FROM economy_wallet_links WHERE id=$1',
+        [link.id],
+      )
+    ).rows[0];
+    expect(historic.user_id).toBe(old.u.id);
+    expect(historic.ownership_released_at).not.toBeNull();
+    expect(
+      (
+        await ctx.db.pool.query('SELECT id FROM economy_wallet_links WHERE user_id=$1', [
+          fresh.u.id,
+        ])
+      ).rowCount,
+    ).toBe(0);
+  });
+
+  it.each(['EVM', 'NEAR'])(
+    'attaches to the %s player UUID, preserves inventory/balance and current login, and later SIWS resolves the same player',
+    async (network) => {
+      const f = network === 'EVM' ? await login() : await nearHttpLogin();
+      const roll = await call('POST', '/v1/lottery/roll', {}, f.u.accessToken);
+      expect(roll.statusCode, roll.body).toBe(200);
+      const balance = (await ctx.db.pool.query('SELECT * FROM balances WHERE user_id=$1', [f.u.id]))
+        .rows;
+      const item = uuidv7(),
+        inventory = uuidv7();
+      await ctx.db.pool.query(
+        "INSERT INTO cosmetic_items(item_id,slot,item_key,name,price_cents) VALUES($1,'top',$2,'Primary fixture',100)",
+        [item, uuidv7()],
+      );
+      await ctx.db.pool.query(
+        "INSERT INTO cosmetic_inventory(inventory_id,user_id,item_id,source) VALUES($1,$2,$3,'grant')",
+        [inventory, f.u.id, item],
+      );
+      const p = await primaryProof(f.u.accessToken);
+      expect(p.c).toMatchObject({
+        purpose: 'primary-solana-enrolment',
+        proofScheme: 'siws-ed25519',
+        userId: f.u.id,
+        network: 'solana:mainnet',
+      });
+      expect(p.c.message.endsWith('- urn:ctlife:purpose:primary-solana-enrolment')).toBe(true);
+      const verified = await call(
+        'POST',
+        '/v1/auth/primary-solana/verify',
+        { challengeId: p.c.id, signature: p.signature },
+        f.u.accessToken,
+      );
+      expect(verified.statusCode, verified.body).toBe(200);
+      expect(verified.json()).toMatchObject({
+        userId: f.u.id,
+        challengeId: p.c.id,
+        wallet: p.address,
+        identity: { network: 'solana:mainnet', address: p.address },
+      });
+      expect(
+        (await ctx.db.pool.query('SELECT * FROM balances WHERE user_id=$1', [f.u.id])).rows,
+      ).toEqual(balance);
+      expect(
+        (
+          await ctx.db.pool.query(
+            'SELECT user_id,item_id FROM cosmetic_inventory WHERE inventory_id=$1',
+            [inventory],
+          )
+        ).rows[0],
+      ).toEqual({ user_id: f.u.id, item_id: item });
+      expect(
+        (await ctx.db.pool.query('SELECT id FROM economy_wallet_links WHERE user_id=$1', [f.u.id]))
+          .rowCount,
+      ).toBe(0);
+      const refreshed = await call('POST', '/v1/auth/refresh', { refreshToken: f.u.refreshToken });
+      expect(refreshed.statusCode, refreshed.body).toBe(200);
+      const r = refreshed.json();
+      expect(r.user).toMatchObject({
+        id: f.u.id,
+        wallet: p.address,
+        authMethod: 'wallet',
+        loginIdentity: f.u.loginIdentity,
+        loginIdentityVersion: f.u.loginIdentityVersion,
+        authenticatedAt: f.u.authenticatedAt,
+      });
+      expect((await ctx.jwt.verifyAccess(r.accessToken)).auth_time).toBe(
+        (await ctx.jwt.verifyAccess(f.u.accessToken)).auth_time,
+      );
+      expect((await siwsLogin(p.key)).u.id).toBe(f.u.id);
+      expect(
+        (
+          await call(
+            'POST',
+            '/v1/auth/primary-solana/verify',
+            { challengeId: p.c.id, signature: p.signature },
+            f.u.accessToken,
+          )
+        ).json().error.code,
+      ).toBe('AUTH_CHALLENGE_INVALID');
+    },
+  );
+  it('rejects wrong owner, signature, purpose, origin and expired proof; only the persisted exact message is signed', async () => {
+    const f = await login(),
+      other = await login(),
+      p = await primaryProof(f.u.accessToken);
+    const body = { challengeId: p.c.id, signature: p.signature };
+    expect(
+      (await call('POST', '/v1/auth/primary-solana/verify', body, other.u.accessToken)).json().error
+        .code,
+    ).toBe('AUTH_CHALLENGE_INVALID');
+    for (const message of [
+      p.c.message.replace(f.u.id, other.u.id),
+      p.c.message.replace('primary-solana-enrolment', 'wallet-link'),
+      p.c.message.replace('solana:mainnet', 'solana:devnet'),
+      p.c.message.replace('play.ctlife.fun', 'other.ctlife.fun'),
+      p.c.message + '\n',
+    ]) {
+      const signature = sign(null, Buffer.from(message), p.key.privateKey).toString('base64');
+      expect(
+        (
+          await call(
+            'POST',
+            '/v1/auth/primary-solana/verify',
+            { ...body, signature },
+            f.u.accessToken,
+          )
+        ).json().error.code,
+      ).toBe('AUTH_PROOF_INVALID');
+    }
+    const actor = await ctx.jwt.verifyAccess(f.u.accessToken);
+    await expect(
+      completePrimarySolanaChallenge(ctx, actor, p.c.id, p.signature, 'https://other.ctlife.fun'),
+    ).rejects.toMatchObject({ code: 'AUTH_ORIGIN_INVALID' });
+    expect((await call('POST', '/v1/auth/wallet/verify', body)).json().error.code).toBe(
+      'AUTH_CHALLENGE_INVALID',
+    );
+    await ctx.db.pool.query(
+      "UPDATE login_identity_challenges SET issued_at=now()-interval '10 minutes',expires_at=now()-interval '5 minutes' WHERE id=$1",
+      [p.c.id],
+    );
+    expect(
+      (await call('POST', '/v1/auth/primary-solana/verify', body, f.u.accessToken)).json().error
+        .code,
+    ).toBe('AUTH_CHALLENGE_INVALID');
+  });
+  it('never accepts a payment-link challenge for primary account access', async () => {
+    const f = await login(),
+      p = solanaKey();
+    // Use an EVM payment challenge to demonstrate table/purpose isolation, not only crypto differences.
+    const link = await issueWalletLinkChallenge(
+      ctx,
+      f.u.id,
+      { network: 'eip155:4663', address: f.a.address },
+      origin,
+    );
+    const signature = sign(null, Buffer.from(link.message), p.key.privateKey).toString('base64');
+    expect(
+      (
+        await call(
+          'POST',
+          '/v1/auth/primary-solana/verify',
+          { challengeId: link.id, signature },
+          f.u.accessToken,
+        )
+      ).json().error.code,
+    ).toBe('AUTH_CHALLENGE_INVALID');
+  });
+  it('does not merge an existing Solana player or steal an active owner revoked payment reservation', async () => {
+    const existing = await siwsLogin(),
+      f = await login(),
+      p = await primaryProof(f.u.accessToken, { key: existing.key, address: existing.u.wallet! });
+    const blocked = await call(
+      'POST',
+      '/v1/auth/primary-solana/verify',
+      { challengeId: p.c.id, signature: p.signature },
+      f.u.accessToken,
+    );
+    expect(blocked.json().error.code).toBe('AUTH_IDENTITY_CONFLICT');
+    const reserved = await primaryProof(f.u.accessToken),
+      linkId = uuidv7();
+    await ctx.db.pool.query(
+      "INSERT INTO economy_wallet_links(id,user_id,network,address,proof_scheme,proof_digest,verified_at,revoked_at) VALUES($1,$2,'solana:mainnet',$3,'solana-ed25519','fixture',now(),now())",
+      [linkId, existing.u.id, reserved.address],
+    );
+    expect(
+      (
+        await call(
+          'POST',
+          '/v1/auth/primary-solana/verify',
+          { challengeId: reserved.c.id, signature: reserved.signature },
+          f.u.accessToken,
+        )
+      ).json().error.code,
+    ).toBe('AUTH_IDENTITY_CONFLICT');
+    expect(
+      (await ctx.db.pool.query('SELECT wallet FROM users WHERE id=$1', [f.u.id])).rows[0].wallet,
+    ).toBeNull();
+    expect(
+      (await ctx.db.pool.query('SELECT user_id FROM economy_wallet_links WHERE id=$1', [linkId]))
+        .rows[0].user_id,
+    ).toBe(existing.u.id);
+  });
+  it('serializes two primary candidates for one player and does not replace the winner', async () => {
+    const f = await login(),
+      p1 = await primaryProof(f.u.accessToken),
+      p2 = await primaryProof(f.u.accessToken);
+    const results = await Promise.all(
+      [p1, p2].map((p) =>
+        call(
+          'POST',
+          '/v1/auth/primary-solana/verify',
+          { challengeId: p.c.id, signature: p.signature },
+          f.u.accessToken,
+        ),
+      ),
+    );
+    expect(results.filter((r) => r.statusCode === 200)).toHaveLength(1);
+    expect(results.find((r) => r.statusCode !== 200)!.json().error.code).toBe(
+      'AUTH_PRIMARY_WALLET_EXISTS',
+    );
+    expect(
+      (await listLoginIdentities(ctx, f.u.id)).filter((i) => i.network === 'solana:mainnet'),
+    ).toHaveLength(1);
+  });
+  it('serializes primary enrolment against simultaneous legacy SIWS creation without moving either player', async () => {
+    const f = await login(),
+      p = await primaryProof(f.u.accessToken);
+    const [attach, legacy] = await Promise.all([
+      call(
+        'POST',
+        '/v1/auth/primary-solana/verify',
+        { challengeId: p.c.id, signature: p.signature },
+        f.u.accessToken,
+      ),
+      siwsLogin(p.key),
+    ]);
+    if (attach.statusCode === 200) expect(legacy.u.id).toBe(f.u.id);
+    else {
+      expect(attach.json().error.code).toBe('AUTH_IDENTITY_CONFLICT');
+      expect(legacy.u.id).not.toBe(f.u.id);
+    }
+    expect(
+      (await ctx.db.pool.query('SELECT id FROM users WHERE wallet=$1', [p.address])).rowCount,
+    ).toBe(1);
+  });
+  it('rejects a revoked initiator and never lets another current identity finish its primary ceremony', async () => {
+    const f = await login(),
+      b = await enrolWithToken(f.u.accessToken),
+      signedB = await login(b.a),
+      p = await primaryProof(signedB.u.accessToken);
+    const body = { challengeId: p.c.id, signature: p.signature };
+    expect(
+      (await call('POST', '/v1/auth/primary-solana/verify', body, f.u.accessToken)).json().error
+        .code,
+    ).toBe('AUTH_CHALLENGE_INVALID');
+    await call('DELETE', `/v1/auth/identities/${b.identity.id}`, undefined, f.u.accessToken);
+    expect(
+      (await call('POST', '/v1/auth/primary-solana/verify', body, signedB.u.accessToken)).json()
+        .error.code,
+    ).toBe('AUTH_IDENTITY_REVOKED');
+    expect(
+      (await ctx.db.pool.query('SELECT wallet FROM users WHERE id=$1', [f.u.id])).rows[0].wallet,
+    ).toBeNull();
+  });
+  it('SGT lookup failures keep non-Seeker status and duplicate verified SGT ownership is a typed conflict', async () => {
+    const f = await login(),
+      p = await primaryProof(f.u.accessToken),
+      helius = vi.mocked(ctx.helius.sgtMintsFor);
+    helius.mockRejectedValueOnce(Error('fixture lookup unavailable'));
+    expect(
+      (
+        await call(
+          'POST',
+          '/v1/auth/primary-solana/verify',
+          { challengeId: p.c.id, signature: p.signature },
+          f.u.accessToken,
+        )
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (await ctx.db.pool.query('SELECT is_seeker FROM users WHERE id=$1', [f.u.id])).rows[0]
+        .is_seeker,
+    ).toBe(false);
+    const sgt = Keypair.generate().publicKey.toBase58();
+    helius.mockResolvedValue([sgt]);
+    await siwsLogin();
+    const other = await login(),
+      candidate = await primaryProof(other.u.accessToken);
+    expect(
+      (
+        await call(
+          'POST',
+          '/v1/auth/primary-solana/verify',
+          { challengeId: candidate.c.id, signature: candidate.signature },
+          other.u.accessToken,
+        )
+      ).json().error.code,
+    ).toBe('SGT_ALREADY_LINKED');
+    expect(
+      (await ctx.db.pool.query('SELECT wallet FROM users WHERE id=$1', [other.u.id])).rows[0]
+        .wallet,
+    ).toBeNull();
+    helius.mockResolvedValue([]);
+  });
+  it('deletion erases security events, retires pending ceremonies and permits only a fresh player UUID', async () => {
+    const f = await login(),
+      b = await enrolWithToken(f.u.accessToken),
+      p = await primaryProof(f.u.accessToken);
+    await call('DELETE', `/v1/auth/identities/${b.identity.id}`, undefined, f.u.accessToken);
+    await deleteAccount(ctx, f.u.id);
+    expect(
+      (await ctx.db.pool.query('SELECT id FROM account_access_events WHERE user_id=$1', [f.u.id]))
+        .rowCount,
+    ).toBe(0);
+    expect(
+      (await ctx.db.pool.query('SELECT id FROM login_identity_challenges WHERE id=$1', [p.c.id]))
+        .rowCount,
+    ).toBe(0);
+    expect((await login(f.a)).u.id).not.toBe(f.u.id);
+  });
+  it('migration rollback refuses used generation/access history rather than resurrecting credentials', async () => {
+    const f = await login(),
+      b = await enrolWithToken(f.u.accessToken);
+    await call('DELETE', `/v1/auth/identities/${b.identity.id}`, undefined, f.u.accessToken);
+    const sql = await readFile('db/migrations/1700000154000_login_identity_lifecycle.sql', 'utf8'),
+      c = await ctx.db.connect();
+    try {
+      await c.query('BEGIN');
+      await expect(c.query(sql.split('-- Down Migration')[1]!)).rejects.toThrow('Cannot roll back');
+      await c.query('ROLLBACK');
+    } finally {
+      c.release();
+    }
+    expect(
+      (
+        await ctx.db.pool.query('SELECT session_version FROM login_identities WHERE id=$1', [
+          b.identity.id,
+        ])
+      ).rows[0].session_version,
+    ).toBe(1);
+  });
 });

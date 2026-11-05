@@ -191,6 +191,7 @@ export async function deleteAccount(ctx: AppContext, userId: string): Promise<vo
         'DELETE FROM login_identity_challenges WHERE user_id=$1 OR account_hint=$1',
         [userId],
       );
+      await client.query('DELETE FROM account_access_events WHERE user_id=$1', [userId]);
       await client.query('DELETE FROM login_identities WHERE user_id=$1', [userId]);
       await client.query(
         `UPDATE economy_wallet_links SET ownership_released_at=COALESCE(ownership_released_at,now()),revoked_at=COALESCE(revoked_at,now()) WHERE user_id=$1`,

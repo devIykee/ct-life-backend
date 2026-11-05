@@ -18,7 +18,7 @@ vi.mock('../player.js', async (orig) => {
   const { PlayerState: PS } = await import('../../../contract/realtime/states.js');
   return {
     ...real,
-    authenticateJoin: async () => 'u1',
+    authenticateJoinIdentity: async () => ({ userId: 'u1', credential: null }),
     loadPlayerState: async (id: string) => Object.assign(new PS(), { userId: id }),
   };
 });

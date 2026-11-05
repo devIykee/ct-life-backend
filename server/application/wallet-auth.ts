@@ -8,7 +8,14 @@ import { runInTransaction } from '../shared/db/uow.js';
 import { matchWebOrigin, siwsBindingForOrigin } from '../shared/domain/web-origins.js';
 import { assertNotBannedDb } from './moderation.js';
 import { lockWalletOwnership } from './wallet-ownership.js';
-import type { WalletContext } from './wallet-links.js';
+import {
+  assertRecentAuthentication,
+  resolveLoginCredentialOn,
+  credentialRevoked,
+  type CredentialClaims,
+} from './login-credentials.js';
+import type { AppContext } from './context.js';
+type WalletAuthContext = Pick<AppContext, 'db' | 'config'>;
 import {
   createNearFullAccessVerifier,
   normalizeWalletLinkAddress,
@@ -35,6 +42,8 @@ interface IdentityRow {
   network: WalletLinkNetwork;
   address: string;
   created_at: Date;
+  revoked_at: Date | null;
+  session_version: number;
 }
 export interface LoginChallenge {
   id: string;
@@ -71,6 +80,8 @@ interface ChallengeRow {
   issued_at: Date;
   expires_at: Date;
   account_hint: string | null;
+  initiator_identity_id: string | null;
+  initiator_session_version: number | null;
 }
 /** Typed authentication failure, mapped by the shared HTTP error handler. */
 export function authWalletError(code: string, message: string, status = 401): WalletLinkError {
@@ -82,8 +93,9 @@ function invalid(): WalletLinkError {
     'Sign-in challenge is missing, expired, used or has the wrong purpose or owner.',
   );
 }
-function binding(
-  ctx: WalletContext,
+/** Bind the current native/browser origin to the configured signing authority. */
+export function walletAuthBinding(
+  ctx: WalletAuthContext,
   origin?: string,
 ): { domain: string; uri: string; origin: string | null } {
   if (origin === undefined || origin === '') return { ...ctx.config.siws, origin: null };
@@ -142,7 +154,8 @@ function identity(r: IdentityRow): LoginIdentity {
     createdAt: r.created_at.toISOString(),
   };
 }
-async function activeUser(client: PoolClient, userId: string): Promise<void> {
+/** Lock active account state after its address lock and enforce the durable ban. */
+export async function lockActiveAuthUser(client: PoolClient, userId: string): Promise<void> {
   const r = await client.query(
     'SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
     [userId],
@@ -153,14 +166,15 @@ async function activeUser(client: PoolClient, userId: string): Promise<void> {
 }
 /** Issue exact five-minute bytes and bind any current owner for deletion invalidation. */
 export async function issueLoginChallenge(
-  ctx: WalletContext,
+  ctx: WalletAuthContext,
   purpose: LoginPurpose,
   userId: string | null,
   input: { network: LoginNetwork; address: string },
   origin?: string,
+  initiator?: CredentialClaims,
 ): Promise<LoginChallenge> {
   if ((purpose === 'login') !== (userId === null)) throw invalid();
-  const b = binding(ctx, origin);
+  const b = walletAuthBinding(ctx, origin);
   const now = new Date();
   const fields = {
     id: uuidv7(),
@@ -187,9 +201,11 @@ export async function issueLoginChallenge(
         )
       ).rows[0];
       const hint = userId ?? known?.user_id ?? null;
-      if (hint !== null) await activeUser(client, hint);
+      if (hint !== null) await lockActiveAuthUser(client, hint);
       // Anonymous addresses are public: unsigned requests must not lock out their holder.
       // Authenticated enrolment can limit only the caller's own outstanding requests.
+      const credential =
+        userId !== null ? await assertAuthInitiator(client, ctx, userId, initiator) : null;
       if (userId !== null) {
         const count = await client.query<{ count: string }>(
           'SELECT count(*) FROM login_identity_challenges WHERE user_id=$1 AND consumed_at IS NULL AND expires_at>clock_timestamp()',
@@ -207,8 +223,8 @@ export async function issueLoginChallenge(
         SELECT id FROM login_identity_challenges WHERE expires_at<=clock_timestamp()
         ORDER BY expires_at,id LIMIT 100 FOR UPDATE SKIP LOCKED)`);
       await client.query(
-        `INSERT INTO login_identity_challenges(id,purpose,user_id,network,address,nonce,message,domain,uri,origin,issued_at,expires_at,account_hint)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        `INSERT INTO login_identity_challenges(id,purpose,user_id,network,address,nonce,message,domain,uri,origin,issued_at,expires_at,account_hint,initiator_identity_id,initiator_session_version)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
         [
           c.id,
           c.purpose,
@@ -223,6 +239,8 @@ export async function issueLoginChallenge(
           c.issuedAt,
           c.expiresAt,
           hint,
+          credential?.identityId ?? null,
+          credential?.version ?? null,
         ],
       );
     },
@@ -242,14 +260,15 @@ export async function issueLoginChallenge(
 
 /** A valid signature can claim login ownership only through this purpose-bound route. */
 export async function completeLoginChallenge(
-  ctx: WalletContext,
+  ctx: WalletAuthContext,
   purpose: LoginPurpose,
   userId: string | null,
   challengeId: string,
   proof: WalletLinkProof,
   origin?: string,
   nearFullAccess?: NearFullAccessVerifier,
-): Promise<{ userId: string; identity: LoginIdentity }> {
+  initiator?: CredentialClaims,
+): Promise<{ userId: string; identity: LoginIdentity; identityVersion: number }> {
   const row = await ctx.db.withConnection(
     async (c) =>
       (
@@ -260,7 +279,7 @@ export async function completeLoginChallenge(
       ).rows[0],
   );
   if (!row) throw invalid();
-  const b = binding(ctx, origin);
+  const b = walletAuthBinding(ctx, origin);
   if (row.origin !== b.origin || row.domain !== b.domain || row.uri !== b.uri)
     throw authWalletError(
       'AUTH_ORIGIN_INVALID',
@@ -305,7 +324,15 @@ export async function completeLoginChallenge(
         )
       ).rows[0];
       const lockingOwner = userId ?? existing?.user_id ?? row.account_hint;
-      if (lockingOwner !== null) await activeUser(client, lockingOwner);
+      if (lockingOwner !== null) await lockActiveAuthUser(client, lockingOwner);
+      if (userId !== null) {
+        const caller = await assertAuthInitiator(client, ctx, userId, initiator);
+        if (
+          row.initiator_identity_id !== caller.identityId ||
+          row.initiator_session_version !== caller.version
+        )
+          throw invalid();
+      }
       // Address -> user -> challenge lock order also permits account deletion.
       const consumed = await client.query(
         'UPDATE login_identity_challenges SET consumed_at=clock_timestamp() WHERE id=$1 AND consumed_at IS NULL AND expires_at>clock_timestamp() RETURNING id',
@@ -325,14 +352,31 @@ export async function completeLoginChallenge(
           'Sign in to the existing player account and explicitly add this wallet as a sign-in identity.',
           409,
         );
-      if (owner !== null) await activeUser(client, owner);
+      if (owner !== null) await lockActiveAuthUser(client, owner);
       if (existing) {
+        if (existing.revoked_at !== null) {
+          if (purpose === 'login') return credentialRevoked();
+          await client.query('UPDATE login_identities SET revoked_at=NULL WHERE id=$1', [
+            existing.id,
+          ]);
+          await recordAccountAccessEvent(
+            client,
+            existing.user_id,
+            existing.id,
+            'identity_reactivated',
+            existing.network,
+          );
+        }
         if (purpose === 'login')
           await recordEvent(client, existing.user_id, {
             name: 'session_start',
             props: { method: 'wallet' },
           });
-        return { userId: existing.user_id, identity: identity(existing) };
+        return {
+          userId: existing.user_id,
+          identity: identity(existing),
+          identityVersion: existing.session_version,
+        };
       }
       const id = owner ?? uuidv7();
       if (owner === null)
@@ -354,7 +398,7 @@ export async function completeLoginChallenge(
         });
       if (purpose === 'login')
         await recordEvent(client, id, { name: 'session_start', props: { method: 'wallet' } });
-      return { userId: id, identity: identity(added) };
+      return { userId: id, identity: identity(added), identityVersion: added.session_version };
     },
     { isolation: 'read committed' },
     ctx.db,
@@ -365,15 +409,66 @@ export async function completeLoginChallenge(
 
 /** List explicit sign-in methods for the authenticated owner only. */
 export async function listLoginIdentities(
-  ctx: WalletContext,
+  ctx: WalletAuthContext,
   userId: string,
 ): Promise<LoginIdentity[]> {
   return ctx.db.withConnection(async (client) =>
     (
       await client.query<IdentityRow>(
-        'SELECT i.* FROM login_identities i JOIN users u ON u.id=i.user_id WHERE i.user_id=$1 AND u.deleted_at IS NULL ORDER BY i.created_at,i.id',
+        'SELECT i.* FROM login_identities i JOIN users u ON u.id=i.user_id WHERE i.user_id=$1 AND u.deleted_at IS NULL AND i.revoked_at IS NULL ORDER BY i.created_at,i.id',
         [userId],
       )
     ).rows.map(identity),
+  );
+}
+
+/** Authenticated mutations recheck the current credential under the player lock. */
+export async function assertAuthInitiator(
+  client: PoolClient,
+  ctx: WalletAuthContext,
+  userId: string,
+  claims?: CredentialClaims,
+) {
+  if (!claims || claims.sub !== userId) throw credentialRevoked();
+  assertRecentAuthentication(ctx.config, claims);
+  return resolveLoginCredentialOn(client, claims);
+}
+
+export type AccountAccessEventKind =
+  'identity_revoked' | 'identity_reactivated' | 'primary_solana_enrolled';
+/** Transactional security history; never stores addresses, signatures, tokens or nonces. */
+export async function recordAccountAccessEvent(
+  client: PoolClient,
+  userId: string,
+  identityId: string,
+  kind: AccountAccessEventKind,
+  network: WalletLinkNetwork,
+): Promise<void> {
+  await client.query(
+    'INSERT INTO account_access_events(id,user_id,identity_id,kind,network) VALUES($1,$2,$3,$4,$5)',
+    [uuidv7(), userId, identityId, kind, network],
+  );
+}
+/** Latest owner-scoped events for the existing sign-in-wallet screen. */
+export async function listAccountAccessEvents(ctx: WalletAuthContext, userId: string) {
+  return ctx.db.withConnection(async (client) =>
+    (
+      await client.query<{
+        id: string;
+        identity_id: string;
+        kind: AccountAccessEventKind;
+        network: WalletLinkNetwork;
+        created_at: Date;
+      }>(
+        'SELECT e.* FROM account_access_events e JOIN users u ON u.id=e.user_id WHERE e.user_id=$1 AND u.deleted_at IS NULL ORDER BY e.created_at DESC,e.id DESC LIMIT 20',
+        [userId],
+      )
+    ).rows.map((r) => ({
+      id: r.id,
+      identityId: r.identity_id,
+      kind: r.kind,
+      network: r.network,
+      createdAt: r.created_at.toISOString(),
+    })),
   );
 }

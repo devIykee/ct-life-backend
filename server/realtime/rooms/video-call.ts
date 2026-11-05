@@ -8,12 +8,12 @@
  */
 import { Room, Client } from 'colyseus';
 import { VideoCallState } from '../../../contract/realtime/states.js';
-import { createJwtIssuer } from '../../shared/auth/jwt.js';
-import { loadConfig } from '../../shared/config/config.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { BanGuard } from '../ban-guard.js';
 
 export class VideoCallRoom extends Room {
   private readonly ban = new BanGuard(this);
+  private readonly usersBySession = new Map<string, string>();
   // Typed local state to keep TypeScript happy without the generic.
   declare state: VideoCallState;
   /**
@@ -33,28 +33,12 @@ export class VideoCallRoom extends Room {
    * B5 fix: Verify JWT token before allowing join
    */
   override async onJoin(client: Client, options: Record<string, unknown>): Promise<void> {
-    const tokenStr = String(options.token ?? '');
-    // Reject if no token provided and not in dev mode
-    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
-      throw new Error('AUTH_REQUIRED');
-    }
-    // Verify the token
-    let userId = String(options.userId ?? '');
-    if (tokenStr !== '') {
-      try {
-        const jwtIssuer = createJwtIssuer();
-        const claims = await jwtIssuer.verifyAccess(tokenStr);
-        userId = claims.sub; // Use verified userId from token
-        this.ban.track(client, userId); // before any await
-      } catch (err) {
-        throw new Error('INVALID_TOKEN', { cause: err });
-      }
-    }
-    if (!userId) return;
-    this.ban.track(client, userId);
-    // Last await (verified tokens only; a dev join has no account to check): nothing
-    // below suspends before the state is changed.
-    if (tokenStr !== '') await this.ban.confirm(userId);
+    const identity = await authenticateJoinIdentity(options, String(options.userId ?? ''));
+    const userId = identity.userId;
+    if (userId === '') return;
+    this.ban.track(client, identity);
+    await this.ban.confirm(client);
+    this.usersBySession.set(client.sessionId, userId);
     if (!this.state.participantUserIds.includes(userId)) {
       this.state.participantUserIds.push(userId);
     }
@@ -69,10 +53,12 @@ export class VideoCallRoom extends Room {
    */
   override onLeave(client: Client): void {
     this.ban.untrack(client);
-    void client;
-    // The application service writes left_at on voice_speakers
-    // when the LiveKit webhook fires; we don't track per-session
-    // identity here.
+    const userId = this.usersBySession.get(client.sessionId);
+    this.usersBySession.delete(client.sessionId);
+    if (!userId || [...this.usersBySession.values()].includes(userId)) return;
+    const index = this.state.participantUserIds.indexOf(userId);
+    if (index >= 0) this.state.participantUserIds.splice(index, 1);
+    // LiveKit webhooks remain authoritative for media presence; this list tracks game-room sessions.
   }
 
   /**
@@ -80,6 +66,7 @@ export class VideoCallRoom extends Room {
    */
   override async onDispose(): Promise<void> {
     await this.ban.detach();
+    this.usersBySession.clear();
     // No state to persist; LiveKit closing is the source of truth.
   }
 }

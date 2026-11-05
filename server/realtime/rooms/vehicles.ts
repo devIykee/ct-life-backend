@@ -48,7 +48,7 @@ import {
   VEHICLE_MAX_Y_M,
   type VehicleKind,
 } from '../../../contract/realtime/messages.js';
-import { authenticateJoin } from '../player.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { createLogger } from '../../shared/logger/logger.js';
 import {
   POS_HASH,
@@ -211,9 +211,10 @@ export class VehiclesRoom extends Room {
    *
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    const userId = await authenticateJoin(options);
-    this.ban.track(client, userId);
-    await this.ban.confirm(userId);
+    const identity = await authenticateJoinIdentity(options);
+    const userId = identity.userId;
+    this.ban.track(client, identity);
+    await this.ban.confirm(client);
     const view = new StateView();
     client.view = view;
     this.sessions.set(client.sessionId, {

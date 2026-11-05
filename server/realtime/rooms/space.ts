@@ -10,12 +10,12 @@
  */
 import { Room, Client } from 'colyseus';
 import { SpaceState, SpeakerState } from '../../../contract/realtime/states.js';
-import { createJwtIssuer } from '../../shared/auth/jwt.js';
-import { loadConfig } from '../../shared/config/config.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { BanGuard } from '../ban-guard.js';
 
 export class SpaceRoom extends Room {
   private readonly ban = new BanGuard(this);
+  private readonly usersBySession = new Map<string, string>();
   // Typed local state to keep TypeScript happy without the generic.
   declare state: SpaceState;
   /**
@@ -32,28 +32,12 @@ export class SpaceRoom extends Room {
    * B5 fix: Verify JWT token before allowing join
    */
   override async onJoin(client: Client, options: Record<string, unknown>): Promise<void> {
-    const tokenStr = String(options.token ?? '');
-    // Reject if no token provided and not in dev mode
-    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
-      throw new Error('AUTH_REQUIRED');
-    }
-    // Verify the token
-    let userId = String(options.userId ?? '');
-    if (tokenStr !== '') {
-      try {
-        const jwtIssuer = createJwtIssuer();
-        const claims = await jwtIssuer.verifyAccess(tokenStr);
-        userId = claims.sub; // Use verified userId from token
-        this.ban.track(client, userId); // before any await
-      } catch (err) {
-        throw new Error('INVALID_TOKEN', { cause: err });
-      }
-    }
-    if (!userId) return;
-    this.ban.track(client, userId);
-    // Last await (verified tokens only; a dev join has no account to check): nothing
-    // below suspends before the state is changed.
-    if (tokenStr !== '') await this.ban.confirm(userId);
+    const identity = await authenticateJoinIdentity(options, String(options.userId ?? ''));
+    const userId = identity.userId;
+    if (userId === '') return;
+    this.ban.track(client, identity);
+    await this.ban.confirm(client);
+    this.usersBySession.set(client.sessionId, userId);
     if (this.state.speakers.has(userId)) return;
     const sp = new SpeakerState();
     sp.userId = userId;
@@ -72,8 +56,9 @@ export class SpaceRoom extends Room {
    */
   override onLeave(client: Client): void {
     this.ban.untrack(client);
-    const userId = this.findUserIdBySession(client);
-    if (!userId) return;
+    const userId = this.usersBySession.get(client.sessionId);
+    this.usersBySession.delete(client.sessionId);
+    if (!userId || [...this.usersBySession.values()].includes(userId)) return;
     this.state.speakers.delete(userId);
     const idx = this.state.handQueue.indexOf(userId);
     if (idx >= 0) this.state.handQueue.splice(idx, 1);
@@ -124,16 +109,8 @@ export class SpaceRoom extends Room {
    */
   override async onDispose(): Promise<void> {
     await this.ban.detach();
+    this.usersBySession.clear();
     // Nothing to clean; the application service closes the LiveKit
     // room when /v1/spaces/:id/end fires.
-  }
-
-  private findUserIdBySession(client: Client): string | null {
-    for (const [uid, sp] of this.state.speakers) {
-      void sp;
-      if (uid) return uid;
-    }
-    void client;
-    return null;
   }
 }

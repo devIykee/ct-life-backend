@@ -81,6 +81,7 @@ beforeAll(async () => {
     '1700000151000_economy_orders.sql',
     '1700000152000_near_wallet_callback.sql',
     '1700000153000_login_identities.sql',
+    '1700000154000_login_identity_lifecycle.sql',
   ]) {
     const sql = await readFile(new URL(`../../db/migrations/${file}`, import.meta.url), 'utf8');
     await pool.query(sql.split('-- Down Migration')[0]!);
@@ -143,6 +144,10 @@ async function player(): Promise<Player> {
   const userId = randomUUID();
   const wallet = randomUUID();
   await pool.query('INSERT INTO users(id,wallet) VALUES($1,$2)', [userId, wallet]);
+  await pool.query(
+    "INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,'solana:mainnet',$3)",
+    [randomUUID(), userId, wallet],
+  );
   return { userId, token: await ctx.jwt.signAccess(userId, wallet, false) };
 }
 function call(who: Player | null, method: HttpMethod, url: string, payload?: object, key?: string) {

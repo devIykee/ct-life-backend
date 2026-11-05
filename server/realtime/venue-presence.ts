@@ -35,15 +35,18 @@ export function venueMembersKey(instanceId: string): string {
  * @param presence - The room's presence (shared Redis).
  * @param instanceId - The venue room id.
  * @param userId - Who joined.
+ * @param onCounted - Records an acknowledged increment before an expiry write can fail.
  */
 export async function markVenueJoin(
   presence: Presence,
   instanceId: string,
   userId: string,
+  onCounted?: () => void,
 ): Promise<void> {
   const key = venueMembersKey(instanceId);
   const n = await presence.hincrby(key, userId, 1);
   if (n < 1) await presence.hset(key, userId, '1');
+  onCounted?.();
   await presence.expire(key, VENUE_MEMBERS_TTL_SEC);
 }
 

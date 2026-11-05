@@ -1169,6 +1169,7 @@ paths:
       description: >-
         EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
         origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
         Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
         AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
         AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
@@ -1207,6 +1208,7 @@ paths:
       description: >-
         EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
         origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
         Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
         AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
         AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
@@ -1241,6 +1243,7 @@ paths:
         code: AUTH_REAUTH_REQUIRED (403).
         EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
         origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
         Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
         AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
         AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
@@ -1284,6 +1287,7 @@ paths:
         code: AUTH_REAUTH_REQUIRED (403).
         EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
         origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
         Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
         AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
         AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
@@ -1320,7 +1324,8 @@ paths:
       tags: [auth]
       operationId: listLoginIdentities
       security: [{ bearerAuth: [] }]
-      summary: List only the current player's explicit sign-in identities.
+      summary: List the current player's active sign-in identities and latest security events.
+      description: Revoked identities retain ownership but are excluded. Events are ordered by createdAt and id descending, limited to twenty.
       responses:
         '200':
           description: Login credentials, not payment authorizations
@@ -1328,13 +1333,162 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [identities]
+                required: [identities, securityEvents]
                 properties:
                   identities:
                     type: array
                     items: { $ref: '#/components/schemas/LoginIdentity' }
+                  securityEvents:
+                    type: array
+                    maxItems: 20
+                    items: { $ref: '#/components/schemas/AccountAccessEvent' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '429': { description: Per-player rate limit }
+  /auth/identities/{id}:
+    delete:
+      tags: [auth]
+      operationId: revokeLoginIdentity
+      security: [{ bearerAuth: [] }]
+      summary: Remove an EVM/NEAR login identity using a retained, recently authenticated credential.
+      description: >-
+        A ten-minute original auth_time is required. Payment links and obligations are unchanged.
+        Revocation increments credential generation; old access and refresh tokens return code: AUTH_IDENTITY_REVOKED.
+        Missing targets return code: AUTH_IDENTITY_NOT_FOUND. Keep at least one credential (code: AUTH_LAST_IDENTITY).
+        Authenticate with a retained different identity (code: AUTH_USE_ANOTHER_IDENTITY).
+        Primary Solana removal is outside scope (code: AUTH_PRIMARY_WALLET_IMMUTABLE).
+        A repeated owned removal returns 204 without incrementing generation again.
+        Supplied browser origins must remain allowed. No request body is accepted.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Removed or already removed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401':
+          description: Invalid token or revoked credential generation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_IDENTITY_REVOKED
+                  message: This sign-in session is no longer active. Sign in again.
+                  details: {}
+        '403': { description: Recent original authentication required or origin forbidden }
+        '404':
+          description: Unknown or unowned identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_IDENTITY_NOT_FOUND
+                  message: Sign-in wallet not found.
+                  details: {}
+        '409':
+          description: Credential removal would violate account access policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                last:
+                  value:
+                    error:
+                      code: AUTH_LAST_IDENTITY
+                      message: Keep at least one sign-in wallet.
+                      details: {}
+                current:
+                  value:
+                    error:
+                      code: AUTH_USE_ANOTHER_IDENTITY
+                      message: Sign in with a wallet you are keeping before removing this one.
+                      details: {}
+                primary:
+                  value:
+                    error:
+                      code: AUTH_PRIMARY_WALLET_IMMUTABLE
+                      message: The primary Solana wallet cannot be removed.
+                      details: {}
+        '429': { description: Per-player rate limit }
+  /auth/primary-solana/challenge:
+    post:
+      tags: [auth]
+      operationId: issuePrimarySolanaChallenge
+      security: [{ bearerAuth: [] }]
+      summary: Request an explicit primary Solana attachment to the current player.
+      description: >-
+        Five-minute SIWS bytes bind owner, primary-solana-enrolment purpose, exact mainnet address,
+        current origin, and initiating credential generation. Requires recent original authentication.
+        Does not merge players or create a payment link. A different existing primary returns code: AUTH_PRIMARY_WALLET_EXISTS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [address]
+              properties:
+                address: { type: string, minLength: 32, maxLength: 44 }
+      responses:
+        '201':
+          description: Persisted primary-wallet signing challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrimarySolanaChallenge' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          { description: Fresh authentication required, account unavailable or origin forbidden }
+        '409':
+          description: Existing different primary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_PRIMARY_WALLET_EXISTS
+                  message: This player already has a primary Solana wallet.
+                  details: {}
+        '429': { description: Per-player/IP or outstanding challenge limit }
+  /auth/primary-solana/verify:
+    post:
+      tags: [auth]
+      operationId: verifyPrimarySolanaChallenge
+      security: [{ bearerAuth: [] }]
+      summary: Verify exact Solana bytes and attach to the existing UUID.
+      description: >-
+        Canonical base64 Ed25519 signature over the persisted message only. Requires the same active
+        initiating credential generation and recent original authentication. Proof is single-use.
+        No account merge, primary replacement or implicit payment link. The receipt authorizes only
+        an owner/revision/address-bound client session update; normal refresh must not permit arbitrary wallet changes.
+        A lost response requires explicit retained-credential sign-in; consumed proof replay is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, signature]
+              properties:
+                challengeId: { type: string, format: uuid }
+                signature: { type: string, minLength: 88, maxLength: 88 }
+      responses:
+        '200':
+          description: Primary attached without changing the authenticating identity or original auth_time
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrimarySolanaReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          { description: Fresh authentication required, account unavailable or origin forbidden }
+        '409': { description: Existing primary, another identity/payment owner or SGT conflict }
+        '429': { description: Per-player/IP rate limit }
+        '503': { description: Global login verifier capacity }
   /auth/challenge:
     get:
       tags: [auth]
@@ -1499,6 +1653,10 @@ paths:
       tags: [auth]
       operationId: postAuthRefresh
       summary: Rotate the refresh token and issue a new pair.
+      description: >-
+        Preserves login identity generation and original authentication time. Durable state is checked
+        before reserving the single-use token. An unreturned failed issuance releases only its own marker.
+        code: AUTH_STATE_UNAVAILABLE is a retryable authority failure; retain credentials on 503.
       x-phase: 1
       security: []
       parameters:
@@ -1521,6 +1679,16 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuthVerifyResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Account state is temporarily unavailable; retain credentials and retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_STATE_UNAVAILABLE
+                  message: Account access could not be checked. Try again shortly.
+                  details: {}
 
   /auth/logout:
     post:
@@ -11834,6 +12002,54 @@ components:
       required: [identity]
       properties:
         identity: { $ref: '#/components/schemas/LoginIdentity' }
+    AccountAccessEvent:
+      type: object
+      required: [id, identityId, kind, network, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        identityId: { type: string, format: uuid }
+        kind:
+          { type: string, enum: [identity_revoked, identity_reactivated, primary_solana_enrolled] }
+        network: { type: string, enum: ['solana:mainnet', 'eip155:4663', 'near:mainnet'] }
+        createdAt: { type: string, format: date-time }
+    PrimarySolanaChallenge:
+      type: object
+      required:
+        [
+          id,
+          purpose,
+          userId,
+          network,
+          address,
+          proofScheme,
+          nonce,
+          message,
+          domain,
+          uri,
+          issuedAt,
+          expiresAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { type: string, enum: [primary-solana-enrolment] }
+        userId: { type: string, format: uuid }
+        network: { type: string, enum: ['solana:mainnet'] }
+        address: { type: string }
+        proofScheme: { type: string, enum: [siws-ed25519] }
+        nonce: { type: string, pattern: '^[0-9a-f]{64}$' }
+        message: { type: string }
+        domain: { type: string }
+        uri: { type: string, format: uri }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    PrimarySolanaReceipt:
+      type: object
+      required: [userId, challengeId, wallet, identity]
+      properties:
+        userId: { type: string, format: uuid }
+        challengeId: { type: string, format: uuid }
+        wallet: { type: string }
+        identity: { $ref: '#/components/schemas/LoginIdentity' }
     WalletAuthChallengeRequest:
       type: object
       additionalProperties: false
@@ -11910,10 +12126,32 @@ components:
         nonce: { type: string }
     AuthVerifyResponse:
       type: object
-      required: [accessToken, refreshToken, user, authMethod, loginIdentity]
+      required:
+        [
+          accessToken,
+          refreshToken,
+          user,
+          authMethod,
+          loginIdentity,
+          loginIdentityVersion,
+          authenticatedAt,
+        ]
       properties:
         authMethod: { type: string, enum: [siws, dev, wallet] }
         loginIdentity: { $ref: '#/components/schemas/SessionLoginIdentity' }
+        loginIdentityVersion:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 2147483647,
+            description: Credential generation matching JWT liv; missing legacy liv means zero only.,
+          }
+        authenticatedAt:
+          {
+            type: integer,
+            nullable: true,
+            description: Original verified authentication Unix time matching JWT auth_time; refresh never advances it.,
+          }
         accessToken: { type: string }
         refreshToken: { type: string }
         user: { $ref: '#/components/schemas/AuthenticatedUser' }
@@ -11921,7 +12159,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/User'
         - type: object
-          required: [authMethod, loginIdentity]
+          required: [authMethod, loginIdentity, loginIdentityVersion, authenticatedAt]
     User:
       type: object
       required: [id, wallet, isSeeker, hasCharacter]
@@ -11930,6 +12168,19 @@ components:
         wallet: { type: string, nullable: true }
         authMethod: { type: string, enum: [siws, dev, wallet] }
         loginIdentity: { $ref: '#/components/schemas/SessionLoginIdentity' }
+        loginIdentityVersion:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 2147483647,
+            description: Credential generation matching JWT liv; missing legacy liv means zero only.,
+          }
+        authenticatedAt:
+          {
+            type: integer,
+            nullable: true,
+            description: Original verified authentication Unix time matching JWT auth_time; refresh never advances it.,
+          }
         isSeeker: { type: boolean }
         hasCharacter: { type: boolean }
         skrName: { type: string, nullable: true }

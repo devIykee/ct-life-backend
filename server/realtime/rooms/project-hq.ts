@@ -55,6 +55,8 @@ export class ProjectHqRoom extends VenueRoom {
   private projectId = '';
   private shiftMs = 10 * 60_000;
   private readonly visitors = new Map<string, Visitor>();
+  private presencePending: Promise<void> | null = null;
+  private presenceDirty = false;
 
   /**
    * Create the HQ for one project.
@@ -93,6 +95,11 @@ export class ProjectHqRoom extends VenueRoom {
     const member = access.role !== null;
     if (!member && !this.hasMemberInside()) throw refuse('members_only');
     await super.onJoin(client, options);
+    this.assertJoinCurrent(client);
+    if (!member && !this.hasMemberInside()) {
+      super.onLeave(client);
+      throw refuse('members_only');
+    }
     this.visitors.set(client.sessionId, {
       userId,
       member,
@@ -100,6 +107,7 @@ export class ProjectHqRoom extends VenueRoom {
       shiftLogged: false,
     });
     if (member) await this.publishPresence();
+    this.assertJoinCurrent(client);
   }
 
   /**
@@ -152,17 +160,31 @@ export class ProjectHqRoom extends VenueRoom {
     }
   }
 
-  private async publishPresence(): Promise<void> {
-    if (this.projectId === '') return;
-    try {
-      const { buildContext } = await import('../../application/context.js');
-      const { setHqMembersPresent } = await import('../../application/project-hq.js');
-      const members = [
-        ...new Set([...this.visitors.values()].filter((v) => v.member).map((v) => v.userId)),
-      ];
-      await setHqMembersPresent(buildContext(), this.projectId, members);
-    } catch {
-      // A missed refresh only delays the API's view; the room still enforces.
-    }
+  private publishPresence(): Promise<void> {
+    if (this.projectId === '') return Promise.resolve();
+    this.presenceDirty = true;
+    if (this.presencePending) return this.presencePending;
+    this.presencePending = (async () => {
+      try {
+        const { buildContext } = await import('../../application/context.js');
+        const { setHqMembersPresent } = await import('../../application/project-hq.js');
+        while (this.presenceDirty) {
+          this.presenceDirty = false;
+          const members = [
+            ...new Set([...this.visitors.values()].filter((v) => v.member).map((v) => v.userId)),
+          ];
+          try {
+            await setHqMembersPresent(buildContext(), this.projectId, members);
+          } catch {
+            /* A missed write delays the API view; the next dirty snapshot/tick retries. */
+          }
+        }
+      } catch {
+        // Keep presence best-effort even if context/module initialization fails.
+      } finally {
+        this.presencePending = null;
+      }
+    })();
+    return this.presencePending;
   }
 }
