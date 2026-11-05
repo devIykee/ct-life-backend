@@ -16,7 +16,11 @@ import {
   revokeWalletLink,
   type WalletContext,
 } from './wallet-links.js';
-import { serializeNep413 } from './wallet-links-proofs.js';
+import {
+  createWalletLinkMessage,
+  serializeNep413,
+  type WalletLinkChallenge,
+} from './wallet-links-proofs.js';
 
 const connectionString = process.env.TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 const schema = `wallet_links_${randomBytes(8).toString('hex')}`;
@@ -24,6 +28,7 @@ let admin: Pool;
 let pool: Pool;
 let ctx: WalletContext;
 let created = false;
+let legacyNearChallenge: string;
 const evm = privateKeyToAccount(`0x${'22'.repeat(32)}`);
 const otherEvm = privateKeyToAccount(`0x${'33'.repeat(32)}`);
 const ed = generateKeyPairSync('ed25519');
@@ -51,6 +56,19 @@ beforeAll(async () => {
     'utf8',
   );
   await pool.query(sql.split('-- Down Migration')[0]!);
+  const legacyUser = await user();
+  legacyNearChallenge = uuidv7();
+  await pool.query(
+    `INSERT INTO economy_wallet_link_challenges
+    (id,user_id,network,address,proof_scheme,nonce,message,domain,uri,issued_at,expires_at)
+    VALUES ($1,$2,'near:mainnet','legacy.near','nep413-ed25519',$3,'legacy message','ctlife.fun','https://ctlife.fun/',now(),now()+interval '5 minutes')`,
+    [legacyNearChallenge, legacyUser, randomBytes(32).toString('hex')],
+  );
+  const callbackMigration = await readFile(
+    new URL('../../db/migrations/1700000152000_near_wallet_callback.sql', import.meta.url),
+    'utf8',
+  );
+  await pool.query(callbackMigration.split('-- Down Migration')[0]!);
   const db: Db = {
     pool,
     connect: () => pool.connect(),
@@ -97,6 +115,185 @@ async function evmChallenge(userId: string, account = evm, origin?: string) {
 }
 
 describe('durable verified wallet links', () => {
+  it('backfills existing NEAR challenges to their original Some(uri) bytes', async () => {
+    const row = (
+      await pool.query(
+        'SELECT near_callback_url,uri FROM economy_wallet_link_challenges WHERE id=$1',
+        [legacyNearChallenge],
+      )
+    ).rows[0];
+    expect(row.near_callback_url).toBe(row.uri);
+    expect(row.near_callback_url).toBe('https://ctlife.fun/');
+  });
+
+  it('accepts Some(uri) from an old writer after migration and distinguishes explicit None', async () => {
+    const uid = await user();
+    const fields = {
+      id: uuidv7(),
+      userId: uid,
+      network: 'near:mainnet' as const,
+      address: 'old-writer.near',
+      proofScheme: 'nep413-ed25519' as const,
+      nonce: randomBytes(32).toString('hex'),
+      domain: 'ctlife.fun',
+      uri: 'https://ctlife.fun/',
+      origin: null,
+      nearCallbackUrl: 'https://ctlife.fun/',
+      issuedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 300000).toISOString(),
+    };
+    const c: WalletLinkChallenge = { ...fields, message: createWalletLinkMessage(fields) };
+    const row = (
+      await pool.query(
+        `INSERT INTO economy_wallet_link_challenges
+      (id,user_id,network,address,proof_scheme,nonce,message,domain,uri,origin,issued_at,expires_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING near_callback_mode,near_callback_url`,
+        [
+          c.id,
+          c.userId,
+          c.network,
+          c.address,
+          c.proofScheme,
+          c.nonce,
+          c.message,
+          c.domain,
+          c.uri,
+          c.origin,
+          c.issuedAt,
+          c.expiresAt,
+        ],
+      )
+    ).rows[0];
+    expect(row).toEqual({ near_callback_mode: 'uri', near_callback_url: null });
+    const signature = (callback: string | null) =>
+      sign(
+        null,
+        createHash('sha256')
+          .update(serializeNep413(c.message, Buffer.from(c.nonce, 'hex'), c.domain, callback))
+          .digest(),
+        ed.privateKey,
+      ).toString('base64');
+    await expect(
+      completeWalletLink(
+        ctx,
+        uid,
+        c.id,
+        { publicKey: `ed25519:${solana}`, signature: signature(null) },
+        undefined,
+        async () => true,
+      ),
+    ).rejects.toMatchObject({ code: 'WALLET_LINK_PROOF_INVALID' });
+    expect(
+      await completeWalletLink(
+        ctx,
+        uid,
+        c.id,
+        { publicKey: `ed25519:${solana}`, signature: signature(c.uri) },
+        undefined,
+        async () => true,
+      ),
+    ).toMatchObject({ address: c.address });
+  });
+
+  it('enforces callback modes in the database and rollback consumes only explicit None challenges', async () => {
+    const uid = await user();
+    const none = await issueWalletLinkChallenge(ctx, uid, {
+      network: 'near:mainnet',
+      address: 'rollback.near',
+      nearCallbackMode: 'none',
+    });
+    const uri = await issueWalletLinkChallenge(ctx, uid, {
+      network: 'near:mainnet',
+      address: 'rollback.near',
+    });
+    const evmProof = await evmChallenge(uid);
+    await expect(
+      pool.query(
+        "UPDATE economy_wallet_link_challenges SET near_callback_mode='none' WHERE id=$1",
+        [evmProof.c.id],
+      ),
+    ).rejects.toMatchObject({ code: '23514' });
+    await expect(
+      pool.query('UPDATE economy_wallet_link_challenges SET near_callback_url=uri WHERE id=$1', [
+        none.id,
+      ]),
+    ).rejects.toMatchObject({ code: '23514' });
+    // Legacy row: omitted callback column, mode still default uri.
+    await pool.query(
+      'UPDATE economy_wallet_link_challenges SET near_callback_url=NULL WHERE id=$1',
+      [uri.id],
+    );
+    const db = await pool.connect();
+    try {
+      await db.query('BEGIN');
+      const migration = await readFile(
+        new URL('../../db/migrations/1700000152000_near_wallet_callback.sql', import.meta.url),
+        'utf8',
+      );
+      await db.query(migration.split('-- Down Migration')[1]!);
+      const rows = (
+        await db.query(
+          'SELECT id,consumed_at FROM economy_wallet_link_challenges WHERE id=ANY($1::uuid[])',
+          [[none.id, uri.id]],
+        )
+      ).rows;
+      expect(rows.find((r) => r.id === none.id).consumed_at).not.toBeNull();
+      expect(rows.find((r) => r.id === uri.id).consumed_at).toBeNull();
+    } finally {
+      await db.query('ROLLBACK');
+      db.release();
+    }
+  });
+
+  it('persists an explicitly requested None option and refuses a different signed option', async () => {
+    const uid = await user();
+    const c = await issueWalletLinkChallenge(
+      ctx,
+      uid,
+      { network: 'near:mainnet', address: 'no-callback.near', nearCallbackMode: 'none' },
+      'https://play.ctlife.fun',
+    );
+    expect(c.nearCallbackUrl).toBeNull();
+    expect(c.nearSignMessage?.callbackUrl).toBeNull();
+    expect(
+      (
+        await pool.query(
+          'SELECT near_callback_url FROM economy_wallet_link_challenges WHERE id=$1',
+          [c.id],
+        )
+      ).rows[0].near_callback_url,
+    ).toBeNull();
+    const proof = (callback: string | null) => ({
+      publicKey: `ed25519:${solana}`,
+      signature: sign(
+        null,
+        createHash('sha256')
+          .update(serializeNep413(c.message, Buffer.from(c.nonce, 'hex'), c.domain, callback))
+          .digest(),
+        ed.privateKey,
+      ).toString('base64'),
+    });
+    await expect(
+      completeWalletLink(ctx, uid, c.id, proof(c.uri), 'https://play.ctlife.fun', async () => true),
+    ).rejects.toMatchObject({ code: 'WALLET_LINK_PROOF_INVALID' });
+    expect(
+      await completeWalletLink(
+        ctx,
+        uid,
+        c.id,
+        proof(null),
+        'https://play.ctlife.fun',
+        async () => true,
+      ),
+    ).toMatchObject({ address: 'no-callback.near', spendingAuthorized: false });
+    await expect(
+      issueWalletLinkChallenge(ctx, uid, {
+        network: 'eip155:4663',
+        address: evm.address,
+        nearCallbackMode: 'none',
+      }),
+    ).rejects.toMatchObject({ code: 'VALIDATION_FAILED' });
+  });
   it('links real EVM proof without changing legacy identity or granting spending', async () => {
     const uid = await user();
     const original = (await pool.query('SELECT wallet FROM users WHERE id=$1', [uid])).rows[0]
@@ -242,6 +439,8 @@ describe('durable verified wallet links', () => {
       address: 'wallet-link-test.near',
     });
     expect(c.nearSignMessage?.state).toBe(c.id);
+    expect(c.nearCallbackUrl).toBe(c.uri);
+    expect(c.nearSignMessage?.callbackUrl).toBe(c.uri);
     expect(Buffer.from(c.nearSignMessage!.nonceBase64, 'base64')).toEqual(
       Buffer.from(c.nonce, 'hex'),
     );

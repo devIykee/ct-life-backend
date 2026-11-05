@@ -29,6 +29,8 @@ export interface WalletLinkChallenge {
   message: string;
   domain: string;
   uri: string;
+  /** Persisted NEP-413 option; null means None, never inferred from proof input. */
+  nearCallbackUrl: string | null;
   origin: string | null;
   issuedAt: string;
   expiresAt: string;
@@ -113,9 +115,11 @@ export function serializeNep413(
   message: string,
   nonce: Uint8Array,
   recipient: string,
-  callbackUrl: string,
+  callbackUrl: string | null,
 ): Buffer {
   if (nonce.length !== 32) throw new Error('NEP-413 nonce must be 32 bytes');
+  if (callbackUrl !== null && typeof callbackUrl !== 'string')
+    throw new Error('NEP-413 callback policy is missing');
   const string = (value: string): Buffer => {
     const data = Buffer.from(value, 'utf8');
     const length = Buffer.alloc(4);
@@ -129,8 +133,7 @@ export function serializeNep413(
     string(message),
     nonce,
     string(recipient),
-    Buffer.from([1]),
-    string(callbackUrl),
+    ...(callbackUrl === null ? [Buffer.from([0])] : [Buffer.from([1]), string(callbackUrl)]),
   ]);
 }
 
@@ -240,7 +243,7 @@ export async function verifyWalletLinkProof(
       challenge.message,
       Buffer.from(challenge.nonce, 'hex'),
       challenge.domain,
-      challenge.uri,
+      challenge.nearCallbackUrl,
     );
     const hash = createHash('sha256').update(payload).digest();
     if (!verifyEd25519(hash, key, proof.signature)) return false;

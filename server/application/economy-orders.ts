@@ -105,6 +105,54 @@ export class EconomyOrders {
     return runInTransaction(fn, { isolation: 'read committed' }, this.ctx.db);
   }
 
+  /** Paginated financial history from a single database snapshot; never prompts or polls RPC. */
+  async history(
+    userId: string,
+    limit = 50,
+    cursor?: string,
+  ): Promise<{ orders: EconomyOrder[]; nextCursor: string | null }> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50)
+      throw new ValidationFailedError({ reason: 'invalid_history_limit' });
+    let before: [string, string] | null = null;
+    if (cursor) {
+      try {
+        if (cursor.length > 256 || !/^[A-Za-z0-9_-]+$/.test(cursor)) throw new Error();
+        const value: unknown = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (
+          !Array.isArray(value) ||
+          value.length !== 2 ||
+          typeof value[0] !== 'string' ||
+          typeof value[1] !== 'string' ||
+          new Date(value[0]).toISOString() !== value[0] ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value[1])
+        )
+          throw new Error();
+        before = [value[0], value[1]];
+      } catch {
+        throw new ValidationFailedError({ reason: 'invalid_history_cursor' });
+      }
+    }
+    const result = await this.ctx.db.pool.query<OrderRow & { receipts: ReceiptRow[] }>(
+      `SELECT o.*, COALESCE((SELECT jsonb_agg(r ORDER BY r.recorded_at,r.receipt_id)
+        FROM economy_receipts r WHERE r.order_id=o.order_id),'[]'::jsonb) AS receipts
+       FROM economy_orders o WHERE o.user_id=$1
+       AND ($2::timestamptz IS NULL OR (o.created_at,o.order_id) < ($2::timestamptz,$3::uuid))
+       ORDER BY o.created_at DESC,o.order_id DESC LIMIT $4`,
+      [userId, before?.[0] ?? null, before?.[1] ?? null, limit + 1],
+    );
+    const page = result.rows.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      orders: page.map((row) => this.response(row, row.receipts)),
+      nextCursor:
+        result.rows.length > limit && last
+          ? Buffer.from(JSON.stringify([last.created_at.toISOString(), last.order_id])).toString(
+              'base64url',
+            )
+          : null,
+    };
+  }
+
   /** Snapshot offer terms once, under a durable per-player idempotency key. */
   async create(
     userId: string,
@@ -236,37 +284,41 @@ export class EconomyOrders {
         'SELECT * FROM economy_receipts WHERE order_id=$1 ORDER BY recorded_at,receipt_id',
         [orderId],
       );
-      return {
-        orderId,
-        offerId: order.offer_id,
-        userId,
-        walletLinkId: order.wallet_link_id,
-        asset: economyAsset(order.chain_id, order.asset_id, order.amount),
-        payer: order.payer,
-        recipient: order.recipient,
-        amount: order.amount,
-        termsVersion: order.terms_version,
-        fulfilment: { kind: 'cosmetic', itemId: order.item_id },
-        status:
-          order.status === 'awaiting_payment' && order.expires_at.getTime() <= Date.now()
-            ? 'expired'
-            : order.status,
-        createdAt: order.created_at.toISOString(),
-        expiresAt: order.expires_at.toISOString(),
-        paymentTransactionId: rows.find((r) => r.kind === 'payment')?.transaction_id,
-        refundTransactionId: rows.find((r) => r.kind === 'refund')?.transaction_id,
-        refundDueReceiptIds: rows
-          .filter((r) => r.disposition === 'refund_due')
-          .map((r) => r.receipt_id),
-        paymentReceipts: rows
-          .filter((r) => r.kind === 'payment')
-          .map((r) => ({
-            receiptId: r.receipt_id,
-            transactionId: r.transaction_id,
-            disposition: r.disposition,
-          })),
-      };
+      return this.response(order, rows);
     });
+  }
+
+  private response(order: OrderRow, rows: ReceiptRow[]): EconomyOrder {
+    return {
+      orderId: order.order_id,
+      offerId: order.offer_id,
+      userId: order.user_id,
+      walletLinkId: order.wallet_link_id,
+      asset: economyAsset(order.chain_id, order.asset_id, order.amount),
+      payer: order.payer,
+      recipient: order.recipient,
+      amount: order.amount,
+      termsVersion: order.terms_version,
+      fulfilment: { kind: 'cosmetic', itemId: order.item_id },
+      status:
+        order.status === 'awaiting_payment' && order.expires_at.getTime() <= Date.now()
+          ? 'expired'
+          : order.status,
+      createdAt: order.created_at.toISOString(),
+      expiresAt: order.expires_at.toISOString(),
+      paymentTransactionId: rows.find((r) => r.kind === 'payment')?.transaction_id,
+      refundTransactionId: rows.find((r) => r.kind === 'refund')?.transaction_id,
+      refundDueReceiptIds: rows
+        .filter((r) => r.disposition === 'refund_due')
+        .map((r) => r.receipt_id),
+      paymentReceipts: rows
+        .filter((r) => r.kind === 'payment')
+        .map((r) => ({
+          receiptId: r.receipt_id,
+          transactionId: r.transaction_id,
+          disposition: r.disposition,
+        })),
+    };
   }
 
   /** Reconcile one pending attempt per poll; never prompt or broadcast a payment. */

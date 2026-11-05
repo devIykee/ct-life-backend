@@ -8,18 +8,20 @@ This foundation adds wallet identities to the existing `users.id`. It leaves SIW
 - `solana:mainnet`: Ed25519 over the exact server-issued UTF-8 message. **Only this player's current `users.wallet` may be linked.** Secondary Solana wallet links require the SIWS identity lookup and recovery design to change first; otherwise signing in with the secondary wallet would create another player. No dev-auth session is automatically treated as a wallet proof.
 - `near:mainnet`: NEP-413 Ed25519 proof over SHA-256 of the tagged Borsh payload, plus a final `view_access_key` RPC check that the exact public key is currently a `FullAccess` key for the signed account. The RPC status must report fresh, synchronized mainnet. Restricted/function-call keys and other key types fail closed. The server uses `config.economy.rpcUrls['near:mainnet']` (`ECONOMY_RPC_NEAR`); unset/unavailable/wrong-network endpoints cannot verify a link. This is a point-in-time identity proof, not continuing access-key authority.
 
-Every challenge binds player UUID, wallet, canonical network, application domain/URI, purpose, 256-bit nonce, request ID and a five-minute expiry. The allowed web origin is captured and must match at completion. Native requests use the existing configured SIWS binding. Clients sign the returned message without rewriting it. For NEAR, decode `nearSignMessage.nonceBase64` to 32 bytes and pass **all** returned signing fields (including callback URL and state) to the wallet.
+Every challenge binds player UUID, wallet, canonical network, application domain/URI, purpose, 256-bit nonce, request ID and a five-minute expiry. The allowed web origin is captured and must match at completion. Native requests use the existing configured SIWS binding. Clients sign the returned message without rewriting it. For NEAR, decode `nearSignMessage.nonceBase64` to 32 bytes. In-page wallets request `nearCallbackMode: "none"` when creating a challenge and omit the wallet's optional `callbackUrl` when the returned value is null. Redirect clients retain the default `"uri"` and pass the returned callback URL and state unchanged. The server persists this choice before signing; it never accepts an alternative callback from a submitted proof. Migration 152 preserves older challenges as `Some(uri)` and consumes new `None` challenges on rollback. The signed message retains the domain/URI binding in both modes.
+
+The database's explicit `near_callback_mode` defaults to `uri`, including inserts by older servers that omit the new columns. A new verifier uses the row's saved `uri` for that legacy mode when `near_callback_url` is null. Only explicit `none` means Borsh None. Non-NEAR rows cannot use that mode. Apply the migration before new servers, and finish the verifier rollout before releasing clients that request `none`; an older binary cannot verify the new proof format. Rollback invalidates only explicit-None challenges, not legacy uri rows with a null new column.
 
 ## API
 
 All routes require the existing access token. Write routes also use the existing per-user rate limit.
 
-| Route                                 | Input                                        | Result                                                 |
-| ------------------------------------- | -------------------------------------------- | ------------------------------------------------------ |
-| `GET /v1/me/wallet-links`             | —                                            | Active verified `links`                                |
-| `POST /v1/me/wallet-links/challenges` | `network`, `address`                         | Challenge; NEAR additionally returns `nearSignMessage` |
-| `POST /v1/me/wallet-links/verify`     | `challengeId`, `signature`, NEAR `publicKey` | Verified `link`                                        |
-| `DELETE /v1/me/wallet-links/:id`      | Own link ID                                  | 204; revoke link and consume pending proofs for it     |
+| Route                                 | Input                                                                        | Result                                                                                        |
+| ------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `GET /v1/me/wallet-links`             | —                                                                            | Active verified `links`                                                                       |
+| `POST /v1/me/wallet-links/challenges` | `network`, `address`, optional NEAR-only `nearCallbackMode: "none" \| "uri"` | Challenge; NEAR additionally returns `nearSignMessage`, whose `callbackUrl` is string or null |
+| `POST /v1/me/wallet-links/verify`     | `challengeId`, `signature`, NEAR `publicKey`                                 | Verified `link`                                                                               |
+| `DELETE /v1/me/wallet-links/:id`      | Own link ID                                                                  | 204; revoke link and consume pending proofs for it                                            |
 
 EVM signatures are 65-byte hex strings. Solana and NEAR signatures are canonical padded base64 of 64 bytes. The API accepts no caller-selected player ID, signed-message override or network override when completing a challenge.
 

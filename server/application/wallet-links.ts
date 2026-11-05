@@ -53,6 +53,8 @@ interface ChallengeRow {
   message: string;
   domain: string;
   uri: string;
+  near_callback_url: string | null;
+  near_callback_mode: 'none' | 'uri';
   origin: string | null;
   issued_at: Date;
   expires_at: Date;
@@ -70,6 +72,7 @@ function linkDto(r: LinkRow): VerifiedWalletLink {
   };
 }
 function challengeDto(r: ChallengeRow): WalletLinkChallenge {
+  if (r.near_callback_mode !== 'none' && r.near_callback_mode !== 'uri') throw invalidChallenge();
   return {
     id: r.id,
     userId: r.user_id,
@@ -80,6 +83,10 @@ function challengeDto(r: ChallengeRow): WalletLinkChallenge {
     message: r.message,
     domain: r.domain,
     uri: r.uri,
+    nearCallbackUrl:
+      r.network === 'near:mainnet' && r.near_callback_mode === 'uri'
+        ? (r.near_callback_url ?? r.uri)
+        : null,
     origin: r.origin,
     issuedAt: r.issued_at.toISOString(),
     expiresAt: r.expires_at.toISOString(),
@@ -124,7 +131,7 @@ function invalidChallenge(): WalletLinkError {
 export async function issueWalletLinkChallenge(
   ctx: WalletContext,
   userId: string,
-  input: { network: WalletLinkNetwork; address: string },
+  input: { network: WalletLinkNetwork; address: string; nearCallbackMode?: 'none' | 'uri' },
   origin?: string,
 ): Promise<
   WalletLinkChallenge & {
@@ -132,13 +139,20 @@ export async function issueWalletLinkChallenge(
       message: string;
       nonceBase64: string;
       recipient: string;
-      callbackUrl: string;
+      callbackUrl: string | null;
       state: string;
     };
   }
 > {
+  if (
+    input.nearCallbackMode !== undefined &&
+    (input.network !== 'near:mainnet' || !['none', 'uri'].includes(input.nearCallbackMode))
+  ) {
+    throw new ValidationFailedError({ field: 'nearCallbackMode', reason: 'invalid_callback_mode' });
+  }
   const address = normalizeWalletLinkAddress(input.network, input.address);
   const now = new Date();
+  const originBinding = binding(ctx, origin);
   const fields = {
     id: uuidv7(),
     userId,
@@ -146,7 +160,11 @@ export async function issueWalletLinkChallenge(
     address,
     proofScheme: walletLinkProofScheme(input.network),
     nonce: randomBytes(32).toString('hex'),
-    ...binding(ctx, origin),
+    ...originBinding,
+    nearCallbackUrl:
+      input.network === 'near:mainnet' && input.nearCallbackMode !== 'none'
+        ? originBinding.uri
+        : null,
     issuedAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + TTL_MS).toISOString(),
   };
@@ -169,8 +187,8 @@ export async function issueWalletLinkChallenge(
       }
       await client.query(
         `INSERT INTO economy_wallet_link_challenges
-      (id,user_id,network,address,proof_scheme,nonce,message,domain,uri,origin,issued_at,expires_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      (id,user_id,network,address,proof_scheme,nonce,message,domain,uri,origin,issued_at,expires_at,near_callback_url,near_callback_mode)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           c.id,
           c.userId,
@@ -184,6 +202,8 @@ export async function issueWalletLinkChallenge(
           c.origin,
           c.issuedAt,
           c.expiresAt,
+          c.nearCallbackUrl,
+          input.nearCallbackMode ?? 'uri',
         ],
       );
     },
@@ -197,7 +217,7 @@ export async function issueWalletLinkChallenge(
           message: c.message,
           nonceBase64: Buffer.from(c.nonce, 'hex').toString('base64'),
           recipient: c.domain,
-          callbackUrl: c.uri,
+          callbackUrl: c.nearCallbackUrl,
           state: c.id,
         },
       }
@@ -259,6 +279,7 @@ export async function completeWalletLink(
             c.nonce,
             c.domain,
             c.uri,
+            c.nearCallbackUrl,
             proof.signature,
             proof.publicKey ?? null,
           ]),

@@ -22,7 +22,11 @@ export function registerWalletLinkRoutes(app: FastifyInstance): void {
     { preHandler: [requireAuth, withRateLimit()] },
     async (req, reply) => {
       const body = z
-        .object({ network: z.enum(WALLET_LINK_NETWORKS), address: z.string().min(2).max(128) })
+        .object({
+          network: z.enum(WALLET_LINK_NETWORKS),
+          address: z.string().min(2).max(128),
+          nearCallbackMode: z.enum(['none', 'uri']).optional(),
+        })
         .strict()
         .safeParse(req.body);
       if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });

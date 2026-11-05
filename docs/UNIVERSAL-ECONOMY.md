@@ -1,8 +1,8 @@
 # Universal economy foundation — first implementation
 
-This is the first implementation slice of CT Life's approved shared economy. It extends the existing player UUID and cosmetic inventory. It does not replace Cash throughout gameplay or certify the game for live funds.
+This implements the shared foundation of CT Life's approved economy and its first wallet/checkout integration. It extends the existing player UUID and cosmetic inventory. It does not replace Cash throughout gameplay or certify the game for live funds.
 
-The current implementation covers verified wallet identity, explicitly configured native-asset offers, immutable purchase orders, unsigned payment preparation, finalized receipt verification, one-time wearable delivery and verified refund recording. The Unity client validates requests against the reviewed order and keeps account-scoped recovery state before handing control to a wallet. Existing Solana mainnet wallet integrations supply the first actual signing port; native EVM and NEAR Unity wallet bridges still need implementation and device/browser validation.
+The current implementation covers verified wallet identity, explicitly configured native-asset offers, immutable purchase orders, unsigned payment preparation, finalized receipt verification, one-time wearable delivery and verified refund recording. The Unity client validates requests against the reviewed order and keeps account-scoped recovery state before handing control to a wallet. Existing Solana mainnet wallet integrations remain installed. The subsequent client slice adds a browser EVM port for Robinhood and a pinned NEAR connector; Android EVM/NEAR support and live device/browser acceptance remain outstanding.
 
 ## Assets and amounts
 
@@ -32,7 +32,7 @@ The current cosmetic adapter writes `source=shop` in existing inventory and reco
 3. Persist the intent before opening the wallet. Persist the returned transaction reference before reporting it to the API. Unknown wallet outcomes must be reconciled, not automatically re-signed.
 4. The server persists submitted references before RPC verification. Chain verification is outside the database transaction. A transaction hash or wallet callback alone never grants inventory.
 5. Finalized evidence is globally claimed by `(chain_id,event_id)`. Receipt insertion and wearable grant commit atomically under the order lock. A delivery failure rolls both back and leaves the attempt recoverable. Concurrent duplicates cannot grant a second inventory row.
-6. GET reconciles at most one pending attempt per call, ordered by last check. Rejected references do not permanently block later attempts. Provider failures retain the attempt. RPC-dependent reads are rate-limited separately from writes.
+6. GET for an individual order reconciles at most one pending attempt per call, ordered by last check. Rejected references do not permanently block later attempts. Provider failures retain the attempt. RPC-dependent reads are rate-limited separately from writes. `GET /economy/orders` is separate, owner-scoped cursor history read from one database snapshot; it never calls a chain RPC. The next cursor follows `(created_at, order_id)` descending, with a maximum 50 orders per page.
 7. The response exposes verified `paymentReceipts`. Match the retained transaction ID in this list before treating it as acknowledged. `200` plus `status=fulfilled` may still describe the original purchase while a second payment is pending.
 
 `fulfilled` means the entitlement was delivered. A timely payment discovered after quote expiry can still deliver; a cancelled quote or a transfer actually executed after expiry becomes `refund_due`. Additional exact-price transfers produce separate refund obligations while the original order remains fulfilled.

@@ -39,6 +39,18 @@ export function registerEconomyRoutes(app: FastifyInstance, chain: EconomyChain)
     ],
   };
   app.get('/v1/economy/catalog', reads, (req) => new EconomyOrders(req.ctx, chain).catalog());
+  app.get('/v1/economy/orders', reads, (req) => {
+    const query = parse(
+      z
+        .object({
+          limit: z.coerce.number().int().min(1).max(50).default(50),
+          cursor: z.string().max(256).optional(),
+        })
+        .strict(),
+      req.query,
+    );
+    return new EconomyOrders(req.ctx, chain).history(req.user!.sub, query.limit, query.cursor);
+  });
   app.post('/v1/economy/orders', writes, async (req, reply) => {
     const body = parse(
       z.object({ offerId: z.string().uuid(), walletLinkId: z.string().uuid() }).strict(),

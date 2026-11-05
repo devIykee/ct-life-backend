@@ -77,6 +77,7 @@ beforeAll(async () => {
     '1700000035000_cosmetic_inventory.sql',
     '1700000150000_economy_wallet_links.sql',
     '1700000151000_economy_orders.sql',
+    '1700000152000_near_wallet_callback.sql',
   ]) {
     const sql = await readFile(new URL(`../../db/migrations/${file}`, import.meta.url), 'utf8');
     await pool.query(sql.split('-- Down Migration')[0]!);
@@ -186,10 +187,30 @@ async function fixture() {
 }
 
 describe('economy and wallet-link HTTP integration', () => {
+  it('lists only owned history and rejects malformed pagination without polling the chain', async () => {
+    const f = await fixture();
+    const other = await player();
+    const created = await f.create();
+    const orderId = created.json<{ orderId: string }>().orderId;
+    const history = await call(f.who, 'GET', '/v1/economy/orders?limit=1');
+    expect(history.statusCode).toBe(200);
+    expect(history.json()).toMatchObject({
+      orders: [{ orderId, userId: f.who.userId }],
+      nextCursor: null,
+    });
+    expect((await call(other, 'GET', '/v1/economy/orders')).json()).toEqual({
+      orders: [],
+      nextCursor: null,
+    });
+    for (const query of ['limit=51', 'limit=0', 'cursor=..', 'userId=' + other.userId]) {
+      expect((await call(f.who, 'GET', '/v1/economy/orders?' + query)).statusCode).toBe(400);
+    }
+  });
   it('requires bearer authentication for every new endpoint', async () => {
     const id = randomUUID();
     const routes: Array<[HttpMethod, string]> = [
       ['GET', '/v1/economy/catalog'],
+      ['GET', '/v1/economy/orders'],
       ['POST', '/v1/economy/orders'],
       ['GET', `/v1/economy/orders/${id}`],
       ['GET', `/v1/economy/orders/${id}/payment-request`],

@@ -28,6 +28,7 @@ function challenge(network: WalletLinkNetwork, address: string): WalletLinkChall
     nonce: 'ab'.repeat(32),
     domain: 'play.ctlife.fun',
     uri: 'https://play.ctlife.fun/',
+    nearCallbackUrl: network === 'near:mainnet' ? 'https://play.ctlife.fun/' : null,
     origin: 'https://play.ctlife.fun',
     issuedAt: '2026-11-04T00:00:00.000Z',
     expiresAt: '2026-11-04T00:05:00.000Z',
@@ -94,7 +95,11 @@ describe('wallet link standardized identity proofs', () => {
     expect(fullAccess).toHaveBeenCalledWith('player.near', proof.publicKey);
     expect(await verifyWalletLinkProof(c, proof, async () => false)).toBe(false);
     expect(
-      await verifyWalletLinkProof({ ...c, uri: 'https://attacker.test/' }, proof, fullAccess),
+      await verifyWalletLinkProof(
+        { ...c, nearCallbackUrl: 'https://attacker.test/' },
+        proof,
+        fullAccess,
+      ),
     ).toBe(false);
     expect(await verifyWalletLinkProof({ ...c, domain: 'attacker.test' }, proof, fullAccess)).toBe(
       false,
@@ -104,6 +109,38 @@ describe('wallet link standardized identity proofs', () => {
     );
     expect(
       await verifyWalletLinkProof(c, { ...proof, publicKey: `secp256k1:${edAddress}` }, fullAccess),
+    ).toBe(false);
+  });
+
+  it('encodes NEP-413 None and rejects swapping the persisted callback option', async () => {
+    expect(
+      serializeNep413(
+        'hi',
+        Uint8Array.from({ length: 32 }, (_, i) => i),
+        'myapp.com',
+        null,
+      ).toString('hex'),
+    ).toBe(
+      '9d010080020000006869000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f090000006d796170702e636f6d00',
+    );
+    const c = { ...challenge('near:mainnet', 'player.near'), nearCallbackUrl: null };
+    const payload = serializeNep413(c.message, Buffer.from(c.nonce, 'hex'), c.domain, null);
+    const proof = {
+      publicKey: `ed25519:${edAddress}`,
+      signature: sign(null, createHash('sha256').update(payload).digest(), ed.privateKey).toString(
+        'base64',
+      ),
+    };
+    expect(await verifyWalletLinkProof(c, proof, async () => true)).toBe(true);
+    expect(
+      await verifyWalletLinkProof({ ...c, nearCallbackUrl: c.uri }, proof, async () => true),
+    ).toBe(false);
+    expect(
+      await verifyWalletLinkProof(
+        { ...c, nearCallbackUrl: undefined } as unknown as WalletLinkChallenge,
+        proof,
+        async () => true,
+      ),
     ).toBe(false);
   });
 

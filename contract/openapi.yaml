@@ -141,6 +141,60 @@ paths:
     }
   /economy/orders:
     {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getEconomyOrders',
+          'summary': "Read this player's immutable purchase history",
+          'security': [{ 'bearerAuth': [] }],
+          'description': 'One database snapshot, no chain RPC or signing. Includes unresolved and completed orders for recovery after local storage loss. Cursor pagination is newest first.',
+          'parameters':
+            [
+              {
+                'name': 'limit',
+                'in': 'query',
+                'schema': { 'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 50 },
+              },
+              { 'name': 'cursor', 'in': 'query', 'schema': { 'type': 'string', 'maxLength': 256 } },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Order page',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'required': ['orders', 'nextCursor'],
+                              'properties':
+                                {
+                                  'orders':
+                                    {
+                                      'type': 'array',
+                                      'items': { '$ref': '#/components/schemas/EconomyOrder' },
+                                    },
+                                  'nextCursor': { 'type': ['string', 'null'] },
+                                },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated request error',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
       'post':
         {
           'tags': ['economy'],
@@ -554,6 +608,13 @@ paths:
                             {
                               'network': { '$ref': '#/components/schemas/EconomyNetwork' },
                               'address': { 'type': 'string', 'minLength': 2, 'maxLength': 128 },
+                              'nearCallbackMode':
+                                {
+                                  'type': 'string',
+                                  'enum': ['none', 'uri'],
+                                  'default': 'uri',
+                                  'description': 'NEAR only. In-page connector uses none. The chosen NEP-413 option is stored in the challenge and cannot be changed in the proof.',
+                                },
                             },
                         },
                     },
@@ -11171,6 +11232,7 @@ components:
             'origin': { 'type': ['string', 'null'] },
             'issuedAt': { 'type': 'string', 'format': 'date-time' },
             'expiresAt': { 'type': 'string', 'format': 'date-time' },
+            'nearCallbackUrl': { 'type': ['string', 'null'] },
             'nearSignMessage':
               {
                 'type': 'object',
@@ -11181,7 +11243,7 @@ components:
                     'message': { 'type': 'string' },
                     'nonceBase64': { 'type': 'string' },
                     'recipient': { 'type': 'string' },
-                    'callbackUrl': { 'type': 'string' },
+                    'callbackUrl': { 'type': ['string', 'null'] },
                     'state': { 'type': 'string' },
                   },
               },

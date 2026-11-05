@@ -125,6 +125,35 @@ async function fixture() {
 }
 
 describe('real-asset durable orders', () => {
+  it('pages immutable purchase history without RPC and never includes another player', async () => {
+    const f = await fixture();
+    const first = await f.create();
+    await f.service.cancel(f.userId, first.orderId);
+    const second = await f.create();
+    await f.service.record(f.userId, second.orderId, randomUUID());
+    const other = await fixture();
+    await other.create();
+    f.state.down = true;
+    const newest = await f.service.history(f.userId, 1);
+    expect(newest.orders.map((o) => o.orderId)).toEqual([second.orderId]);
+    expect(newest.orders[0]!.paymentReceipts).toHaveLength(1);
+    expect(newest.nextCursor).not.toBeNull();
+    const older = await f.service.history(f.userId, 1, newest.nextCursor!);
+    expect(older.orders.map((o) => o.orderId)).toEqual([first.orderId]);
+    expect(older.nextCursor).toBeNull();
+    expect((await f.service.history(randomUUID())).orders).toEqual([]);
+    await expect(f.service.history(f.userId, 51)).rejects.toMatchObject({ httpStatus: 400 });
+    await expect(f.service.history(f.userId, 1, '../other')).rejects.toMatchObject({
+      httpStatus: 400,
+    });
+    await expect(
+      f.service.history(
+        f.userId,
+        1,
+        Buffer.from('["not-a-date","not-an-id"]').toString('base64url'),
+      ),
+    ).rejects.toMatchObject({ httpStatus: 400 });
+  });
   it('collapses concurrent same-key creates and retains immutable price terms', async () => {
     const f = await fixture();
     const key = randomUUID();

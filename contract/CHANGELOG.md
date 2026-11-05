@@ -1,3 +1,8 @@
+## 2026-11-05 - Wallet connector compatibility and purchase recovery
+
+- `GET /economy/orders` adds owner-scoped cursor history with up to 50 orders per page, including verified payment/refund obligations. It does not poll chains or initiate payment. Clients can recover purchases after local storage loss.
+- Wallet-link challenges accept `nearCallbackMode: none | uri` for NEAR only (default `uri`). Migration152 preserves existing Some(uri) challenges and stores the exact NEP-413 callback option. In-page connectors request `none`; verification cannot override that choice. `nearSignMessage.callbackUrl` and `nearCallbackUrl` can be null.
+
 ## 2026-11-05 - Universal economy foundation
 
 Additive migrations 150 and 151; existing Cash, SIWS and Solana feature endpoints retain their contracts.
