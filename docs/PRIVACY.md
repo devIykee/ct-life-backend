@@ -35,13 +35,13 @@ The same wallet signing in again creates a different, empty account.
 
 ## Retained, keyed to the anonymous id
 
-| Data                                                                                                                      | Why                                                                                                         |
-| ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `ledger_entries`, `payment_intents`, likeness entitlements and payment intents, `tips`, `paid_call_escrow`, `shop_orders` | Financial records and audit. A payer wallet appears in on-chain payments, which are public regardless.      |
-| Casino, market, perps, positions, predictions, factory, beef, gigs, quests, season and progress rows                      | Game history and fairness audit; they carry no name, wallet or contact data once the account is anonymised. |
-| `reports` filed by or about the player                                                                                    | Safety: moderators still need the record.                                                                   |
-| Ad bookings and the creative they use                                                                                     | The advertiser paid for a live slot; the booking runs out its term.                                         |
-| `account_deletions` (id and time)                                                                                         | Proof the request was honoured.                                                                             |
+| Data                                                                                                                                      | Why                                                                                                         |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `ledger_entries`, `payment_intents`, likeness entitlements and payment intents, `tips`, `paid_call_escrow`, `shop_orders`, `travel_trips` | Financial records and audit. A payer wallet appears in on-chain payments, which are public regardless.      |
+| Casino, market, perps, positions, predictions, factory, beef, gigs, quests, season and progress rows                                      | Game history and fairness audit; they carry no name, wallet or contact data once the account is anonymised. |
+| `reports` filed by or about the player                                                                                                    | Safety: moderators still need the record.                                                                   |
+| Ad bookings and the creative they use                                                                                                     | The advertiser paid for a live slot; the booking runs out its term.                                         |
+| `account_deletions` (id and time)                                                                                                         | Proof the request was honoured.                                                                             |
 
 Cash is not refunded and cannot be recovered. Open obligations (a head-to-head challenge
 the player opened, an escrow) settle through their normal expiry.

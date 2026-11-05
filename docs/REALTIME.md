@@ -90,7 +90,7 @@ The M1 milestone produces the `messages.ts` types with Zod validation:
 
 | Room              | Type                 | To                                                                | Payload                                                                                                                                                                                                                                                                                                                                                                           |
 | ----------------- | -------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| any               | `welcome`            | joiner                                                            | `{ serverNow, instanceId, island? }`; venue rooms on CT Island add `island {x, y, z, yaw}`                                                                                                                                                                                                                                                                                        |
+| any               | `welcome`            | joiner                                                            | `{ serverNow, instanceId, island?, travel? }`; venue rooms on CT Island add `island {x, y, z, yaw}`; a street join that used a Map Travel ticket adds `travel {tripId, x, z, yaw}` (`travel_arrival`, see "Map Travel arrival")                                                                                                                                                   |
 | `venue`           | `said`               | everyone (except blocked senders)                                 | `{ messageId, userId, sessionId, text, at }`                                                                                                                                                                                                                                                                                                                                      |
 | `venue`           | `toast`              | one player                                                        | `{ textId, params }`                                                                                                                                                                                                                                                                                                                                                              |
 | `venue`           | `rejected`           | one player                                                        | `{ type, code }` (e.g. `SPOT_TAKEN`, `RATE_LIMITED`); a rejected `move` adds the server `x, z` when known                                                                                                                                                                                                                                                                         |
@@ -182,6 +182,31 @@ The rate limit and distance budget are unchanged after the join.
 `ctl:pos` stores the time of the player's last accepted move as `at`, also when a street or venue
 room writes it on leave. A dropped socket the server notices seconds later therefore does not make
 the player look more recent than they were.
+
+### Map Travel arrival (street, capability `travel`)
+
+A booked bus or taxi ride (`POST /v1/travel/trips`, docs/TRAVEL.md) leaves the player in no room
+until it arrives. At `arriveAt` the client joins the destination district's street room with the
+trip id: `joinOrCreate("street", { token, district, tripId })` (`district` = the trip's
+`arrival.district`). The server reads the player's single-use ticket `ctl:travel:<userId>`:
+
+- it must name this `tripId` and this district, and `expiresAt` (`arriveAt` + 120 s) must not have
+  been reached; otherwise the join is refused with `ServerError 4410 TRAVEL_TICKET_INVALID` (also for a
+  used ticket, or another user's trip: tickets are per user);
+- before `arriveAt - 1 s` the join is refused with `4425 TRAVEL_NOT_ARRIVED` and the ticket is
+  kept, so killing the ride animation gains nothing; retry at `arriveAt`;
+- on success the ticket is deleted atomically and the trip must flip to `arrived` in one guarded
+  update (still `booked`, not expired). If it does not (cancelled, refunded, expired, or the update
+  failed) the join is refused with `4410` and nothing is placed: join again without `tripId`
+  (no ride; a trip left booked is refunded by the sweep). Otherwise the player is anchored and
+  shown at once at the arrival point (a street spot 4.6 m outside the destination door, facing it),
+  `ctl:pos` is written there, and `welcome` carries `travel {tripId, x, z, yaw}`.
+
+While a player holds an open ticket, any street join without it is refused with
+`4409 TRAVEL_IN_TRANSIT`. Cancel the ride (`POST /v1/travel/trips/{id}/cancel`) to walk on from
+where you stood; an unused ticket expires and the fare is refunded by the travel-sweep worker.
+Venue rooms are unchanged in phase 1: entry into the destination is the normal walk-in, and the
+venue's own join gate decides it. Codes: `TravelJoinError` in `contract/realtime/messages.ts`.
 
 ### Browser clients (Origin check)
 

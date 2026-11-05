@@ -36,6 +36,7 @@ import { registerBankRoutes } from './routes/bank.js';
 import { registerPushMetaAdRoutes } from './routes/push-meta-ads.js';
 import { registerCosmeticRoutes } from './routes/cosmetics.js';
 import { registerShopRoutes } from './routes/shop.js';
+import { registerTravelRoutes } from './routes/travel.js';
 import { httpLoggerOptions } from '../shared/logger/logger.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerCasinoRoutes } from './routes/casino.js';
@@ -186,6 +187,7 @@ export async function buildServer(): Promise<ServerHandle> {
   registerPushMetaAdRoutes(app);
   registerCosmeticRoutes(app);
   registerShopRoutes(app);
+  registerTravelRoutes(app);
   registerEventRoutes(app);
   registerCasinoRoutes(app);
   registerFactoryRoutes(app);
