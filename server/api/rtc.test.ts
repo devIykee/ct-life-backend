@@ -24,7 +24,10 @@ function grant(token: string): { room: string; canPublish: boolean; canSubscribe
 }
 
 async function tokenFor(userId: string, body: Record<string, unknown>) {
-  const auth = await buildContext().jwt.signAccess(userId, `rtc-${userId}`, false);
+  const user = await pool.query<{ wallet: string }>('SELECT wallet FROM users WHERE id=$1', [
+    userId,
+  ]);
+  const auth = await buildContext().jwt.signAccess(userId, user.rows[0]!.wallet, false);
   return handle.app.inject({
     method: 'POST',
     url: '/v1/rtc/token',
@@ -44,6 +47,10 @@ beforeAll(async () => {
     listenerId,
     `rtc-listener-${listenerId}`,
   ]);
+  await pool.query(
+    `INSERT INTO login_identities(id,user_id,network,address) SELECT gen_random_uuid(),id,'solana:mainnet',wallet FROM users WHERE id=ANY($1::uuid[])`,
+    [[hostId, listenerId]],
+  );
   await pool.query(
     `INSERT INTO voice_rooms (room_id, host_user_id, kind, title) VALUES ($1, $2, 'space', 'rtc')`,
     [spaceId, hostId],

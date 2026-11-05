@@ -87,6 +87,7 @@ import { ALPHA_GRADING_QUEUE, handleAlphaGrading } from './alpha.js';
 import { PAYMENT_POLLER_QUEUE, handlePaymentPoller } from './payment-poller.js';
 import { RENT_QUEUE, handleWeeklyRent } from './rent.js';
 import { PREDICTION_MARKETS_QUEUE, handlePredictionMarkets } from './prediction-markets.js';
+import { startMediaAccessSweep } from './media-access.js';
 import { startPaidCallSweep } from './paid-calls.js';
 import { NFT_GALLERY_QUEUE, handleNftGalleryRecheck } from './nft-gallery.js';
 import { SHOP_DELIVERY_QUEUE, type ShopJobData } from '../application/shop-queue.js';
@@ -502,6 +503,12 @@ export async function buildWorkers(likeness?: {
     ctx,
   });
 
+  const mediaAccess = await startMediaAccessSweep({
+    connection: conn,
+    workerConnection: newClient(redis),
+    ctx,
+  });
+
   // CT Beef phases (unlock A6): every 15 s while the capability `beef` is on.
   const beefPhases = await startBeefPhases(ctx, conn, newClient(redis), log);
 
@@ -560,6 +567,7 @@ export async function buildWorkers(likeness?: {
     redis,
     healthzServer,
     async shutdown() {
+      await mediaAccess.close();
       stopMarket();
       stopPolice();
       await likenessScheduler?.stop();

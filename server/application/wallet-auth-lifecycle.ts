@@ -1,4 +1,5 @@
 /** Explicit account-access changes; never creates payment links or moves a player. */
+import { revokeCredentialMedia } from './media-access.js';
 import { randomBytes } from 'node:crypto';
 import type { AppContext } from './context.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
@@ -105,6 +106,14 @@ export async function revokeLoginIdentity(
       createLogger().warn(
         { mod: 'auth' },
         'Credential revocation publication failed; durable session checks remain authoritative',
+      );
+    }
+    try {
+      await revokeCredentialMedia(ctx, event);
+    } catch {
+      createLogger().warn(
+        { mod: 'auth' },
+        'Media cutoff pending; durable grants remain queued for reconciliation',
       );
     }
   }

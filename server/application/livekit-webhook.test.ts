@@ -4,10 +4,10 @@
  * Tests WebhookReceiver integration and exercises the DB paths.
  */
 import { Pool } from 'pg';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { config as loadDotenv } from 'dotenv';
 import { AccessToken } from 'livekit-server-sdk';
-import { createHash, createHmac } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 
 import { buildContext, _resetContextForTests } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
@@ -147,8 +147,13 @@ describe('livekit-webhook', () => {
   it('participant_left marks voice_speakers.left_at', async () => {
     const ctx = buildContext();
     const { applyLiveKitEvent } = await import('./livekit-webhook.js');
-    const roomId = `space:wh-participant-${Date.now()}`;
+    vi.spyOn(ctx.livekit, 'participants').mockResolvedValue([]);
+    const roomId = `space:${randomUUID()}`;
     const userId = '00000000-0000-7000-8000-000000000002';
+    await pool.query('INSERT INTO users(id,wallet) VALUES($1,$2) ON CONFLICT DO NOTHING', [
+      userId,
+      'whMember-' + userId,
+    ]);
     await pool.query(
       `INSERT INTO voice_rooms (room_id, host_user_id, kind, title, status)
        VALUES ($1, $2::uuid, 'space', 'wh p', 'live')`,

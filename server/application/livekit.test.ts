@@ -17,6 +17,7 @@
  */
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { AppContext } from './context.js';
+import { mediaIdentity } from '../shared/livekit/identity.js';
 import { createLiveKitService, roomName, type LiveKitService } from './livekit.js';
 
 interface JwtParts {
@@ -97,7 +98,10 @@ function makeContext(overrides: Partial<AppContext> = {}): AppContext {
         oreReader: false,
       },
     } as AppContext['config'],
-    db: {} as AppContext['db'],
+    db: {
+      withConnection: async (fn: (client: unknown) => Promise<unknown>) =>
+        fn({ query: async () => ({ rows: [], rowCount: 0 }) }),
+    } as unknown as AppContext['db'],
     redis: {} as AppContext['redis'],
     jwt: {} as AppContext['jwt'],
     helius: {} as AppContext['helius'],
@@ -110,6 +114,12 @@ function makeContext(overrides: Partial<AppContext> = {}): AppContext {
     ...overrides,
   };
 }
+
+const qualified = mediaIdentity({
+  userId: '019a5750-0000-7000-8000-000000000001',
+  identityId: '019a5750-0000-7000-8000-000000000002',
+  version: 0,
+});
 
 describe('livekit service', () => {
   let svc: LiveKitService;
@@ -126,19 +136,19 @@ describe('livekit service', () => {
 
   it('mints a token whose payload carries the right grants', async () => {
     const out = await svc.mintRtcToken({
-      userId: 'u-1',
+      identity: qualified,
       kind: 'space',
       id: 'sp-1',
     });
     expect(out.roomName).toBe('space:sp-1');
-    expect(out.identity).toBe('u-1');
+    expect(out.identity).toBe(qualified);
     expect(out.url).toBe('ws://localhost:7880');
     // Spaces default to canPublish=false for listeners.
     expect(out.canPublish).toBe(false);
     expect(out.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
 
     const decoded = decodeJwt(out.token);
-    expect(decoded.payload.sub).toBe('u-1');
+    expect(decoded.payload.sub).toBe(qualified);
     const video = decoded.payload.video as Record<string, unknown>;
     expect(video?.room).toBe('space:sp-1');
     expect(video?.canPublish).toBe(false);
@@ -147,7 +157,7 @@ describe('livekit service', () => {
 
   it('canPublish=true for non-space kinds by default', async () => {
     const out = await svc.mintRtcToken({
-      userId: 'u-2',
+      identity: qualified,
       kind: 'paid_call',
       id: 'pc-1',
     });
@@ -161,7 +171,7 @@ describe('livekit service', () => {
 
   it('honours explicit canPublish override', async () => {
     const out = await svc.mintRtcToken({
-      userId: 'u-3',
+      identity: qualified,
       kind: 'space',
       id: 'sp-2',
       canPublish: true,
@@ -172,16 +182,121 @@ describe('livekit service', () => {
     expect(video?.canPublish).toBe(true);
   });
 
-  it('TTL is roughly 1 hour by default', async () => {
+  it('TTL stays within Cloud revocation retention by default', async () => {
     const before = Math.floor(Date.now() / 1000);
-    const out = await svc.mintRtcToken({ userId: 'u-4', kind: 'video', id: 'v-1' });
+    const out = await svc.mintRtcToken({ identity: qualified, kind: 'video', id: 'v-1' });
     const ttl = out.expiresAt - before;
-    expect(ttl).toBeGreaterThan(3500);
-    expect(ttl).toBeLessThanOrEqual(3600);
+    expect(ttl).toBeGreaterThan(590);
+    expect(ttl).toBeLessThanOrEqual(600);
   });
 });
 
 describe('livekit room service client', () => {
+  it('rejects unqualified identities and token TTLs outside the Cloud cutoff horizon', async () => {
+    const service = createLiveKitService();
+    await expect(service.mintRtcToken({ identity: 'u-1', kind: 'video', id: 'v' })).rejects.toThrow(
+      'qualified media identity',
+    );
+    for (const ttlSec of [0, -1, 1.5, 601, NaN])
+      await expect(
+        service.mintRtcToken({ identity: qualified, kind: 'video', id: 'v', ttlSec }),
+      ).rejects.toThrow('TTL');
+  });
+
+  it('attempts all matching credential permissions even when one update fails', async () => {
+    const { RoomServiceClient } = await import('livekit-server-sdk');
+    const player = '019a5750-0000-7000-8000-000000000001';
+    const sibling = mediaIdentity({
+      userId: player,
+      identityId: '019a5750-0000-7000-8000-000000000003',
+      version: 0,
+    });
+    const list = vi
+      .spyOn(RoomServiceClient.prototype, 'listParticipants')
+      .mockResolvedValue([
+        { identity: qualified },
+        { identity: sibling },
+        { identity: '019a5750-0000-7000-8000-000000000099' },
+      ] as never);
+    const update = vi
+      .spyOn(RoomServiceClient.prototype, 'updateParticipant')
+      .mockRejectedValueOnce(new Error('provider unavailable'))
+      .mockResolvedValue({} as never);
+    try {
+      await expect(
+        createLiveKitService().setParticipantCanPublish(makeContext(), {
+          kind: 'space',
+          id: 'space-test',
+          identity: player,
+          canPublish: false,
+        }),
+      ).rejects.toThrow('Participant update incomplete');
+      expect(update.mock.calls.map((call) => call[1]).sort()).toEqual([qualified, sibling].sort());
+    } finally {
+      list.mockRestore();
+      update.mockRestore();
+    }
+  });
+
+  it('an exact legacy cutoff does not expand to qualified sibling identities', async () => {
+    const { RoomServiceClient } = await import('livekit-server-sdk');
+    const list = vi.spyOn(RoomServiceClient.prototype, 'listParticipants');
+    const remove = vi.spyOn(RoomServiceClient.prototype, 'removeParticipant').mockResolvedValue();
+    try {
+      const legacy = '019a5750-0000-7000-8000-000000000001';
+      await createLiveKitService().removeParticipant(makeContext(), {
+        kind: 'video',
+        id: 'v',
+        identity: legacy,
+        exact: true,
+      });
+      expect(list).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalledTimes(1);
+      expect(remove.mock.calls[0]![1]).toBe(legacy);
+    } finally {
+      list.mockRestore();
+      remove.mockRestore();
+    }
+  });
+
+  it('only treats structured provider not_found as absence', async () => {
+    const { RoomServiceClient } = await import('livekit-server-sdk');
+    const list = vi.spyOn(RoomServiceClient.prototype, 'listParticipants');
+    try {
+      const service = createLiveKitService(),
+        ctx = makeContext();
+      for (const error of [
+        new Error('404 not found'),
+        Object.assign(new Error('participant not found'), { code: 'unavailable' }),
+      ]) {
+        list.mockRejectedValueOnce(error);
+        await expect(service.participants(ctx, 'video:v')).rejects.toBe(error);
+      }
+      list.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'not_found' }));
+      await expect(service.participants(ctx, 'video:v')).resolves.toEqual([]);
+    } finally {
+      list.mockRestore();
+    }
+  });
+
+  it('uses the SDK abort timeout for provider requests', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fetch = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('{"rooms":[]}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    try {
+      await expect(createLiveKitService().rooms(makeContext())).resolves.toEqual([]);
+      expect(timeout).toHaveBeenCalledWith(5000);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      timeout.mockRestore();
+      fetch.mockRestore();
+    }
+  });
+
   it('endRoom swallows 404', async () => {
     // Mock the SDK module before the service picks it up. The
     // service caches the client per URL, so we need to mock at the
@@ -194,8 +309,8 @@ describe('livekit room service client', () => {
     const originalDelete = proto.deleteRoom;
     const originalUpdate = proto.updateParticipant;
     proto.deleteRoom = vi.fn(async () => {
-      const e = new Error('not found') as Error & { status?: number };
-      e.status = 404;
+      const e = new Error('not found') as Error & { code?: string };
+      e.code = 'not_found';
       throw e;
     });
     proto.updateParticipant = vi.fn(async () => undefined);
@@ -251,9 +366,16 @@ describe('livekit room service client', () => {
       const ctx = makeContext();
       const svc = createLiveKitService();
       await svc.removeParticipant(ctx, { kind: 'venue', id: 'inst-1', identity: 'u-1' });
-      expect(spy.mock.calls[0]).toEqual(['venue:inst-1', 'u-1']);
+      expect(spy.mock.calls[0]).toEqual([
+        'venue:inst-1',
+        'u-1',
+        { revokeTokenTs: expect.any(BigInt) },
+      ]);
+      const cutoff = ((spy.mock.calls[0] as unknown as unknown[])[2] as { revokeTokenTs: bigint })
+        .revokeTokenTs;
+      expect(Number(cutoff)).toBeGreaterThan(Math.floor(Date.now() / 1000));
       proto.removeParticipant = vi.fn(async () => {
-        throw new Error('participant not found');
+        throw Object.assign(new Error('participant not found'), { code: 'not_found' });
       });
       await expect(
         svc.removeParticipant(ctx, { kind: 'proximity', id: 'inst-1', identity: 'u-1' }),

@@ -16,8 +16,8 @@
  * The `voice_rooms.max_speakers` CHECK enforces 1..8; the
  * video-calls service uses the default 8.
  *
- * The endpoint mints a LiveKit token for each participant and
- * returns the URL + tokens so the client can connect.
+ * The endpoint creates membership. Each participant requests their own
+ * credential-scoped grant through /v1/rtc/token.
  */
 import { runInTransaction } from '../shared/db/uow.js';
 import { ForbiddenError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
@@ -40,19 +40,8 @@ export interface StartVideoCallArgs {
   readonly participantUserIds: string[];
 }
 
-export interface VideoCallToken {
-  readonly userId: string;
-  readonly token: string;
-  readonly url: string;
-  readonly roomName: string;
-  readonly identity: string;
-  readonly canPublish: boolean;
-  readonly expiresAt: number;
-}
-
 export interface StartVideoCallResult {
   readonly call: VideoCallRow;
-  readonly token: VideoCallToken;
 }
 
 function participantsList(host: string, ids: string[]): string[] {
@@ -106,13 +95,7 @@ export async function startVideoCall(
       paid: false,
     });
   }
-  // B3 fix: only mint token for the caller (host), not all participants
-  const t = await ctx.livekit.mintRtcToken({
-    userId: hostUserId,
-    kind: 'video',
-    id: callId,
-    canPublish: true,
-  });
+  // Each participant obtains a credential-scoped grant through /rtc/token.
   return {
     call: {
       callId,
@@ -121,15 +104,6 @@ export async function startVideoCall(
       status: 'live',
       startedAt: new Date().toISOString(),
       endedAt: null,
-    },
-    token: {
-      userId: hostUserId,
-      token: t.token,
-      url: t.url,
-      roomName: t.roomName,
-      identity: t.identity,
-      canPublish: t.canPublish,
-      expiresAt: t.expiresAt,
     },
   };
 }

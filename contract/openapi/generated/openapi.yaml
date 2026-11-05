@@ -5244,6 +5244,10 @@ paths:
       operationId: postRtcToken
       summary: Mint a LiveKit access token.
       description: |
+        Every grant uses the authenticated login credential generation as media identity
+        `ct1:<player UUID>:<login identity UUID>:<version>`. Identity is an opaque
+        transport key; player-level lookups use the parsed player UUID. All initial
+        grants last at most 10 minutes. See docs/MEDIA-ACCESS.md for cutoff semantics.
         Returns a token scoped to the room `{kind}:{id}`; `id` may be bare or
         carry its own single `{kind}:` prefix (Space ids are `space:<uuid>`),
         and a prefix of another kind is rejected. Grants are server-derived:
@@ -5297,6 +5301,10 @@ paths:
                   url: { type: string }
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
+                  identity:
+                    type: string
+                    description: Credential-scoped LiveKit transport identity; not a player UUID.
+                  roomName: { type: string }
                   canPublish: { type: boolean }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }

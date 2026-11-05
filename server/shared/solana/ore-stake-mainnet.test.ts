@@ -19,7 +19,7 @@ import {
   ORE_STAKE_PROGRAM_ID,
 } from './ore-stake.js';
 
-const SKIP = !process.env.RUN_MAINNET_TESTS;
+const SKIP = process.env.RUN_MAINNET_TESTS !== '1';
 const describeMainnet = SKIP ? describe.skip : describe;
 
 const RPC = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';

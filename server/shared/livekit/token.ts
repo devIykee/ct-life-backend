@@ -7,15 +7,16 @@
  * section 4: "RTC tokens" — id is the venue instanceId, the spaceId
  * or the callId; the LiveKit identity is the userId).
  *
- * Tokens are short-lived (default 1 h). The `canPublish` flag is
+ * Tokens are short-lived (at most 10 minutes). The `canPublish` flag is
  * set by the caller: venues and paid calls allow publishing;
  * Spaces listeners start with canPublish=false and the host promotes
  * them via the LiveKit server API.
  */
 import { AccessToken, type VideoGrant } from 'livekit-server-sdk';
+import { parseMediaIdentity } from './identity.js';
 import { loadConfig } from '../config/config.js';
 
-export type RtcKind = 'venue' | 'space' | 'video' | 'paid_call';
+export type RtcKind = 'venue' | 'space' | 'video' | 'paid_call' | 'call' | 'proximity';
 
 const ROOM_PREFIXES = ['venue', 'space', 'video', 'paid_call', 'call', 'proximity'] as const;
 
@@ -35,7 +36,7 @@ export function canonicalRoomName(kind: string, id: string): string | null {
 export interface MintOptions {
   readonly kind: RtcKind;
   readonly id: string;
-  readonly userId: string;
+  readonly identity: string;
   readonly ttlSec?: number;
   readonly canPublish?: boolean;
   readonly canSubscribe?: boolean;
@@ -48,7 +49,8 @@ export interface RtcTokenIssuer {
   ): Promise<{ token: string; url: string; expiresAt: number; canPublish: boolean }>;
 }
 
-const DEFAULT_TTL_SEC = 60 * 60;
+export const MAX_MEDIA_TOKEN_TTL_SEC = 600;
+const DEFAULT_TTL_SEC = MAX_MEDIA_TOKEN_TTL_SEC;
 
 /**
  * Build the process-wide LiveKit token issuer. Reads the LiveKit
@@ -61,8 +63,12 @@ export function createRtcTokenIssuer(): RtcTokenIssuer {
   return {
     async mint(opts) {
       const ttl = opts.ttlSec ?? DEFAULT_TTL_SEC;
+      if (!parseMediaIdentity(opts.identity))
+        throw new Error('A qualified media identity is required');
+      if (!Number.isInteger(ttl) || ttl <= 0 || ttl > MAX_MEDIA_TOKEN_TTL_SEC)
+        throw new Error('Media token TTL must be between 1 and 600 seconds');
       const at = new AccessToken(cfg.livekit.apiKey, cfg.livekit.apiSecret, {
-        identity: opts.userId,
+        identity: opts.identity,
         ttl,
         metadata: opts.metadata ? JSON.stringify(opts.metadata) : undefined,
       });
@@ -74,6 +80,7 @@ export function createRtcTokenIssuer(): RtcTokenIssuer {
         canPublish: opts.canPublish ?? true,
         canSubscribe: opts.canSubscribe ?? true,
         canPublishData: true,
+        canUpdateOwnMetadata: false,
       };
       at.addGrant(grant);
       const token = await at.toJwt();
