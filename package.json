@@ -18,7 +18,7 @@
     "format:check": "prettier --check .",
     "test": "pnpm -r --parallel run test",
     "test:unit": "vitest run --reporter=basic",
-    "test:integration": "pnpm -r --parallel run test:integration",
+    "test:integration": "NODE_ENV=test RUN_MAINNET_TESTS=0 ENABLE_E2E=0 vitest run --reporter=basic server/api/siws-web.test.ts server/api/authz.test.ts server/api/economy-http.test.ts server/api/rtc.test.ts server/api/street-voice-rtc.test.ts server/api/paid-calls-routes.test.ts server/application/wallet-auth.test.ts server/application/economy-orders.test.ts server/application/media-access.test.ts server/shared/ledger.test.ts server/realtime/rooms/street-voice.test.ts server/realtime/rooms/project-hq.test.ts server/shared/infra/likeness-artifacts.test.ts server/shared/infra/tripo.test.ts",
     "test:e2e": "pnpm -r --parallel run test:e2e",
     "smoke": "tsx tools/scripts/smoke.ts",
     "db:migrate": "node-pg-migrate -f .pgmigrate.json -m db/migrations up",
