@@ -38,7 +38,7 @@ export async function requireAuth(
   const token = header.slice(7).trim();
   try {
     const claims = await req.ctx.jwt.verifyAccess(token);
-    await assertAccountActive(req.ctx.redis, claims.sub);
+    await assertAccountActive(req.ctx.redis, claims.sub, req.ctx.db);
     req.user = claims;
     await assertNotBannedLive(req.ctx.redis, claims.sub);
     return claims;
@@ -68,7 +68,7 @@ export async function requireAdmin(
 ): Promise<AccessClaims> {
   const claims = await requireAuth(req, _reply);
   const adminWallets = req.ctx.config.auth.adminWallets;
-  if (!adminWallets.includes(claims.wal)) {
+  if (claims.wal === null || !adminWallets.includes(claims.wal)) {
     throw new ForbiddenError({ reason: 'admin_required' });
   }
   return claims;

@@ -1,3 +1,15 @@
+import {
+  LOGIN_NETWORKS,
+  authWalletError,
+  issueLoginChallenge,
+  completeLoginChallenge,
+  listLoginIdentities,
+} from '../../application/wallet-auth.js';
+import { requireAuth } from '../middleware/auth.js';
+import { withRateLimit } from '../middleware/rate-limit.js';
+import type { AuthMethod } from '../../shared/auth/jwt.js';
+import type { SessionIdentity } from '../../application/auth.js';
+import { RateLimitedError, ServerBusyError } from '../../shared/domain/errors.js';
 /**
  * Auth routes.
  *
@@ -44,7 +56,9 @@ const LogoutBody = z.object({ refreshToken: z.string().min(1) });
 function authResponse(
   user: {
     id: string;
-    wallet: string;
+    wallet: string | null;
+    authMethod: AuthMethod;
+    loginIdentity: SessionIdentity;
     isSeeker: boolean;
     accessToken: string;
     refreshToken: string;
@@ -59,6 +73,8 @@ function authResponse(
     user: {
       id: user.id,
       wallet: user.wallet,
+      authMethod: user.authMethod,
+      loginIdentity: user.loginIdentity,
       isSeeker: user.isSeeker,
       hasCharacter,
     },
@@ -71,6 +87,103 @@ function authResponse(
  */
 export function registerAuthRoutes(app: FastifyInstance): void {
   const auth = (req: FastifyRequest): AuthService => new AuthService(req.ctx);
+
+  const walletBody = z
+    .object({ network: z.enum(LOGIN_NETWORKS), address: z.string().min(2).max(128) })
+    .strict();
+  const proofBody = z
+    .object({
+      challengeId: z.string().uuid(),
+      signature: z.string().min(1).max(256),
+      publicKey: z.string().min(1).max(64).optional(),
+    })
+    .strict();
+  const limit = async (req: FastifyRequest): Promise<void> => {
+    const r = await perIpLoginLimiter(
+      req.ctx.redis.main,
+      req.ip,
+      req.ctx.config.rateLimits.loginPerIpPerMin,
+    );
+    if (!r.allowed) throw new RateLimitedError(r.retryAfterMs);
+  };
+  const recentAuth = async (req: FastifyRequest): Promise<void> => {
+    const time = req.user?.auth_time,
+      now = Math.floor(Date.now() / 1000);
+    const devAllowed =
+      req.user?.am !== 'dev' ||
+      (req.ctx.config.auth.devAuthEnabled && ['local', 'mock'].includes(req.ctx.config.appEnv));
+    if (
+      time === undefined ||
+      !Number.isSafeInteger(time) ||
+      time <= 0 ||
+      time > now + 30 ||
+      now - time > 600 ||
+      !devAllowed
+    )
+      throw authWalletError(
+        'AUTH_REAUTH_REQUIRED',
+        'Sign in again before adding a login wallet.',
+        403,
+      );
+  };
+  for (const purpose of ['login', 'enrolment'] as const) {
+    const path = purpose === 'login' ? '/v1/auth/wallet' : '/v1/auth/identities';
+    const guards =
+      purpose === 'login' ? [limit] : [requireAuth, recentAuth, withRateLimit(), limit];
+    app.post(`${path}/challenge`, { preHandler: guards }, async (req, reply) => {
+      const body = walletBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      return reply
+        .code(201)
+        .send(
+          await issueLoginChallenge(
+            req.ctx,
+            purpose,
+            purpose === 'login' ? null : req.user!.sub,
+            body.data,
+            req.headers.origin,
+          ),
+        );
+    });
+    app.post(`${path}/verify`, { preHandler: guards }, async (req, reply) => {
+      const body = proofBody.safeParse(req.body);
+      if (!body.success) throw new ValidationFailedError({ issues: body.error.issues });
+      const sem = new GlobalLoginSemaphore(
+        req.ctx.redis.main,
+        req.ctx.config.rateLimits.loginGlobalConcurrent,
+      );
+      const acquired = await sem.tryAcquire();
+      if (!acquired.acquired) throw new ServerBusyError(acquired.retryAfterMs);
+      try {
+        const proof = {
+          signature: body.data.signature,
+          ...(body.data.publicKey === undefined ? {} : { publicKey: body.data.publicKey }),
+        };
+        if (purpose === 'login') {
+          const user = await auth(req).walletAuthenticate(
+            body.data.challengeId,
+            proof,
+            req.headers.origin,
+          );
+          return reply.send(authResponse(user, user.hasCharacter));
+        }
+        const result = await completeLoginChallenge(
+          req.ctx,
+          purpose,
+          req.user!.sub,
+          body.data.challengeId,
+          proof,
+          req.headers.origin,
+        );
+        return reply.send({ identity: result.identity });
+      } finally {
+        await sem.release();
+      }
+    });
+  }
+  app.get('/v1/auth/identities', { preHandler: [requireAuth, withRateLimit()] }, async (req) => ({
+    identities: await listLoginIdentities(req.ctx, req.user!.sub),
+  }));
 
   // GET /v1/auth/challenge
   app.get('/v1/auth/challenge', async (req, reply) => {

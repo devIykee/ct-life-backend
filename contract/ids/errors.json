@@ -5,6 +5,46 @@
   "_note": "Every error code used in the API or realtime protocol. The contract:check tool asserts every code here is referenced in openapi.yaml and every realtime message documents the codes it can return. Add codes here first, then use them.",
   "codes": [
     {
+      "code": "AUTH_REAUTH_REQUIRED",
+      "httpStatus": 403,
+      "message": "Sign in again before adding a login wallet."
+    },
+    {
+      "code": "AUTH_CHALLENGE_INVALID",
+      "httpStatus": 401,
+      "message": "Sign-in challenge is missing, expired, used or has the wrong purpose or owner."
+    },
+    {
+      "code": "AUTH_PROOF_INVALID",
+      "httpStatus": 401,
+      "message": "The sign-in signature could not be verified."
+    },
+    {
+      "code": "AUTH_ORIGIN_INVALID",
+      "httpStatus": 403,
+      "message": "This sign-in origin is not allowed."
+    },
+    {
+      "code": "AUTH_IDENTITY_CONFLICT",
+      "httpStatus": 409,
+      "message": "This sign-in identity belongs to another player."
+    },
+    {
+      "code": "AUTH_IDENTITY_ENROLMENT_REQUIRED",
+      "httpStatus": 409,
+      "message": "Sign in to the existing player account and explicitly enrol this wallet."
+    },
+    {
+      "code": "AUTH_ACCOUNT_UNAVAILABLE",
+      "httpStatus": 403,
+      "message": "This player account is unavailable."
+    },
+    {
+      "code": "AUTH_CHALLENGE_LIMIT",
+      "httpStatus": 429,
+      "message": "Too many pending enrolment requests. Wait for them to expire."
+    },
+    {
       "code": "ECONOMY_CONFLICT",
       "httpStatus": 409,
       "message": "The economic action cannot proceed in its current state."

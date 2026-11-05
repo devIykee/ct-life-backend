@@ -141,7 +141,7 @@ export async function syncFromWallet(
   lastSync.set(userId, now);
 
   const u = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string }>(`SELECT wallet FROM users WHERE id = $1`, [userId]),
+    c.query<{ wallet: string | null }>(`SELECT wallet FROM users WHERE id = $1`, [userId]),
   );
   const wallet = u.rows[0]?.wallet;
   if (!wallet) return;

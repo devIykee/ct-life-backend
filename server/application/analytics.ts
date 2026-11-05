@@ -23,7 +23,7 @@ import { loadConfig } from '../shared/config/config.js';
 /** Catalogue ids only: lowercase, digits, `_ : . -`, at most 64 chars. */
 const ID_RE = /^[a-z0-9][a-z0-9_:.-]{0,63}$/;
 
-export type SignInMethod = 'siws' | 'dev';
+export type SignInMethod = 'siws' | 'dev' | 'wallet';
 
 /** Every event the server records, with its props. Closed on purpose. */
 export type AnalyticsEvent =

@@ -9,18 +9,18 @@ One row in `analytics_events` per event, written **in the same transaction** as 
 event exists exactly when the action committed: a rolled-back request, a refused request and an
 idempotent replay write nothing.
 
-| Event               | Written when                                                    | `props`                                    | `amount_cents`              |
-| ------------------- | --------------------------------------------------------------- | ------------------------------------------ | --------------------------- |
-| `signup`            | a wallet signs in for the first time                            | `method` (`siws` / `dev`), `seeker`        |                             |
-| `session_start`     | every sign-in (SIWS verify or dev auth)                         | `method`                                   |                             |
-| `lottery_rolled`    | the onboarding lottery roll                                     | `outcome`                                  | Cash granted                |
-| `character_created` | the character is created                                        | `tribeId`, `likeness`                      |                             |
-| `daily_claimed`     | the gm streak chest is claimed                                  | `streakDay`, `reset`                       | Cash paid                   |
-| `quest_claimed`     | a quest reward is claimed                                       | `questId`, `period` (`daily` / `weekly`)   | Cash paid                   |
-| `shift_paid`        | a work shift pays out                                           | `careerId`, `bonusCents`                   | Cash paid                   |
-| `casino_round`      | a Rug Room round settles (slots, coinflip, crash, head-to-head) | `game`, `stakeCents`, `payoutCents`, `pvp` | player net (payout - stake) |
-| `shop_order`        | a Duo Shop order is placed                                      | `lines`, `units`                           | total charged               |
-| `tip_sent`          | a Cash tip is sent (sender only)                                | `feeCents` (burned)                        | tip amount                  |
+| Event               | Written when                                                    | `props`                                        | `amount_cents`              |
+| ------------------- | --------------------------------------------------------------- | ---------------------------------------------- | --------------------------- |
+| `signup`            | a wallet signs in for the first time                            | `method` (`siws` / `dev` / `wallet`), `seeker` |                             |
+| `session_start`     | every sign-in (SIWS verify or dev auth)                         | `method`                                       |                             |
+| `lottery_rolled`    | the onboarding lottery roll                                     | `outcome`                                      | Cash granted                |
+| `character_created` | the character is created                                        | `tribeId`, `likeness`                          |                             |
+| `daily_claimed`     | the gm streak chest is claimed                                  | `streakDay`, `reset`                           | Cash paid                   |
+| `quest_claimed`     | a quest reward is claimed                                       | `questId`, `period` (`daily` / `weekly`)       | Cash paid                   |
+| `shift_paid`        | a work shift pays out                                           | `careerId`, `bonusCents`                       | Cash paid                   |
+| `casino_round`      | a Rug Room round settles (slots, coinflip, crash, head-to-head) | `game`, `stakeCents`, `payoutCents`, `pvp`     | player net (payout - stake) |
+| `shop_order`        | a Duo Shop order is placed                                      | `lines`, `units`                               | total charged               |
+| `tip_sent`          | a Cash tip is sent (sender only)                                | `feeCents` (burned)                            | tip amount                  |
 
 The list is closed: the TypeScript union in `server/application/analytics.ts` and the `CHECK` on
 `analytics_events.name` (migration 098) must name the same events (a unit test compares them). A

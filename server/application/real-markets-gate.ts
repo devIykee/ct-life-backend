@@ -112,7 +112,7 @@ export async function loadPlayerGate(
   userId: string,
 ): Promise<PlayerGate> {
   const r = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string; age_confirmed_at: Date | null }>(
+    c.query<{ wallet: string | null; age_confirmed_at: Date | null }>(
       `SELECT u.wallet, ch.age_confirmed_at FROM users u
          LEFT JOIN characters ch ON ch.user_id = u.id WHERE u.id = $1`,
       [userId],
@@ -122,7 +122,7 @@ export async function loadPlayerGate(
   if (!row) throw new NotFoundError({ kind: 'user' });
   let wallet: string | null = null;
   try {
-    wallet = new PublicKey(row.wallet).toBase58();
+    wallet = row.wallet ? new PublicKey(row.wallet).toBase58() : null;
   } catch {
     wallet = null; // e.g. a 'deleted:' placeholder
   }

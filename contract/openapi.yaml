@@ -1160,6 +1160,181 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /auth/wallet/challenge:
+    post:
+      tags: [auth]
+      operationId: issueWalletLogin
+      security: []
+      summary: Issue a purpose-bound wallet login proof.
+      description: >-
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+        Example error code: AUTH_CHALLENGE_LIMIT
+        Example error code: AUTH_ACCOUNT_UNAVAILABLE
+        Example error code: AUTH_IDENTITY_ENROLMENT_REQUIRED
+        Example error code: AUTH_IDENTITY_CONFLICT
+        Example error code: AUTH_ORIGIN_INVALID
+        Example error code: AUTH_PROOF_INVALID
+        Example error code: AUTH_CHALLENGE_INVALID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthChallengeRequest' }
+      responses:
+        '201':
+          description: Persisted signing challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletAuthChallenge' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Disallowed origin, deleted account or ban }
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/wallet/verify:
+    post:
+      tags: [auth]
+      operationId: verifyWalletLogin
+      security: []
+      summary: Verify a purpose-bound wallet login proof.
+      description: >-
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthProof' }
+      responses:
+        '200':
+          description: Verified login
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthVerifyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Disallowed origin, deleted account or ban }
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/identities/challenge:
+    post:
+      tags: [auth]
+      operationId: issueLoginIdentity
+      security: [{ bearerAuth: [] }]
+      summary: Issue a purpose-bound wallet enrolment proof.
+      description: >-
+        Requires original verified authentication within ten minutes at both stages.
+        Refresh does not renew auth_time; missing or stale authentication returns
+        code: AUTH_REAUTH_REQUIRED (403).
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthChallengeRequest' }
+      responses:
+        '201':
+          description: Persisted signing challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletAuthChallenge' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Fresh sign-in required, disallowed origin, deleted account or ban
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_REAUTH_REQUIRED
+                  message: Sign in again before adding a login wallet.
+                  details: {}
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/identities/verify:
+    post:
+      tags: [auth]
+      operationId: verifyLoginIdentity
+      security: [{ bearerAuth: [] }]
+      summary: Verify a purpose-bound wallet enrolment proof.
+      description: >-
+        Requires original verified authentication within ten minutes at both stages.
+        Refresh does not renew auth_time; missing or stale authentication returns
+        code: AUTH_REAUTH_REQUIRED (403).
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthProof' }
+      responses:
+        '200':
+          description: Verified enrolment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginIdentityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Fresh sign-in required, disallowed origin, deleted account or ban
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_REAUTH_REQUIRED
+                  message: Sign in again before adding a login wallet.
+                  details: {}
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/identities:
+    get:
+      tags: [auth]
+      operationId: listLoginIdentities
+      security: [{ bearerAuth: [] }]
+      summary: List only the current player's explicit sign-in identities.
+      responses:
+        '200':
+          description: Login credentials, not payment authorizations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [identities]
+                properties:
+                  identities:
+                    type: array
+                    items: { $ref: '#/components/schemas/LoginIdentity' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Per-player rate limit }
   /auth/challenge:
     get:
       tags: [auth]
@@ -1251,8 +1426,18 @@ paths:
               example:
                 accessToken: 'eyJhbGciOiJSUzI1NiIs...'
                 refreshToken: 'rt_8f4...'
+                authMethod: siws
+                loginIdentity:
+                  id: '0192a1c2-0000-7000-8000-000000000001'
+                  network: 'solana:mainnet'
+                  address: 'Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ'
                 user:
-                  id: '0192a1c2-...'
+                  id: '0192a1c2-0000-7000-8000-000000000002'
+                  authMethod: siws
+                  loginIdentity:
+                    id: '0192a1c2-0000-7000-8000-000000000001'
+                    network: 'solana:mainnet'
+                    address: 'Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ'
                   wallet: 'Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ'
                   isSeeker: true
                   hasCharacter: false
@@ -11630,6 +11815,79 @@ components:
             code: { type: string, description: 'One of the codes in contract/ids/errors.json.' }
             message: { type: string }
             details: { type: object, additionalProperties: true }
+    SessionLoginIdentity:
+      type: object
+      required: [id, network, address]
+      properties:
+        id: { type: string, format: uuid }
+        network: { type: string, enum: ['solana:mainnet', 'eip155:4663', 'near:mainnet'] }
+        address: { type: string }
+    LoginIdentity:
+      allOf:
+        - $ref: '#/components/schemas/SessionLoginIdentity'
+        - type: object
+          required: [createdAt]
+          properties:
+            createdAt: { type: string, format: date-time }
+    LoginIdentityResponse:
+      type: object
+      required: [identity]
+      properties:
+        identity: { $ref: '#/components/schemas/LoginIdentity' }
+    WalletAuthChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [network, address]
+      properties:
+        network: { type: string, enum: ['eip155:4663', 'near:mainnet'] }
+        address: { type: string, minLength: 2, maxLength: 128 }
+    WalletAuthProof:
+      type: object
+      additionalProperties: false
+      required: [challengeId, signature]
+      properties:
+        challengeId: { type: string, format: uuid }
+        signature: { type: string, minLength: 1, maxLength: 256 }
+        publicKey: { type: string, maxLength: 64, description: NEAR Ed25519 only }
+    WalletAuthChallenge:
+      type: object
+      required:
+        [
+          id,
+          purpose,
+          userId,
+          network,
+          address,
+          proofScheme,
+          nonce,
+          message,
+          domain,
+          uri,
+          issuedAt,
+          expiresAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { type: string, enum: [login, enrolment] }
+        userId: { type: string, format: uuid, nullable: true }
+        network: { type: string, enum: ['eip155:4663', 'near:mainnet'] }
+        address: { type: string }
+        proofScheme: { type: string, enum: [eip4361-eoa, nep413-ed25519] }
+        nonce: { type: string, pattern: '^[0-9a-f]{64}$' }
+        message: { type: string }
+        domain: { type: string }
+        uri: { type: string, format: uri }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        nearSignMessage:
+          type: object
+          required: [message, nonceBase64, recipient, callbackUrl, state]
+          properties:
+            message: { type: string }
+            nonceBase64: { type: string }
+            recipient: { type: string }
+            callbackUrl: { type: 'null' }
+            state: { type: string, format: uuid }
     AuthChallenge:
       type: object
       required: [nonce, domain, statement, uri, version, chainId, issuedAt, expirationTime]
@@ -11652,17 +11910,26 @@ components:
         nonce: { type: string }
     AuthVerifyResponse:
       type: object
-      required: [accessToken, refreshToken, user]
+      required: [accessToken, refreshToken, user, authMethod, loginIdentity]
       properties:
+        authMethod: { type: string, enum: [siws, dev, wallet] }
+        loginIdentity: { $ref: '#/components/schemas/SessionLoginIdentity' }
         accessToken: { type: string }
         refreshToken: { type: string }
-        user: { $ref: '#/components/schemas/User' }
+        user: { $ref: '#/components/schemas/AuthenticatedUser' }
+    AuthenticatedUser:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [authMethod, loginIdentity]
     User:
       type: object
       required: [id, wallet, isSeeker, hasCharacter]
       properties:
         id: { type: string, format: uuid }
-        wallet: { type: string }
+        wallet: { type: string, nullable: true }
+        authMethod: { type: string, enum: [siws, dev, wallet] }
+        loginIdentity: { $ref: '#/components/schemas/SessionLoginIdentity' }
         isSeeker: { type: boolean }
         hasCharacter: { type: boolean }
         skrName: { type: string, nullable: true }

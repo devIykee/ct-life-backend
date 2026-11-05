@@ -73,20 +73,23 @@ export async function authenticateJoin(options: unknown): Promise<string> {
 }
 
 /**
- * Refuse a banned account at the door of any room. A still-valid access token
- * is not enough: the ban flag and, failing that, the database decide.
+ * Refuse a banned or deleted account at the door of any room. A still-valid
+ * access token is not enough: account existence is checked in the database.
  * @param userId - The verified token subject.
  * @throws Error `ACCOUNT_BANNED`.
  */
 export async function assertJoinAllowed(userId: string): Promise<void> {
   // Only real accounts (UUIDs) can be banned; dev-token ids never touch the database.
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId)) return;
-  const [{ buildContext }, { assertNotBanned }] = await Promise.all([
+  const [{ buildContext }, { assertNotBanned }, { assertAccountActive }] = await Promise.all([
     import('../application/context.js'),
     import('../application/moderation.js'),
+    import('../application/account-deletion.js'),
   ]);
   try {
-    await assertNotBanned(buildContext(), userId);
+    const ctx = buildContext();
+    await assertAccountActive(ctx.redis, userId, ctx.db);
+    await assertNotBanned(ctx, userId);
   } catch (e) {
     if ((e as { code?: string }).code === 'ACCOUNT_BANNED') {
       throw new Error('ACCOUNT_BANNED', { cause: e });

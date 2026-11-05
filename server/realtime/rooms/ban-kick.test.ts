@@ -13,6 +13,7 @@ import { SpaceRoom } from './space.js';
 import { VideoCallRoom } from './video-call.js';
 import { VehiclesRoom } from './vehicles.js';
 import { BAN_CHANNEL } from '../../application/moderation.js';
+import { ACCOUNT_DELETED_CHANNEL } from '../../application/account-deletion.js';
 
 const gate: { promise: Promise<void> | null } = { promise: null };
 vi.mock('../player.js', async (orig) => {
@@ -93,7 +94,9 @@ describe('ban kicks live sessions in every room type', () => {
       Object.defineProperty(room, 'clients', { value: [c], configurable: true });
       let handler: ((m: unknown) => void) | undefined;
       room.presence = {
-        subscribe: async (_c: string, fn: (m: unknown) => void) => (handler = fn),
+        subscribe: async (channel: string, fn: (m: unknown) => void) => {
+          if (channel === BAN_CHANNEL) handler = fn;
+        },
         unsubscribe: async () => {},
       };
       await room.ban.attach();
@@ -107,6 +110,46 @@ describe('ban kicks live sessions in every room type', () => {
     expect(call.c.left).toEqual([[4003, 'ACCOUNT_BANNED']]);
     expect(market.c.left).toEqual([[4003, 'ACCOUNT_BANNED']]);
   });
+});
+
+describe('account deletion closes every room without banning a fresh account', () => {
+  for (const [name, Ctor] of Object.entries(ROOMS)) {
+    it(`${name}: closes only the deleted UUID and refuses its in-flight joins`, async () => {
+      const room: any = new Ctor();
+      const clients = [mkClient('old1'), mkClient('old2'), mkClient('fresh')];
+      Object.defineProperty(room, 'clients', { value: clients, configurable: true });
+      const handlers = new Map<string, (m: unknown) => void>();
+      room.presence = {
+        subscribe: async (channel: string, fn: (m: unknown) => void) => {
+          handlers.set(channel, fn);
+        },
+        unsubscribe: async (channel: string) => {
+          handlers.delete(channel);
+        },
+      };
+      await room.ban.attach();
+      room.ban.track(clients[0], 'old-player');
+      room.ban.track(clients[1], 'old-player');
+      room.ban.track(clients[2], 'fresh-player');
+      let release!: () => void;
+      gate.promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const inFlight = room.ban.confirm('old-player');
+      handlers.get(ACCOUNT_DELETED_CHANNEL)!({ userId: 'old-player' });
+      release();
+      await expect(inFlight).rejects.toThrow('ACCOUNT_DELETED');
+      gate.promise = null;
+      expect(clients[0]!.left).toEqual([[4004, 'ACCOUNT_DELETED']]);
+      expect(clients[1]!.left).toEqual([[4004, 'ACCOUNT_DELETED']]);
+      expect(clients[2]!.left).toEqual([]);
+      await expect(room.ban.confirm('fresh-player')).resolves.toBeUndefined();
+      handlers.get(ACCOUNT_DELETED_CHANNEL)!({ nope: true });
+      expect(clients[2]!.left).toEqual([]);
+      await room.ban.detach();
+      expect(handlers.size).toBe(0);
+    });
+  }
 });
 
 describe('TOCTOU: a ban fired mid-join', () => {

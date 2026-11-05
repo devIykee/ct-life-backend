@@ -284,7 +284,7 @@ export async function prepareLaunch(
   const description = cleanDescription(input.description ?? '');
 
   const who = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string; age_confirmed_at: Date | null }>(
+    c.query<{ wallet: string | null; age_confirmed_at: Date | null }>(
       `SELECT u.wallet, ch.age_confirmed_at FROM users u
          LEFT JOIN characters ch ON ch.user_id = u.id WHERE u.id = $1`,
       [userId],
@@ -293,6 +293,7 @@ export async function prepareLaunch(
   const row = who.rows[0];
   if (!row) throw new NotFoundError({ kind: 'user' });
   if (!row.age_confirmed_at) throw new AgeRequiredError({});
+  if (!row.wallet) throw new ForbiddenError({ reason: 'wallet_required' });
   let wallet: PublicKey;
   try {
     wallet = new PublicKey(row.wallet);

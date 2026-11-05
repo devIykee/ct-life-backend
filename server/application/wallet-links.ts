@@ -1,3 +1,4 @@
+import { lockWalletOwnership } from './wallet-ownership.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import type { AppContext } from './context.js';
@@ -101,15 +102,19 @@ function binding(
   if (!allowed) throw new ForbiddenError({ reason: 'origin_not_allowed' });
   return { ...siwsBindingForOrigin(allowed), origin: allowed };
 }
-async function lockUser(client: PoolClient, userId: string): Promise<string> {
-  const result = await client.query<{ wallet: string }>(
-    'SELECT wallet FROM users WHERE id=$1 FOR UPDATE',
+async function lockUser(client: PoolClient, userId: string): Promise<string | null> {
+  const result = await client.query<{ wallet: string | null }>(
+    'SELECT wallet FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
     [userId],
   );
   if (!result.rows[0]) throw new NotFoundError();
   return result.rows[0].wallet;
 }
-function checkSolanaPrimary(network: WalletLinkNetwork, address: string, primary: string): void {
+function checkSolanaPrimary(
+  network: WalletLinkNetwork,
+  address: string,
+  primary: string | null,
+): void {
   // Existing SIWS resolves users.wallet. Secondary Solana identities need an auth migration first.
   if (network === 'solana:mainnet' && address !== primary) {
     throw new WalletLinkError(
@@ -263,6 +268,7 @@ export async function completeWalletLink(
   }
   const result = await runInTransaction(
     async (client): Promise<VerifiedWalletLink | null> => {
+      await lockWalletOwnership(client, c.network, c.address);
       const primary = await lockUser(client, userId);
       checkSolanaPrimary(c.network, c.address, primary);
       // Atomically consume after signature validation, even when identity is already owned.
@@ -272,6 +278,13 @@ export async function completeWalletLink(
         [challengeId, userId],
       );
       if (consumed.rowCount !== 1) throw invalidChallenge();
+      const loginOwner = (
+        await client.query<{ user_id: string }>(
+          'SELECT user_id FROM login_identities WHERE network=$1 AND address=$2',
+          [c.network, c.address],
+        )
+      ).rows[0];
+      if (loginOwner && loginOwner.user_id !== userId) return null;
       const digest = createHash('sha256')
         .update(
           JSON.stringify([
@@ -289,12 +302,17 @@ export async function completeWalletLink(
         `INSERT INTO economy_wallet_links
       (id,user_id,network,address,proof_scheme,proof_digest,public_key,verified_at)
       VALUES ($1,$2,$3,$4,$5,$6,$7,clock_timestamp())
-      ON CONFLICT (network,address) DO UPDATE SET proof_scheme=EXCLUDED.proof_scheme,
+      ON CONFLICT (network,address) WHERE ownership_released_at IS NULL DO UPDATE SET proof_scheme=EXCLUDED.proof_scheme,
         proof_digest=EXCLUDED.proof_digest,public_key=EXCLUDED.public_key,
         verified_at=EXCLUDED.verified_at,revoked_at=NULL
       WHERE economy_wallet_links.user_id=EXCLUDED.user_id RETURNING *`,
         [uuidv7(), userId, c.network, c.address, c.proofScheme, digest, proof.publicKey ?? null],
       );
+      if (linked.rows[0])
+        await client.query(
+          'UPDATE login_identity_challenges SET account_hint=$3 WHERE network=$1 AND address=$2 AND account_hint IS NULL',
+          [c.network, c.address, userId],
+        );
       return linked.rows[0] ? linkDto(linked.rows[0]) : null;
     },
     { isolation: 'read committed' },
@@ -317,7 +335,7 @@ export async function listWalletLinks(
   return ctx.db.withConnection(async (client) =>
     (
       await client.query<LinkRow>(
-        'SELECT * FROM economy_wallet_links WHERE user_id=$1 AND revoked_at IS NULL ORDER BY created_at,id',
+        'SELECT * FROM economy_wallet_links WHERE user_id=$1 AND revoked_at IS NULL AND ownership_released_at IS NULL ORDER BY created_at,id',
         [userId],
       )
     ).rows.map(linkDto),
@@ -334,7 +352,7 @@ export async function getVerifiedWalletLink(
     async (client) =>
       (
         await client.query<LinkRow>(
-          'SELECT * FROM economy_wallet_links WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL',
+          'SELECT * FROM economy_wallet_links WHERE id=$1 AND user_id=$2 AND revoked_at IS NULL AND ownership_released_at IS NULL',
           [linkId, userId],
         )
       ).rows[0],
@@ -354,7 +372,7 @@ export async function revokeWalletLink(
       await lockUser(client, userId);
       const result = await client.query<LinkRow>(
         `UPDATE economy_wallet_links
-      SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1 AND user_id=$2 RETURNING *`,
+      SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1 AND user_id=$2 AND ownership_released_at IS NULL RETURNING *`,
         [linkId, userId],
       );
       const row = result.rows[0];

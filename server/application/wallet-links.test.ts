@@ -50,7 +50,9 @@ beforeAll(async () => {
     lock_timeout: 3_000,
   });
   // Minimal real users shape is enough to exercise the migration's ownership FKs.
-  await pool.query('CREATE TABLE users (id uuid PRIMARY KEY, wallet text NOT NULL UNIQUE)');
+  await pool.query(
+    'CREATE TABLE users (id uuid PRIMARY KEY, wallet text NOT NULL UNIQUE, deleted_at timestamptz)',
+  );
   const sql = await readFile(
     new URL('../../db/migrations/1700000150000_economy_wallet_links.sql', import.meta.url),
     'utf8',
@@ -69,6 +71,14 @@ beforeAll(async () => {
     'utf8',
   );
   await pool.query(callbackMigration.split('-- Down Migration')[0]!);
+  await pool.query(
+    (
+      await readFile(
+        new URL('../../db/migrations/1700000153000_login_identities.sql', import.meta.url),
+        'utf8',
+      )
+    ).split('-- Down Migration')[0]!,
+  );
   const db: Db = {
     pool,
     connect: () => pool.connect(),

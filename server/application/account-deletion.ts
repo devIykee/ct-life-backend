@@ -1,3 +1,4 @@
+import type { Db } from '../shared/db/pool.js';
 /**
  * Account deletion (DELETE /v1/me).
  *
@@ -32,18 +33,28 @@ export const DELETE_CONFIRMATION = 'DELETE';
 const DELETED_FLAG_TTL_SEC = 24 * 60 * 60;
 
 /** Redis key that marks a user as deleted for live access tokens. */
+export const ACCOUNT_DELETED_CHANNEL = 'ctl:account-deleted';
+
 export const deletedFlagKey = (userId: string): string => `acct:deleted:${userId}`;
 
 /**
- * Reject tokens of a deleted account. Cheap (one Redis GET); the durable truth
- * is users.deleted_at, which refresh and login consult.
+ * Reject tokens of a deleted or missing account. Redis is a quick refusal only;
+ * every accepted request also checks durable users.deleted_at by primary key.
  * @param redis - The Redis layer.
  * @param userId - The token subject.
  */
-export async function assertAccountActive(redis: RedisLayer, userId: string): Promise<void> {
+export async function assertAccountActive(
+  redis: RedisLayer,
+  userId: string,
+  db: Db,
+): Promise<void> {
   if ((await redis.main.get(deletedFlagKey(userId))) !== null) {
     throw new SignatureInvalidError({ reason: 'account_deleted' });
   }
+  const active = await db.withConnection((c) =>
+    c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL', [userId]),
+  );
+  if (!active.rowCount) throw new SignatureInvalidError({ reason: 'account_unavailable' });
 }
 
 /**
@@ -84,108 +95,135 @@ async function queueKeys(
  * @param userId - The authenticated user.
  */
 export async function deleteAccount(ctx: AppContext, userId: string): Promise<void> {
-  await runInTransaction(async (client) => {
-    const u = await client.query<{ deleted_at: Date | null }>(
-      'SELECT deleted_at FROM users WHERE id = $1 FOR UPDATE',
-      [userId],
-    );
-    if (u.rows.length === 0 || u.rows[0]!.deleted_at !== null) return;
+  await runInTransaction(
+    async (client) => {
+      const u = await client.query<{ deleted_at: Date | null }>(
+        'SELECT deleted_at FROM users WHERE id = $1 FOR UPDATE',
+        [userId],
+      );
+      if (u.rows.length === 0 || u.rows[0]!.deleted_at !== null) return;
 
-    // 1. Files first (keys are read before their rows are deleted).
-    await queueKeys(
-      client,
-      'likeness',
-      'SELECT object_key FROM likeness_uploads WHERE user_id = $1',
-      userId,
-    );
-    await queueKeys(
-      client,
-      'likeness',
-      'SELECT object_key FROM likeness_upload_sessions WHERE user_id = $1',
-      userId,
-    );
-    await queueKeys(
-      client,
-      'likeness',
-      'SELECT reference_key FROM likeness_jobs WHERE user_id = $1',
-      userId,
-    );
-    await queueKeys(
-      client,
-      'likeness',
-      'SELECT asset_key FROM likeness_jobs WHERE user_id = $1',
-      userId,
-    );
-    await queueKeys(
-      client,
-      'ads',
-      `SELECT u.image_key FROM ad_uploads u WHERE u.user_id = $1
+      // 1. Files first (keys are read before their rows are deleted).
+      await queueKeys(
+        client,
+        'likeness',
+        'SELECT object_key FROM likeness_uploads WHERE user_id = $1',
+        userId,
+      );
+      await queueKeys(
+        client,
+        'likeness',
+        'SELECT object_key FROM likeness_upload_sessions WHERE user_id = $1',
+        userId,
+      );
+      await queueKeys(
+        client,
+        'likeness',
+        'SELECT reference_key FROM likeness_jobs WHERE user_id = $1',
+        userId,
+      );
+      await queueKeys(
+        client,
+        'likeness',
+        'SELECT asset_key FROM likeness_jobs WHERE user_id = $1',
+        userId,
+      );
+      await queueKeys(
+        client,
+        'ads',
+        `SELECT u.image_key FROM ad_uploads u WHERE u.user_id = $1
          AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
-      userId,
-    );
-    // Creator images count only when the key is one of THIS user's own uploads
-    // and no booking still shows it (profile keys are otherwise user-supplied).
-    await queueKeys(
-      client,
-      'ads',
-      `SELECT u.image_key FROM ad_uploads u JOIN creator_profiles c ON c.user_id = u.user_id
+        userId,
+      );
+      // Creator images count only when the key is one of THIS user's own uploads
+      // and no booking still shows it (profile keys are otherwise user-supplied).
+      await queueKeys(
+        client,
+        'ads',
+        `SELECT u.image_key FROM ad_uploads u JOIN creator_profiles c ON c.user_id = u.user_id
         WHERE u.user_id = $1 AND u.image_key IN (c.avatar_image_key, c.banner_image_key)
           AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
-      userId,
-    );
+        userId,
+      );
 
-    // 2. Erase personal rows. Order respects the likeness foreign keys
-    //    (characters -> jobs, selections/attempts -> jobs, jobs -> uploads).
-    const erase = [
-      'DELETE FROM characters WHERE user_id = $1',
-      'DELETE FROM likeness_selections WHERE user_id = $1',
-      'DELETE FROM likeness_provider_attempts WHERE job_id IN (SELECT id FROM likeness_jobs WHERE user_id = $1)',
-      'DELETE FROM likeness_jobs WHERE user_id = $1',
-      'DELETE FROM likeness_action_receipts WHERE user_id = $1',
-      'DELETE FROM likeness_upload_sessions WHERE user_id = $1',
-      'DELETE FROM likeness_uploads WHERE user_id = $1',
-      'DELETE FROM x_links WHERE user_id = $1',
-      'DELETE FROM push_devices WHERE user_id = $1',
-      'DELETE FROM push_prefs WHERE user_id = $1',
-      'DELETE FROM push_log WHERE user_id = $1',
-      'DELETE FROM creator_profiles WHERE user_id = $1',
-      'DELETE FROM follows WHERE follower_user_id = $1 OR followee_user_id = $1',
-      'DELETE FROM blocks WHERE blocker_user_id = $1 OR blocked_user_id = $1',
-      'DELETE FROM voice_speakers WHERE user_id = $1',
-      // Real Markets order records carry the wallet and exist for display/anti-abuse only.
-      'DELETE FROM real_market_orders WHERE user_id = $1',
-      // 18+ confirmation audit rows (client version and time; no IP).
-      'DELETE FROM age_confirmations WHERE user_id = $1',
-      `DELETE FROM ad_uploads u WHERE u.user_id = $1
+      // 2. Erase personal rows. Order respects the likeness foreign keys
+      //    (characters -> jobs, selections/attempts -> jobs, jobs -> uploads).
+      const erase = [
+        'DELETE FROM characters WHERE user_id = $1',
+        'DELETE FROM likeness_selections WHERE user_id = $1',
+        'DELETE FROM likeness_provider_attempts WHERE job_id IN (SELECT id FROM likeness_jobs WHERE user_id = $1)',
+        'DELETE FROM likeness_jobs WHERE user_id = $1',
+        'DELETE FROM likeness_action_receipts WHERE user_id = $1',
+        'DELETE FROM likeness_upload_sessions WHERE user_id = $1',
+        'DELETE FROM likeness_uploads WHERE user_id = $1',
+        'DELETE FROM x_links WHERE user_id = $1',
+        'DELETE FROM push_devices WHERE user_id = $1',
+        'DELETE FROM push_prefs WHERE user_id = $1',
+        'DELETE FROM push_log WHERE user_id = $1',
+        'DELETE FROM creator_profiles WHERE user_id = $1',
+        'DELETE FROM follows WHERE follower_user_id = $1 OR followee_user_id = $1',
+        'DELETE FROM blocks WHERE blocker_user_id = $1 OR blocked_user_id = $1',
+        'DELETE FROM voice_speakers WHERE user_id = $1',
+        // Real Markets order records carry the wallet and exist for display/anti-abuse only.
+        'DELETE FROM real_market_orders WHERE user_id = $1',
+        // 18+ confirmation audit rows (client version and time; no IP).
+        'DELETE FROM age_confirmations WHERE user_id = $1',
+        `DELETE FROM ad_uploads u WHERE u.user_id = $1
          AND NOT EXISTS (SELECT 1 FROM ad_bookings b WHERE b.upload_id = u.upload_id::text)`,
-    ];
-    for (const sql of erase) await client.query(sql, [userId]);
+      ];
+      for (const sql of erase) await client.query(sql, [userId]);
 
-    // 3. Overwrite free text other players can see.
-    await client.query("UPDATE dm_messages SET text = '[deleted]' WHERE from_user_id = $1", [
-      userId,
-    ]);
-    await client.query("UPDATE feed_posts SET text = '[deleted]', meta = NULL WHERE user_id = $1", [
-      userId,
-    ]);
-    await client.query("UPDATE tombstones SET alias = 'Deleted player' WHERE user_id = $1", [
-      userId,
-    ]);
+      // 3. Overwrite free text other players can see.
+      await client.query("UPDATE dm_messages SET text = '[deleted]' WHERE from_user_id = $1", [
+        userId,
+      ]);
+      await client.query(
+        "UPDATE feed_posts SET text = '[deleted]', meta = NULL WHERE user_id = $1",
+        [userId],
+      );
+      await client.query("UPDATE tombstones SET alias = 'Deleted player' WHERE user_id = $1", [
+        userId,
+      ]);
 
-    // 4. Anonymise the identity row. The wallet column is UNIQUE NOT NULL, so it
-    //    gets a placeholder; the same wallet can sign up again as a new account.
-    await client.query(
-      `UPDATE users SET wallet = 'deleted:' || id::text, is_seeker = false, sgt_mint = NULL,
+      // Auth proofs are personal data, not retained financial evidence. Invalidate
+      // outstanding login proofs bound to this owner before releasing credentials.
+      await client.query(
+        'DELETE FROM login_identity_challenges WHERE user_id=$1 OR account_hint=$1',
+        [userId],
+      );
+      await client.query('DELETE FROM login_identities WHERE user_id=$1', [userId]);
+      await client.query(
+        `UPDATE economy_wallet_links SET ownership_released_at=COALESCE(ownership_released_at,now()),revoked_at=COALESCE(revoked_at,now()) WHERE user_id=$1`,
+        [userId],
+      );
+      await client.query(
+        'UPDATE economy_wallet_link_challenges SET consumed_at=COALESCE(consumed_at,now()) WHERE user_id=$1',
+        [userId],
+      );
+
+      // 4. Anonymise the identity row. Release wallet ownership; a fresh signed
+      //    login creates a NEW UUID without access to erased inventory or old orders.
+      await client.query(
+        `UPDATE users SET wallet = NULL, is_seeker = false, sgt_mint = NULL,
               skr_name = NULL, deleted_at = now() WHERE id = $1`,
-      [userId],
-    );
-    await client.query(
-      'INSERT INTO account_deletions (user_id) VALUES ($1) ON CONFLICT DO NOTHING',
-      [userId],
-    );
-  });
-  // After commit: kill live access tokens. (Refresh checks users.deleted_at.)
-  await ctx.redis.main.set(deletedFlagKey(userId), '1', 'EX', DELETED_FLAG_TTL_SEC);
+        [userId],
+      );
+      await client.query(
+        'INSERT INTO account_deletions (user_id) VALUES ($1) ON CONFLICT DO NOTHING',
+        [userId],
+      );
+    },
+    {},
+    ctx.db,
+  );
+  // Durable checks reject deleted accounts even if Redis is unavailable. Attempt
+  // both independent revocation signals so a failed cache write cannot skip kicks.
+  const revocations = await Promise.allSettled([
+    ctx.redis.main.set(deletedFlagKey(userId), '1', 'EX', DELETED_FLAG_TTL_SEC),
+    ctx.redis.main.publish(ACCOUNT_DELETED_CHANNEL, JSON.stringify({ userId })),
+  ]);
+  const failed = revocations.find((r) => r.status === 'rejected');
+  if (failed?.status === 'rejected') throw failed.reason;
 }
 
 /** Deleter for one store; throws on failure so the row is retried. */

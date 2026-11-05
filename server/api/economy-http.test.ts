@@ -71,13 +71,16 @@ beforeAll(async () => {
     statement_timeout: 5000,
     lock_timeout: 3000,
   });
-  await pool.query('CREATE TABLE users(id uuid PRIMARY KEY,wallet text NOT NULL UNIQUE)');
+  await pool.query(
+    'CREATE TABLE users(id uuid PRIMARY KEY,wallet text NOT NULL UNIQUE, deleted_at timestamptz)',
+  );
   for (const file of [
     '1700000034000_cosmetic_items.sql',
     '1700000035000_cosmetic_inventory.sql',
     '1700000150000_economy_wallet_links.sql',
     '1700000151000_economy_orders.sql',
     '1700000152000_near_wallet_callback.sql',
+    '1700000153000_login_identities.sql',
   ]) {
     const sql = await readFile(new URL(`../../db/migrations/${file}`, import.meta.url), 'utf8');
     await pool.query(sql.split('-- Down Migration')[0]!);
