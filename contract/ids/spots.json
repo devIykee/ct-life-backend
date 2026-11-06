@@ -1,23 +1,23 @@
 {
   "_owner": "FE",
   "_provisional": true,
-  "version": "1.2.0",
-  "_note": "FE replaces this file. BE only references IDs from it. Additions only after publication; never renames.",
+  "version": "1.3.0",
+  "_note": "FE replaces this file. BE only references IDs from it. Additions only after publication; never renames. Positions, facings (rotY) and walkable rectangles are the shipped client venue prefabs' spot anchors and NavMesh floor (1.3.0); the client's VenueSpotContractTests fails when they drift apart.",
   "units": "metres, radians; venue-local; x right, z forward",
   "venues": {
     "timeline_square": {
       "walkable": [
         {
-          "x0": -20,
-          "z0": -15,
-          "x1": 20,
-          "z1": 15
+          "x0": -11.5,
+          "z0": -12.4,
+          "x1": 11.5,
+          "z1": 9.8
         },
         {
-          "x0": -5,
-          "z0": 15,
-          "x1": 5,
-          "z1": 21
+          "x0": -3.5,
+          "z0": 9.8,
+          "x1": 3.5,
+          "z1": 12.0
         }
       ],
       "spots": [
@@ -25,49 +25,49 @@
           "id": "timeline_square.center",
           "kind": "stage",
           "x": 0,
-          "z": 0,
+          "z": -5.6,
           "rotY": 0.0
         },
         {
           "id": "timeline_square.crier_1",
           "kind": "standing",
-          "x": -12,
-          "z": 8,
+          "x": -8.0,
+          "z": 8.6,
           "rotY": 0
         },
         {
           "id": "timeline_square.crier_2",
           "kind": "standing",
-          "x": 12,
-          "z": 8,
+          "x": 8.0,
+          "z": 8.6,
           "rotY": 0
         },
         {
           "id": "timeline_square.crier_3",
           "kind": "standing",
           "x": 0,
-          "z": 18,
+          "z": 11.0,
           "rotY": 0
         },
         {
           "id": "timeline_square.entrance",
           "kind": "exit",
           "x": 0,
-          "z": -14,
+          "z": -10.9,
           "rotY": 0
         },
         {
           "id": "timeline_square.exit",
           "kind": "exit",
           "x": 0,
-          "z": -15,
+          "z": -11.9,
           "rotY": 3.142
         },
         {
           "id": "timeline_square.square_center",
           "kind": "stand",
           "x": 0,
-          "z": 2,
+          "z": -7.0,
           "rotY": 0.0
         },
         {
@@ -75,7 +75,7 @@
           "kind": "seat",
           "x": 4.5,
           "z": 7.79,
-          "rotY": 4.189,
+          "rotY": -2.618,
           "anim": "act_sit"
         },
         {
@@ -83,7 +83,7 @@
           "kind": "seat",
           "x": -4.5,
           "z": 7.79,
-          "rotY": 5.236,
+          "rotY": 2.618,
           "anim": "act_sit"
         },
         {
@@ -91,7 +91,7 @@
           "kind": "seat",
           "x": -9.0,
           "z": 0.0,
-          "rotY": 6.283,
+          "rotY": 1.571,
           "anim": "act_sit"
         },
         {
@@ -99,7 +99,7 @@
           "kind": "seat",
           "x": -4.5,
           "z": -7.79,
-          "rotY": 7.33,
+          "rotY": 0.524,
           "anim": "act_sit"
         },
         {
@@ -107,7 +107,7 @@
           "kind": "seat",
           "x": 4.5,
           "z": -7.79,
-          "rotY": 8.378,
+          "rotY": -0.524,
           "anim": "act_sit"
         },
         {
@@ -115,21 +115,21 @@
           "kind": "seat",
           "x": 9.0,
           "z": -0.0,
-          "rotY": 9.425,
+          "rotY": -1.571,
           "anim": "act_sit"
         },
         {
           "id": "timeline_square.pixel_wall",
           "kind": "stand",
-          "x": -18,
-          "z": 0,
+          "x": -9.6,
+          "z": 6.2,
           "rotY": 1.571
         },
         {
           "id": "timeline_square.billboard_view",
           "kind": "stand",
-          "x": 15,
-          "z": -10,
+          "x": 6.2,
+          "z": -9.6,
           "rotY": 0
         },
         {
@@ -169,81 +169,81 @@
         {
           "id": "spaces_studio.stage_1",
           "kind": "stage",
-          "x": -9,
-          "z": 6,
-          "rotY": 3.142,
+          "x": -4.99,
+          "z": 3.55,
+          "rotY": 1.082,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_2",
           "kind": "stage",
-          "x": -7,
-          "z": 6,
-          "rotY": 3.142,
+          "x": -5.63,
+          "z": 5.71,
+          "rotY": 1.484,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_3",
           "kind": "stage",
-          "x": -5,
-          "z": 6,
-          "rotY": 3.142,
+          "x": -5.37,
+          "z": 7.95,
+          "rotY": 1.885,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_4",
           "kind": "stage",
           "x": -3,
-          "z": 6,
-          "rotY": 3.142,
+          "z": 5.2,
+          "rotY": 2.88,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_5",
           "kind": "stage",
-          "x": -1,
-          "z": 6,
-          "rotY": 3.142,
+          "x": -1.3,
+          "z": 5.75,
+          "rotY": 3.002,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_6",
           "kind": "stage",
-          "x": 1,
-          "z": 6,
-          "rotY": 3.142,
+          "x": 1.3,
+          "z": 5.75,
+          "rotY": -3.002,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_7",
           "kind": "stage",
           "x": 3,
-          "z": 6,
-          "rotY": 3.142,
+          "z": 5.2,
+          "rotY": -2.88,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_8",
           "kind": "stage",
-          "x": 5,
-          "z": 6,
-          "rotY": 3.142,
+          "x": 5.37,
+          "z": 7.95,
+          "rotY": -1.885,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_9",
           "kind": "stage",
-          "x": 7,
-          "z": 6,
-          "rotY": 3.142,
+          "x": 5.63,
+          "z": 5.71,
+          "rotY": -1.484,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.stage_10",
           "kind": "stage",
-          "x": 9,
-          "z": 6,
-          "rotY": 3.142,
+          "x": 4.99,
+          "z": 3.55,
+          "rotY": -1.082,
           "anim": "act_sit"
         },
         {
@@ -270,17 +270,17 @@
         {
           "id": "spaces_studio.seat_1",
           "kind": "seat",
-          "x": -6,
-          "z": -2,
-          "rotY": 0,
+          "x": -5.25,
+          "z": -0.1,
+          "rotY": 0.695,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_2",
           "kind": "seat",
-          "x": -3,
-          "z": -2,
-          "rotY": 0,
+          "x": -2.79,
+          "z": -1.51,
+          "rotY": 0.348,
           "anim": "act_sit"
         },
         {
@@ -294,33 +294,33 @@
         {
           "id": "spaces_studio.seat_4",
           "kind": "seat",
-          "x": 3,
-          "z": -2,
-          "rotY": 0,
+          "x": 2.79,
+          "z": -1.51,
+          "rotY": -0.348,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_5",
           "kind": "seat",
-          "x": 6,
-          "z": -2,
-          "rotY": 0,
+          "x": 5.25,
+          "z": -0.1,
+          "rotY": -0.695,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_6",
           "kind": "seat",
-          "x": -6,
-          "z": -4,
-          "rotY": 0,
+          "x": -5.41,
+          "z": -2.45,
+          "rotY": 0.559,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_7",
           "kind": "seat",
-          "x": -3,
-          "z": -4,
-          "rotY": 0,
+          "x": -2.81,
+          "z": -3.6,
+          "rotY": 0.279,
           "anim": "act_sit"
         },
         {
@@ -334,33 +334,33 @@
         {
           "id": "spaces_studio.seat_9",
           "kind": "seat",
-          "x": 3,
-          "z": -4,
-          "rotY": 0,
+          "x": 2.81,
+          "z": -3.6,
+          "rotY": -0.279,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_10",
           "kind": "seat",
-          "x": 6,
-          "z": -4,
-          "rotY": 0,
+          "x": 5.41,
+          "z": -2.45,
+          "rotY": -0.559,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_11",
           "kind": "seat",
-          "x": -6,
-          "z": -6,
-          "rotY": 0,
+          "x": -5.49,
+          "z": -4.69,
+          "rotY": 0.467,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_12",
           "kind": "seat",
-          "x": -3,
-          "z": -6,
-          "rotY": 0,
+          "x": -2.82,
+          "z": -5.67,
+          "rotY": 0.234,
           "anim": "act_sit"
         },
         {
@@ -374,33 +374,33 @@
         {
           "id": "spaces_studio.seat_14",
           "kind": "seat",
-          "x": 3,
-          "z": -6,
-          "rotY": 0,
+          "x": 2.82,
+          "z": -5.67,
+          "rotY": -0.234,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_15",
           "kind": "seat",
-          "x": 6,
-          "z": -6,
-          "rotY": 0,
+          "x": 5.49,
+          "z": -4.69,
+          "rotY": -0.467,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_16",
           "kind": "seat",
-          "x": -6,
-          "z": -8,
-          "rotY": 0,
+          "x": -5.55,
+          "z": -6.87,
+          "rotY": 0.401,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_17",
           "kind": "seat",
-          "x": -3,
-          "z": -8,
-          "rotY": 0,
+          "x": -2.83,
+          "z": -7.71,
+          "rotY": 0.201,
           "anim": "act_sit"
         },
         {
@@ -414,17 +414,33 @@
         {
           "id": "spaces_studio.seat_19",
           "kind": "seat",
-          "x": 3,
-          "z": -8,
-          "rotY": 0,
+          "x": 2.83,
+          "z": -7.71,
+          "rotY": -0.201,
           "anim": "act_sit"
         },
         {
           "id": "spaces_studio.seat_20",
           "kind": "seat",
-          "x": 6,
-          "z": -8,
-          "rotY": 0,
+          "x": 5.55,
+          "z": -6.87,
+          "rotY": -0.401,
+          "anim": "act_sit"
+        },
+        {
+          "id": "spaces_studio.greenroom_1",
+          "kind": "seat",
+          "x": -11.0,
+          "z": -2.0,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "spaces_studio.greenroom_2",
+          "kind": "seat",
+          "x": -11.0,
+          "z": -0.8,
+          "rotY": 1.571,
           "anim": "act_sit"
         }
       ]
@@ -432,142 +448,142 @@
     "terminal_cafe": {
       "walkable": [
         {
-          "x0": -12,
-          "z0": -9,
-          "x1": 12,
-          "z1": 9
+          "x0": -8.5,
+          "z0": -6.0,
+          "x1": 8.5,
+          "z1": 6.0
         }
       ],
       "spots": [
         {
           "id": "terminal_cafe.terminal_1",
           "kind": "terminal",
-          "x": -7.5,
-          "z": 3,
+          "x": -2.7,
+          "z": -2.7,
           "rotY": 0,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_2",
           "kind": "terminal",
-          "x": -2.5,
-          "z": 3,
+          "x": -0.1,
+          "z": -2.7,
           "rotY": 0,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_3",
           "kind": "terminal",
-          "x": 2.5,
-          "z": 3,
-          "rotY": 0,
+          "x": -2.7,
+          "z": -0.5,
+          "rotY": 3.142,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_4",
           "kind": "terminal",
-          "x": 7.5,
-          "z": 3,
-          "rotY": 0,
+          "x": -0.1,
+          "z": -0.5,
+          "rotY": 3.142,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_5",
           "kind": "terminal",
-          "x": -7.5,
-          "z": 7,
-          "rotY": 0,
+          "x": 7.4,
+          "z": -3.6,
+          "rotY": 1.571,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_6",
           "kind": "terminal",
-          "x": -2.5,
-          "z": 7,
-          "rotY": 0,
+          "x": 7.4,
+          "z": -1.5,
+          "rotY": 1.571,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_7",
           "kind": "terminal",
-          "x": 2.5,
-          "z": 7,
-          "rotY": 0,
+          "x": 7.4,
+          "z": 0.6,
+          "rotY": 1.571,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.terminal_8",
           "kind": "terminal",
-          "x": 7.5,
-          "z": 7,
-          "rotY": 0,
+          "x": 7.4,
+          "z": 2.7,
+          "rotY": 1.571,
           "anim": "act_type"
         },
         {
           "id": "terminal_cafe.entrance",
           "kind": "exit",
           "x": 0,
-          "z": -8,
+          "z": -5.0,
           "rotY": 0
         },
         {
           "id": "terminal_cafe.exit",
           "kind": "exit",
           "x": 0,
-          "z": -9,
+          "z": -6.0,
           "rotY": 3.142
         },
         {
           "id": "terminal_cafe.center",
           "kind": "stand",
-          "x": 0,
-          "z": 0,
+          "x": 0.3,
+          "z": 1.4,
           "rotY": 0.0
         },
         {
           "id": "terminal_cafe.pulse_screen",
           "kind": "stand",
-          "x": 0,
-          "z": 8.5,
+          "x": -0.45,
+          "z": 5.2,
           "rotY": 3.142
         },
         {
           "id": "terminal_cafe.counter",
           "kind": "npc",
-          "x": -10,
-          "z": -5,
-          "rotY": 1.571
+          "x": -5.3,
+          "z": 4.5,
+          "rotY": 3.142
         },
         {
           "id": "terminal_cafe.table_1",
           "kind": "seat",
-          "x": -6,
-          "z": -4,
-          "rotY": 0,
+          "x": 1.15,
+          "z": 0.45,
+          "rotY": 0.785,
           "anim": "act_sit"
         },
         {
           "id": "terminal_cafe.table_2",
           "kind": "seat",
-          "x": -2,
-          "z": -4,
-          "rotY": 0,
+          "x": 2.25,
+          "z": 0.45,
+          "rotY": -0.785,
           "anim": "act_sit"
         },
         {
           "id": "terminal_cafe.table_3",
           "kind": "seat",
-          "x": 2,
-          "z": -4,
-          "rotY": 0,
+          "x": 4.35,
+          "z": 0.45,
+          "rotY": 0.785,
           "anim": "act_sit"
         },
         {
           "id": "terminal_cafe.table_4",
           "kind": "seat",
-          "x": 6,
-          "z": -4,
-          "rotY": 0,
+          "x": 5.45,
+          "z": 0.45,
+          "rotY": -0.785,
           "anim": "act_sit"
         }
       ]
@@ -1132,6 +1148,38 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "discord_heights.sofa_1",
+          "kind": "seat",
+          "x": -4.6,
+          "z": -3.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "discord_heights.sofa_2",
+          "kind": "seat",
+          "x": -3.4,
+          "z": -3.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "discord_heights.sofa_3",
+          "kind": "seat",
+          "x": 3.4,
+          "z": -3.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "discord_heights.sofa_4",
+          "kind": "seat",
+          "x": 4.6,
+          "z": -3.0,
+          "rotY": 0,
+          "anim": "act_sit"
         }
       ]
     },
@@ -1193,10 +1241,43 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "audit_row.audit_desk_1",
+          "kind": "terminal",
+          "x": -7.5,
+          "z": 7.6,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "audit_row.audit_desk_2",
+          "kind": "terminal",
+          "x": -2.5,
+          "z": 7.6,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "audit_row.audit_desk_3",
+          "kind": "terminal",
+          "x": 2.5,
+          "z": 7.6,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "audit_row.audit_desk_4",
+          "kind": "terminal",
+          "x": 7.5,
+          "z": 7.6,
+          "rotY": 0,
+          "anim": "act_type"
         }
       ]
     },
     "the_trenches": {
+      "_note": "No shipped client prefab yet: the client builds a greybox from these spots, so they are its layout. Provisional; they move to the prefab's anchors when the venue is built.",
       "walkable": [
         {
           "x0": -12,
@@ -1258,6 +1339,7 @@
       ]
     },
     "club_liquidity": {
+      "_note": "No shipped client prefab yet: the client builds a greybox from these spots, so they are its layout. Provisional; they move to the prefab's anchors when the venue is built.",
       "walkable": [
         {
           "x0": -12,
@@ -1376,6 +1458,62 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "vc_row.pitch_1",
+          "kind": "seat",
+          "x": -2,
+          "z": 6.6,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "vc_row.pitch_2",
+          "kind": "seat",
+          "x": 0,
+          "z": 6.6,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "vc_row.pitch_3",
+          "kind": "seat",
+          "x": 2,
+          "z": 6.6,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "vc_row.pitch_4",
+          "kind": "seat",
+          "x": -2,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "vc_row.pitch_5",
+          "kind": "seat",
+          "x": 0,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "vc_row.pitch_6",
+          "kind": "seat",
+          "x": 2,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "vc_row.partner_desk",
+          "kind": "terminal",
+          "x": -9,
+          "z": -4,
+          "rotY": 0,
+          "anim": "act_type"
         }
       ]
     },
@@ -1437,6 +1575,86 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "hackathon_house.desk_1",
+          "kind": "terminal",
+          "x": -6,
+          "z": -2.75,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_2",
+          "kind": "terminal",
+          "x": -2,
+          "z": -2.75,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_3",
+          "kind": "terminal",
+          "x": 2,
+          "z": -2.75,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_4",
+          "kind": "terminal",
+          "x": 6,
+          "z": -2.75,
+          "rotY": 0,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_5",
+          "kind": "terminal",
+          "x": -6,
+          "z": -0.25,
+          "rotY": 3.142,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_6",
+          "kind": "terminal",
+          "x": -2,
+          "z": -0.25,
+          "rotY": 3.142,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_7",
+          "kind": "terminal",
+          "x": 2,
+          "z": -0.25,
+          "rotY": 3.142,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.desk_8",
+          "kind": "terminal",
+          "x": 6,
+          "z": -0.25,
+          "rotY": 3.142,
+          "anim": "act_type"
+        },
+        {
+          "id": "hackathon_house.couch_1",
+          "kind": "seat",
+          "x": -9.5,
+          "z": 6.2,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "hackathon_house.couch_2",
+          "kind": "seat",
+          "x": -8.0,
+          "z": 6.2,
+          "rotY": 0,
+          "anim": "act_sit"
         }
       ]
     },
@@ -1498,6 +1716,124 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "conference_hall.stage_speaker",
+          "kind": "stage",
+          "x": 0,
+          "z": 8,
+          "rotY": 3.142,
+          "anim": "loco_idle"
+        },
+        {
+          "id": "conference_hall.seat_1",
+          "kind": "seat",
+          "x": -7.5,
+          "z": 0.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_2",
+          "kind": "seat",
+          "x": -5,
+          "z": 0.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_3",
+          "kind": "seat",
+          "x": -2.5,
+          "z": 0.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_4",
+          "kind": "seat",
+          "x": 2.5,
+          "z": 0.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_5",
+          "kind": "seat",
+          "x": 5,
+          "z": 0.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_6",
+          "kind": "seat",
+          "x": 7.5,
+          "z": 0.0,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_7",
+          "kind": "seat",
+          "x": -7.5,
+          "z": -2.5,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_8",
+          "kind": "seat",
+          "x": -5,
+          "z": -2.5,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_9",
+          "kind": "seat",
+          "x": -2.5,
+          "z": -2.5,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_10",
+          "kind": "seat",
+          "x": 2.5,
+          "z": -2.5,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_11",
+          "kind": "seat",
+          "x": 5,
+          "z": -2.5,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.seat_12",
+          "kind": "seat",
+          "x": 7.5,
+          "z": -2.5,
+          "rotY": 0,
+          "anim": "act_sit"
+        },
+        {
+          "id": "conference_hall.booth_1",
+          "kind": "npc",
+          "x": -10.6,
+          "z": -5,
+          "rotY": 1.571
+        },
+        {
+          "id": "conference_hall.booth_2",
+          "kind": "npc",
+          "x": 10.6,
+          "z": -5,
+          "rotY": -1.571
         }
       ]
     },
@@ -1559,6 +1895,84 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "ratio_arena.corner_red",
+          "kind": "stand",
+          "x": -2.5,
+          "z": 0,
+          "rotY": 1.571
+        },
+        {
+          "id": "ratio_arena.corner_blue",
+          "kind": "stand",
+          "x": 2.5,
+          "z": 0,
+          "rotY": -1.571
+        },
+        {
+          "id": "ratio_arena.bleacher_1",
+          "kind": "seat",
+          "x": -7,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_2",
+          "kind": "seat",
+          "x": -5,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_3",
+          "kind": "seat",
+          "x": -3,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_4",
+          "kind": "seat",
+          "x": -1,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_5",
+          "kind": "seat",
+          "x": 1,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_6",
+          "kind": "seat",
+          "x": 3,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_7",
+          "kind": "seat",
+          "x": 5,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ratio_arena.bleacher_8",
+          "kind": "seat",
+          "x": 7,
+          "z": 8.0,
+          "rotY": 3.142,
+          "anim": "act_sit"
         }
       ]
     },
@@ -1620,6 +2034,22 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "airdrop_fields.bench_1",
+          "kind": "seat",
+          "x": -8,
+          "z": -5,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "airdrop_fields.bench_2",
+          "kind": "seat",
+          "x": 8,
+          "z": -5,
+          "rotY": -1.571,
+          "anim": "act_sit"
         }
       ]
     },
@@ -1681,10 +2111,27 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "sybil_barn.hay_1",
+          "kind": "seat",
+          "x": -9,
+          "z": -3,
+          "rotY": 1.571,
+          "anim": "act_sit"
+        },
+        {
+          "id": "sybil_barn.hay_2",
+          "kind": "seat",
+          "x": 9,
+          "z": -3,
+          "rotY": -1.571,
+          "anim": "act_sit"
         }
       ]
     },
     "dubai_marina": {
+      "_note": "No shipped client prefab yet: the client builds a greybox from these spots, so they are its layout. Provisional; they move to the prefab's anchors when the venue is built.",
       "walkable": [
         {
           "x0": -12,
@@ -1803,6 +2250,54 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "cabal_lounge.booth_1",
+          "kind": "seat",
+          "x": -7.4,
+          "z": 8.2,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "cabal_lounge.booth_2",
+          "kind": "seat",
+          "x": -5.6,
+          "z": 8.2,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "cabal_lounge.booth_3",
+          "kind": "seat",
+          "x": -0.9,
+          "z": 8.2,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "cabal_lounge.booth_4",
+          "kind": "seat",
+          "x": 0.9,
+          "z": 8.2,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "cabal_lounge.booth_5",
+          "kind": "seat",
+          "x": 5.6,
+          "z": 8.2,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "cabal_lounge.booth_6",
+          "kind": "seat",
+          "x": 7.4,
+          "z": 8.2,
+          "rotY": 3.142,
+          "anim": "act_sit"
         }
       ]
     },
@@ -1864,6 +2359,52 @@
           "x": 6,
           "z": 4,
           "rotY": 0
+        },
+        {
+          "id": "ct_jail.bunk_1",
+          "kind": "seat",
+          "x": -10.2,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ct_jail.bunk_2",
+          "kind": "seat",
+          "x": -4.2,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ct_jail.bunk_3",
+          "kind": "seat",
+          "x": 1.8,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ct_jail.bunk_4",
+          "kind": "seat",
+          "x": 7.8,
+          "z": 8.6,
+          "rotY": 3.142,
+          "anim": "act_sit"
+        },
+        {
+          "id": "ct_jail.kyc_desk",
+          "kind": "npc",
+          "x": -9,
+          "z": -5,
+          "rotY": 1.571
+        },
+        {
+          "id": "ct_jail.mugshot",
+          "kind": "stand",
+          "x": 7,
+          "z": -6,
+          "rotY": 3.142
         }
       ]
     },
