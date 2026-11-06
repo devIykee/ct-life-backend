@@ -33,11 +33,14 @@ import {
   CABAL_INVITES_PER_SENDER_PER_HOUR,
   CABAL_NOTIFY_PER_TARGET_PER_HOUR,
   getMyCabal,
+  getVenueAccess,
   listCabalInvites,
   marinaVisit,
   MARINA_GATE_CENTS,
   revokeCabalInvite,
+  venueGate,
 } from './venues-gating.js';
+import { readFileSync } from 'node:fs';
 
 loadDotenv({ path: process.cwd() + '/.env' });
 
@@ -385,5 +388,83 @@ describe('Cabal invite rate limits (review L11)', () => {
       code: 'RATE_LIMITED',
       details: { reason: 'sender_invite_cap' },
     });
+  });
+});
+
+describe('venue gates from venues.json (marina venues)', () => {
+  const venues = JSON.parse(readFileSync(process.cwd() + '/contract/ids/venues.json', 'utf8')) as {
+    venues: Array<{ id: string; access?: { gate: string; minNetWorthCents?: number } }>;
+  };
+
+  it('every gate is one the server knows, and the marina bar is MARINA_GATE_CENTS', () => {
+    const gated = venues.venues.filter((v) => v.access);
+    expect(gated.map((v) => v.id).sort()).toEqual(
+      ['cabal_lounge', 'dubai_marina', 'penthouse_row', 'sybil_barn', 'yacht_club'].sort(),
+    );
+    for (const v of gated) expect(['net_worth', 'membership', 'jailed']).toContain(v.access!.gate);
+    for (const id of ['dubai_marina', 'yacht_club', 'penthouse_row']) {
+      expect(venueGate(buildContext(), id)?.minNetWorthCents).toBe(MARINA_GATE_CENTS);
+    }
+    expect(venueGate(buildContext(), 'checker_kiosk')).toBeNull();
+    expect(venueGate(buildContext(), 'penthouse_row')?.orHomeKinds).toEqual([
+      'penthouse',
+      'marina_villa',
+    ]);
+  });
+
+  it('yacht_club and dubai_marina need the net worth; checker_kiosk is open', async () => {
+    const ctx = buildContext();
+    const poor = await newUser('yachtPoor');
+    await setBalance(poor, MARINA_GATE_CENTS - 1);
+    for (const id of ['yacht_club', 'dubai_marina']) {
+      expect(await getVenueAccess(ctx, poor, id)).toMatchObject({
+        venueId: id,
+        allowed: false,
+        reasonCode: 'NET_WORTH_TOO_LOW',
+        requiredNetWorthCents: MARINA_GATE_CENTS,
+        netWorthCents: MARINA_GATE_CENTS - 1,
+        orHomeKinds: [],
+      });
+    }
+    expect(await getVenueAccess(ctx, poor, 'checker_kiosk')).toMatchObject({
+      allowed: true,
+      reasonCode: null,
+      requiredNetWorthCents: null,
+    });
+    const rich = await newUser('yachtRich');
+    await setBalance(rich, MARINA_GATE_CENTS);
+    expect((await getVenueAccess(ctx, rich, 'yacht_club')).allowed).toBe(true);
+  });
+
+  it('penthouse_row lets residents in without the net worth, others need it', async () => {
+    const ctx = buildContext();
+    const visitor = await newUser('phVisitor');
+    await setBalance(visitor, 0);
+    expect(await getVenueAccess(ctx, visitor, 'penthouse_row')).toMatchObject({
+      allowed: false,
+      reasonCode: 'NET_WORTH_TOO_LOW',
+      requiredNetWorthCents: MARINA_GATE_CENTS,
+      orHomeKinds: ['penthouse', 'marina_villa'],
+    });
+    const resident = await newUser('phResident');
+    await setBalance(resident, 0);
+    await pool.query(
+      `INSERT INTO homes (home_id, owner_user_id, kind, rent_cents_per_week, status)
+       VALUES ($1, $2, 'penthouse', 150000, 'active')`,
+      [`home-${uuidv7()}`, resident],
+    );
+    expect(await getVenueAccess(ctx, resident, 'penthouse_row')).toMatchObject({
+      allowed: true,
+      reasonCode: null,
+    });
+    // A moved-out home does not count.
+    const former = await newUser('phFormer');
+    await setBalance(former, 0);
+    await pool.query(
+      `INSERT INTO homes (home_id, owner_user_id, kind, rent_cents_per_week, status)
+       VALUES ($1, $2, 'penthouse', 150000, 'moved_out')`,
+      [`home-${uuidv7()}`, former],
+    );
+    expect((await getVenueAccess(ctx, former, 'penthouse_row')).allowed).toBe(false);
   });
 });

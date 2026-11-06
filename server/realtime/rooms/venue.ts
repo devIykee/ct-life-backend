@@ -49,7 +49,7 @@
  * where is in ../npc-roster.ts (phase-2 NPCs only at LIVE_PHASE >= 2,
  * at most 12 per instance).
  */
-import { Room, Client } from 'colyseus';
+import { Room, Client, ServerError } from 'colyseus';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -300,6 +300,11 @@ export class VenueRoom extends Room {
     if (this.state.venueId !== 'ct_jail' && (await isInPoliceCustody(userId))) {
       throw new Error('JAILED');
     }
+    // Entry gate (venues.json `access`: net worth, membership, jailed-only).
+    // The same check as GET /v1/venues/{venueId}/access, enforced here so a
+    // client that skips the REST call cannot walk in. Fails closed.
+    const refusal = await venueGateRefusal(userId, this.state.venueId);
+    if (refusal !== null) throw refusal;
     const player = await loadPlayerState(userId);
     const last = this.placement ? await this.readPos(userId) : null;
     // Last check, no await before the player is stored.
@@ -1046,6 +1051,52 @@ export function slotFreeLineIds(lines: Record<string, unknown>): Map<string, str
     out.set(archetype, ids);
   }
   return out;
+}
+
+/** Gate refusal codes on join: Colyseus `ServerError {code, message}`. */
+export const VENUE_GATE_JOIN_ERRORS = {
+  /** message = the access reasonCode (`NET_WORTH_TOO_LOW`, `NOT_A_MEMBER`, `NOT_JAILED`, ...). */
+  refused: 4403,
+  /** message `VENUE_GATE_UNAVAILABLE`: the gate could not be checked, so the join is refused. */
+  unavailable: 4503,
+} as const;
+
+/**
+ * Why a player may not join a gated venue, or null when they may (or the
+ * venue has no gate). An open venue never touches the database here; a
+ * gated venue whose check fails is refused (fail closed).
+ * @param userId - The joining player.
+ * @param venueId - The venue.
+ * @returns A ServerError to throw from onJoin, or null.
+ */
+export async function venueGateRefusal(
+  userId: string,
+  venueId: string,
+): Promise<ServerError | null> {
+  const unavailable = (): ServerError =>
+    new ServerError(VENUE_GATE_JOIN_ERRORS.unavailable, 'VENUE_GATE_UNAVAILABLE');
+  let check: () => Promise<{ allowed: boolean; reasonCode: string | null }>;
+  try {
+    const [{ buildContext }, { getVenueAccess, venueGate }] = await Promise.all([
+      import('../../application/context.js'),
+      import('../../application/venues-gating.js'),
+    ]);
+    const ctx = buildContext();
+    // venues.json is a local file (the room already read spots.json beside it);
+    // if it cannot be read we cannot tell open from gated, so refuse.
+    if (venueGate(ctx, venueId) === null) return null;
+    check = () => getVenueAccess(ctx, userId, venueId);
+  } catch {
+    return unavailable();
+  }
+  try {
+    const access = await check();
+    if (access.allowed) return null;
+    return new ServerError(VENUE_GATE_JOIN_ERRORS.refused, access.reasonCode ?? 'VENUE_GATED');
+  } catch {
+    // Database down or slow: a gated venue stays shut.
+    return unavailable();
+  }
 }
 
 /**
