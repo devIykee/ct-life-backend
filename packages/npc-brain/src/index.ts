@@ -191,6 +191,12 @@ export interface BrainOptions {
    * that archetype's set.
    */
   readonly lineIds?: readonly string[];
+  /**
+   * The anim the NPC holds on its home spot when that is a seat or a
+   * terminal (`act_sit`, `act_type`). An ambient NPC with one stays on the
+   * spot and keeps the anim while it talks. Used by the normie waves.
+   */
+  readonly homeAnim?: string;
 }
 
 /**
@@ -249,6 +255,11 @@ export function createBrain(archetype: NpcArchetype, opts: BrainOptions = {}): N
     case 'drainer':
     case 'community_mod':
     case 'normie':
+      return new AmbientBrain(
+        id,
+        opts.lineIds,
+        opts.homeAnim ? { idleAnim: opts.homeAnim, talkAnim: opts.homeAnim, wanders: false } : {},
+      );
     case 'prediction_shark_npc':
     case 'laser_eyes_maxi':
     case 'chain_tribalist':
@@ -269,6 +280,8 @@ interface AmbientStyle {
   readonly idleAnim?: string;
   /** False keeps the NPC on its home spot. Default true. */
   readonly wanders?: boolean;
+  /** Anim while talking (anims.json). Default `loco_idle`. */
+  readonly talkAnim?: string;
 }
 
 export class AmbientBrain implements NpcBrain {
@@ -282,6 +295,7 @@ export class AmbientBrain implements NpcBrain {
   private readonly lineIds: readonly string[];
   private readonly idleAnimId: string;
   private readonly wanders: boolean;
+  private readonly talkAnimId: string;
 
   /**
    * @param archetype - The registry id the brain reports.
@@ -296,6 +310,7 @@ export class AmbientBrain implements NpcBrain {
     this.lineIds = lineIds;
     this.idleAnimId = style.idleAnim ?? 'loco_idle';
     this.wanders = style.wanders ?? true;
+    this.talkAnimId = style.talkAnim ?? 'loco_idle';
   }
 
   /** Back to the starting state, for a re-spawn. */
@@ -332,7 +347,7 @@ export class AmbientBrain implements NpcBrain {
     }
     if (ctx.nowMs >= this.nextTalkAtMs) {
       this.nextTalkAtMs = ctx.nowMs + 20_000 + ctx.rng.int(20_000); // 20-40 s
-      return this.enter('talk', this.spotId, this.pickLine(ctx.rng), 'loco_idle', 4_000, ctx);
+      return this.enter('talk', this.spotId, this.pickLine(ctx.rng), this.talkAnimId, 4_000, ctx);
     }
     const free = this.wanders ? (ctx.venue.standSpots ?? []) : [];
     const walkMs = 6_000;

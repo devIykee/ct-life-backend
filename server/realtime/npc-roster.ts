@@ -13,8 +13,8 @@
  * sends as `livePhase`). At phase 1 the rooms spawn exactly what they did
  * before.
  *
- * `normie` is not here on purpose: the spec spawns Normies in waves at
- * market peaks, which needs its own code.
+ * `normie` is not here on purpose: Normies arrive in waves at market peaks
+ * (./normie-waves.ts).
  *
  * Pure: no I/O, so the tables are testable without a room.
  */
