@@ -64,6 +64,8 @@ tags:
     description: Top-up, cosmetic, ad booking, season pass intents. Phase 2+.
   - name: shop
     description: Shop, inventory. Phase 4+.
+  - name: travel
+    description: Map Travel (docs/TRAVEL.md), capability `travel`. Bus and taxi rides between venues, priced by the server.
   - name: casino
     description: The Rug Room, a Cash-only play-money casino (18+). Phase 4+.
   - name: season
@@ -6700,6 +6702,278 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /travel/quote:
+    get:
+      tags: [travel]
+      operationId: getTravelQuote
+      summary: Price every way to a venue from where the server last saw you.
+      description: >-
+        Map Travel phase 1 (docs/TRAVEL.md), capability `travel` (`503 CAPABILITY_OFF` while
+        off). The origin is the caller's last accepted island position (`ctl:pos`, at most 30 s
+        old; else `409 TRAVEL_NOT_IN_WORLD`); the client never sends a price, origin or distance.
+        `distanceM` is the straight line to the destination door times `roadFactor`. Every mode
+        is listed, with `available: false` and a `reason` when it cannot be booked: `TOO_CLOSE`,
+        `NOT_AT_STOP` (bus: `stop` is the nearest stop), `INSUFFICIENT_CASH`, `LOCKED`
+        (`unlockNetWorthCents`), `COOLDOWN` (`retryAfterSec`), `TRAVEL_IN_PROGRESS`,
+        `VENUE_GATED` (only with `gatedBooking: refuse`) or `NOT_SERVED` (no street room covers
+        the arrival point). `walk` is always available and free. `gate` is the destination's
+        door access (`GET /venues/{id}/access`): with the default `gatedBooking: warn` a gated
+        destination can still be ridden to (you arrive on the street outside the rope). The
+        quote is kept for `quoteTtlSec` (60 s); book with its `quoteId`.
+      x-phase: 1
+      parameters:
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, maxLength: 64 }
+          description: A venue id from contract/ids/districts.json `venues`.
+      responses:
+        '200':
+          description: The quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TravelQuote' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: In CT Jail (`JAILED`) or the Barn (`SYBIL_JAILED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The server has no fresh island position for you
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRAVEL_NOT_IN_WORLD,
+                      message: 'Your position on CT Island is not known yet. Walk a few steps and try again.',
+                      details: { reason: 'no fresh position' },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /travel/trips:
+    post:
+      tags: [travel]
+      operationId: postTravelTrips
+      summary: Book a bus or taxi ride from a quote.
+      description: >-
+        Capability `travel`. Debits the quoted fare in the same transaction that creates the
+        trip (ledger reason `travel_fare`), mirroring the Duo Shop order. A replay with the same
+        `Idempotency-Key` returns the same trip without charging again. The fresh position must
+        still be within `bookDriftM` (20 m) of the quote's `from` (else `409 QUOTE_EXPIRED
+        {reason: moved}`); the bus needs you within `busStopRadiusM` of a stop. `arriveAt` is
+        server time; join the destination street room with `{district: arrival.district,
+        tripId}` from `arriveAt` (docs/REALTIME.md "Map Travel arrival"). An unused ticket
+        expires at `expiresAt` and the fare is refunded. Walking is never booked (`mode: walk`
+        is a 400).
+      x-phase: 1
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quoteId, mode]
+              properties:
+                quoteId: { type: string, format: uuid }
+                mode: { type: string, enum: [bus, taxi] }
+      responses:
+        '201':
+          description: The booked trip
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TravelTrip' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the fare
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '150', need: '200', shortfallCents: 50 },
+                    },
+                }
+        '403':
+          description: >-
+            `JAILED`, `SYBIL_JAILED`, `TRAVEL_LOCKED` (net worth below the mode's unlock) or
+            `VENUE_GATED` (only with `gatedBooking: refuse`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                locked:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_LOCKED,
+                          message: 'This ride unlocks at a higher net worth.',
+                          details: { mode: taxi, unlockNetWorthCents: 1000000 },
+                        },
+                    }
+                gated:
+                  value:
+                    {
+                      error:
+                        {
+                          code: VENUE_GATED,
+                          message: "This venue's door is gated for you; the ride is not offered.",
+                          details: { to: yacht_club },
+                        },
+                    }
+        '409':
+          description: >-
+            `TRAVEL_IN_PROGRESS` (one open trip at a time), `QUOTE_EXPIRED` (`reason: expired |
+            moved`), `TRAVEL_NOT_AT_STOP` (bus away from a stop) or `TRAVEL_NOT_IN_WORLD`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                inProgress:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_IN_PROGRESS,
+                          message: 'You already have a ride booked. Finish or cancel it first.',
+                          details: {},
+                        },
+                    }
+                expired:
+                  value:
+                    {
+                      error:
+                        {
+                          code: QUOTE_EXPIRED,
+                          message: 'The quote expired or you moved. Get a new quote.',
+                          details: { reason: moved },
+                        },
+                    }
+                notAtStop:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_NOT_AT_STOP,
+                          message: 'The bus only picks up at a bus stop. Walk to the nearest stop first.',
+                          details:
+                            {
+                              radiusM: 25,
+                              stop: { id: stop_timeline, x: 44.31, z: 6.07 },
+                              distanceM: 140,
+                            },
+                        },
+                    }
+        '429':
+          description: >-
+            `TRAVEL_COOLDOWN`: `cooldownSec` (10 s) after the last ride ended, or `tripsPerHour`
+            (30) reached. `Retry-After` header and `details.retryAfterSec`.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRAVEL_COOLDOWN,
+                      message: 'Too many rides. Wait a moment before booking another.',
+                      details: { retryAfterSec: 8 },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /travel/trips/current:
+    get:
+      tags: [travel]
+      operationId: getTravelTripsCurrent
+      summary: My booked ride, if any (resume after an app restart).
+      description: Capability `travel`. Only a trip still `booked`; null otherwise.
+      x-phase: 1
+      responses:
+        '200':
+          description: The open trip or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trip, serverNow]
+                properties:
+                  trip:
+                    oneOf:
+                      - { $ref: '#/components/schemas/TravelTrip' }
+                      - { type: 'null' }
+                  serverNow: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /travel/trips/{id}/cancel:
+    post:
+      tags: [travel]
+      operationId: postTravelTripsIdCancel
+      summary: Cancel a booked ride before it arrives.
+      description: >-
+        Capability `travel`. Owner only, while `booked` and before the ticket opens
+        (`arriveAt - arriveEarlySec`, 1 s): the ticket is taken first (it must still exist), then
+        the trip is cancelled and refunded in full (ledger reason `travel_refund`, once per trip),
+        so street joins work again from where you stood. A cancel and an arrival never both
+        succeed.
+      x-phase: 1
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Refunded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tripId, refundedCents, cashCents]
+                properties:
+                  tripId: { type: string, format: uuid }
+                  refundedCents: { type: integer }
+                  cashCents: { type: integer }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            Already arrived or ended, past the cutoff, or the ticket was already used
+            (`details.reason: ticket_gone | not_booked`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRAVEL_NOT_CANCELLABLE,
+                      message: 'This ride can no longer be cancelled.',
+                      details: { status: arrived },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
   /casino/state:
     get:
       tags: [casino]
@@ -11271,6 +11545,49 @@ components:
             offerTtlHours: { type: integer }
             builderDiscountBps: { type: integer }
             minProjectAgeMinutes: { type: integer }
+        travel:
+          type: [object, 'null']
+          description: >-
+            Map Travel (docs/TRAVEL.md) rules the client renders, from contract/config/travel.json;
+            null while the `travel` capability is off. `walk.speedMps` is the auto-path speed,
+            `busStops` the stops (island metres, yaw degrees clockwise from north, `shelter`
+            baked = built by islandgen, kit = placed by the client). Prices always come from
+            `GET /travel/quote`.
+          required: [version, walk, busStopRadiusM, busStops, modes, minDistanceM]
+          properties:
+            version: { type: string }
+            walk:
+              type: object
+              required: [speedMps]
+              properties:
+                speedMps: { type: number }
+            busStopRadiusM: { type: number }
+            minDistanceM: { type: number }
+            busStops:
+              type: array
+              items:
+                type: object
+                required: [id, district, x, z, yaw, shelter]
+                properties:
+                  id: { type: string }
+                  district: { type: string }
+                  x: { type: number }
+                  z: { type: number }
+                  yaw: { type: number }
+                  shelter: { type: string, enum: [baked, kit] }
+            modes:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  baseCents: { type: integer }
+                  perHundredMCents: { type: integer }
+                  minCents: { type: integer }
+                  capCents: { type: integer }
+                  baseSec: { type: number }
+                  speedMps: { type: number }
+                  unlockNetWorthCents: { type: integer }
+                  pickup: { type: string, enum: [stop, anywhere] }
         beef:
           type: [object, 'null']
           description: >-
@@ -12556,6 +12873,134 @@ components:
         message: { type: [string, 'null'] }
         status: { type: string, enum: [pending, confirmed, failed] }
         createdAt: { type: string, format: date-time }
+    TravelStreetPoint:
+      type: object
+      description: An island street point (metres, +X east, +Z north) and the district whose street room holds it.
+      required: [district, x, z]
+      properties:
+        district: { type: string }
+        x: { type: number }
+        z: { type: number }
+    TravelArrival:
+      allOf:
+        - { $ref: '#/components/schemas/TravelStreetPoint' }
+        - type: object
+          required: [yaw]
+          properties:
+            yaw:
+              type: number
+              description: Radians (PlayerState.rotY; forward = (sin yaw, cos yaw)), facing the door.
+    TravelQuote:
+      type: object
+      required:
+        [
+          quoteId,
+          to,
+          toKind,
+          distanceM,
+          serverNow,
+          expiresAt,
+          cashCents,
+          from,
+          arrival,
+          gate,
+          modes,
+        ]
+      properties:
+        quoteId: { type: string, format: uuid }
+        to: { type: string }
+        toKind: { type: string, enum: [venue] }
+        distanceM: { type: integer, description: Road metres (straight line x roadFactor). }
+        serverNow: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        cashCents: { type: integer }
+        from: { $ref: '#/components/schemas/TravelStreetPoint' }
+        arrival: { $ref: '#/components/schemas/TravelArrival' }
+        gate:
+          type: object
+          required: [open]
+          properties:
+            open: { type: boolean }
+            code:
+              {
+                type: string,
+                description: 'GET /venues/{id}/access reasonCode (NET_WORTH_TOO_LOW, NOT_A_MEMBER, NOT_JAILED)',
+              }
+            message: { type: string }
+        modes:
+          type: array
+          items:
+            type: object
+            required: [mode, available, fareCents, durationSec]
+            properties:
+              mode: { type: string, enum: [walk, bus, taxi] }
+              available: { type: boolean }
+              reason:
+                type: string
+                enum:
+                  [
+                    TOO_CLOSE,
+                    NOT_AT_STOP,
+                    INSUFFICIENT_CASH,
+                    LOCKED,
+                    COOLDOWN,
+                    TRAVEL_IN_PROGRESS,
+                    VENUE_GATED,
+                    NOT_SERVED,
+                  ]
+              reasonMessage: { type: string }
+              fareCents: { type: integer }
+              durationSec: { type: integer }
+              stop:
+                type: object
+                required: [id, x, z, yaw, distanceM]
+                properties:
+                  id: { type: string }
+                  x: { type: number }
+                  z: { type: number }
+                  yaw: { type: number, description: Degrees clockwise from north. }
+                  distanceM: { type: integer }
+              unlockNetWorthCents: { type: integer }
+              retryAfterSec: { type: integer }
+    TravelTrip:
+      type: object
+      required:
+        [
+          tripId,
+          status,
+          mode,
+          to,
+          fareCents,
+          cashCents,
+          departAt,
+          arriveAt,
+          expiresAt,
+          serverNow,
+          origin,
+          arrival,
+        ]
+      properties:
+        tripId: { type: string, format: uuid }
+        status: { type: string, enum: [booked, arrived, cancelled, expired_refunded] }
+        mode: { type: string, enum: [bus, taxi] }
+        to: { type: string }
+        fareCents: { type: integer }
+        cashCents: { type: integer, description: Cash after the fare. }
+        departAt: { type: string, format: date-time }
+        arriveAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        serverNow: { type: string, format: date-time }
+        origin: { $ref: '#/components/schemas/TravelStreetPoint' }
+        arrival: { $ref: '#/components/schemas/TravelArrival' }
+        pickup:
+          type: object
+          description: The bus stop (bus only).
+          required: [id, x, z, yaw]
+          properties:
+            id: { type: string }
+            x: { type: number }
+            z: { type: number }
+            yaw: { type: number }
     ShopOrder:
       type: object
       required:
