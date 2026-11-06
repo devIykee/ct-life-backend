@@ -159,7 +159,7 @@ describe('ore-stake: encodeTxBase64 round-trip', () => {
 describe('ore-stake: mainnet constants verification', () => {
   const MAINNET_RPC = 'https://api.mainnet-beta.solana.com';
 
-  it.skipIf(!process.env.RUN_MAINNET_TESTS)(
+  it.skipIf(process.env.RUN_MAINNET_TESTS !== '1')(
     'verifies ORE_MINT account exists on mainnet',
     async () => {
       const res = await fetch(MAINNET_RPC, {
@@ -177,7 +177,7 @@ describe('ore-stake: mainnet constants verification', () => {
     },
   );
 
-  it.skipIf(!process.env.RUN_MAINNET_TESTS)(
+  it.skipIf(process.env.RUN_MAINNET_TESTS !== '1')(
     'verifies STORE_MINT account exists on mainnet',
     async () => {
       const res = await fetch(MAINNET_RPC, {
@@ -195,7 +195,7 @@ describe('ore-stake: mainnet constants verification', () => {
     },
   );
 
-  it.skipIf(!process.env.RUN_MAINNET_TESTS)(
+  it.skipIf(process.env.RUN_MAINNET_TESTS !== '1')(
     'verifies ORE_STAKE_PROGRAM_ID account exists on mainnet',
     async () => {
       const res = await fetch(MAINNET_RPC, {

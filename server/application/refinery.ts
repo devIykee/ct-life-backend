@@ -180,14 +180,14 @@ export interface OreMe {
  */
 export async function readOreMe(ctx: AppContext, userId: string): Promise<OreMe> {
   const r = await ctx.db.withConnection(async (c) => {
-    return c.query<{ miner_tier: MinerTier; wallet: string }>(
+    return c.query<{ miner_tier: MinerTier; wallet: string | null }>(
       `SELECT miner_tier, wallet FROM users WHERE id = $1`,
       [userId],
     );
   });
   const minerTier = r.rows[0]?.miner_tier ?? 'none';
   const wallet = r.rows[0]?.wallet;
-  if (!ctx.config.features.oreReader || wallet === undefined) {
+  if (!ctx.config.features.oreReader || !wallet) {
     return { balance: '0', staked: '0', stOre: '0', minerTier };
   }
   const rpcUrl = ctx.config.helius.rpcUrlMainnet;

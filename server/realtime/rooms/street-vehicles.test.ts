@@ -22,7 +22,10 @@ vi.mock('../player.js', async (orig) => {
   const real = await orig<typeof import('../player.js')>();
   return {
     ...real,
-    authenticateJoin: async (o: { userId: string }) => o.userId,
+    authenticateJoinIdentity: async (o: { userId: string }) => ({
+      userId: o.userId,
+      credential: null,
+    }),
   };
 });
 

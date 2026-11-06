@@ -198,7 +198,7 @@ export async function getCoin(
   // Top holders.
   const holders = await ctx.db.withConnection(async (c) => {
     return c.query<{ alias: string; units: string }>(
-      `SELECT COALESCE(ch.alias, u.wallet) AS alias, p.units
+      `SELECT COALESCE(ch.alias, u.wallet, 'Player') AS alias, p.units
        FROM positions p
        LEFT JOIN characters ch ON ch.user_id = p.user_id
        LEFT JOIN users u ON u.id = p.user_id

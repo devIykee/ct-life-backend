@@ -50,6 +50,13 @@ beforeAll(async () => {
   await createDb().withConnection((c) =>
     c.query('INSERT INTO users (id, wallet) VALUES ($1, $2)', [userId, wallet]),
   );
+  const identityId = randomUUID();
+  await createDb().withConnection((c) =>
+    c.query(
+      "INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,'solana:mainnet',$3)",
+      [identityId, userId, wallet],
+    ),
+  );
   png = await sharp({
     create: { width: 8, height: 8, channels: 3, background: { r: 0, g: 0, b: 255 } },
   })
@@ -60,7 +67,7 @@ beforeAll(async () => {
     req.ctx = { ...req.ctx, s3 };
   });
   await handle.app.ready();
-  token = await buildContext().jwt.signAccess(userId, wallet, false);
+  token = await buildContext().jwt.signAccess(userId, wallet, false, identityId);
 });
 
 afterAll(async () => {

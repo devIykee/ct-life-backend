@@ -13,8 +13,7 @@
  */
 import { Room, Client } from 'colyseus';
 import { CityState } from '../../../contract/realtime/states.js';
-import { createJwtIssuer } from '../../shared/auth/jwt.js';
-import { loadConfig } from '../../shared/config/config.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { getMoodBps } from '../../application/world-pulse.js';
 import { recordWorldEventOnce } from '../../application/world-events.js';
 import {
@@ -66,34 +65,17 @@ export class CityRoom extends Room {
    * B5 fix: Verify JWT token before allowing join
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    const tokenStr = String((options as { token?: string })?.token ?? '');
-    // B5 fix: Reject if no token provided and not in dev mode
-    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
-      throw new Error('AUTH_REQUIRED');
-    }
-    // B5 fix: Verify the token and get userId from claims, not options
-    if (tokenStr !== '') {
-      try {
-        const jwtIssuer = createJwtIssuer();
-        const claims = await jwtIssuer.verifyAccess(tokenStr);
-        const userId = claims.sub ?? '';
-        // Track before any await so a ban published from here on finds this session.
-        this.ban.track(client, userId);
-        // Last await: nothing below suspends before the session is registered.
-        await this.ban.confirm(userId);
-        if (userId !== '') {
-          this.userIdBySession.set(client.sessionId, userId);
-          const set = this.sessionsByUser.get(userId) ?? new Set<string>();
-          const first = set.size === 0;
-          set.add(client.sessionId);
-          this.sessionsByUser.set(userId, set);
-          // The player's first session in this room: tell the city they came online (not awaited).
-          if (first) void this.announceJoin(userId);
-        }
-      } catch (err) {
-        if ((err as Error).message === 'ACCOUNT_BANNED') throw err;
-        throw new Error('INVALID_TOKEN', { cause: err });
-      }
+    const identity = await authenticateJoinIdentity(options, '');
+    const userId = identity.userId;
+    if (userId !== '') {
+      this.ban.track(client, identity);
+      await this.ban.confirm(client);
+      this.userIdBySession.set(client.sessionId, userId);
+      const set = this.sessionsByUser.get(userId) ?? new Set<string>();
+      const first = set.size === 0;
+      set.add(client.sessionId);
+      this.sessionsByUser.set(userId, set);
+      if (first) void this.announceJoin(userId);
     }
     this.state.online = this.clients.length;
     client.send('welcome', { serverNow: Date.now(), instanceId: this.roomId ?? 'city' });

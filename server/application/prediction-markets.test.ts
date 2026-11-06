@@ -19,7 +19,7 @@ import { config as loadDotenv } from 'dotenv';
 import { buildContext, _resetContextForTests, type AppContext } from './context.js';
 import { _resetConfigForTests } from '../shared/config/config.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
-import { randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   commitmentOf,
   drawOutcome,
@@ -128,19 +128,37 @@ describe('decimalToMicros', () => {
 });
 
 describe('sealed draws are fair', () => {
-  it('yes-rate is 50% within 3.5 points over 2000 markets per horizon and kind', () => {
-    // Each market gets a fresh secret, as generateMarkets does. 2000 draws:
-    // sigma = sqrt(0.25 / 2000) = 1.1 points, so 3.5 points is about 3 sigma.
+  it('yes-rate is 50% within 3.5 points over 2000 deterministic markets per horizon and kind', () => {
+    // Fixed, varied 32-byte test seeds make this distribution regression reproducible.
+    // Production generateMarkets still uses fresh cryptographic randomness; neither
+    // its entropy nor this corpus depends on the randomly chosen integration-test hour.
     const kinds = ['sim:5m', 'sim:15m', 'sim:1h', 'event:event_rug_1h'];
+    const startSec = Date.UTC(2031, 0, 1) / 1000;
     for (const kind of kinds) {
       let yes = 0;
       const n = 2000;
       for (let i = 0; i < n; i++) {
-        const seed = randomBytes(32).toString('hex');
-        if (drawOutcome(seed, `${kind}:${HOUR0 / 1000 + i * 60}`) === 'yes') yes++;
+        const seed = createHash('sha256')
+          .update(`ct-life:prediction-fairness:v1:${kind}:${i}`)
+          .digest('hex');
+        if (drawOutcome(seed, `${kind}:${startSec + i * 60}`) === 'yes') yes++;
       }
       expect(Math.abs(yes / n - 0.5), kind).toBeLessThan(0.035);
     }
+  });
+
+  it('matches independently computed HMAC-SHA256 outcome vectors', () => {
+    // Computed with Python's standard-library hmac, not the production helper.
+    // A yes outcome means the first digest byte's low bit is 1.
+    const sequential = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f';
+    const vectors = [
+      ['00'.repeat(32), 'sim:5m:1924992000', 'no'], // digest begins 7a
+      ['ff'.repeat(32), 'sim:5m:1924992000', 'yes'], // digest begins f3
+      [sequential, 'sim:1h:1924992000', 'no'], // digest begins 2a
+      [sequential, 'event:event_rug_1h:1924992000', 'yes'], // digest begins f1
+    ] as const;
+    for (const [seed, marketId, outcome] of vectors)
+      expect(drawOutcome(seed, marketId), `${marketId}/${seed}`).toBe(outcome);
   });
 
   it('does not follow the coin: a coin that only goes up still resolves about half no', async () => {

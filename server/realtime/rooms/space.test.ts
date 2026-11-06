@@ -35,10 +35,10 @@ describe('SpaceRoom', () => {
     const host: FakeClient = { sessionId: 's1', send: () => undefined };
     const listener: FakeClient = { sessionId: 's2', send: () => undefined };
     await (
-      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => void }
+      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => Promise<void> }
     ).onJoin(host, { userId: 'host-1', hostUserId: 'host-1' });
     await (
-      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => void }
+      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => Promise<void> }
     ).onJoin(listener, { userId: 'l-1', hostUserId: 'host-1' });
     const hostSp = room.state.speakers.get('host-1');
     const listenerSp = room.state.speakers.get('l-1');
@@ -53,14 +53,14 @@ describe('SpaceRoom', () => {
     const host: FakeClient = { sessionId: 's1', send: () => undefined };
     const listener: FakeClient = { sessionId: 's2', send: () => undefined };
     const api = room as unknown as {
-      onJoin: (c: FakeClient, o: Record<string, unknown>) => void;
+      onJoin: (c: FakeClient, o: Record<string, unknown>) => Promise<void>;
       onRaiseHand: (u: string) => void;
       onLowerHand: (u: string) => void;
       onPromote: (u: string) => void;
       onDemote: (u: string) => void;
     };
-    api.onJoin(host, { userId: 'h', hostUserId: 'h' });
-    api.onJoin(listener, { userId: 'l', hostUserId: 'h' });
+    await api.onJoin(host, { userId: 'h', hostUserId: 'h' });
+    await api.onJoin(listener, { userId: 'l', hostUserId: 'h' });
     api.onRaiseHand('l');
     expect([...room.state.handQueue]).toEqual(['l']);
     expect(room.state.speakers.get('l')?.handRaised).toBe(true);
@@ -80,13 +80,13 @@ describe('SpaceRoom', () => {
     const room = await newRoom(SpaceRoom, {});
     const host: FakeClient = { sessionId: 's0', send: () => undefined };
     const api = room as unknown as {
-      onJoin: (c: FakeClient, o: Record<string, unknown>) => void;
+      onJoin: (c: FakeClient, o: Record<string, unknown>) => Promise<void>;
       onRaiseHand: (u: string) => void;
     };
-    api.onJoin(host, { userId: 'h', hostUserId: 'h' });
-    api.onJoin({ sessionId: 's1', send: () => undefined }, { userId: 'a', hostUserId: 'h' });
-    api.onJoin({ sessionId: 's2', send: () => undefined }, { userId: 'b', hostUserId: 'h' });
-    api.onJoin({ sessionId: 's3', send: () => undefined }, { userId: 'c', hostUserId: 'h' });
+    await api.onJoin(host, { userId: 'h', hostUserId: 'h' });
+    await api.onJoin({ sessionId: 's1', send: () => undefined }, { userId: 'a', hostUserId: 'h' });
+    await api.onJoin({ sessionId: 's2', send: () => undefined }, { userId: 'b', hostUserId: 'h' });
+    await api.onJoin({ sessionId: 's3', send: () => undefined }, { userId: 'c', hostUserId: 'h' });
     api.onRaiseHand('a');
     api.onRaiseHand('b');
     api.onRaiseHand('c');
@@ -110,10 +110,10 @@ describe('VideoCallRoom', () => {
       },
     };
     await (
-      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => void }
+      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => Promise<void> }
     ).onJoin(host, { userId: 'h' });
     await (
-      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => void }
+      room as unknown as { onJoin: (c: FakeClient, o: Record<string, unknown>) => Promise<void> }
     ).onJoin(guest, { userId: 'g' });
     expect(welcomeFired).toBe(true);
     expect([...room.state.participantUserIds].sort()).toEqual(['g', 'h']);

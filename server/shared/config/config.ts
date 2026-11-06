@@ -49,6 +49,9 @@ loadDotenv();
 export type AppEnv = 'local' | 'staging' | 'prod';
 
 export interface Config {
+  readonly economy: {
+    readonly rpcUrls: Readonly<Record<'solana:mainnet' | 'eip155:4663' | 'near:mainnet', string>>;
+  };
   readonly likeness: {
     readonly priceUsdcCents: number;
     readonly generationEnabled: boolean;
@@ -566,6 +569,14 @@ export function loadConfig(): Config {
         asInt('JWT_REFRESH_TTL_SECONDS', 30 * 24 * 60 * 60),
       ),
       kid: optionalEnv('JWT_KID', optionalEnv('JWT_KEY_ID', 'ct-life-1')),
+    },
+
+    economy: {
+      rpcUrls: {
+        'solana:mainnet': optionalEnv('ECONOMY_RPC_SOLANA', ''),
+        'eip155:4663': optionalEnv('ECONOMY_RPC_ROBINHOOD', ''),
+        'near:mainnet': optionalEnv('ECONOMY_RPC_NEAR', ''),
+      },
     },
 
     siws: {

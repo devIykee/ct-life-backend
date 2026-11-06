@@ -38,16 +38,19 @@ export function streetMembersKey(district: string, instanceId: string): string {
  * @param district - The street room's district id.
  * @param instanceId - The street room id.
  * @param userId - Who joined.
+ * @param onCounted - Records an acknowledged increment before an expiry write can fail.
  */
 export async function markStreetJoin(
   presence: Presence,
   district: string,
   instanceId: string,
   userId: string,
+  onCounted?: () => void,
 ): Promise<void> {
   const key = streetMembersKey(district, instanceId);
   const n = await presence.hincrby(key, userId, 1);
   if (n < 1) await presence.hset(key, userId, '1');
+  onCounted?.();
   await presence.expire(key, STREET_MEMBERS_TTL_SEC);
 }
 

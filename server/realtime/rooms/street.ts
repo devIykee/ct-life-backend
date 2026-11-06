@@ -62,7 +62,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { StreetState, type PlayerState } from '../../../contract/realtime/states.js';
 import {
-  authenticateJoin,
+  authenticateJoinIdentity,
   applyOutfitMessage,
   loadPlayerState,
   filterSay,
@@ -231,9 +231,11 @@ export class StreetRoom extends Room {
    *   Map Travel arrival.
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    const userId = await authenticateJoin(options);
+    const identity = await authenticateJoinIdentity(options);
+    const userId = identity.userId;
     // No await between the token check and track(): a ban published from here on finds us.
-    this.ban.track(client, userId);
+    this.ban.track(client, identity);
+    const assertCurrent = this.ban.checkpoint(client);
     let arrival: TravelTicket | null;
     try {
       arrival = await this.travelArrival(userId, options, Date.now());
@@ -246,7 +248,8 @@ export class StreetRoom extends Room {
     const now = Date.now();
     const fresh = last !== null && now - last.at <= POS_FRESH_MS;
     // Last check, no await before the session is stored.
-    await this.ban.confirm(userId);
+    await this.ban.confirm(client);
+    assertCurrent();
     this.sessions.set(client.sessionId, {
       userId,
       player,
@@ -265,13 +268,44 @@ export class StreetRoom extends Room {
     // Count the session for street voice before the client hears it joined, so its first
     // POST /v1/rtc/token already finds it. Best effort: a Redis error costs this player
     // street voice, never the join.
-    if (this.voice && this.presence) {
-      try {
-        await markStreetJoin(this.presence, this.state.district, this.state.instanceId, userId);
-        this.members.set(client.sessionId, userId);
-      } catch {
-        // Presence is best effort.
+    let marked = false;
+    try {
+      if (this.voice && this.presence) {
+        try {
+          await markStreetJoin(
+            this.presence,
+            this.state.district,
+            this.state.instanceId,
+            userId,
+            () => {
+              marked = true;
+            },
+          );
+        } catch {
+          // Presence is best effort; cancellation checks below are not swallowed.
+        }
+        try {
+          assertCurrent();
+        } catch (error) {
+          if (marked)
+            await markStreetLeave(this.presence, this.state.district, this.state.instanceId, userId)
+              .then((left) =>
+                left === 0
+                  ? this.removeFromVoice(this.state.district, this.state.instanceId, userId)
+                  : undefined,
+              )
+              .catch(() => {
+                /* The existing presence TTL remains the Redis-failure fallback. */
+              });
+          throw error;
+        }
+        if (marked) this.members.set(client.sessionId, userId);
       }
+      assertCurrent();
+      client.send('welcome', { serverNow: now, instanceId: this.state.instanceId });
+    } catch (error) {
+      if (this.sessions.get(client.sessionId)?.player === player) this.onLeave(client);
+      throw error;
     }
     if (arrival) this.placeArrival(client, arrival, now);
     client.send('welcome', {

@@ -13,7 +13,10 @@
  *
  * Claims:
  *   sub:  user UUID
- *   wal:  base58 wallet public key
+ *   wal:  primary Solana public key or null
+ *   lid:  explicit login identity UUID (legacy tokens may omit it)
+ *   am:   siws | dev | wallet (legacy tokens may omit it)
+ *   auth_time: original verified sign-in Unix time; refresh never advances it
  *   skr:  isSeeker (boolean)
  *   iat, exp: standard
  *   typ:  "access" | "refresh"
@@ -29,10 +32,17 @@ import {
 } from 'jose';
 import { createPublicKey, type KeyObject } from 'node:crypto';
 import { loadConfig } from '../config/config.js';
+import { SignatureInvalidError } from '../domain/errors.js';
+
+export type AuthMethod = 'siws' | 'dev' | 'wallet';
 
 export interface AccessClaims extends JWTPayload {
   readonly sub: string;
-  readonly wal: string;
+  readonly wal: string | null;
+  readonly lid?: string | null;
+  readonly liv?: number;
+  readonly am?: AuthMethod;
+  readonly auth_time?: number;
   readonly skr: boolean;
   readonly typ: 'access';
 }
@@ -41,11 +51,30 @@ export interface RefreshClaims extends JWTPayload {
   readonly sub: string;
   readonly jti: string;
   readonly typ: 'refresh';
+  readonly lid?: string | null;
+  readonly liv?: number;
+  readonly am?: AuthMethod;
+  readonly auth_time?: number;
 }
 
 export interface JwtIssuer {
-  signAccess(userId: string, wallet: string, isSeeker: boolean): Promise<string>;
-  signRefresh(userId: string, jti: string): Promise<string>;
+  signAccess(
+    userId: string,
+    wallet: string | null,
+    isSeeker: boolean,
+    identityId?: string | null,
+    authMethod?: AuthMethod,
+    authTime?: number,
+    identityVersion?: number,
+  ): Promise<string>;
+  signRefresh(
+    userId: string,
+    jti: string,
+    identityId?: string | null,
+    authMethod?: AuthMethod,
+    authTime?: number,
+    identityVersion?: number,
+  ): Promise<string>;
   verifyAccess(token: string): Promise<AccessClaims>;
   verifyRefresh(token: string): Promise<RefreshClaims>;
   jwks(): Promise<{
@@ -81,10 +110,26 @@ export function createJwtIssuer(): JwtIssuer {
       })();
 
   const issuer: JwtIssuer = {
-    async signAccess(userId, wallet, isSeeker) {
+    async signAccess(
+      userId,
+      wallet,
+      isSeeker,
+      identityId = null,
+      authMethod = 'siws',
+      authTime?: number,
+      identityVersion = 0,
+    ) {
       const key = await privateKeyPromise;
       const now = Math.floor(Date.now() / 1000);
-      return await new SignJWT({ wal: wallet, skr: isSeeker, typ: 'access' })
+      return await new SignJWT({
+        wal: wallet,
+        skr: isSeeker,
+        typ: 'access',
+        lid: identityId,
+        liv: identityVersion,
+        am: authMethod,
+        ...(authTime === undefined ? {} : { auth_time: authTime }),
+      })
         .setProtectedHeader({ alg: 'RS256', kid: cfg.jwt.kid, typ: 'JWT' })
         .setSubject(userId)
         .setIssuer(cfg.jwt.issuer)
@@ -93,10 +138,23 @@ export function createJwtIssuer(): JwtIssuer {
         .setExpirationTime(now + cfg.jwt.accessTtlSec)
         .sign(key);
     },
-    async signRefresh(userId, jti) {
+    async signRefresh(
+      userId,
+      jti,
+      identityId = null,
+      authMethod = 'siws',
+      authTime?: number,
+      identityVersion = 0,
+    ) {
       const key = await privateKeyPromise;
       const now = Math.floor(Date.now() / 1000);
-      return await new SignJWT({ typ: 'refresh' })
+      return await new SignJWT({
+        typ: 'refresh',
+        lid: identityId,
+        liv: identityVersion,
+        am: authMethod,
+        ...(authTime === undefined ? {} : { auth_time: authTime }),
+      })
         .setProtectedHeader({ alg: 'RS256', kid: cfg.jwt.kid, typ: 'JWT' })
         .setSubject(userId)
         .setJti(jti)
@@ -113,8 +171,14 @@ export function createJwtIssuer(): JwtIssuer {
         audience: cfg.jwt.audience,
         algorithms: ['RS256'],
       });
-      if (payload.typ !== 'access') {
-        throw new Error('Not an access token');
+      if (
+        payload.typ !== 'access' ||
+        typeof payload.sub !== 'string' ||
+        (payload.wal !== null && typeof payload.wal !== 'string') ||
+        typeof payload.skr !== 'boolean' ||
+        !validIdentityClaims(payload)
+      ) {
+        throw new SignatureInvalidError({ reason: 'invalid_access_claims' });
       }
       return payload;
     },
@@ -125,8 +189,13 @@ export function createJwtIssuer(): JwtIssuer {
         audience: cfg.jwt.audience,
         algorithms: ['RS256'],
       });
-      if (payload.typ !== 'refresh') {
-        throw new Error('Not a refresh token');
+      if (
+        payload.typ !== 'refresh' ||
+        typeof payload.sub !== 'string' ||
+        typeof payload.jti !== 'string' ||
+        !validIdentityClaims(payload)
+      ) {
+        throw new SignatureInvalidError({ reason: 'invalid_refresh_claims' });
       }
       return payload;
     },
@@ -149,4 +218,22 @@ export function createJwtIssuer(): JwtIssuer {
   };
   cached = issuer;
   return issuer;
+}
+
+function validIdentityClaims(payload: JWTPayload): boolean {
+  return (
+    (payload.liv === undefined ||
+      (Number.isSafeInteger(payload.liv) &&
+        Number(payload.liv) >= 0 &&
+        Number(payload.liv) <= 2147483647)) &&
+    (payload.auth_time === undefined ||
+      (Number.isSafeInteger(payload.auth_time) && Number(payload.auth_time) > 0)) &&
+    (payload.am === undefined ||
+      (typeof payload.am === 'string' && ['siws', 'dev', 'wallet'].includes(payload.am))) &&
+    (payload.lid === undefined ||
+      payload.lid === null ||
+      (typeof payload.lid === 'string' &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.lid))) &&
+    (payload.am !== 'wallet' || typeof payload.lid === 'string')
+  );
 }

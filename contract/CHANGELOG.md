@@ -107,19 +107,30 @@ No migration. Realtime and config only. At `LIVE_PHASE` 1 every venue spawns exa
 - `ids/archetypes.json` 1.1.0: adds `laser_eyes_maxi` (timeline_square, phase 2) and `chain_tribalist` (ratio_arena, phase 2, `maxPerInstance: 2`). `venueId` fixes: farmer and sybil_farmer `airdrop_farm` -> `airdrop_fields`, doxxed_founder `builder_hills` -> `hackathon_house`, normie `market_room` -> `terminal_cafe`. `ids/archetypes.json` 1.2.0 (entry above): fake_rich_larp and dubai_relocator `dubai_marina` -> `yacht_club`.
 - `config/npc_lines.json` 1.1.0: line sets for the 21 phase-2 archetypes (32 lines each, from the FE world-life proposal; parody names only, approved display names: VIP Lounge, Discord HQ, Debate Arena, News Reader, police).
 
-## 2026-11-02 - Vehicles room: no conjured vehicles (security fix)
+## 2026-11-05 - Credential-scoped media grants and revocation
 
-No migration. Server-side fix; the shipped Unity client already sends what the new checks need.
+Migration 155 adds the durable `media_access_grants` registry; apply it before the updated API and media worker. Coordinate compatible clients and legacy-token retirement as described in [MEDIA-ACCESS.md](../docs/MEDIA-ACCESS.md).
 
-- **The bypass.** `vehicle_enter` with an id the server did not know registered a vehicle of any `kind` wherever the client said (within reach of the player). Only `roadstar` was gated (pass). A modified client could conjure a helicopter (`heli`, 60 m/s, up to 214 m) or a quadcopter (`drone`) next to itself without the pass, or any street car under any id anywhere.
-- An unknown id now registers only:
-  - a decor parked car: `park_<kind>_<round(x*10)>_<round(z*10)>` (the client's `IslandProtocol.ParkedId`) naming a spot in the new FE-owned **`contract/ids/parked_cars.json`** (283 spots, exported from the baked island cells by the frontend's `tools/world/export_parked_cars.py`) with that kind listed for it, and the reported pose within 3 m of the spot (`PARKED_SPOT_DRIFT_M`); the player must still be within the enter reach of it (`VEHICLE_TOO_FAR`);
-  - a hijacked NPC traffic car (`traffic_*`) of a street kind (compact, suv, sports, moped, sedan, taxi, police, pickup, van, bike), with the steal rules unchanged. NPC traffic is client-simulated, so the server cannot know where one is;
-  - a pass vehicle of an entitled player.
-- `drone` now needs `vehicle.hovercar` like `roadstar` (`NOT_ENTITLED`), for unknown ids and server-owned bays alike; the client already required it ("one entitlement unlocks both").
-- New realtime codes on `vehicle_enter`: `VEHICLE_KIND_NOT_ALLOWED` (403; e.g. `heli`, or a non-street kind under a `traffic_*` id) and `VEHICLE_NOT_REGISTRABLE` (403; no such parked car at that spot, a kind it does not park, or a pose too far from it).
-- Unchanged: entering a vehicle the server already knows (server-owned bays from `parking.json`, cars already registered), the enter radius, steals, heat, the 2-per-player and 400-total caps.
-- Ops: re-export `parked_cars.json` whenever the island is rebuilt (the frontend's EditMode test `ParkedCarsContractTests` fails when it drifts); a stale file refuses entry to decor cars that moved.
+- `POST /rtc/token` returns `identity` as `ct1:<player UUID>:<login identity UUID>:<credential version>` and the canonical `roomName`. The raw identity keys transport resources; clients use the embedded player UUID for profiles, avatars and player-level mute state.
+- Initial tokens have a maximum lifetime of 600 seconds; existing shorter room-specific lifetimes remain. The backend registers grants under the credential-removal account lock and rejects revoked generations before issuance.
+- Credential removal, join webhooks and the durable worker enforce exact credential identities. First cutoffs receive priority; successful cutoffs retain their refresh tail in the fair maintenance queue. Current room access is checked alongside credential status, and retained active sibling credentials preserve player-level presence.
+- LiveKit Cloud cached-token rejection and coordinated legacy-token retirement require provider acceptance. Self-hosted removal is post-admission enforcement; short token expiry alone does not terminate connected media.
+
+## 2026-11-05 - Wallet connector compatibility and purchase recovery
+
+- `GET /economy/orders` adds owner-scoped cursor history with up to 50 orders per page, including verified payment/refund obligations. It does not poll chains or initiate payment. Clients can recover purchases after local storage loss.
+- Wallet-link challenges accept `nearCallbackMode: none | uri` for NEAR only (default `uri`). Migration152 preserves existing Some(uri) challenges and stores the exact NEP-413 callback option. In-page connectors request `none`; verification cannot override that choice. `nearSignMessage.callbackUrl` and `nearCallbackUrl` can be null.
+
+## 2026-11-05 - Universal economy foundation
+
+Additive migrations 150 and 151; existing Cash, SIWS and Solana feature endpoints retain their contracts.
+
+- Verified identity links: `GET /me/wallet-links`, `POST /me/wallet-links/challenges`, `POST /me/wallet-links/verify`, `DELETE /me/wallet-links/{id}`. These proofs grant no spending permission. Primary Solana wallet only; EVM EOAs and NEAR Ed25519 FullAccess keys.
+- Native-asset catalog and immutable orders under `/economy`. Initial assets are RH WIF, native NEAR, native SOL and ORE. Prices are positive integer strings with asset-specific limits. No real prices or treasury addresses are seeded.
+- `POST /economy/orders` permanently deduplicates a player UUID key. Payment and refund submissions are naturally idempotent by globally unique chain event; pending responses are never cached as completion. GET reconciles one pending attempt with a separate per-player rate limit.
+- `paymentReceipts` acknowledges the exact verified incoming transaction. A successful HTTP response or an already-fulfilled order alone does not acknowledge an additional submitted transaction. `refundDueReceiptIds` tracks additional exact-price payments independently of the original entitlement.
+- Cancellation and actual late payments retain verified refund obligations. Refund endpoint verifies an already-sent merchant refund; it does not sign or send money. Wrong-amount external transfers remain an operator investigation case.
+- Errors: `ECONOMY_CONFLICT` (409); `WALLET_LINK_PRIMARY_REQUIRED` (409), `WALLET_LINK_CHALLENGE_INVALID` (401), `WALLET_LINK_CHALLENGE_LIMIT` (429), `WALLET_LINK_PROOF_INVALID` (401), `WALLET_LINK_IDENTITY_CONFLICT` (409).
 
 ## 2026-11-01 - Street voice: one proximity room per street instance (capability streetVoice)
 

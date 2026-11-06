@@ -56,7 +56,7 @@ export class LotteryService {
    */
   async roll(
     userId: string,
-    _wallet: string,
+    _wallet: string | null,
   ): Promise<{
     outcome: 'insider' | 'exit_liquidity' | 'seeker';
     cashCents: number;

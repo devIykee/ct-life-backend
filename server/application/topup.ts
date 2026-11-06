@@ -40,6 +40,7 @@ import {
   ValidationFailedError,
   PaymentExpiredError,
   ConflictError,
+  ForbiddenError,
 } from '../shared/domain/errors.js';
 import type { AppContext } from './context.js';
 import { runInTransaction } from '../shared/db/uow.js';
@@ -252,10 +253,11 @@ export async function prepareUsdcIntent(
   // input.userId is the users.id UUID, never an on-chain address, so the
   // payer has to be looked up.
   const walletRow = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [args.userId]),
+    c.query<{ wallet: string | null }>('SELECT wallet FROM users WHERE id = $1', [args.userId]),
   );
   const wallet = walletRow.rows[0]?.wallet;
   if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: args.userId });
+  if (!wallet) throw new ForbiddenError({ reason: 'wallet_required' });
   let userPubkey: PublicKey;
   try {
     userPubkey = new PublicKey(wallet);

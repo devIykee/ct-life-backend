@@ -51,4 +51,35 @@ describe('jwt issuer', () => {
     // Public key not configured in M0; jwks returns empty.
     expect(Array.isArray(jwks.keys)).toBe(true);
   });
+
+  it('binds the credential generation and rejects malformed versions on access and refresh', async () => {
+    const issuer = createJwtIssuer(),
+      userId = uuidv7(),
+      identityId = uuidv7(),
+      time = Math.floor(Date.now() / 1000);
+    const access = await issuer.signAccess(userId, null, false, identityId, 'wallet', time, 4);
+    const refresh = await issuer.signRefresh(userId, uuidv7(), identityId, 'wallet', time, 4);
+    expect(await issuer.verifyAccess(access)).toMatchObject({
+      lid: identityId,
+      liv: 4,
+      auth_time: time,
+    });
+    expect(await issuer.verifyRefresh(refresh)).toMatchObject({
+      lid: identityId,
+      liv: 4,
+      auth_time: time,
+    });
+    for (const version of [-1, 0.5, 2147483648, Number.NaN]) {
+      await expect(
+        issuer.verifyAccess(
+          await issuer.signAccess(userId, null, false, identityId, 'wallet', time, version),
+        ),
+      ).rejects.toThrow();
+      await expect(
+        issuer.verifyRefresh(
+          await issuer.signRefresh(userId, uuidv7(), identityId, 'wallet', time, version),
+        ),
+      ).rejects.toThrow();
+    }
+  });
 });

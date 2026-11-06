@@ -285,7 +285,7 @@ export async function listSmartMoney(
       cash_cents: string;
       created_at: Date;
     }>(
-      `SELECT l.user_id, COALESCE(ch.alias, u.wallet) AS alias, l.ref_id AS coin_id,
+      `SELECT l.user_id, COALESCE(ch.alias, u.wallet, 'Player') AS alias, l.ref_id AS coin_id,
               c.ticker, l.reason AS side, l.delta_cents AS cash_cents, l.created_at
        FROM ledger_entries l
        JOIN users u ON u.id = l.user_id

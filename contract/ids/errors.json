@@ -5,6 +5,76 @@
   "_note": "Every error code used in the API or realtime protocol. The contract:check tool asserts every code here is referenced in openapi.yaml and every realtime message documents the codes it can return. Add codes here first, then use them.",
   "codes": [
     {
+      "code": "AUTH_REAUTH_REQUIRED",
+      "httpStatus": 403,
+      "message": "Sign in again before adding a login wallet."
+    },
+    {
+      "code": "AUTH_CHALLENGE_INVALID",
+      "httpStatus": 401,
+      "message": "Sign-in challenge is missing, expired, used or has the wrong purpose or owner."
+    },
+    {
+      "code": "AUTH_PROOF_INVALID",
+      "httpStatus": 401,
+      "message": "The sign-in signature could not be verified."
+    },
+    {
+      "code": "AUTH_ORIGIN_INVALID",
+      "httpStatus": 403,
+      "message": "This sign-in origin is not allowed."
+    },
+    {
+      "code": "AUTH_IDENTITY_CONFLICT",
+      "httpStatus": 409,
+      "message": "This sign-in identity belongs to another player."
+    },
+    {
+      "code": "AUTH_IDENTITY_ENROLMENT_REQUIRED",
+      "httpStatus": 409,
+      "message": "Sign in to the existing player account and explicitly enrol this wallet."
+    },
+    {
+      "code": "AUTH_ACCOUNT_UNAVAILABLE",
+      "httpStatus": 403,
+      "message": "This player account is unavailable."
+    },
+    {
+      "code": "AUTH_CHALLENGE_LIMIT",
+      "httpStatus": 429,
+      "message": "Too many pending enrolment requests. Wait for them to expire."
+    },
+    {
+      "code": "ECONOMY_CONFLICT",
+      "httpStatus": 409,
+      "message": "The economic action cannot proceed in its current state."
+    },
+    {
+      "code": "WALLET_LINK_PRIMARY_REQUIRED",
+      "httpStatus": 409,
+      "message": "Only the player's primary Solana wallet can be linked."
+    },
+    {
+      "code": "WALLET_LINK_CHALLENGE_INVALID",
+      "httpStatus": 401,
+      "message": "Wallet-link challenge is missing, expired, consumed or belongs to another player."
+    },
+    {
+      "code": "WALLET_LINK_CHALLENGE_LIMIT",
+      "httpStatus": 429,
+      "message": "Too many pending wallet-link requests. Wait for them to expire."
+    },
+    {
+      "code": "WALLET_LINK_PROOF_INVALID",
+      "httpStatus": 401,
+      "message": "Wallet identity proof could not be verified."
+    },
+    {
+      "code": "WALLET_LINK_IDENTITY_CONFLICT",
+      "httpStatus": 409,
+      "message": "This wallet is already linked to another player."
+    },
+    {
       "code": "LIKENESS_UNAVAILABLE",
       "httpStatus": 503,
       "message": "Character likeness is not available. No purchase or upload is accepted."
@@ -598,6 +668,41 @@
       "code": "TRAVEL_NOT_AT_PAD",
       "httpStatus": 409,
       "message": "The helicopter boards at a helipad. Walk to your home pad or a public pad first."
+    },
+    {
+      "code": "AUTH_IDENTITY_REVOKED",
+      "httpStatus": 401,
+      "message": "This sign-in session is no longer active. Sign in again."
+    },
+    {
+      "code": "AUTH_IDENTITY_NOT_FOUND",
+      "httpStatus": 404,
+      "message": "Sign-in wallet not found."
+    },
+    {
+      "code": "AUTH_LAST_IDENTITY",
+      "httpStatus": 409,
+      "message": "Keep at least one sign-in wallet."
+    },
+    {
+      "code": "AUTH_USE_ANOTHER_IDENTITY",
+      "httpStatus": 409,
+      "message": "Sign in with a wallet you are keeping before removing this one."
+    },
+    {
+      "code": "AUTH_PRIMARY_WALLET_IMMUTABLE",
+      "httpStatus": 409,
+      "message": "The primary Solana wallet cannot be removed."
+    },
+    {
+      "code": "AUTH_PRIMARY_WALLET_EXISTS",
+      "httpStatus": 409,
+      "message": "This player already has a primary Solana wallet."
+    },
+    {
+      "code": "AUTH_STATE_UNAVAILABLE",
+      "httpStatus": 503,
+      "message": "Account access could not be checked. Try again shortly."
     }
   ]
 }

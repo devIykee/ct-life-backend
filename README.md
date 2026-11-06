@@ -418,7 +418,7 @@ pnpm lint
 # Unit tests
 pnpm test:unit
 
-# Integration tests (requires Docker)
+# Integration tests (migrated test Postgres + dedicated Redis; controlled provider fixtures)
 pnpm test:integration
 
 # E2E tests (requires ENABLE_E2E=1)

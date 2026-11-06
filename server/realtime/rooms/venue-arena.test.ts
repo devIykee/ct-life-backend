@@ -17,7 +17,7 @@ vi.mock('../player.js', async (orig) => {
   const { PlayerState: PS } = await import('../../../contract/realtime/states.js');
   return {
     ...real,
-    authenticateJoin: async () => USER,
+    authenticateJoinIdentity: async () => ({ userId: USER, credential: null }),
     loadPlayerState: async (id: string) => Object.assign(new PS(), { userId: id }),
   };
 });
@@ -28,6 +28,7 @@ vi.mock('../ban-guard.js', () => ({
     track = (): void => undefined;
     untrack = (): void => undefined;
     confirm = async (): Promise<void> => undefined;
+    checkpoint = (): (() => void) => () => undefined;
   },
 }));
 

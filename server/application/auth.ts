@@ -1,3 +1,8 @@
+import { credentialRevoked, authStateUnavailable } from './login-credentials.js';
+import { lockWalletOwnership } from './wallet-ownership.js';
+import { completeLoginChallenge, type LoginIdentity } from './wallet-auth.js';
+import type { WalletLinkProof, NearFullAccessVerifier } from './wallet-links-proofs.js';
+import type { AuthMethod } from '../shared/auth/jwt.js';
 /**
  * Auth service.
  *
@@ -14,6 +19,7 @@ import { createPublicKey, verify as ed25519Verify } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
+  DomainError,
   ForbiddenError,
   NonceInvalidError,
   SignatureInvalidError,
@@ -44,9 +50,25 @@ export interface Challenge {
   readonly expirationTime: string;
 }
 
-export interface AuthenticatedUser {
+export interface SessionIdentity {
+  id: string;
+  network: LoginIdentity['network'];
+  address: string;
+}
+interface SessionTokens {
+  loginIdentityVersion: number;
+  authenticatedAt: number | null;
+  wallet: string | null;
+  isSeeker: boolean;
+  accessToken: string;
+  refreshToken: string;
+  authMethod: AuthMethod;
+  loginIdentity: SessionIdentity;
+}
+
+export interface AuthenticatedUser extends SessionTokens {
   readonly id: string;
-  readonly wallet: string;
+  readonly wallet: string | null;
   readonly isSeeker: boolean;
   readonly hasCharacter: boolean;
   readonly accessToken: string;
@@ -167,7 +189,7 @@ export class AuthService {
     }
     // Upsert the user and check SGT.
     const user = await this.upsertUserWithSgt(input.address);
-    const tokens = await this.mintTokens(user);
+    const tokens = await this.mintTokens(user, 'siws', undefined, Math.floor(Date.now() / 1000));
     // B14 fix: Check if user has a character
     const hasCharacter = await this.checkHasCharacter(user.id);
     return { ...user, ...tokens, hasCharacter };
@@ -216,35 +238,98 @@ export class AuthService {
       throw new ValidationFailedError({ reason: 'invalid_wallet' });
     }
     const user = await this.upsertUser(wallet, false, null, 'dev');
-    const tokens = await this.mintTokens(user);
+    const tokens = await this.mintTokens(
+      user,
+      'dev',
+      undefined,
+      ['local', 'mock'].includes(this.ctx.config.appEnv)
+        ? Math.floor(Date.now() / 1000)
+        : undefined,
+    );
     // B14 fix: Check if user has a character
     const hasCharacter = await this.checkHasCharacter(user.id);
     return { ...user, ...tokens, hasCharacter };
   }
 
   /** Refresh: re-mint an access token. Revokes the old refresh token (single-use). */
-  async refresh(refreshToken: string): Promise<{
-    id: string;
-    wallet: string;
-    isSeeker: boolean;
-    accessToken: string;
-    refreshToken: string;
-  }> {
+  async refresh(
+    refreshToken: string,
+  ): Promise<UserRow & SessionTokens & { hasCharacter: boolean }> {
     const claims = await this.ctx.jwt.verifyRefresh(refreshToken);
     const jti = claims.jti;
     if (jti === undefined) throw new SignatureInvalidError({ reason: 'no_jti' });
     const usedKey = `refresh:used:${jti}`;
-    const set = await this.ctx.redis.main.set(usedKey, '1', 'EX', 30 * 24 * 60 * 60, 'NX');
-    if (set !== 'OK') {
-      throw new SignatureInvalidError({ reason: 'refresh_replay' });
+    const reservation = randomUUID();
+    const markerTtl = Math.max(
+      1,
+      Math.ceil(
+        (claims.exp ?? Date.now() / 1000 + this.ctx.config.jwt.refreshTtlSec) - Date.now() / 1000,
+      ),
+    );
+    let attemptedReservation = false;
+    try {
+      const user = await this.findUser(claims.sub);
+      if (user === null) throw new SignatureInvalidError({ reason: 'no_user' });
+      const hasCharacter = await this.checkHasCharacter(user.id);
+      const tokens = await this.mintTokens(
+        user,
+        claims.am ?? 'siws',
+        claims.lid ?? undefined,
+        claims.auth_time,
+        claims.liv ?? 0,
+        async () => {
+          // Durable ownership/generation checks already passed under the user lock.
+          attemptedReservation = true;
+          const set = await this.ctx.redis.main.set(usedKey, reservation, 'EX', markerTtl, 'NX');
+          if (set !== 'OK') throw new SignatureInvalidError({ reason: 'refresh_replay' });
+        },
+      );
+      return { ...user, ...tokens, hasCharacter };
+    } catch (error) {
+      if (attemptedReservation) {
+        try {
+          // Nothing was returned before commit. Never remove another attempt's marker.
+          await this.ctx.redis.main.eval(
+            "-- ctl-refresh-release\nif redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+            1,
+            usedKey,
+            reservation,
+          );
+        } catch {
+          /* Unavailable Redis may require explicit sign-in; never report its outage as invalid credentials. */
+        }
+      }
+      if (error instanceof DomainError) throw error;
+      throw authStateUnavailable();
     }
-    // Look up the user to get the wallet.
-    const user = await this.findUser(claims.sub);
-    if (user === null) throw new SignatureInvalidError({ reason: 'no_user' });
-    // The contract answers refresh with a user as well, so return the row
-    // the rotation already had to load.
-    const tokens = await this.mintTokens(user);
-    return { ...user, ...tokens };
+  }
+
+  /** Purpose-bound EVM/NEAR login, never a payment-wallet proof. */
+  async walletAuthenticate(
+    challengeId: string,
+    proof: WalletLinkProof,
+    origin?: string,
+    nearFullAccess?: NearFullAccessVerifier,
+  ): Promise<AuthenticatedUser> {
+    const result = await completeLoginChallenge(
+      this.ctx,
+      'login',
+      null,
+      challengeId,
+      proof,
+      origin,
+      nearFullAccess,
+    );
+    const user = await this.findUser(result.userId);
+    if (!user) throw new SignatureInvalidError({ reason: 'no_user' });
+    const tokens = await this.mintTokens(
+      user,
+      'wallet',
+      result.identity.id,
+      Math.floor(Date.now() / 1000),
+      result.identityVersion,
+    );
+    return { ...user, ...tokens, hasCharacter: await this.checkHasCharacter(user.id) };
   }
 
   /** Logout: mark the refresh token used. Best-effort. */
@@ -253,7 +338,18 @@ export class AuthService {
       const claims = await this.ctx.jwt.verifyRefresh(refreshToken);
       const jti = claims.jti;
       if (jti !== undefined) {
-        await this.ctx.redis.main.set(`refresh:used:${jti}`, '1', 'EX', 30 * 24 * 60 * 60);
+        await this.ctx.redis.main.set(
+          `refresh:used:${jti}`,
+          '1',
+          'EX',
+          Math.max(
+            1,
+            Math.ceil(
+              (claims.exp ?? Date.now() / 1000 + this.ctx.config.jwt.refreshTtlSec) -
+                Date.now() / 1000,
+            ),
+          ),
+        );
       }
     } catch {
       // Best effort.
@@ -286,65 +382,82 @@ export class AuthService {
     sgtMint: string | null,
     method: SignInMethod,
   ): Promise<UserRow> {
-    return runInTransaction(async (client) => {
-      // Try to fetch the existing user.
-      const existing = await client.query<{
-        id: string;
-        wallet: string;
-        is_seeker: boolean;
-      }>('SELECT id, wallet, is_seeker FROM users WHERE wallet = $1', [wallet]);
-      if (existing.rowCount && existing.rowCount > 0) {
-        const row = existing.rows[0]!;
-        // If the user is verifying with a new SGT and the SGT is
-        // already linked to another account, refuse.
-        if (sgtMint !== null) {
-          const dupe = await client.query<{ id: string }>(
-            'SELECT id FROM users WHERE sgt_mint = $1 AND id != $2',
-            [sgtMint, row.id],
-          );
-          if (dupe.rowCount && dupe.rowCount > 0) {
-            throw new SGTAlreadyLinkedError({});
-          }
-          await client.query('UPDATE users SET sgt_mint = $1, is_seeker = $2 WHERE id = $3', [
-            sgtMint,
-            isSeeker,
-            row.id,
-          ]);
-        } else if (row.is_seeker !== isSeeker) {
-          await client.query('UPDATE users SET is_seeker = $1 WHERE id = $2', [isSeeker, row.id]);
-        }
-        await recordEvent(client, row.id, { name: 'session_start', props: { method } });
-        return { id: row.id, wallet: row.wallet, isSeeker: row.is_seeker || isSeeker };
-      }
-      // New user.
-      const id = uuidv7();
-      try {
-        await client.query(
-          `INSERT INTO users (id, wallet, is_seeker, sgt_mint)
-           VALUES ($1, $2, $3, $4)`,
-          [id, wallet, isSeeker, sgtMint],
+    return runInTransaction(
+      async (client) => {
+        await lockWalletOwnership(client, 'solana:mainnet', wallet);
+        // Try to fetch the existing user.
+        const existing = await client.query<{
+          id: string;
+          wallet: string;
+          is_seeker: boolean;
+        }>(
+          'SELECT id, wallet, is_seeker FROM users WHERE wallet = $1 AND deleted_at IS NULL FOR UPDATE',
+          [wallet],
         );
-      } catch (e) {
-        if ((e as { code?: string }).code === '23505') {
-          // Race: another insert won. Re-fetch.
-          const racer = await client.query<{ id: string; wallet: string; is_seeker: boolean }>(
-            'SELECT id, wallet, is_seeker FROM users WHERE wallet = $1',
-            [wallet],
+        const reserved = (
+          await client.query<{ user_id: string }>(
+            'SELECT user_id FROM login_identities WHERE network=$1 AND address=$2',
+            ['solana:mainnet', wallet],
+          )
+        ).rows[0];
+        if (reserved && reserved.user_id !== existing.rows[0]?.id)
+          throw new SignatureInvalidError({ reason: 'identity_owner_mismatch' });
+        if (existing.rowCount && existing.rowCount > 0) {
+          const row = existing.rows[0]!;
+          // If the user is verifying with a new SGT and the SGT is
+          // already linked to another account, refuse.
+          if (sgtMint !== null) {
+            const dupe = await client.query<{ id: string }>(
+              'SELECT id FROM users WHERE sgt_mint = $1 AND id != $2',
+              [sgtMint, row.id],
+            );
+            if (dupe.rowCount && dupe.rowCount > 0) {
+              throw new SGTAlreadyLinkedError({});
+            }
+            await client.query('UPDATE users SET sgt_mint = $1, is_seeker = $2 WHERE id = $3', [
+              sgtMint,
+              isSeeker,
+              row.id,
+            ]);
+          } else if (row.is_seeker !== isSeeker) {
+            await client.query('UPDATE users SET is_seeker = $1 WHERE id = $2', [isSeeker, row.id]);
+          }
+          await client.query(
+            'INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,$3,$4) ON CONFLICT(network,address) DO NOTHING',
+            [uuidv7(), row.id, 'solana:mainnet', wallet],
           );
-          const row = racer.rows[0]!;
-          return { id: row.id, wallet: row.wallet, isSeeker: row.is_seeker };
+          await recordEvent(client, row.id, { name: 'session_start', props: { method } });
+          return { id: row.id, wallet: row.wallet, isSeeker };
         }
-        throw e;
-      }
-      await recordEvent(client, id, { name: 'signup', props: { method, seeker: isSeeker } });
-      await recordEvent(client, id, { name: 'session_start', props: { method } });
-      return { id, wallet, isSeeker };
+        // New user.
+        const id = uuidv7();
+        await client.query(`INSERT INTO users (id,wallet,is_seeker,sgt_mint) VALUES($1,$2,$3,$4)`, [
+          id,
+          wallet,
+          isSeeker,
+          sgtMint,
+        ]);
+        await client.query(
+          'INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,$3,$4)',
+          [uuidv7(), id, 'solana:mainnet', wallet],
+        );
+        await recordEvent(client, id, { name: 'signup', props: { method, seeker: isSeeker } });
+        await recordEvent(client, id, { name: 'session_start', props: { method } });
+        return { id, wallet, isSeeker };
+      },
+      { isolation: 'read committed' },
+      this.ctx.db,
+    ).catch((error: unknown) => {
+      const pg = error as { code?: string; constraint?: string };
+      if (pg.code === '23505' && pg.constraint === 'users_sgt_mint_unique')
+        throw new SGTAlreadyLinkedError({});
+      throw error;
     });
   }
 
   private async findUser(userId: string): Promise<UserRow | null> {
     return this.ctx.db.withConnection(async (c) => {
-      const r = await c.query<{ id: string; wallet: string; is_seeker: boolean }>(
+      const r = await c.query<{ id: string; wallet: string | null; is_seeker: boolean }>(
         'SELECT id, wallet, is_seeker FROM users WHERE id = $1 AND deleted_at IS NULL',
         [userId],
       );
@@ -354,11 +467,91 @@ export class AuthService {
     });
   }
 
-  private async mintTokens(user: UserRow): Promise<{ accessToken: string; refreshToken: string }> {
-    await this.ctx.db.withConnection((c) => assertNotBannedDb(c, user.id));
-    const accessToken = await this.ctx.jwt.signAccess(user.id, user.wallet, user.isSeeker);
-    const refreshToken = await this.ctx.jwt.signRefresh(user.id, randomUUID());
-    return { accessToken, refreshToken };
+  private async mintTokens(
+    user: UserRow,
+    authMethod: AuthMethod,
+    identityId?: string,
+    authTime?: number,
+    expectedVersion?: number,
+    reserveRefresh?: () => Promise<void>,
+  ): Promise<SessionTokens> {
+    return runInTransaction(
+      async (client) => {
+        if (identityId === undefined && authMethod !== 'wallet' && user.wallet !== null)
+          await lockWalletOwnership(client, 'solana:mainnet', user.wallet);
+        // Serialise with deletion: tokens minted before deletion are revoked by its live flag;
+        // a rotation/sign-in after deletion cannot pass this check.
+        const current = (
+          await client.query<{ wallet: string | null; is_seeker: boolean }>(
+            'SELECT wallet,is_seeker FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
+            [user.id],
+          )
+        ).rows[0];
+        if (!current) throw new SignatureInvalidError({ reason: 'no_user' });
+        await assertNotBannedDb(client, user.id);
+        // A legacy writer may have inserted a Solana user after migration backfill.
+        // A verified old refresh proves that original primary identity, never a payment link.
+        if (identityId === undefined && authMethod !== 'wallet' && current.wallet !== null) {
+          await client.query(
+            'INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,$3,$4) ON CONFLICT(network,address) DO NOTHING',
+            [uuidv7(), user.id, 'solana:mainnet', current.wallet],
+          );
+        }
+        const identity = (
+          await client.query<{
+            id: string;
+            network: LoginIdentity['network'];
+            address: string;
+            revoked_at: Date | null;
+            session_version: number;
+          }>(
+            identityId === undefined
+              ? "SELECT id,network,address,revoked_at,session_version FROM login_identities WHERE user_id=$1 AND network='solana:mainnet' AND address=$2"
+              : 'SELECT id,network,address,revoked_at,session_version FROM login_identities WHERE user_id=$1 AND id=$2',
+            [user.id, identityId ?? current.wallet],
+          )
+        ).rows[0];
+        if (
+          !identity ||
+          identity.revoked_at !== null ||
+          (expectedVersion !== undefined && expectedVersion !== identity.session_version) ||
+          (authMethod === 'wallet' && identity.network === 'solana:mainnet') ||
+          (authMethod !== 'wallet' &&
+            (identity.network !== 'solana:mainnet' || identity.address !== current.wallet))
+        )
+          throw credentialRevoked();
+        if (reserveRefresh) await reserveRefresh();
+        const accessToken = await this.ctx.jwt.signAccess(
+          user.id,
+          current.wallet,
+          current.is_seeker,
+          identity.id,
+          authMethod,
+          authTime,
+          identity.session_version,
+        );
+        const refreshToken = await this.ctx.jwt.signRefresh(
+          user.id,
+          randomUUID(),
+          identity.id,
+          authMethod,
+          authTime,
+          identity.session_version,
+        );
+        return {
+          accessToken,
+          refreshToken,
+          authMethod,
+          loginIdentity: { id: identity.id, network: identity.network, address: identity.address },
+          loginIdentityVersion: identity.session_version,
+          authenticatedAt: authTime ?? null,
+          wallet: current.wallet,
+          isSeeker: current.is_seeker,
+        };
+      },
+      { isolation: 'read committed', maxRetries: 0 },
+      this.ctx.db,
+    );
   }
 
   /**
@@ -377,7 +570,7 @@ export class AuthService {
 
 export interface UserRow {
   readonly id: string;
-  readonly wallet: string;
+  readonly wallet: string | null;
   readonly isSeeker: boolean;
 }
 

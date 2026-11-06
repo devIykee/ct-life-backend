@@ -123,6 +123,15 @@ async function chainFixture(intentId: string) {
   };
 }
 describe('dedicated likeness checkout', () => {
+  it('requires a primary Solana wallet before preparing a likeness payment', async () => {
+    await f.pool.query('UPDATE users SET wallet=NULL WHERE id=$1', [owner]);
+    await expect(quoted()).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      details: { reason: 'wallet_required' },
+    });
+    expect(rpcCalls).toHaveLength(0);
+    expect((await f.pool.query('SELECT * FROM likeness_payment_intents')).rowCount).toBe(0);
+  });
   it('quotes immutable integer USDC and a real unsigned v0 wallet transaction', async () => {
     const key = randomUUID(),
       q = await service.create(owner, key, { modelId: 'head_snow' });
