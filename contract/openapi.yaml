@@ -6720,6 +6720,11 @@ paths:
         door access (`GET /venues/{id}/access`): with the default `gatedBooking: warn` a gated
         destination can still be ridden to (you arrive on the street outside the rope). The
         quote is kept for `quoteTtlSec` (60 s); book with its `quoteId`.
+        Phase 3: while `travelHeli` is also on, a `heli` row is added (flat fare, pad to pad).
+        Its reasons add `NEEDS_HELIPAD` (no live home of a `heliHomeKinds` kind) and
+        `NOT_AT_PAD` (`stop` = the nearest pad you may use); `TOO_CLOSE` when you stand on the
+        landing pad. It carries its own `arrival` (the public pad nearest the door) and, when
+        available, `pickup` (your pad); `distanceM` for heli is pad to pad (no road factor).
       x-phase: 1
       parameters:
         - name: to
@@ -6771,7 +6776,11 @@ paths:
         server time; join the destination street room with `{district: arrival.district,
         tripId}` from `arriveAt` (docs/REALTIME.md "Map Travel arrival"). An unused ticket
         expires at `expiresAt` and the fare is refunded. Walking is never booked (`mode: walk`
-        is a 400).
+        is a 400). `mode: heli` needs capability `travelHeli` (`503 CAPABILITY_OFF
+        {capability: travelHeli}`) and is re-checked in the transaction: a live pad home (`403
+        NEEDS_HELIPAD`) and the caller within `heliPadRadiusM` (15 m) of the quoted pickup pad
+        (`409 TRAVEL_NOT_AT_PAD`). A heli trip's `origin` is the pickup pad, `arrival` the
+        landing pad and `pickup` `{id, x, z}`; the ticket anchors at the landing pad.
       x-phase: 1
       parameters:
         - $ref: '#/components/parameters/IdempotencyKey'
@@ -6784,7 +6793,7 @@ paths:
               required: [quoteId, mode]
               properties:
                 quoteId: { type: string, format: uuid }
-                mode: { type: string, enum: [bus, taxi] }
+                mode: { type: string, enum: [bus, taxi, heli] }
       responses:
         '201':
           description: The booked trip
@@ -6809,12 +6818,23 @@ paths:
                 }
         '403':
           description: >-
-            `JAILED`, `SYBIL_JAILED`, `TRAVEL_LOCKED` (net worth below the mode's unlock) or
-            `VENUE_GATED` (only with `gatedBooking: refuse`)
+            `JAILED`, `SYBIL_JAILED`, `TRAVEL_LOCKED` (net worth below the mode's unlock),
+            `VENUE_GATED` (only with `gatedBooking: refuse`) or `NEEDS_HELIPAD` (heli: no live
+            pad home, or the quoted home pad is no longer yours)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
               examples:
+                needsHelipad:
+                  value:
+                    {
+                      error:
+                        {
+                          code: NEEDS_HELIPAD,
+                          message: 'Helicopter rides need a home with a helipad.',
+                          details: {},
+                        },
+                    }
                 locked:
                   value:
                     {
@@ -6861,6 +6881,21 @@ paths:
                           code: QUOTE_EXPIRED,
                           message: 'The quote expired or you moved. Get a new quote.',
                           details: { reason: moved },
+                        },
+                    }
+                notAtPad:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_NOT_AT_PAD,
+                          message: 'The helicopter boards at a helipad. Walk to your home pad or a public pad first.',
+                          details:
+                            {
+                              radiusM: 15,
+                              pad: { id: pad_home_penthouse, x: 527.7, z: -280.2 },
+                              distanceM: 18,
+                            },
                         },
                     }
                 notAtStop:
@@ -11587,7 +11622,23 @@ components:
                   baseSec: { type: number }
                   speedMps: { type: number }
                   unlockNetWorthCents: { type: integer }
-                  pickup: { type: string, enum: [stop, anywhere] }
+                  pickup: { type: string, enum: [stop, anywhere, pad] }
+            heli:
+              type: boolean
+              description: Phase 3 - true while the `travelHeli` capability is on (heli is quoted and bookable).
+            heliPadRadiusM: { type: number }
+            heliHomeKinds:
+              type: array
+              items: { type: string }
+              description: Home kinds whose live owner has a pad and the helicopter.
+            heliPads:
+              type: array
+              description: Public helipads (island metres). Every flight lands on one.
+              items: { $ref: '#/components/schemas/TravelHeliPad' }
+            homePads:
+              type: object
+              description: The pad beside each pad-home kind; only its owner boards there.
+              additionalProperties: { $ref: '#/components/schemas/TravelHeliPad' }
         beef:
           type: [object, 'null']
           description: >-
@@ -12890,6 +12941,14 @@ components:
             yaw:
               type: number
               description: Radians (PlayerState.rotY; forward = (sin yaw, cos yaw)), facing the door.
+    TravelHeliPad:
+      type: object
+      required: [id, district, x, z]
+      properties:
+        id: { type: string }
+        district: { type: string }
+        x: { type: number }
+        z: { type: number }
     TravelQuote:
       type: object
       required:
@@ -12933,7 +12992,7 @@ components:
             type: object
             required: [mode, available, fareCents, durationSec]
             properties:
-              mode: { type: string, enum: [walk, bus, taxi] }
+              mode: { type: string, enum: [walk, bus, taxi, heli] }
               available: { type: boolean }
               reason:
                 type: string
@@ -12947,19 +13006,39 @@ components:
                     TRAVEL_IN_PROGRESS,
                     VENUE_GATED,
                     NOT_SERVED,
+                    NEEDS_HELIPAD,
+                    NOT_AT_PAD,
                   ]
               reasonMessage: { type: string }
               fareCents: { type: integer }
               durationSec: { type: integer }
               stop:
                 type: object
-                required: [id, x, z, yaw, distanceM]
+                description: >-
+                  Bus: the pickup stop (or the nearest one with NOT_AT_STOP). Heli with
+                  NOT_AT_PAD: the nearest pad the caller may use (own home pad or public), no
+                  yaw.
+                required: [id, x, z, distanceM]
                 properties:
                   id: { type: string }
                   x: { type: number }
                   z: { type: number }
-                  yaw: { type: number, description: Degrees clockwise from north. }
+                  yaw: { type: number, description: Degrees clockwise from north (bus stops only). }
                   distanceM: { type: integer }
+              arrival:
+                description: >-
+                  Heli only: where the flight lands, the public pad nearest the destination door
+                  (pad centre, yaw radians facing the door). Differs from the quote's top-level
+                  `arrival` (the street outside the door, for the ground modes).
+                allOf: [{ $ref: '#/components/schemas/TravelArrival' }]
+              pickup:
+                type: object
+                description: Heli only, when available - the pad you board at.
+                required: [id, x, z]
+                properties:
+                  id: { type: string }
+                  x: { type: number }
+                  z: { type: number }
               unlockNetWorthCents: { type: integer }
               retryAfterSec: { type: integer }
     TravelTrip:
@@ -12982,7 +13061,7 @@ components:
       properties:
         tripId: { type: string, format: uuid }
         status: { type: string, enum: [booked, arrived, cancelled, expired_refunded] }
-        mode: { type: string, enum: [bus, taxi] }
+        mode: { type: string, enum: [bus, taxi, heli] }
         to: { type: string }
         fareCents: { type: integer }
         cashCents: { type: integer, description: Cash after the fare. }
@@ -12994,8 +13073,8 @@ components:
         arrival: { $ref: '#/components/schemas/TravelArrival' }
         pickup:
           type: object
-          description: The bus stop (bus only).
-          required: [id, x, z, yaw]
+          description: Bus - the stop (yaw degrees). Heli - the boarding pad (no yaw).
+          required: [id, x, z]
           properties:
             id: { type: string }
             x: { type: number }

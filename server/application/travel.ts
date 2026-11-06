@@ -31,6 +31,8 @@ import { runInTransaction } from '../shared/db/uow.js';
 import {
   InsufficientCashError,
   JailedError,
+  NeedsHelipadError,
+  TravelNotAtPadError,
   NotFoundError,
   QuoteExpiredError,
   SybilJailedError,
@@ -55,7 +57,7 @@ import {
   type IslandPos,
 } from '../realtime/movement.js';
 import type { AppContext } from './context.js';
-import { isCapabilityOn } from './capabilities.js';
+import { assertCapabilityOn, isCapabilityOn } from './capabilities.js';
 import { activeJail, assertNotJailed } from './heat.js';
 import { isSybilJailed } from './sybil-jail.js';
 import { getVenueAccess } from './venues-gating.js';
@@ -63,8 +65,11 @@ import { readContractJson } from './rewards.js';
 
 // --- Config -----------------------------------------------------------
 
-export const RIDE_MODES = ['bus', 'taxi'] as const;
+export const RIDE_MODES = ['bus', 'taxi', 'heli'] as const;
 export type RideMode = (typeof RIDE_MODES)[number];
+/** Road modes: priced by road distance, end on the street outside the door. */
+export const GROUND_MODES = ['bus', 'taxi'] as const;
+export type GroundMode = (typeof GROUND_MODES)[number];
 export type TravelMode = 'walk' | RideMode;
 
 export interface RideModeConfig {
@@ -75,7 +80,15 @@ export interface RideModeConfig {
   readonly baseSec: number;
   readonly speedMps: number;
   readonly unlockNetWorthCents: number;
-  readonly pickup: 'stop' | 'anywhere';
+  readonly pickup: 'stop' | 'anywhere' | 'pad';
+}
+
+/** A helipad (island metres): a public pad or the pad beside a pad home. */
+export interface HeliPad {
+  readonly id: string;
+  readonly district: string;
+  readonly x: number;
+  readonly z: number;
 }
 
 export interface BusStop {
@@ -104,6 +117,14 @@ export interface TravelConfig {
   readonly busStopRadiusM: number;
   readonly modes: Readonly<Record<RideMode, RideModeConfig>>;
   readonly busStops: readonly BusStop[];
+  /** Phase 3: heli boarding only within this of a pad. */
+  readonly heliPadRadiusM: number;
+  /** Home kinds whose live owner has a pad and the helicopter. */
+  readonly heliHomeKinds: readonly string[];
+  /** Public pads: where every flight lands, and where pad-home owners may also board. */
+  readonly heliPads: readonly HeliPad[];
+  /** The pad beside each pad-home kind (only its owner boards there). */
+  readonly homePads: Readonly<Record<string, HeliPad>>;
 }
 
 let travelConfig: TravelConfig | null = null;
@@ -273,6 +294,109 @@ function round4(n: number): number {
   return Math.round(n * 10_000) / 10_000;
 }
 
+// --- Helipads ---------------------------------------------------------
+
+/**
+ * The pads a player may board at: their own home pads (one per owned pad-home kind), then
+ * the public pads.
+ * @param cfg - Travel config.
+ * @param ownedKinds - The player's live home kinds that are in `heliHomeKinds`.
+ */
+export function usablePads(cfg: TravelConfig, ownedKinds: readonly string[]): HeliPad[] {
+  const own = ownedKinds.map((k) => cfg.homePads[k]).filter((p): p is HeliPad => !!p);
+  return [...own, ...cfg.heliPads];
+}
+
+/**
+ * The pad to board at: an own home pad within `heliPadRadiusM` first, else the nearest public
+ * pad within it.
+ * @returns The pad, or null when the player stands at none.
+ */
+export function heliPickupPad(
+  cfg: TravelConfig,
+  ownedKinds: readonly string[],
+  x: number,
+  z: number,
+): HeliPad | null {
+  const within = (p: HeliPad): boolean => Math.hypot(p.x - x, p.z - z) <= cfg.heliPadRadiusM;
+  const own = ownedKinds.map((k) => cfg.homePads[k]).filter((p): p is HeliPad => !!p);
+  const home = own.find(within);
+  if (home) return home;
+  const near = cfg.heliPads
+    .filter(within)
+    .sort((a, b) => Math.hypot(a.x - x, a.z - z) - Math.hypot(b.x - x, b.z - z));
+  return near[0] ?? null;
+}
+
+/**
+ * The nearest pad a player may use, for NOT_AT_PAD.
+ * @returns The pad and its distance (whole metres), or null with no pads.
+ */
+export function nearestUsablePad(
+  cfg: TravelConfig,
+  ownedKinds: readonly string[],
+  x: number,
+  z: number,
+): { pad: HeliPad; distanceM: number } | null {
+  let best: { pad: HeliPad; distanceM: number } | null = null;
+  for (const p of usablePads(cfg, ownedKinds)) {
+    const d = Math.hypot(p.x - x, p.z - z);
+    if (best === null || d < best.distanceM) best = { pad: p, distanceM: d };
+  }
+  return best ? { pad: best.pad, distanceM: Math.round(best.distanceM) } : null;
+}
+
+/**
+ * Where a flight to `door` lands: the PUBLIC pad nearest the door (never a home pad), its
+ * centre, facing the door. The district is the street room that covers the pad.
+ */
+export function heliArrival(
+  cfg: TravelConfig,
+  door: { x: number; z: number },
+): { pad: HeliPad; arrival: Arrival } | null {
+  let pad: HeliPad | null = null;
+  for (const p of cfg.heliPads) {
+    if (
+      pad === null ||
+      Math.hypot(p.x - door.x, p.z - door.z) < Math.hypot(pad.x - door.x, pad.z - door.z)
+    ) {
+      pad = p;
+    }
+  }
+  if (!pad) return null;
+  const dx = door.x - pad.x;
+  const dz = door.z - pad.z;
+  const yaw = Math.hypot(dx, dz) < 1e-3 ? 0 : round4(Math.atan2(dx, dz));
+  return {
+    pad,
+    arrival: { district: streetDistrictAt(pad.x, pad.z) ?? pad.district, x: pad.x, z: pad.z, yaw },
+  };
+}
+
+/** The live home kinds of `userId` that own a helipad (`heliHomeKinds`). */
+async function padHomeKinds(
+  c: Pick<PoolClient, 'query'>,
+  cfg: TravelConfig,
+  userId: string,
+): Promise<string[]> {
+  if (cfg.heliHomeKinds.length === 0) return [];
+  const r = await c.query<{ kind: string }>(
+    `SELECT DISTINCT kind FROM homes
+      WHERE owner_user_id = $1 AND status IN ('active', 'overdue') AND kind = ANY($2::text[])`,
+    [userId, cfg.heliHomeKinds],
+  );
+  // Keep the config order so the first home pad is deterministic.
+  const owned = new Set(r.rows.map((x) => x.kind));
+  return cfg.heliHomeKinds.filter((k) => owned.has(k));
+}
+
+/** Every pad by id (public and home). */
+export function padById(cfg: TravelConfig, id: string): HeliPad | undefined {
+  return (
+    cfg.heliPads.find((p) => p.id === id) ?? Object.values(cfg.homePads).find((p) => p.id === id)
+  );
+}
+
 // --- Redis keys -------------------------------------------------------
 
 /** The single-use arrival ticket of a player's booked trip. */
@@ -299,8 +423,15 @@ interface StoredQuote {
   readonly distanceM: number;
   readonly arrival: Arrival;
   readonly served: boolean;
-  readonly fares: Record<RideMode, number>;
-  readonly durations: Record<RideMode, number>;
+  readonly fares: Partial<Record<RideMode, number>>;
+  readonly durations: Partial<Record<RideMode, number>>;
+  /** The heli row as quoted (only while travelHeli was on), so booking cannot be steered. */
+  readonly heli?: {
+    readonly pickupPadId: string | null;
+    readonly arrival: Arrival;
+    readonly arrivalPadId: string;
+    readonly distanceM: number;
+  };
   readonly createdAt: number;
 }
 
@@ -314,7 +445,9 @@ export type ModeReason =
   | 'COOLDOWN'
   | 'TRAVEL_IN_PROGRESS'
   | 'VENUE_GATED'
-  | 'NOT_SERVED';
+  | 'NOT_SERVED'
+  | 'NEEDS_HELIPAD'
+  | 'NOT_AT_PAD';
 
 export interface QuoteMode {
   readonly mode: TravelMode;
@@ -323,7 +456,12 @@ export interface QuoteMode {
   readonly reasonMessage?: string;
   readonly fareCents: number;
   readonly durationSec: number;
-  readonly stop?: { id: string; x: number; z: number; yaw: number; distanceM: number };
+  /** Bus: the pickup stop (yaw in degrees). Heli with NOT_AT_PAD: the nearest pad you may use (no yaw). */
+  readonly stop?: { id: string; x: number; z: number; yaw?: number; distanceM: number };
+  /** Heli only: where the flight lands (the public pad nearest the door), facing the door. */
+  readonly arrival?: Arrival;
+  /** Heli only, when available: the pad you board at. */
+  readonly pickup?: { id: string; x: number; z: number };
   readonly unlockNetWorthCents?: number;
   readonly retryAfterSec?: number;
 }
@@ -357,7 +495,8 @@ export interface TravelTrip {
   readonly serverNow: string;
   readonly origin: StreetPoint;
   readonly arrival: Arrival;
-  readonly pickup?: { id: string; x: number; z: number; yaw: number };
+  /** Bus: the stop (yaw in degrees). Heli: the boarding pad (no yaw). */
+  readonly pickup?: { id: string; x: number; z: number; yaw?: number };
 }
 
 const GATE_MESSAGES: Record<string, string> = {
@@ -376,6 +515,8 @@ const REASON_MESSAGES: Record<ModeReason, string> = {
   TRAVEL_IN_PROGRESS: 'You already have a ride booked.',
   VENUE_GATED: 'The door is gated for you.',
   NOT_SERVED: 'No road service to this door yet. Walk.',
+  NEEDS_HELIPAD: 'Needs a home with a helipad.',
+  NOT_AT_PAD: 'The helicopter boards at a helipad. Walk to the nearest pad.',
 };
 
 // --- Shared reads -----------------------------------------------------
@@ -479,18 +620,20 @@ export async function quoteTravel(
         message: GATE_MESSAGES[access.reasonCode ?? ''] ?? 'The door is gated for you.',
       };
 
-  const { bal, limits } = await ctx.db.withConnection(async (c) => ({
+  const heliOn = isCapabilityOn(ctx, 'travelHeli');
+  const { bal, limits, ownedKinds } = await ctx.db.withConnection(async (c) => ({
     bal: await balanceOf(c, userId),
     limits: await readLimits(c, cfg, userId, now),
+    ownedKinds: heliOn ? await padHomeKinds(c, cfg, userId) : [],
   }));
 
-  const fares = {} as Record<RideMode, number>;
-  const durations = {} as Record<RideMode, number>;
+  const fares: Partial<Record<RideMode, number>> = {};
+  const durations: Partial<Record<RideMode, number>> = {};
   const modes: QuoteMode[] = [
     { mode: 'walk', available: true, fareCents: 0, durationSec: walkSeconds(cfg, distanceM) },
   ];
   const near = nearestBusStop(cfg, pos.x, pos.z);
-  for (const mode of RIDE_MODES) {
+  for (const mode of GROUND_MODES) {
     const m = cfg.modes[mode];
     const fare = fareCents(m, distanceM);
     const durationSec = rideSeconds(m, distanceM);
@@ -530,6 +673,66 @@ export async function quoteTravel(
     });
   }
 
+  // Phase 3: the helicopter (both `travel` and `travelHeli` on). Pad to pad: board at your own
+  // home pad or a public pad, land on the public pad nearest the door.
+  let heli: StoredQuote['heli'];
+  const landing = heliOn ? heliArrival(cfg, target.door) : null;
+  if (heliOn && landing) {
+    const m = cfg.modes.heli;
+    const eligible = ownedKinds.length > 0;
+    const pickup = eligible ? heliPickupPad(cfg, ownedKinds, pos.x, pos.z) : null;
+    const from = pickup ?? { x: pos.x, z: pos.z };
+    const heliDistanceM = Math.round(
+      Math.hypot(landing.arrival.x - from.x, landing.arrival.z - from.z),
+    );
+    const fare = fareCents(m, heliDistanceM);
+    const durationSec = rideSeconds(m, heliDistanceM);
+    fares.heli = fare;
+    durations.heli = durationSec;
+    let reason: ModeReason | undefined;
+    if (limits.openTripId) reason = 'TRAVEL_IN_PROGRESS';
+    else if (limits.retryAfterMs > 0) reason = 'COOLDOWN';
+    else if (!eligible) reason = 'NEEDS_HELIPAD';
+    else if (!pickup) reason = 'NOT_AT_PAD';
+    else if (pickup.id === landing.pad.id) reason = 'TOO_CLOSE';
+    else if (!gate.open && cfg.gatedBooking === 'refuse') reason = 'VENUE_GATED';
+    else if (bal.netWorth < m.unlockNetWorthCents) reason = 'LOCKED';
+    else if (bal.cash < fare) reason = 'INSUFFICIENT_CASH';
+    const nearest =
+      reason === 'NOT_AT_PAD' ? nearestUsablePad(cfg, ownedKinds, pos.x, pos.z) : null;
+    modes.push({
+      mode: 'heli',
+      available: reason === undefined,
+      ...(reason ? { reason, reasonMessage: REASON_MESSAGES[reason] } : {}),
+      fareCents: fare,
+      durationSec,
+      arrival: landing.arrival,
+      ...(reason === undefined && pickup
+        ? { pickup: { id: pickup.id, x: pickup.x, z: pickup.z } }
+        : {}),
+      ...(nearest
+        ? {
+            stop: {
+              id: nearest.pad.id,
+              x: nearest.pad.x,
+              z: nearest.pad.z,
+              distanceM: nearest.distanceM,
+            },
+          }
+        : {}),
+      ...(reason === 'LOCKED' ? { unlockNetWorthCents: m.unlockNetWorthCents } : {}),
+      ...(reason === 'COOLDOWN'
+        ? { retryAfterSec: Math.max(1, Math.ceil(limits.retryAfterMs / 1000)) }
+        : {}),
+    });
+    heli = {
+      pickupPadId: pickup?.id ?? null,
+      arrival: landing.arrival,
+      arrivalPadId: landing.pad.id,
+      distanceM: heliDistanceM,
+    };
+  }
+
   const quoteId = uuidv7();
   const stored: StoredQuote = {
     userId,
@@ -540,6 +743,7 @@ export async function quoteTravel(
     served: target.served,
     fares,
     durations,
+    ...(heli ? { heli } : {}),
     createdAt: now.getTime(),
   };
   await ctx.redis.main.set(travelQuoteKey(quoteId), JSON.stringify(stored), 'EX', cfg.quoteTtlSec);
@@ -583,9 +787,9 @@ const TRIP_COLS = `trip_id, status, mode, to_id, fare_cents, origin_district, or
   pickup_stop_id, arrival_district, arrival_x, arrival_z, arrival_yaw, depart_at, arrive_at, expires_at`;
 
 function toTrip(r: TripRow, cashCents: number, now: Date): TravelTrip {
-  const stop = r.pickup_stop_id
-    ? getTravelConfig().busStops.find((s) => s.id === r.pickup_stop_id)
-    : undefined;
+  const cfg = getTravelConfig();
+  const stop = r.pickup_stop_id ? cfg.busStops.find((s) => s.id === r.pickup_stop_id) : undefined;
+  const pad = r.pickup_stop_id && !stop ? padById(cfg, r.pickup_stop_id) : undefined;
   return {
     tripId: r.trip_id,
     status: r.status,
@@ -600,6 +804,7 @@ function toTrip(r: TripRow, cashCents: number, now: Date): TravelTrip {
     origin: { district: r.origin_district, x: r.origin_x, z: r.origin_z },
     arrival: { district: r.arrival_district, x: r.arrival_x, z: r.arrival_z, yaw: r.arrival_yaw },
     ...(stop ? { pickup: { id: stop.id, x: stop.x, z: stop.z, yaw: stop.yaw } } : {}),
+    ...(pad ? { pickup: { id: pad.id, x: pad.x, z: pad.z } } : {}),
   };
 }
 
@@ -635,6 +840,8 @@ export async function bookTrip(
   now: Date = new Date(),
 ): Promise<TravelTrip> {
   const cfg = getTravelConfig();
+  // The helicopter needs its own capability (503 CAPABILITY_OFF {capability: travelHeli}).
+  if (input.mode === 'heli') assertCapabilityOn(ctx, 'travelHeli');
   const ref = `travel-trip:${userId}:${idempotencyKey}`;
   const rawQuote = await ctx.redis.main.get(travelQuoteKey(input.quoteId));
   const quote = rawQuote ? (JSON.parse(rawQuote) as StoredQuote) : null;
@@ -688,12 +895,54 @@ export async function bookTrip(
     if (!pos || now.getTime() - pos.at > POS_FRESH_MS) {
       throw new TravelNotInWorldError({ reason: 'no fresh position' });
     }
+    let arrival = quote.arrival;
+    let distanceM = quote.distanceM;
+    let pickupStopId: string | null = null;
+    let heliPad: HeliPad | null = null;
+    if (input.mode === 'heli') {
+      // Re-checked inside the locked transaction: a live pad home, the quoted pickup pad is
+      // still one this player may use, and they stand on it.
+      const h = quote.heli;
+      if (!h) throw new QuoteExpiredError({ reason: 'expired' });
+      const owned = await padHomeKinds(client, cfg, userId);
+      if (owned.length === 0) throw new NeedsHelipadError({});
+      const pad = h.pickupPadId ? padById(cfg, h.pickupPadId) : undefined;
+      if (!pad) {
+        const near = nearestUsablePad(cfg, owned, pos.x, pos.z);
+        throw new TravelNotAtPadError({
+          radiusM: cfg.heliPadRadiusM,
+          ...(near
+            ? { pad: { id: near.pad.id, x: near.pad.x, z: near.pad.z }, distanceM: near.distanceM }
+            : {}),
+        });
+      }
+      if (!usablePads(cfg, owned).some((p) => p.id === pad.id)) {
+        throw new NeedsHelipadError({ reason: 'pad_not_yours', padId: pad.id });
+      }
+      const off = Math.hypot(pos.x - pad.x, pos.z - pad.z);
+      if (off > cfg.heliPadRadiusM) {
+        throw new TravelNotAtPadError({
+          radiusM: cfg.heliPadRadiusM,
+          pad: { id: pad.id, x: pad.x, z: pad.z },
+          distanceM: Math.round(off),
+        });
+      }
+      if (pad.id === h.arrivalPadId) {
+        throw new ValidationFailedError({ reason: 'too_close', padId: pad.id });
+      }
+      arrival = h.arrival;
+      distanceM = h.distanceM;
+      pickupStopId = pad.id;
+      heliPad = pad;
+    }
     if (Math.hypot(pos.x - quote.from.x, pos.z - quote.from.z) > cfg.bookDriftM) {
       throw new QuoteExpiredError({ reason: 'moved' });
     }
-    if (!quote.served) throw new ValidationFailedError({ reason: 'not_served', to: quote.to });
-    if (quote.distanceM < cfg.minDistanceM) {
-      throw new ValidationFailedError({ reason: 'too_close', minDistanceM: cfg.minDistanceM });
+    if (input.mode !== 'heli') {
+      if (!quote.served) throw new ValidationFailedError({ reason: 'not_served', to: quote.to });
+      if (quote.distanceM < cfg.minDistanceM) {
+        throw new ValidationFailedError({ reason: 'too_close', minDistanceM: cfg.minDistanceM });
+      }
     }
 
     if (gated) throw new VenueGatedError({ to: quote.to });
@@ -707,7 +956,6 @@ export async function bookTrip(
       throw new TravelLockedError({ mode: input.mode, unlockNetWorthCents: m.unlockNetWorthCents });
     }
 
-    let pickupStopId: string | null = null;
     if (m.pickup === 'stop') {
       const near = nearestBusStop(cfg, pos.x, pos.z);
       if (!near || near.distanceM > cfg.busStopRadiusM) {
@@ -725,17 +973,26 @@ export async function bookTrip(
     }
 
     const fare = quote.fares[input.mode];
+    const durationSec = quote.durations[input.mode];
+    if (fare === undefined || durationSec === undefined) {
+      throw new QuoteExpiredError({ reason: 'expired' });
+    }
     if (bal.cash < fare) {
       throw new InsufficientCashError({ have: String(bal.cash), need: String(fare) });
     }
 
-    const durationSec = quote.durations[input.mode];
     const departAt = now;
     const arriveAt = new Date(now.getTime() + durationSec * 1000);
     const expiresAt = new Date(arriveAt.getTime() + cfg.ticketGraceSec * 1000);
-    const origin = pickupStopId
-      ? cfg.busStops.find((s) => s.id === pickupStopId)!
-      : { district: quote.from.district, x: quote.from.x, z: quote.from.z };
+    const origin = heliPad
+      ? {
+          district: streetDistrictAt(heliPad.x, heliPad.z) ?? heliPad.district,
+          x: heliPad.x,
+          z: heliPad.z,
+        }
+      : pickupStopId
+        ? cfg.busStops.find((s) => s.id === pickupStopId)!
+        : { district: quote.from.district, x: quote.from.x, z: quote.from.z };
     try {
       await client.query(
         `INSERT INTO travel_trips
@@ -750,15 +1007,15 @@ export async function bookTrip(
           input.mode,
           quote.to,
           fare,
-          quote.distanceM,
+          distanceM,
           origin.district,
           origin.x,
           origin.z,
           pickupStopId,
-          quote.arrival.district,
-          quote.arrival.x,
-          quote.arrival.z,
-          quote.arrival.yaw,
+          arrival.district,
+          arrival.x,
+          arrival.z,
+          arrival.yaw,
           departAt,
           arriveAt,
           expiresAt,
@@ -1104,5 +1361,12 @@ export function travelClientConfig(
     busStops: cfg.busStops,
     modes: cfg.modes,
     minDistanceM: cfg.minDistanceM,
+    // Phase 3: the helicopter. `heli` is true while `travelHeli` is on; the pads are sent
+    // either way so the client can draw them.
+    heli: isCapabilityOn(ctx, 'travelHeli'),
+    heliPadRadiusM: cfg.heliPadRadiusM,
+    heliHomeKinds: cfg.heliHomeKinds,
+    heliPads: cfg.heliPads,
+    homePads: cfg.homePads,
   };
 }

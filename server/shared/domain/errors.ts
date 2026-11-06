@@ -924,3 +924,19 @@ export class VenueGatedError extends DomainError {
     this.httpStatus = 403;
   }
 }
+
+export class NeedsHelipadError extends DomainError {
+  readonly code = 'NEEDS_HELIPAD';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Helicopter rides need a home with a helipad.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class TravelNotAtPadError extends DomainError {
+  readonly code = 'TRAVEL_NOT_AT_PAD';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The helicopter boards at a helipad. Walk to your home pad or a public pad first.', details);
+    this.httpStatus = 409;
+  }
+}

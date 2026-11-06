@@ -74,6 +74,7 @@ describe('buildCapabilitiesPayload', () => {
           streetVoice: false,
           travel: false,
           travelInstantGoOff: false,
+          travelHeli: false,
         },
       },
       competitionCapabilities: { version: 1, beefChallenges: false, targetedCabalInvites: false },

@@ -85,11 +85,11 @@ const TIMELINE: Array<[number, number]> = [
 ];
 
 type AnyRoom = Record<string, (...a: unknown[]) => unknown> & { presence: unknown };
-async function boot(presence: LocalPresence): Promise<AnyRoom> {
+async function boot(presence: LocalPresence, district = 'timeline'): Promise<AnyRoom> {
   const room = new TestStreet() as unknown as AnyRoom;
   room.presence = presence;
   room.setSimulationInterval = () => undefined;
-  await room.onCreate!({ district: 'timeline' });
+  await room.onCreate!({ district });
   new Encoder((room as unknown as { state: Schema }).state);
   return room;
 }
@@ -258,5 +258,25 @@ describe('StreetRoom Map Travel arrival', () => {
     expect((await joinError(room, fakeClient('s1'), { userId: 'u1', tripId: TRIP })).code).toBe(
       4410,
     );
+  });
+
+  it('places a helicopter traveller on the arrival pad (real districts.json)', async () => {
+    setIslandGeometry(null);
+    const presence = new LocalPresence();
+    const room = await boot(presence, 'mountain');
+    // pad_mountain in contract/config/travel.json
+    redis.kv.set(
+      travelTicketKey('u1'),
+      JSON.stringify(
+        ticket({ district: 'mountain', x: -226, z: 428, yaw: 2.2, arriveAt: now - 100 }),
+      ),
+    );
+    const c = fakeClient('s1');
+    await room.onJoin!(c, { userId: 'u1', tripId: TRIP });
+    const p = (
+      room as unknown as { state: { players: Map<string, PlayerState> } }
+    ).state.players.get('s1')!;
+    expect([p.x, p.z, p.rotY]).toEqual([-226, 428, 2.2]);
+    expect(decodePos(await presence.hget(POS_HASH, 'u1'))).toEqual({ x: -226, z: 428, at: now });
   });
 });

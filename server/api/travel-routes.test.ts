@@ -142,6 +142,17 @@ describe('Map Travel routes', () => {
         .status,
     ).toBe(400); // no Idempotency-Key
 
+    expect(q.body.modes.some((m: { mode: string }) => m.mode === 'heli')).toBe(false);
+    const heli = await call(u, 'POST', '/v1/travel/trips', {
+      quoteId: q.body.quoteId,
+      mode: 'heli',
+    });
+    expect(heli.status).toBe(503);
+    expect(heli.body.error).toMatchObject({
+      code: 'CAPABILITY_OFF',
+      details: { capability: 'travelHeli' },
+    });
+
     const booked = await call(u, 'POST', '/v1/travel/trips', {
       quoteId: q.body.quoteId,
       mode: 'bus',
