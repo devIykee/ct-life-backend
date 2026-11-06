@@ -1,3 +1,17 @@
+## 2026-11-02 - Vehicles room: no conjured vehicles (security fix)
+
+No migration. Server-side fix; the shipped Unity client already sends what the new checks need.
+
+- **The bypass.** `vehicle_enter` with an id the server did not know registered a vehicle of any `kind` wherever the client said (within reach of the player). Only `roadstar` was gated (pass). A modified client could conjure a helicopter (`heli`, 60 m/s, up to 214 m) or a quadcopter (`drone`) next to itself without the pass, or any street car under any id anywhere.
+- An unknown id now registers only:
+  - a decor parked car: `park_<kind>_<round(x*10)>_<round(z*10)>` (the client's `IslandProtocol.ParkedId`) naming a spot in the new FE-owned **`contract/ids/parked_cars.json`** (283 spots, exported from the baked island cells by the frontend's `tools/world/export_parked_cars.py`) with that kind listed for it, and the reported pose within 3 m of the spot (`PARKED_SPOT_DRIFT_M`); the player must still be within the enter reach of it (`VEHICLE_TOO_FAR`);
+  - a hijacked NPC traffic car (`traffic_*`) of a street kind (compact, suv, sports, moped, sedan, taxi, police, pickup, van, bike), with the steal rules unchanged. NPC traffic is client-simulated, so the server cannot know where one is;
+  - a pass vehicle of an entitled player.
+- `drone` now needs `vehicle.hovercar` like `roadstar` (`NOT_ENTITLED`), for unknown ids and server-owned bays alike; the client already required it ("one entitlement unlocks both").
+- New realtime codes on `vehicle_enter`: `VEHICLE_KIND_NOT_ALLOWED` (403; e.g. `heli`, or a non-street kind under a `traffic_*` id) and `VEHICLE_NOT_REGISTRABLE` (403; no such parked car at that spot, a kind it does not park, or a pose too far from it).
+- Unchanged: entering a vehicle the server already knows (server-owned bays from `parking.json`, cars already registered), the enter radius, steals, heat, the 2-per-player and 400-total caps.
+- Ops: re-export `parked_cars.json` whenever the island is rebuilt (the frontend's EditMode test `ParkedCarsContractTests` fails when it drifts); a stale file refuses entry to decor cars that moved.
+
 ## 2026-11-02 - travel.json 1.2.1: bus stops on walkable ground, at their shelters
 
 No migration. Config only (Map Travel, capability `travel`). Found by the frontend's world smoke test (docs/progress/world-smoke-test.md in the frontend repo).
@@ -92,6 +106,20 @@ No migration. Realtime and config only. At `LIVE_PHASE` 1 every venue spawns exa
 - Brain ids `vc_npc` and `builder_npc` are now `vc` and `doxxed_founder` (the registry ids); the old ids still create the same brains. Neither was ever spawned.
 - `ids/archetypes.json` 1.1.0: adds `laser_eyes_maxi` (timeline_square, phase 2) and `chain_tribalist` (ratio_arena, phase 2, `maxPerInstance: 2`). `venueId` fixes: farmer and sybil_farmer `airdrop_farm` -> `airdrop_fields`, doxxed_founder `builder_hills` -> `hackathon_house`, normie `market_room` -> `terminal_cafe`. `ids/archetypes.json` 1.2.0 (entry above): fake_rich_larp and dubai_relocator `dubai_marina` -> `yacht_club`.
 - `config/npc_lines.json` 1.1.0: line sets for the 21 phase-2 archetypes (32 lines each, from the FE world-life proposal; parody names only, approved display names: VIP Lounge, Discord HQ, Debate Arena, News Reader, police).
+
+## 2026-11-02 - Vehicles room: no conjured vehicles (security fix)
+
+No migration. Server-side fix; the shipped Unity client already sends what the new checks need.
+
+- **The bypass.** `vehicle_enter` with an id the server did not know registered a vehicle of any `kind` wherever the client said (within reach of the player). Only `roadstar` was gated (pass). A modified client could conjure a helicopter (`heli`, 60 m/s, up to 214 m) or a quadcopter (`drone`) next to itself without the pass, or any street car under any id anywhere.
+- An unknown id now registers only:
+  - a decor parked car: `park_<kind>_<round(x*10)>_<round(z*10)>` (the client's `IslandProtocol.ParkedId`) naming a spot in the new FE-owned **`contract/ids/parked_cars.json`** (283 spots, exported from the baked island cells by the frontend's `tools/world/export_parked_cars.py`) with that kind listed for it, and the reported pose within 3 m of the spot (`PARKED_SPOT_DRIFT_M`); the player must still be within the enter reach of it (`VEHICLE_TOO_FAR`);
+  - a hijacked NPC traffic car (`traffic_*`) of a street kind (compact, suv, sports, moped, sedan, taxi, police, pickup, van, bike), with the steal rules unchanged. NPC traffic is client-simulated, so the server cannot know where one is;
+  - a pass vehicle of an entitled player.
+- `drone` now needs `vehicle.hovercar` like `roadstar` (`NOT_ENTITLED`), for unknown ids and server-owned bays alike; the client already required it ("one entitlement unlocks both").
+- New realtime codes on `vehicle_enter`: `VEHICLE_KIND_NOT_ALLOWED` (403; e.g. `heli`, or a non-street kind under a `traffic_*` id) and `VEHICLE_NOT_REGISTRABLE` (403; no such parked car at that spot, a kind it does not park, or a pose too far from it).
+- Unchanged: entering a vehicle the server already knows (server-owned bays from `parking.json`, cars already registered), the enter radius, steals, heat, the 2-per-player and 400-total caps.
+- Ops: re-export `parked_cars.json` whenever the island is rebuilt (the frontend's EditMode test `ParkedCarsContractTests` fails when it drifts); a stale file refuses entry to decor cars that moved.
 
 ## 2026-11-01 - Street voice: one proximity room per street instance (capability streetVoice)
 

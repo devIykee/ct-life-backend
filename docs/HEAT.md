@@ -50,6 +50,8 @@ Rules, all checked on the server:
 - A vehicle someone is driving is `VEHICLE_TAKEN`. There is no stealing from a driver, so no griefing.
 - The hovercar (`roadstar`) is **never** stealable: `VEHICLE_NOT_STEALABLE`, including a roadstar another player
   parked, and a `traffic_*` id with kind `roadstar`.
+- A `traffic_*` id registers only a street kind (compact, suv, sports, moped, sedan, taxi, police, pickup, van,
+  bike); a helicopter or drone "traffic car" is `VEHICLE_KIND_NOT_ALLOWED` (security fix 2026-11-02, docs/REALTIME.md).
 - It adds heat and **never moves ownership**: the vehicle's owner stays the player who registered it. When
   the thief exits, or after 3 minutes (the thief is put out), a player's vehicle goes back to the pose where
   its owner left it. A stolen NPC traffic car just stays where it was parked.
