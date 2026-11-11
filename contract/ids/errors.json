@@ -5,6 +5,76 @@
   "_note": "Every error code used in the API or realtime protocol. The contract:check tool asserts every code here is referenced in openapi.yaml and every realtime message documents the codes it can return. Add codes here first, then use them.",
   "codes": [
     {
+      "code": "AUTH_REAUTH_REQUIRED",
+      "httpStatus": 403,
+      "message": "Sign in again before adding a login wallet."
+    },
+    {
+      "code": "AUTH_CHALLENGE_INVALID",
+      "httpStatus": 401,
+      "message": "Sign-in challenge is missing, expired, used or has the wrong purpose or owner."
+    },
+    {
+      "code": "AUTH_PROOF_INVALID",
+      "httpStatus": 401,
+      "message": "The sign-in signature could not be verified."
+    },
+    {
+      "code": "AUTH_ORIGIN_INVALID",
+      "httpStatus": 403,
+      "message": "This sign-in origin is not allowed."
+    },
+    {
+      "code": "AUTH_IDENTITY_CONFLICT",
+      "httpStatus": 409,
+      "message": "This sign-in identity belongs to another player."
+    },
+    {
+      "code": "AUTH_IDENTITY_ENROLMENT_REQUIRED",
+      "httpStatus": 409,
+      "message": "Sign in to the existing player account and explicitly enrol this wallet."
+    },
+    {
+      "code": "AUTH_ACCOUNT_UNAVAILABLE",
+      "httpStatus": 403,
+      "message": "This player account is unavailable."
+    },
+    {
+      "code": "AUTH_CHALLENGE_LIMIT",
+      "httpStatus": 429,
+      "message": "Too many pending enrolment requests. Wait for them to expire."
+    },
+    {
+      "code": "ECONOMY_CONFLICT",
+      "httpStatus": 409,
+      "message": "The economic action cannot proceed in its current state."
+    },
+    {
+      "code": "WALLET_LINK_PRIMARY_REQUIRED",
+      "httpStatus": 409,
+      "message": "Only the player's primary Solana wallet can be linked."
+    },
+    {
+      "code": "WALLET_LINK_CHALLENGE_INVALID",
+      "httpStatus": 401,
+      "message": "Wallet-link challenge is missing, expired, consumed or belongs to another player."
+    },
+    {
+      "code": "WALLET_LINK_CHALLENGE_LIMIT",
+      "httpStatus": 429,
+      "message": "Too many pending wallet-link requests. Wait for them to expire."
+    },
+    {
+      "code": "WALLET_LINK_PROOF_INVALID",
+      "httpStatus": 401,
+      "message": "Wallet identity proof could not be verified."
+    },
+    {
+      "code": "WALLET_LINK_IDENTITY_CONFLICT",
+      "httpStatus": 409,
+      "message": "This wallet is already linked to another player."
+    },
+    {
       "code": "LIKENESS_UNAVAILABLE",
       "httpStatus": 503,
       "message": "Character likeness is not available. No purchase or upload is accepted."
@@ -197,7 +267,17 @@
     {
       "code": "NOT_ENTITLED",
       "httpStatus": 403,
-      "message": "The player does not own the entitlement this needs (e.g. vehicle.hovercar for the roadstar)."
+      "message": "The player does not own the entitlement this needs (e.g. vehicle.hovercar for the roadstar or the drone)."
+    },
+    {
+      "code": "VEHICLE_KIND_NOT_ALLOWED",
+      "httpStatus": 403,
+      "message": "Realtime: no client may register a vehicle of this kind (e.g. a helicopter), or an NPC traffic car of a non-street kind."
+    },
+    {
+      "code": "VEHICLE_NOT_REGISTRABLE",
+      "httpStatus": 403,
+      "message": "Realtime: no such parked car at that spot (the id must name a decor car in contract/ids/parked_cars.json, with a kind it parks, reported where it stands)."
     },
     {
       "code": "NO_FREE_UNIT",
@@ -523,6 +603,106 @@
       "code": "REAL_MARKETS_TX_MISMATCH",
       "httpStatus": 422,
       "message": "That signature is not the order that was built for your wallet."
+    },
+    {
+      "code": "TRAVEL_IN_PROGRESS",
+      "httpStatus": 409,
+      "message": "You already have a ride booked. Finish or cancel it first."
+    },
+    {
+      "code": "TRAVEL_COOLDOWN",
+      "httpStatus": 429,
+      "message": "Too many rides. Wait a moment before booking another."
+    },
+    {
+      "code": "TRAVEL_NOT_IN_WORLD",
+      "httpStatus": 409,
+      "message": "Your position on CT Island is not known yet. Walk a few steps and try again."
+    },
+    {
+      "code": "TRAVEL_NOT_AT_STOP",
+      "httpStatus": 409,
+      "message": "The bus only picks up at a bus stop. Walk to the nearest stop first."
+    },
+    {
+      "code": "TRAVEL_LOCKED",
+      "httpStatus": 403,
+      "message": "This ride unlocks at a higher net worth."
+    },
+    {
+      "code": "TRAVEL_NOT_CANCELLABLE",
+      "httpStatus": 409,
+      "message": "This ride can no longer be cancelled."
+    },
+    {
+      "code": "QUOTE_EXPIRED",
+      "httpStatus": 409,
+      "message": "The quote expired or you moved. Get a new quote."
+    },
+    {
+      "code": "VENUE_GATED",
+      "httpStatus": 403,
+      "message": "This venue's door is gated for you; the ride is not offered."
+    },
+    {
+      "code": "TRAVEL_IN_TRANSIT",
+      "httpStatus": 409,
+      "message": "You are riding to another place. Join with your trip id when you arrive."
+    },
+    {
+      "code": "TRAVEL_TICKET_INVALID",
+      "httpStatus": 410,
+      "message": "This ride ticket is not valid (used, expired or not yours)."
+    },
+    {
+      "code": "TRAVEL_NOT_ARRIVED",
+      "httpStatus": 425,
+      "message": "The ride has not arrived yet."
+    },
+    {
+      "code": "NEEDS_HELIPAD",
+      "httpStatus": 403,
+      "message": "Helicopter rides need a home with a helipad."
+    },
+    {
+      "code": "TRAVEL_NOT_AT_PAD",
+      "httpStatus": 409,
+      "message": "The helicopter boards at a helipad. Walk to your home pad or a public pad first."
+    },
+    {
+      "code": "AUTH_IDENTITY_REVOKED",
+      "httpStatus": 401,
+      "message": "This sign-in session is no longer active. Sign in again."
+    },
+    {
+      "code": "AUTH_IDENTITY_NOT_FOUND",
+      "httpStatus": 404,
+      "message": "Sign-in wallet not found."
+    },
+    {
+      "code": "AUTH_LAST_IDENTITY",
+      "httpStatus": 409,
+      "message": "Keep at least one sign-in wallet."
+    },
+    {
+      "code": "AUTH_USE_ANOTHER_IDENTITY",
+      "httpStatus": 409,
+      "message": "Sign in with a wallet you are keeping before removing this one."
+    },
+    {
+      "code": "AUTH_PRIMARY_WALLET_IMMUTABLE",
+      "httpStatus": 409,
+      "message": "The primary Solana wallet cannot be removed."
+    },
+    {
+      "code": "AUTH_PRIMARY_WALLET_EXISTS",
+      "httpStatus": 409,
+      "message": "This player already has a primary Solana wallet."
+    },
+    {
+      "code": "AUTH_STATE_UNAVAILABLE",
+      "httpStatus": 503,
+      "message": "Account access could not be checked. Try again shortly."
     }
   ]
 }

@@ -16,10 +16,22 @@
  *
  * Messages:
  *   - vehicle_enter { id, kind?, x?, y?, z?, yaw?, steal? }: vehicle must be free
- *     and within 4 m of the player. An id the server does not know yet is
- *     registered where the client says (client-parked cars). A roadstar
- *     (the hovercar) needs the vehicle.hovercar entitlement (NOT_ENTITLED).
- *     A jailed player cannot enter (JAILED).
+ *     and within ENTER_RADIUS_M of the player. A roadstar (the hovercar) or a
+ *     drone (the quadcopter the same pass unlocks) needs the vehicle.hovercar
+ *     entitlement (NOT_ENTITLED). A jailed player cannot enter (JAILED).
+ *     An id the server does not know yet is registered only for a vehicle
+ *     that can really be there (security fix 2026-11-02; before it, any kind
+ *     was registered wherever the client said, so a modified client could
+ *     conjure a helicopter or a drone next to itself):
+ *       - a decor parked car: the id is park_<kind>_<x10>_<z10> naming a spot
+ *         in contract/ids/parked_cars.json with that kind allowed there, and
+ *         the reported pose is within PARKED_SPOT_DRIFT_M of the spot;
+ *       - a hijacked NPC traffic car (traffic_*, client-simulated, so the
+ *         server cannot know where one is): a street kind only, with the
+ *         steal rules below;
+ *       - a pass vehicle (roadstar, drone) of an entitled player.
+ *     Anything else: VEHICLE_KIND_NOT_ALLOWED (a kind no client may register,
+ *     e.g. heli) or VEHICLE_NOT_REGISTRABLE (no such parked car there).
  *     Stealing: an NPC traffic car (id `traffic_*`) or another player's parked
  *     vehicle needs `steal: true` (else STEAL_REQUIRED). It adds heat, one steal
  *     per 15 s per player, never transfers ownership (a player's vehicle goes back
@@ -48,7 +60,7 @@ import {
   VEHICLE_MAX_Y_M,
   type VehicleKind,
 } from '../../../contract/realtime/messages.js';
-import { authenticateJoin } from '../player.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { createLogger } from '../../shared/logger/logger.js';
 import {
   POS_HASH,
@@ -59,6 +71,7 @@ import {
   encodePos,
   getIslandGeometry,
   getParkingBays,
+  parkedSpotFor,
   TokenBucket,
   type IslandPos,
   type ParkingBay,
@@ -78,6 +91,54 @@ const MIN_Y_M = -20;
 const WATER_MARGIN_M = 50;
 /** A stored street position older than this cannot be used to enter or be hit. */
 const POS_STALE_MS = 5_000;
+/** How far a registered parked car's reported pose may be from its decor spot (a bumped car stays enterable). */
+export const PARKED_SPOT_DRIFT_M = 3;
+/**
+ * The street kinds: what a decor parked car or an NPC traffic car can be (contract/ids/parked_cars.json, the client's
+ * traffic mix and IslandProtocol.IsPublicVehicle). Only these are registered from a parked or traffic id.
+ */
+export const STREET_KINDS: ReadonlySet<string> = new Set([
+  'compact',
+  'suv',
+  'sports',
+  'moped',
+  'sedan',
+  'taxi',
+  'police',
+  'pickup',
+  'van',
+  'bike',
+]);
+/** Kinds the vehicle.hovercar pass unlocks: the hovercar and the quadcopter (one entitlement unlocks both). */
+export const PASS_KINDS: ReadonlySet<string> = new Set(['roadstar', 'drone']);
+
+/**
+ * Why a vehicle the server does not know yet may not be registered, or null when it may (the pass check for
+ * PASS_KINDS and the reach and steal checks run separately).
+ * @param id - The client's vehicle id.
+ * @param kind - The kind the client claims.
+ * @param x - Reported island x.
+ * @param z - Reported island z.
+ * @returns A refusal code, or null.
+ */
+export function registrationRefusal(
+  id: string,
+  kind: string,
+  x: number,
+  z: number,
+): 'VEHICLE_KIND_NOT_ALLOWED' | 'VEHICLE_NOT_REGISTRABLE' | null {
+  if (id.startsWith(TRAFFIC_ID_PREFIX)) {
+    return STREET_KINDS.has(kind) ? null : 'VEHICLE_KIND_NOT_ALLOWED';
+  }
+  if (PASS_KINDS.has(kind)) return null;
+  if (!STREET_KINDS.has(kind)) return 'VEHICLE_KIND_NOT_ALLOWED';
+  const hit = parkedSpotFor(id);
+  if (!hit || hit.kind !== kind) return 'VEHICLE_NOT_REGISTRABLE';
+  if (Math.hypot(x - hit.spot.x, z - hit.spot.z) > PARKED_SPOT_DRIFT_M) {
+    return 'VEHICLE_NOT_REGISTRABLE';
+  }
+  return null;
+}
 const HIT_RADIUS_M = 8;
 const HIT_MIN_SPEED_M_PER_S = 3;
 const VICTIM_COOLDOWN_MS = 1_500;
@@ -111,6 +172,8 @@ export interface VehicleCrimeHooks {
     source: 'steal_npc' | 'steal_player' | 'vehicle_hit',
     refId: string,
   ): Promise<void>;
+  /** Whether the player holds the vehicle.hovercar pass (tests replace it; default: entitlements + wallet sync). */
+  ownsHovercarPass?(userId: string): Promise<boolean>;
 }
 
 const defaultHooks: VehicleCrimeHooks = {
@@ -211,9 +274,10 @@ export class VehiclesRoom extends Room {
    *
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
-    const userId = await authenticateJoin(options);
-    this.ban.track(client, userId);
-    await this.ban.confirm(userId);
+    const identity = await authenticateJoinIdentity(options);
+    const userId = identity.userId;
+    this.ban.track(client, identity);
+    await this.ban.confirm(client);
     const view = new StateView();
     client.view = view;
     this.sessions.set(client.sessionId, {
@@ -265,12 +329,11 @@ export class VehiclesRoom extends Room {
     }
     if (await hooks.isJailed(s.userId)) return reject('JAILED');
     // Checked before the awaits and again on the re-read vehicle below:
-    // a kind that becomes roadstar meanwhile was never verified.
-    const hovercarOk =
-      (this.state.vehicles.get(m.id)?.kind ?? m.kind) === 'roadstar'
-        ? await this.ownsHovercar(s.userId)
-        : null;
-    if (hovercarOk === false) return reject('NOT_ENTITLED');
+    // a kind that becomes a pass kind meanwhile was never verified.
+    const passOk = PASS_KINDS.has(this.state.vehicles.get(m.id)?.kind ?? m.kind ?? '')
+      ? await this.ownsHovercar(s.userId)
+      : null;
+    if (passOk === false) return reject('NOT_ENTITLED');
     const where = await this.readPos(s.userId);
     // Re-read everything after the await; another message may have landed.
     const now = Date.now();
@@ -286,7 +349,8 @@ export class VehiclesRoom extends Room {
     if (kind === 'roadstar' && this.isStealTarget(s.userId, m.id, traffic)) {
       return reject('VEHICLE_NOT_STEALABLE');
     }
-    if (kind === 'roadstar' && hovercarOk !== true) return reject('NOT_ENTITLED');
+    if (kind !== undefined && PASS_KINDS.has(kind) && passOk !== true)
+      return reject('NOT_ENTITLED');
     // Someone else's parked vehicle or an NPC traffic car is a steal.
     const stealing = this.isStealTarget(s.userId, m.id, traffic);
     const previousOwner = v && !traffic ? (this.meta.get(m.id)?.spawnedBy ?? null) : null;
@@ -314,6 +378,8 @@ export class VehiclesRoom extends Room {
       }
     } else {
       if (!m.kind || m.x === undefined || m.z === undefined) return reject('NOT_FOUND');
+      const refusal = registrationRefusal(m.id, m.kind, m.x, m.z);
+      if (refusal) return reject(refusal);
       const d = Math.hypot(m.x - where.x, m.z - where.z);
       if (d > reach) {
         return reject('VEHICLE_TOO_FAR', { fromReported: Math.round(d), posAgeMs: now - where.at });
@@ -407,6 +473,7 @@ export class VehiclesRoom extends Room {
    * calls GET /v1/me/entitlements.
    */
   private async ownsHovercar(userId: string): Promise<boolean> {
+    if (hooks.ownsHovercarPass) return hooks.ownsHovercarPass(userId);
     const [{ buildContext }, { hasEntitlement, syncFromWallet, HOVERCAR }] = await Promise.all([
       import('../../application/context.js'),
       import('../../application/entitlements.js'),

@@ -33,7 +33,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer, CloseAccount};
 use anchor_spl::associated_token::AssociatedToken;
 
-declare_id!("FKvuRNUxGgijeD8P4varsnzBiLduCWKMhSLQp5fQsMfz");
+declare_id!("HiFDmQ2B5KvNAybywbvNhxSnV6empFVvHND2U2oGEb5d");
 
 pub mod errors;
 pub use errors::EscrowError;

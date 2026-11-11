@@ -74,16 +74,15 @@ function makeCtx(): import('./context.js').AppContext {
 }
 
 describe('video calls service', () => {
-  it('startVideoCall 1:1 writes room + speakers + tokens', async () => {
+  it('startVideoCall 1:1 writes room + speakers without minting unbound media tokens', async () => {
     const ctx = makeCtx();
     const { startVideoCall } = await import('./video-calls.js');
     const out = await startVideoCall(ctx, hostId, { participantUserIds: [p1] });
     expect(out.call.hostUserId).toBe(hostId);
     expect(out.call.participantUserIds).toEqual([p1]);
     // B3 fix: only caller's token is returned
-    expect(out.token).toBeDefined();
-    expect(out.token.userId).toBe(hostId);
-    expect(out.token.canPublish).toBe(true);
+    expect(out).not.toHaveProperty('token');
+    expect(ctx.livekit.mintRtcToken).not.toHaveBeenCalled();
     // Room + 2 speakers persisted.
     const room = await pool.query<{ kind: string; status: string; max_speakers: number }>(
       `SELECT kind, status, max_speakers FROM voice_rooms WHERE room_id = $1`,
@@ -94,13 +93,13 @@ describe('video calls service', () => {
     expect(room.rows[0]?.max_speakers).toBe(8);
   });
 
-  it('startVideoCall group setup returns only caller token', async () => {
+  it('startVideoCall group setup leaves each credential to request its own grant', async () => {
     const ctx = makeCtx();
     const { startVideoCall } = await import('./video-calls.js');
     const out = await startVideoCall(ctx, hostId, { participantUserIds: [p1, p2] });
     // B3 fix: only the host's token is returned
-    expect(out.token).toBeDefined();
-    expect(out.token.userId).toBe(hostId);
+    expect(out).not.toHaveProperty('token');
+    expect(ctx.livekit.mintRtcToken).not.toHaveBeenCalled();
   });
 
   it('startVideoCall refuses more than 8 participants', async () => {

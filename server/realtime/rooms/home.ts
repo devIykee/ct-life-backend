@@ -14,8 +14,7 @@
 import { Room, Client } from 'colyseus';
 import { MapSchema } from '@colyseus/schema';
 import { HomeState, PlayerState } from '../../../contract/realtime/states.js';
-import { createJwtIssuer } from '../../shared/auth/jwt.js';
-import { loadConfig } from '../../shared/config/config.js';
+import { authenticateJoinIdentity } from '../player.js';
 import { HOME_ACCESS_CHANNEL } from '../../application/home-units.js';
 import { BanGuard } from '../ban-guard.js';
 import { OUTFIT_CHANNEL } from '../movement.js';
@@ -124,22 +123,10 @@ export class HomeRoom extends Room {
    * @param options - Join options; only `token` is trusted.
    */
   override async onJoin(client: Client, options: Record<string, unknown>): Promise<void> {
-    const tokenStr = String(options.token ?? '');
-    if (tokenStr === '' && !loadConfig().auth.devAuthEnabled) {
-      throw new Error('AUTH_REQUIRED');
-    }
-    let userId = String(options.userId ?? '');
-    if (tokenStr !== '') {
-      try {
-        const claims = await createJwtIssuer().verifyAccess(tokenStr);
-        userId = claims.sub;
-        this.ban.track(client, userId); // before any await
-      } catch (err) {
-        throw new Error('INVALID_TOKEN', { cause: err });
-      }
-    }
+    const identity = await authenticateJoinIdentity(options, String(options.userId ?? ''));
+    const userId = identity.userId;
     if (userId === '') return;
-    this.ban.track(client, userId);
+    this.ban.track(client, identity);
 
     // The door's rule applies to the room too: without this, anyone who knew
     // a home id could join past a locked door. A home without a door stays open.
@@ -162,7 +149,7 @@ export class HomeRoom extends Room {
     player.look = profile.look;
     player.outfit = (await loadPlayerState(userId)).outfit;
     player.anim = 'loco_idle';
-    await this.ban.confirm(userId);
+    await this.ban.confirm(client);
     this.userBySession.set(client.sessionId, userId);
     this.state.players.set(client.sessionId, player);
     client.send('welcome', {

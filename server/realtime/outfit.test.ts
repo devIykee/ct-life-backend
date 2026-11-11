@@ -10,7 +10,10 @@ import { applyOutfitMessage } from './player.js';
 
 vi.mock('./player.js', async (orig) => ({
   ...(await orig<typeof import('./player.js')>()),
-  authenticateJoin: async (o: { userId: string }) => o.userId,
+  authenticateJoinIdentity: async (o: { userId: string }) => ({
+    userId: o.userId,
+    credential: null,
+  }),
 }));
 
 const { StreetRoom } = await import('./rooms/street.js');

@@ -125,9 +125,10 @@ export class LikenessCheckoutService {
     );
     for (const intent of pending.rows) await this.get(userId, intent.id);
     const user = await this.db.withConnection((c) =>
-      c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id=$1', [userId]),
+      c.query<{ wallet: string | null }>('SELECT wallet FROM users WHERE id=$1', [userId]),
     );
     if (!user.rows[0]) throw new NotFoundError({ kind: 'user' });
+    if (!user.rows[0].wallet) throw new ForbiddenError({ reason: 'wallet_required' });
     const payer = new PublicKey(user.rows[0].wallet),
       recipient = new PublicKey(this.config.recipient),
       mint = new PublicKey(this.config.mint),

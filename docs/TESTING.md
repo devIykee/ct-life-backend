@@ -4,8 +4,8 @@
 
 ## Layers
 
-1. **Unit tests** — pure logic, no I/O. `pnpm test:unit`. Property-based where the math matters.
-2. **Integration tests** — real Postgres, real Redis, real LiveKit. `pnpm test:integration`. Run via the test job in `ci.yml` with services.
+1. **Default suite** — pure logic and the existing local database/HTTP/realtime suites. `pnpm test:unit`. Requires the migrated test Postgres and dedicated Redis used by CI. External opt-in tests remain gated.
+2. **Integration tests** — an explicit 14-file subset of existing tests using real Postgres and Redis, controlled LiveKit/chain responses, and loopback HTTP/DNS provider fixtures. `pnpm test:integration` runs Vitest directly; it does not delegate to absent workspace scripts.
 3. **Contract tests** — every response validated against `contract/openapi.yaml`; every realtime message validated against its schema. `pnpm contract:check`.
 4. **End-to-end with bots** — headless real-keypair clients on devnet. `pnpm test:e2e`. Gated by `ENABLE_E2E=1`.
 5. **Anchor tests** — the `ct_escrow` program on `solana-test-validator`. `pnpm anchor:test`.
@@ -24,9 +24,12 @@
 
 ## Integration
 
-- Uses a dedicated test database (`ctlife_test`) and a dedicated Redis. The CI job creates them per run.
-- Tests for every Phase 1 endpoint including every error code and idempotent replay (M2 gate).
-- Realtime tests with `@colyseus/testing` (M2 gate): join, welcome, move validation, sit/stand, emote rate limit, say filter, block, reconnection, venue overflow.
+- Requires a migrated dedicated test database (`DATABASE_URL` and `TEST_DATABASE_URL`) and dedicated `REDIS_URL`. The integration CI job creates PostgreSQL and Redis per run. Never point it at production or another developer's database.
+- Reuses the six HTTP suites for SIWS web login, authorization, economy orders, RTC, street voice and paid calls; the wallet-auth, economy-order and media-access application suites; ledger transaction tests; and street-voice/project-HQ room tests.
+- Provider boundaries use the existing likeness-artifact and Tripo tests with local HTTP and DNS fixtures. LiveKit and chain responses are controlled doubles. These tests do not prove live provider acceptance or transaction settlement on a chain.
+- Realtime tests drive room lifecycle methods and verify actual Redis/Postgres effects; they do not run websocket matchmaker end-to-end clients.
+- The command forces `NODE_ENV=test`, `RUN_MAINNET_TESTS=0` and `ENABLE_E2E=0`, keeps the shared serial per-file isolation, and retains Vitest's failure for an empty test selection. It does not sign or send wallet transactions, deploy, or invoke external smoke/nightly jobs.
+- The same test files also run in the default suite; there is no copied test implementation. The integration job currently runs on push/manual workflow events, not pull requests. Manually dispatching the complete `ci.yml` also enables its external nightly job, so it is not an isolated integration-only action.
 
 ## Contract
 

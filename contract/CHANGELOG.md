@@ -1,3 +1,137 @@
+## 2026-11-02 - Vehicles room: no conjured vehicles (security fix)
+
+No migration. Server-side fix; the shipped Unity client already sends what the new checks need.
+
+- **The bypass.** `vehicle_enter` with an id the server did not know registered a vehicle of any `kind` wherever the client said (within reach of the player). Only `roadstar` was gated (pass). A modified client could conjure a helicopter (`heli`, 60 m/s, up to 214 m) or a quadcopter (`drone`) next to itself without the pass, or any street car under any id anywhere.
+- An unknown id now registers only:
+  - a decor parked car: `park_<kind>_<round(x*10)>_<round(z*10)>` (the client's `IslandProtocol.ParkedId`) naming a spot in the new FE-owned **`contract/ids/parked_cars.json`** (283 spots, exported from the baked island cells by the frontend's `tools/world/export_parked_cars.py`) with that kind listed for it, and the reported pose within 3 m of the spot (`PARKED_SPOT_DRIFT_M`); the player must still be within the enter reach of it (`VEHICLE_TOO_FAR`);
+  - a hijacked NPC traffic car (`traffic_*`) of a street kind (compact, suv, sports, moped, sedan, taxi, police, pickup, van, bike), with the steal rules unchanged. NPC traffic is client-simulated, so the server cannot know where one is;
+  - a pass vehicle of an entitled player.
+- `drone` now needs `vehicle.hovercar` like `roadstar` (`NOT_ENTITLED`), for unknown ids and server-owned bays alike; the client already required it ("one entitlement unlocks both").
+- New realtime codes on `vehicle_enter`: `VEHICLE_KIND_NOT_ALLOWED` (403; e.g. `heli`, or a non-street kind under a `traffic_*` id) and `VEHICLE_NOT_REGISTRABLE` (403; no such parked car at that spot, a kind it does not park, or a pose too far from it).
+- Unchanged: entering a vehicle the server already knows (server-owned bays from `parking.json`, cars already registered), the enter radius, steals, heat, the 2-per-player and 400-total caps.
+- Ops: re-export `parked_cars.json` whenever the island is rebuilt (the frontend's EditMode test `ParkedCarsContractTests` fails when it drifts); a stale file refuses entry to decor cars that moved.
+
+## 2026-11-02 - travel.json 1.2.1: bus stops on walkable ground, at their shelters
+
+No migration. Config only (Map Travel, capability `travel`). Found by the frontend's world smoke test (docs/progress/world-smoke-test.md in the frontend repo).
+
+- `contract/config/travel.json` `version` 1.2.0 -> 1.2.1. The schema is unchanged.
+- `stop_mountain` moves from (x -85.33, z 384.68) to (x -87.3, z 385.4). The mountain road has no sidewalk, so the old point was on the verge, 2.1 m off the walkable NavMesh. NPCs could not path to it. Its yaw is unchanged.
+- The two islandgen-built shelter stops move to where the shelters stand on the current island: `stop_timeline_shelter1` (252.45, 51.06, yaw 189.5) -> (263.55, 49.96, yaw 181.5) and `stop_airdrop_farm_shelter2` (435.28, 64.62, yaw 358.3) -> (431.39, 64.47, yaw 357.3). The old points were 11.2 m and 3.9 m from them.
+- Every stop stays in its district's street room: `stop_mountain` is inside the polygon, and the two shelters are 19.2 m and 24.2 m outside it, within the 30 m street border (`STREET_BORDER_M`). `GET /config` `travel.busStops` returns the new points. The bus picks up within `busStopRadiusM` of them.
+
+## 2026-11-02 - travel.json 1.2.0: two downtown helipads
+
+No migration. Config only; behind `travelHeli` (off).
+
+- `contract/config/travel.json` `version` 1.1.0 -> 1.2.0. `heliPads` gains `pad_genesis_park` (timeline, x 24.0, z 66.0, Genesis Park's open lawn) and `pad_boardwalk` (boardwalk, x 67.0, z -233.0, the boardwalk south of CT Jail). Both are inside the street room of their district. The schema is unchanged.
+- Flights still land on the public pad nearest the destination door, so downtown flights now land within 150 m of it: Times Square 82 m, Discord Heights 113 m, Spaces Studio 123 m (pad_genesis_park), CT Jail 132 m (pad_boardwalk). They used to land at pad_breakpoint, 262 to 513 m away. Trenches venues and the Prediction Pit now land at pad_boardwalk; Audit Row, VC Row and the Ore Refinery at pad_genesis_park.
+- `GET /config` `travel.heliPads` lists five pads.
+
+## 2026-11-02 - Map Travel phase 3: helicopter rides for pad homes (capability travelHeli)
+
+Migration 145 (`travel_trips.mode` accepts `heli`). Additive; dark behind the new capability `travelHeli` (off; it also needs `travel`). See docs/TRAVEL.md "Helicopter".
+
+- New capability `travelHeli`; `GET /config` `capabilities.features` gains the key.
+- `contract/config/travel.json` 1.1.0: `modes.heli` (flat 15000 cents, `baseSec` 10, `speedMps` 80, `pickup: pad`), `heliPadRadiusM` 15, `heliHomeKinds` [penthouse, marina_villa], `heliPads` (3 public pads), `homePads` (one per pad-home kind). Schema updated; `modes.*.pickup` accepts `pad`.
+- `GET /travel/quote`: while `travelHeli` is on, `modes` gains `{mode: heli, available, reason?, reasonMessage?, fareCents, durationSec, arrival {district, x, z, yaw (radians, facing the door)}, pickup? {id, x, z} (when available), stop? {id, x, z, distanceM} (with NOT_AT_PAD)}`. New reasons `NEEDS_HELIPAD`, `NOT_AT_PAD`; `TOO_CLOSE` when standing on the landing pad. `stop.yaw` is now optional (bus stops only).
+- `POST /travel/trips` accepts `mode: heli` (`503 CAPABILITY_OFF {capability: travelHeli}` while off; `403 NEEDS_HELIPAD`; `409 TRAVEL_NOT_AT_PAD {radiusM, pad {id, x, z}, distanceM}`). A heli `TravelTrip` has `mode: heli`, `origin` = the pickup pad, `arrival` = the landing pad, `pickup {id, x, z}` (no yaw; `pickup.yaw` is now optional). The ticket and the street-room arrival place the player on the landing pad.
+- `GET /config` `travel` gains `heli` (bool), `heliPadRadiusM`, `heliHomeKinds`, `heliPads`, `homePads` and `modes.heli`.
+- New error codes: `NEEDS_HELIPAD` (403), `TRAVEL_NOT_AT_PAD` (409).
+
+## 2026-11-01 - districts.json 1.1.0 (FE-owned): Builder Hills west tab for the Ore Refinery
+
+No migration. Additive bounds change, generated by the frontend island export.
+
+- `contract/ids/districts.json` `version` 1.0.0 -> 1.1.0. `districts.builder_hills` gains a west tab (island x 100..209, z 270..350; 4 points appended to its polygon) so the Ore Refinery door, its Map Travel arrival point and its access road are inside a street room. Nothing else in the file changes.
+- Street room bounds there change from countryside (no street room held a player there) to `builder_hills`. The vehicles room and every other district are unchanged.
+- Map Travel: `ore_refinery` is now served (it was quoted `NOT_SERVED`, walk only).
+
+## 2026-11-01 - Map Travel phase 1: server-priced bus and taxi rides (capability travel)
+
+Migration 144 (`travel_trips`). Additive; dark behind the new capability `travel` (off). See docs/TRAVEL.md.
+
+- New capabilities `travel` and `travelInstantGoOff`; `GET /config` `capabilities.features` gains both keys. `travelInstantGoOff` (off = the classic instant "Go" stays offered) only tells the client to hide instant Go while `travel` is on; nothing enforces it server-side yet.
+- New `contract/config/travel.json` (+ schema): fares, ride times, net-worth unlocks, cooldowns, quote and ticket windows, `arrivalOffsetM`, `gatedBooking`, `walk.speedMps` and 11 `busStops`. `GET /config` gains `travel` (walk speed, stops, mode rules; null while off).
+- New `GET /travel/quote?to=<venueId>` -> `{quoteId, to, toKind, distanceM, serverNow, expiresAt, cashCents, from, arrival {district, x, z, yaw (radians)}, gate {open, code?, message?}, modes [{mode: walk|bus|taxi, available, reason?, reasonMessage?, fareCents, durationSec, stop?, unlockNetWorthCents?, retryAfterSec?}]}`. Reasons: `TOO_CLOSE`, `NOT_AT_STOP`, `INSUFFICIENT_CASH`, `LOCKED`, `COOLDOWN`, `TRAVEL_IN_PROGRESS`, `VENUE_GATED`, `NOT_SERVED`.
+- New `POST /travel/trips {quoteId, mode: bus|taxi}` (Idempotency-Key) -> `201 TravelTrip {tripId, status, mode, to, fareCents, cashCents, departAt, arriveAt, expiresAt, serverNow, origin, arrival, pickup?}`; ledger `travel_fare`. New `GET /travel/trips/current` -> `{trip | null, serverNow}`; new `POST /travel/trips/{id}/cancel` (Idempotency-Key) -> `{tripId, refundedCents, cashCents}`; ledger `travel_refund`.
+- `street` join options accept `tripId`: the single-use arrival ticket anchors and shows the player at the arrival point; `welcome` gains `travel {tripId, x, z, yaw}`. Join refusals (`ServerError`): 4409 `TRAVEL_IN_TRANSIT`, 4410 `TRAVEL_TICKET_INVALID`, 4425 `TRAVEL_NOT_ARRIVED` (`TravelJoinError` in realtime/messages.ts). Venue rooms unchanged.
+- New worker `travel-sweep` (every 30 s): refunds trips whose ticket expired unused more than 60 s ago, once.
+- Ride XOR refund (security review): cancel is allowed only before `arriveAt - arriveEarlySec` and takes the ticket first (else `409 TRAVEL_NOT_CANCELLABLE {reason: ticket_gone | not_booked}`); an arrival is placed only after a guarded update flips the trip to `arrived` (else `4410`, no placement); the ticket is valid until just before `expiresAt`; booking re-checks CT Jail and the Barn in the transaction.
+- New error codes: `TRAVEL_IN_PROGRESS` (409), `TRAVEL_COOLDOWN` (429, `Retry-After`), `TRAVEL_NOT_IN_WORLD` (409), `TRAVEL_NOT_AT_STOP` (409), `TRAVEL_LOCKED` (403), `TRAVEL_NOT_CANCELLABLE` (409), `QUOTE_EXPIRED` (409), `VENUE_GATED` (403), `TRAVEL_IN_TRANSIT` (409), `TRAVEL_TICKET_INVALID` (410), `TRAVEL_NOT_ARRIVED` (425).
+
+## 2026-11-01 - spots.json 1.3.0: spot positions and walkable areas from the client venue prefabs
+
+No migration. Contract ids only (FE-owned `spots.json`). No spot id renamed or removed; kinds and anims unchanged.
+
+- Every spot of a venue with a shipped client prefab now sits on that prefab's spot anchor (x/z within 0.05 m, rotY = the anchor's facing). The client always positioned players and NPCs from the anchors, so only the server's copy was stale, for the three oldest venues. **52 spots moved** (median 3.0 m, max 18.3 m `terminal_cafe.terminal_5`): `timeline_square` 9 (compact square: `center` (0, -5.6), `square_center` (0, -7), `crier_1..3`, `entrance` (0, -10.9), `exit` (0, -11.9), `pixel_wall`, `billboard_view`), `spaces_studio` 26 (`stage_1..10` and `seat_1..20` on the arcs round the round stage) and `terminal_cafe` 17 (compact cafe: terminals, tables, counter, `entrance` (0, -5), `exit`, `center`, `pulse_screen`). 43 rotY values changed with them, plus `timeline_square.bench_1..6`, which only turn (they now face the fountain; the old values were above 2 pi).
+- `walkable`: `timeline_square` was still the old 40 x 30 m layout; now the real 23 x 22.2 m plaza (x -11.5..11.5, z -12.4..9.8) plus the street to the town hall steps (x -3.5..3.5, z 9.8..12). `terminal_cafe` 24 x 18 m -> 17 x 12 m (x -8.5..8.5, z -6..6). Every other venue already matched its NavMesh. Venue `move` bounds, the join fallback and the rejoin check use these rectangles.
+- **68 spots added**: anchors the prefabs have and the server did not know, so a player's `sit` on them got `SPOT_NOT_FOUND`. `spaces_studio` greenroom_1..2; `discord_heights` sofa_1..4; `audit_row` audit_desk_1..4; `vc_row` pitch_1..6, partner_desk; `hackathon_house` desk_1..8, couch_1..2; `conference_hall` stage_speaker, seat_1..12, booth_1..2; `ratio_arena` corner_red, corner_blue, bleacher_1..8; `airdrop_fields` bench_1..2; `sybil_barn` hay_1..2; `cabal_lounge` booth_1..6; `ct_jail` bunk_1..4, kyc_desk, mugshot. They come after each venue's existing spots, so NPC home spots (round-robin over stand/npc spots in file order) do not change. New NPC-standable spots: `conference_hall.booth_1/2`, `ct_jail.kyc_desk` (npc), `ratio_arena.corner_red/blue`, `ct_jail.mugshot` (stand); of these venues only ratio_arena spawns NPCs, and its two chain_tribalists keep `center` and `spot_1` as homes and can now also wander to the two corners.
+- `dubai_marina`, `club_liquidity` and `the_trenches` have no client prefab yet (the client builds a greybox from these spots); their spots are unchanged and marked with a venue-level `_note`.
+- The client's `VenueSpotContractTests` now fails when a contract spot is more than 0.05 m from its anchor (or turned, or another kind/anim), when a prefab anchor is missing from the contract, or when a venue's walkable rectangles do not hold its NavMesh. The frontend regenerates this file with `tools/venues/sync_contract_spots.py`.
+
+## 2026-11-01 - Venue gates in venues.json; Yacht Club and Penthouse Row gated
+
+No migration. Stacked on the phase-2 NPC change (which adds the three island venues).
+
+- `ids/venues.json` 1.2.0: optional `access` per venue, the entry gate `GET /v1/venues/{venueId}/access` checks. `{gate: "net_worth", minNetWorthCents, orHomeKinds?}`, `{gate: "membership"}` (VIP Lounge invite) or `{gate: "jailed"}`. No `access` = open. The server reads the gate from this file instead of a hard-coded list; dubai_marina, cabal_lounge and sybil_barn behave exactly as before.
+- `yacht_club`: net worth >= $100,000 (10000000 cents), like `dubai_marina`. `penthouse_row`: the same bar, or a live (`active`/`overdue`) `penthouse` or `marina_villa` home, so residents can always reach their own building. `checker_kiosk` stays open.
+- `GET /v1/venues/{venueId}/access` gains `orHomeKinds` (string array, `[]` unless the gate lets residents in). Refusals keep the existing codes (`NET_WORTH_TOO_LOW` with `requiredNetWorthCents`).
+- **Security fix:** the `venue` room now enforces the same gate on join. Before, only the REST check refused, and the room admitted anyone (dubai_marina, cabal_lounge and sybil_barn included). A player who fails the gate is refused with Colyseus `ServerError` **4403** and the access `reasonCode` as the message (`NET_WORTH_TOO_LOW`, `NOT_A_MEMBER`, `NOT_JAILED`). If the gate cannot be checked (database error), a gated venue is refused with **4503 `VENUE_GATE_UNAVAILABLE`** (fail closed). Open venues never look the player up.
+
+## 2026-11-01 - Normie waves at market peaks (LIVE_PHASE >= 2)
+
+No migration. Realtime only; stacked on the phase-2 NPC change.
+
+- `timeline_square`, `terminal_cafe` and `launchpad_tower` venue rooms spawn a wave of 2-4 `normie` NPCs while the market mood (the city room's `mood`, from `getMoodBps`) is at or above +300 bps. Never past 12 NPCs in the room or 4 normies (`archetypes.json` 1.3.0: `normie.maxPerInstance: 4`).
+- Their npcIds are `npc-normie-<n>`, new for every normie. They take free stand/npc spots first, then free seats and terminals (`animId` `act_sit` / `act_type`, held while they talk), never a spot a player or another NPC holds. Lines are `normie.<index>`, FOMO lines from the existing set.
+- They leave after 3-5 minutes, or all at once when the mood falls below +100 bps (with a "number went down" line). Leaving is `state: leave`, `spotId: <venue>.exit`, `animId: loco_walk`; the NPC is removed from `npcs` 5 s later. A player who `sit`s on a normie's seat gets it and the normie leaves.
+- One wave at a time, and at least 15 minutes between wave starts.
+
+## 2026-11-01 - Island venues yacht_club, penthouse_row, checker_kiosk; two more timeline_square NPC spots
+
+No migration. Contract ids only (FE-owned `spots.json`, BE `venues.json`); realtime roster follows.
+
+- `ids/venues.json` 1.1.0: adds the three built island venues that had no room: `yacht_club` (Yacht Club), `penthouse_row` (Penthouse Row) and `checker_kiosk` (Checker Kiosk), all `kind: social`, 50 clients, 10 Hz. Their island placements were already in `districts.json`. `GET /venues/{id}/access` treats them as open (no gate).
+- `ids/spots.json` 1.2.0: spot sets for the three venues, copied from the client's venue prefab anchors (`yacht_club` 15 spots incl. `bartender` npc, `center` and `gangway` stand; `penthouse_row` 13; `checker_kiosk` 9, `center` at z -0.8). `timeline_square` gains `crowd_1` (6.5, 1.0) and `crowd_2` (-6.5, 1.0), kind `standing`, so its 8 phase-2 NPCs each get a home spot of their own (it had 6). Additive only; no id renamed or moved.
+- `ids/archetypes.json` 1.2.0: `fake_rich_larp` and `dubai_relocator` `venueId` `dubai_marina` -> `yacht_club`. The venue room spawns them there at `LIVE_PHASE >= 2`; `dubai_marina` spawns no NPCs.
+
+## 2026-11-01 - Phase-2 NPCs spawn (LIVE_PHASE >= 2)
+
+No migration. Realtime and config only. At `LIVE_PHASE` 1 every venue spawns exactly what it did before.
+
+- Venue rooms now spawn the phase-2 NPCs of the spec table while `LIVE_PHASE` is 2 or more: `cabal_lounge` alpha_caller, cabal_insider; `launchpad_tower` rug_dev, sniper_bot; `audit_row` sleuth, auditor; `vc_row` vc; `airdrop_fields` farmer, sybil_farmer; `discord_heights` drainer, community_mod; `prediction_pit` prediction_shark_npc; `ratio_arena` two chain_tribalist (`npc-0-chain_tribalist`, `npc-1-chain_tribalist`); `hackathon_house` doxxed_founder; `yacht_club` fake_rich_larp, dubai_relocator; `timeline_square` + thread_boy, engagement_farmer, laser_eyes_maxi (5 -> 8); `terminal_cafe` + ai_agent on `terminal_cafe.center` (8 -> 9). The new NPCs come after the phase-1 NPCs, so phase-1 npcIds and home spots do not change. At most 12 NPCs per venue instance. `normie` does not spawn yet (spec: waves at market peaks).
+- The new NPCs idle on a stand/npc spot of the venue, walk to a free one now and then (`wander`, `spotId` always a spot of that venue), and `talk` every 20-40 s. Their `lineId` is `<archetypeId>.<index>` into `npc_lines.<archetypeId>`, only lines without `{slots}`; `animId` and `lineId` stay the same for the whole state.
+- Brain ids `vc_npc` and `builder_npc` are now `vc` and `doxxed_founder` (the registry ids); the old ids still create the same brains. Neither was ever spawned.
+- `ids/archetypes.json` 1.1.0: adds `laser_eyes_maxi` (timeline_square, phase 2) and `chain_tribalist` (ratio_arena, phase 2, `maxPerInstance: 2`). `venueId` fixes: farmer and sybil_farmer `airdrop_farm` -> `airdrop_fields`, doxxed_founder `builder_hills` -> `hackathon_house`, normie `market_room` -> `terminal_cafe`. `ids/archetypes.json` 1.2.0 (entry above): fake_rich_larp and dubai_relocator `dubai_marina` -> `yacht_club`.
+- `config/npc_lines.json` 1.1.0: line sets for the 21 phase-2 archetypes (32 lines each, from the FE world-life proposal; parody names only, approved display names: VIP Lounge, Discord HQ, Debate Arena, News Reader, police).
+
+## 2026-11-05 - Credential-scoped media grants and revocation
+
+Migration 155 adds the durable `media_access_grants` registry; apply it before the updated API and media worker. Coordinate compatible clients and legacy-token retirement as described in [MEDIA-ACCESS.md](../docs/MEDIA-ACCESS.md).
+
+- `POST /rtc/token` returns `identity` as `ct1:<player UUID>:<login identity UUID>:<credential version>` and the canonical `roomName`. The raw identity keys transport resources; clients use the embedded player UUID for profiles, avatars and player-level mute state.
+- Initial tokens have a maximum lifetime of 600 seconds; existing shorter room-specific lifetimes remain. The backend registers grants under the credential-removal account lock and rejects revoked generations before issuance.
+- Credential removal, join webhooks and the durable worker enforce exact credential identities. First cutoffs receive priority; successful cutoffs retain their refresh tail in the fair maintenance queue. Current room access is checked alongside credential status, and retained active sibling credentials preserve player-level presence.
+- LiveKit Cloud cached-token rejection and coordinated legacy-token retirement require provider acceptance. Self-hosted removal is post-admission enforcement; short token expiry alone does not terminate connected media.
+
+## 2026-11-05 - Wallet connector compatibility and purchase recovery
+
+- `GET /economy/orders` adds owner-scoped cursor history with up to 50 orders per page, including verified payment/refund obligations. It does not poll chains or initiate payment. Clients can recover purchases after local storage loss.
+- Wallet-link challenges accept `nearCallbackMode: none | uri` for NEAR only (default `uri`). Migration152 preserves existing Some(uri) challenges and stores the exact NEP-413 callback option. In-page connectors request `none`; verification cannot override that choice. `nearSignMessage.callbackUrl` and `nearCallbackUrl` can be null.
+
+## 2026-11-05 - Universal economy foundation
+
+Additive migrations 150 and 151; existing Cash, SIWS and Solana feature endpoints retain their contracts.
+
+- Verified identity links: `GET /me/wallet-links`, `POST /me/wallet-links/challenges`, `POST /me/wallet-links/verify`, `DELETE /me/wallet-links/{id}`. These proofs grant no spending permission. Primary Solana wallet only; EVM EOAs and NEAR Ed25519 FullAccess keys.
+- Native-asset catalog and immutable orders under `/economy`. Initial assets are RH WIF, native NEAR, native SOL and ORE. Prices are positive integer strings with asset-specific limits. No real prices or treasury addresses are seeded.
+- `POST /economy/orders` permanently deduplicates a player UUID key. Payment and refund submissions are naturally idempotent by globally unique chain event; pending responses are never cached as completion. GET reconciles one pending attempt with a separate per-player rate limit.
+- `paymentReceipts` acknowledges the exact verified incoming transaction. A successful HTTP response or an already-fulfilled order alone does not acknowledge an additional submitted transaction. `refundDueReceiptIds` tracks additional exact-price payments independently of the original entitlement.
+- Cancellation and actual late payments retain verified refund obligations. Refund endpoint verifies an already-sent merchant refund; it does not sign or send money. Wrong-amount external transfers remain an operator investigation case.
+- Errors: `ECONOMY_CONFLICT` (409); `WALLET_LINK_PRIMARY_REQUIRED` (409), `WALLET_LINK_CHALLENGE_INVALID` (401), `WALLET_LINK_CHALLENGE_LIMIT` (429), `WALLET_LINK_PROOF_INVALID` (401), `WALLET_LINK_IDENTITY_CONFLICT` (409).
+
 ## 2026-11-01 - Street voice: one proximity room per street instance (capability streetVoice)
 
 No migration. Dark behind the new capability `streetVoice` (off). See docs/STREET-VOICE.md.

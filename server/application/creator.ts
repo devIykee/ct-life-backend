@@ -15,7 +15,12 @@
  * config — that field lives here in the M4 slice).
  */
 import { runInTransaction } from '../shared/db/uow.js';
-import { ConflictError, NotFoundError, ValidationFailedError } from '../shared/domain/errors.js';
+import {
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from '../shared/domain/errors.js';
 import { uuidv7 } from '../shared/domain/uuid.js';
 import type { AppContext } from './context.js';
 import { isCapabilityOn } from './capabilities.js';
@@ -265,9 +270,12 @@ export async function putCreatorMode(
     throw new ValidationFailedError({ reason: 'max_minutes', min: 1, max: CREATOR_MAX_MINUTES });
   }
   return ctx.db.withConnection(async (c) => {
-    const u = await c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [userId]);
+    const u = await c.query<{ wallet: string | null }>('SELECT wallet FROM users WHERE id = $1', [
+      userId,
+    ]);
     const wallet = u.rows[0]?.wallet;
     if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: userId });
+    if (mode.enabled && !wallet) throw new ForbiddenError({ reason: 'wallet_required' });
     const handle = `c_${userId.replace(/-/g, '').slice(0, 20)}`;
     const r = await c.query<{ enabled: boolean; rate_per_min_usdc: string; max_minutes: number }>(
       `INSERT INTO creator_profiles

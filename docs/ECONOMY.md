@@ -1,5 +1,7 @@
 # Economy
 
+The existing Cash implementation is documented below. The approved native-asset transition and its current implementation are documented in [UNIVERSAL-ECONOMY.md](UNIVERSAL-ECONOMY.md); this page is not a restriction on that newer direction.
+
 > Every faucet and sink, tax brackets, rent, top-up packs and bonuses, every formula, and the latest `econ-sim` results. Every number in `contract/config/economy.json` is explained here.
 
 The full content lives in M2 onward. This is the table of contents and the rules that govern the numbers.

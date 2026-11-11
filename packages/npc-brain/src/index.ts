@@ -23,20 +23,81 @@ import type { Rng } from './rng.js';
 
 export type NpcState = 'idle' | 'wander' | 'goto' | 'act' | 'talk' | 'react' | 'follow' | 'leave';
 
-export type NpcArchetype =
-  | 'town_crier'
-  | 'giveaway_guy'
-  | 'reply_guy'
-  | 'perp_degen_npc'
-  | 'rekt_guy'
-  | 'wallet_tracker'
-  | 'doomposter'
-  | 'spaces_host'
-  | 'ore_miner'
-  | 'vc_npc'
-  | 'builder_npc'
-  | 'barista'
-  | 'patron';
+/** The phase-1 archetypes (spec NPC table, M2). */
+export const PHASE1_ARCHETYPES = [
+  'town_crier',
+  'giveaway_guy',
+  'reply_guy',
+  'perp_degen_npc',
+  'rekt_guy',
+  'wallet_tracker',
+  'doomposter',
+  'spaces_host',
+  'ore_miner',
+] as const;
+
+/**
+ * The phase-2 archetypes: every other NPC of the spec table, with the ids
+ * of `contract/ids/archetypes.json`. `vc` and `doxxed_founder` keep their
+ * own brains; the rest run the shared ambient brain until their spec
+ * loops land (Sybil clones, Rug Dev launches, Normie waves, ...).
+ */
+export const PHASE2_ARCHETYPES = [
+  'alpha_caller',
+  'cabal_insider',
+  'rug_dev',
+  'sniper_bot',
+  'sleuth',
+  'auditor',
+  'vc',
+  'farmer',
+  'sybil_farmer',
+  'fake_rich_larp',
+  'dubai_relocator',
+  'ai_agent',
+  'drainer',
+  'community_mod',
+  'thread_boy',
+  'engagement_farmer',
+  'normie',
+  'doxxed_founder',
+  'prediction_shark_npc',
+  'laser_eyes_maxi',
+  'chain_tribalist',
+] as const;
+
+/** Venue dressing: line-less NPCs that hold the spot the room gives them. */
+export const DRESSING_ARCHETYPES = ['barista', 'patron'] as const;
+
+/**
+ * Brain ids from before the registry ids existed (M5 #67). Nothing persists
+ * them (NPC state lives only in the room), but `createBrain` still accepts
+ * them and returns the brain of the registry id, whose `archetype` is the
+ * registry id.
+ */
+export const LEGACY_ARCHETYPE_ALIASES = {
+  vc_npc: 'vc',
+  builder_npc: 'doxxed_founder',
+} as const;
+
+/** An archetype id of `contract/ids/archetypes.json`. */
+export type RegistryArchetype =
+  | (typeof PHASE1_ARCHETYPES)[number]
+  | (typeof PHASE2_ARCHETYPES)[number]
+  | (typeof DRESSING_ARCHETYPES)[number];
+
+export type NpcArchetype = RegistryArchetype | keyof typeof LEGACY_ARCHETYPE_ALIASES;
+
+/**
+ * The registry id for an archetype, mapping the legacy brain ids.
+ * @param archetype - A registry id or a legacy brain id.
+ * @returns The registry id.
+ */
+export function canonicalArchetype(archetype: NpcArchetype): RegistryArchetype {
+  return archetype in LEGACY_ARCHETYPE_ALIASES
+    ? LEGACY_ARCHETYPE_ALIASES[archetype as keyof typeof LEGACY_ARCHETYPE_ALIASES]
+    : (archetype as RegistryArchetype);
+}
 
 export interface VenueCtx {
   /** The venue instance id. */
@@ -53,6 +114,12 @@ export interface VenueCtx {
   readonly followUserId: string | null;
   /** Free walkable spots the NPC may target. */
   readonly walkableSpots: readonly string[];
+  /**
+   * Spot ids (spots.json, `venueId.spotId`) of this venue's stand/npc spots
+   * that no other NPC holds right now. The ambient brain wanders between
+   * them. Optional: a room that does not fill it gets NPCs that stay home.
+   */
+  readonly standSpots?: readonly string[];
   /** NPC's "drained" state, set after a successful tap of Giveaway Guy. */
   readonly drainedUntilMs: number | null;
   /** True if the player who tapped Giveaway Guy paid. */
@@ -114,9 +181,33 @@ export interface NpcBrain {
   reset(): void;
 }
 
-/** Create a brain for the given archetype. */
-export function createBrain(archetype: NpcArchetype): NpcBrain {
-  switch (archetype) {
+/** Per-NPC options the room passes when it creates a brain. */
+export interface BrainOptions {
+  /**
+   * Line ids the NPC may speak, `<archetype>.<index>` into
+   * `npc_lines.<archetype>` (the room passes only lines without `{slots}`,
+   * since it does not fill lineParams yet). Used by the ambient brain;
+   * when empty it sends the archetype id and the client picks a line from
+   * that archetype's set.
+   */
+  readonly lineIds?: readonly string[];
+  /**
+   * The anim the NPC holds on its home spot when that is a seat or a
+   * terminal (`act_sit`, `act_type`). An ambient NPC with one stays on the
+   * spot and keeps the anim while it talks. Used by the normie waves.
+   */
+  readonly homeAnim?: string;
+}
+
+/**
+ * Create a brain for the given archetype.
+ * @param archetype - A registry id, or a legacy brain id (`vc_npc`, `builder_npc`).
+ * @param opts - Per-NPC options (line ids for the ambient brain).
+ * @returns A fresh brain in its starting state.
+ */
+export function createBrain(archetype: NpcArchetype, opts: BrainOptions = {}): NpcBrain {
+  const id = canonicalArchetype(archetype);
+  switch (id) {
     case 'town_crier':
       return new TownCrierBrain();
     case 'giveaway_guy':
@@ -135,13 +226,178 @@ export function createBrain(archetype: NpcArchetype): NpcBrain {
       return new SpacesHostBrain();
     case 'ore_miner':
       return new OreMinerBrain();
-    case 'vc_npc':
-      return new VcNpcBrain();
-    case 'builder_npc':
-      return new BuilderNpcBrain();
+    case 'vc':
+      return new VcBrain();
+    case 'doxxed_founder':
+      return new DoxxedFounderBrain();
     case 'barista':
     case 'patron':
       return new StationaryBrain();
+    // Phase-2 NPCs without a bespoke loop yet: idle, wander, talk.
+    case 'farmer':
+    case 'sybil_farmer':
+      return new AmbientBrain(id, opts.lineIds, { idleAnim: 'act_farm' });
+    case 'rug_dev':
+    case 'auditor':
+      return new AmbientBrain(id, opts.lineIds, { idleAnim: 'act_type' });
+    case 'thread_boy':
+    case 'engagement_farmer':
+    case 'alpha_caller':
+      return new AmbientBrain(id, opts.lineIds, { idleAnim: 'act_phone_scroll' });
+    case 'ai_agent':
+      // Trades from its terminal-cafe spot; it does not walk around.
+      return new AmbientBrain(id, opts.lineIds, { idleAnim: 'act_type', wanders: false });
+    case 'cabal_insider':
+    case 'sniper_bot':
+    case 'sleuth':
+    case 'fake_rich_larp':
+    case 'dubai_relocator':
+    case 'drainer':
+    case 'community_mod':
+    case 'normie':
+      return new AmbientBrain(
+        id,
+        opts.lineIds,
+        opts.homeAnim ? { idleAnim: opts.homeAnim, talkAnim: opts.homeAnim, wanders: false } : {},
+      );
+    case 'prediction_shark_npc':
+    case 'laser_eyes_maxi':
+    case 'chain_tribalist':
+      return new AmbientBrain(id, opts.lineIds);
+  }
+}
+
+// --- Ambient (shared phase-2 brain) ---------------------------------
+//
+// Loop: IDLE at the current spot -> every 20-40 s TALK one line from
+// the NPC's own set; between lines, sometimes WANDER to a free stand/npc
+// spot of the venue. Each output is held for its whole dwell, so the
+// anim, line and spot do not flicker between ticks. Event-driven loops
+// (spec table) replace this per archetype later.
+
+interface AmbientStyle {
+  /** Anim while idling (anims.json). Default `loco_idle`. */
+  readonly idleAnim?: string;
+  /** False keeps the NPC on its home spot. Default true. */
+  readonly wanders?: boolean;
+  /** Anim while talking (anims.json). Default `loco_idle`. */
+  readonly talkAnim?: string;
+}
+
+export class AmbientBrain implements NpcBrain {
+  state: NpcState = 'idle';
+  dwellUntilMs = 0;
+  followUserId: string | null = null;
+  /** The spot the NPC walked to; null means its home spot. */
+  private spotId: string | null = null;
+  private nextTalkAtMs = 0;
+  private current: BrainOutput | null = null;
+  private readonly lineIds: readonly string[];
+  private readonly idleAnimId: string;
+  private readonly wanders: boolean;
+  private readonly talkAnimId: string;
+
+  /**
+   * @param archetype - The registry id the brain reports.
+   * @param lineIds - Line ids it may speak (see BrainOptions.lineIds).
+   * @param style - Idle anim and whether it wanders.
+   */
+  constructor(
+    readonly archetype: RegistryArchetype,
+    lineIds: readonly string[] = [],
+    style: AmbientStyle = {},
+  ) {
+    this.lineIds = lineIds;
+    this.idleAnimId = style.idleAnim ?? 'loco_idle';
+    this.wanders = style.wanders ?? true;
+    this.talkAnimId = style.talkAnim ?? 'loco_idle';
+  }
+
+  /** Back to the starting state, for a re-spawn. */
+  reset(): void {
+    this.state = 'idle';
+    this.dwellUntilMs = 0;
+    this.followUserId = null;
+    this.spotId = null;
+    this.nextTalkAtMs = 0;
+    this.current = null;
+  }
+
+  /**
+   * Advance one tick.
+   * @param ctx - Clock, rng and the venue as the room sees it.
+   * @returns The output to apply to the NPC's state.
+   */
+  tick(ctx: TickCtx): BrainOutput {
+    // Hold the current output for its dwell; an idle gives way to a line
+    // that is due, so the lines keep their 20-40 s rhythm.
+    const talkDue = this.current !== null && ctx.nowMs >= this.nextTalkAtMs;
+    if (
+      this.current !== null &&
+      ctx.nowMs < this.dwellUntilMs &&
+      !(talkDue && this.state === 'idle')
+    ) {
+      return { ...this.current, dwellMs: this.dwellUntilMs - ctx.nowMs };
+    }
+    if (this.current === null) {
+      // First tick: stagger the first line so a venue's NPCs do not all
+      // speak on the same second.
+      this.nextTalkAtMs = ctx.nowMs + 5_000 + ctx.rng.int(15_000);
+      return this.enter('idle', this.spotId, null, this.idleAnimId, 5_000, ctx);
+    }
+    if (ctx.nowMs >= this.nextTalkAtMs) {
+      this.nextTalkAtMs = ctx.nowMs + 20_000 + ctx.rng.int(20_000); // 20-40 s
+      return this.enter('talk', this.spotId, this.pickLine(ctx.rng), this.talkAnimId, 4_000, ctx);
+    }
+    const free = this.wanders ? (ctx.venue.standSpots ?? []) : [];
+    const walkMs = 6_000;
+    const roomToWalk = this.nextTalkAtMs - ctx.nowMs > walkMs;
+    if (free.length > 0 && roomToWalk && this.state !== 'wander' && ctx.rng.chance(0.4)) {
+      const target = free[ctx.rng.int(free.length)] ?? null;
+      if (target !== null && target !== this.spotId) {
+        this.spotId = target;
+        return this.enter('wander', target, null, 'loco_walk', walkMs, ctx);
+      }
+    }
+    return this.enter('idle', this.spotId, null, this.idleAnimId, 5_000 + ctx.rng.int(5_000), ctx);
+  }
+
+  /**
+   * World events do not change the ambient loop yet.
+   * @param _event - The event.
+   * @param ctx - The tick context.
+   * @returns The current output.
+   */
+  notify(_event: NpcEvent, ctx: TickCtx): BrainOutput {
+    // No event reactions yet; keep doing what it is doing.
+    return this.current ?? idleAnim(ctx.venue, ctx.rng);
+  }
+
+  private enter(
+    state: NpcState,
+    spotId: string | null,
+    lineId: string | null,
+    animId: string,
+    dwellMs: number,
+    ctx: TickCtx,
+  ): BrainOutput {
+    this.state = state;
+    this.dwellUntilMs = ctx.nowMs + dwellMs;
+    this.current = {
+      state,
+      targetSpotId: spotId,
+      lineId,
+      emoteId: null,
+      animId,
+      dwellMs,
+      followUserId: null,
+    };
+    return this.current;
+  }
+
+  private pickLine(rng: Rng): string {
+    if (this.lineIds.length === 0) return this.archetype;
+    return this.lineIds[rng.int(this.lineIds.length)] ?? this.archetype;
   }
 }
 
@@ -964,15 +1220,15 @@ class OreMinerBrain implements NpcBrain {
   }
 }
 
-// --- VC NPC (M5 #67) --------------------------------------------------
+// --- VC (M5 #67; was `vc_npc`) -----------------------------------------
 //
 // Lives in VC Row. The VC trades between investors and project
 // founders: every 30-90 s the VC will "hunt" a project owner
 // (random richest player) and pitch a line. On a launch event
 // the VC immediately calls dibs.
 
-class VcNpcBrain implements NpcBrain {
-  readonly archetype = 'vc_npc' as const;
+class VcBrain implements NpcBrain {
+  readonly archetype = 'vc' as const;
   state: NpcState = 'idle';
   dwellUntilMs = 0;
   followUserId: string | null = null;
@@ -1045,15 +1301,15 @@ class VcNpcBrain implements NpcBrain {
   }
 }
 
-// --- Builder NPC (M5 #67) ---------------------------------------------
+// --- Doxxed Founder (M5 #67; was `builder_npc`) ------------------------
 //
-// Lives in Builder Hills. The builder is permanently wandering
+// Lives in Hackathon House. The builder is permanently wandering
 // between project HQs and occasionally shouting about hiring or
 // a launch. On a launch event the builder shouts and a brief
 // reaction emote plays.
 
-class BuilderNpcBrain implements NpcBrain {
-  readonly archetype = 'builder_npc' as const;
+class DoxxedFounderBrain implements NpcBrain {
+  readonly archetype = 'doxxed_founder' as const;
   state: NpcState = 'idle';
   dwellUntilMs = 0;
   followUserId: string | null = null;
@@ -1069,10 +1325,15 @@ class BuilderNpcBrain implements NpcBrain {
       const isWander = ctx.rng.int(2) === 0;
       this.state = isWander ? 'wander' : 'talk';
       this.dwellUntilMs = ctx.nowMs + 20_000 + ctx.rng.int(40_000);
+      // Real spot ids first (the room drops anything that is not a spot
+      // of this venue and keeps the NPC home).
+      const stand = ctx.venue.standSpots ?? [];
       const spots =
-        ctx.venue.walkableSpots.length > 0
-          ? ctx.venue.walkableSpots
-          : ['builder_hq_1', 'builder_hq_2'];
+        stand.length > 0
+          ? stand
+          : ctx.venue.walkableSpots.length > 0
+            ? ctx.venue.walkableSpots
+            : ['builder_hq_1', 'builder_hq_2'];
       const targetSpot = spots[ctx.rng.int(spots.length)] ?? null;
       return {
         state: this.state,

@@ -268,6 +268,88 @@ export function setIslandGeometry(g: IslandGeometry | null): void {
   geometry = g;
 }
 
+// --- Decor parked cars -------------------------------------------------
+
+/**
+ * A decor parked car on the island (`contract/ids/parked_cars.json`, frontend-owned, exported from the baked cells).
+ * A client may register a parked car only as `park_<kind>_<round(x*10)>_<round(z*10)>` at one of these spots, with
+ * one of its `kinds`. Island metres.
+ */
+export interface ParkedSpot {
+  readonly id: string;
+  readonly x: number;
+  readonly z: number;
+  readonly kinds: readonly string[];
+}
+
+let parkedSpots: readonly ParkedSpot[] | null = null;
+let parkedIndex: Map<string, ParkedSpot[]> | null = null;
+
+/** Grid key of a spot, in decimetres (the unit of the parked car id). */
+function decimetreKey(dx: number, dz: number): string {
+  return `${dx}_${dz}`;
+}
+
+/**
+ * The decor parked cars from `contract/ids/parked_cars.json`.
+ * @returns The spots; [] when the file has none (then no parked car can be registered).
+ */
+export function getParkedSpots(): readonly ParkedSpot[] {
+  if (parkedSpots) return parkedSpots;
+  const raw = JSON.parse(
+    readFileSync(join(process.cwd(), 'contract', 'ids', 'parked_cars.json'), 'utf8'),
+  ) as { spots?: ParkedSpot[] };
+  parkedSpots = (raw.spots ?? []).filter(
+    (s) =>
+      typeof s.id === 'string' &&
+      Number.isFinite(s.x) &&
+      Number.isFinite(s.z) &&
+      Array.isArray(s.kinds),
+  );
+  parkedIndex = null;
+  return parkedSpots;
+}
+
+/**
+ * Replace the spots (tests only).
+ * @param s - Spots to use, or null to re-read the file.
+ */
+export function setParkedSpots(s: readonly ParkedSpot[] | null): void {
+  parkedSpots = s;
+  parkedIndex = null;
+}
+
+/**
+ * The decor spot a parked car id names, if any: the id's decimetre coordinates must match a spot within 1 dm
+ * (rounding on either side) and the id's kind must be one the spot allows.
+ * @param id - A `park_<kind>_<x10>_<z10>` id.
+ * @returns The spot and the kind, or null when the id does not name a real decor car.
+ */
+export function parkedSpotFor(id: string): { spot: ParkedSpot; kind: string } | null {
+  const m = /^park_([a-z]+)_(-?\d{1,6})_(-?\d{1,6})$/.exec(id);
+  if (!m) return null;
+  const kind = m[1]!;
+  const dx = Number(m[2]);
+  const dz = Number(m[3]);
+  if (!parkedIndex) {
+    parkedIndex = new Map();
+    for (const s of getParkedSpots()) {
+      const k = decimetreKey(Math.round(s.x * 10), Math.round(s.z * 10));
+      const list = parkedIndex.get(k);
+      if (list) list.push(s);
+      else parkedIndex.set(k, [s]);
+    }
+  }
+  for (let ox = -1; ox <= 1; ox++) {
+    for (let oz = -1; oz <= 1; oz++) {
+      for (const s of parkedIndex.get(decimetreKey(dx + ox, dz + oz)) ?? []) {
+        if (s.kinds.includes(kind)) return { spot: s, kind };
+      }
+    }
+  }
+  return null;
+}
+
 // --- Parking bays ----------------------------------------------------
 
 /** A bay where the server keeps a parked vehicle. Island metres, yaw in radians. */

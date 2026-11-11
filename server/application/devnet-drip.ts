@@ -33,6 +33,7 @@ import { uuidv7 } from '../shared/domain/uuid.js';
 import {
   CapabilityOffError,
   ConflictError,
+  ForbiddenError,
   NotFoundError,
   RateLimitedError,
   ServerBusyError,
@@ -102,10 +103,11 @@ function nextUtcMidnight(now: Date): Date {
 
 async function walletOf(ctx: AppContext, userId: string): Promise<PublicKey> {
   const r = await ctx.db.withConnection((c) =>
-    c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [userId]),
+    c.query<{ wallet: string | null }>('SELECT wallet FROM users WHERE id = $1', [userId]),
   );
   const wallet = r.rows[0]?.wallet;
   if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: userId });
+  if (!wallet) throw new ForbiddenError({ reason: 'wallet_required' });
   try {
     return new PublicKey(wallet);
   } catch {

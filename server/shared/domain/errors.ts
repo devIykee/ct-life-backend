@@ -849,3 +849,94 @@ export class RealMarketsTxMismatchError extends DomainError {
     this.httpStatus = 422;
   }
 }
+
+// Map Travel (docs/TRAVEL.md) -----------------------------------------------
+
+export class TravelInProgressError extends DomainError {
+  readonly code = 'TRAVEL_IN_PROGRESS';
+  constructor(details: Record<string, unknown> = {}) {
+    super('You already have a ride booked. Finish or cancel it first.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class TravelCooldownError extends DomainError {
+  readonly code = 'TRAVEL_COOLDOWN';
+  readonly retryAfterMs: number;
+  /**
+   * @param retryAfterMs - When the next booking can succeed (sent as Retry-After).
+   * @param details - Structured details.
+   */
+  constructor(retryAfterMs: number, details: Record<string, unknown> = {}) {
+    super('Too many rides. Wait a moment before booking another.', {
+      ...details,
+      retryAfterSec: Math.max(1, Math.ceil(retryAfterMs / 1000)),
+    });
+    this.httpStatus = 429;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+export class TravelNotInWorldError extends DomainError {
+  readonly code = 'TRAVEL_NOT_IN_WORLD';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Your position on CT Island is not known yet. Walk a few steps and try again.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class TravelNotAtStopError extends DomainError {
+  readonly code = 'TRAVEL_NOT_AT_STOP';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The bus only picks up at a bus stop. Walk to the nearest stop first.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class TravelLockedError extends DomainError {
+  readonly code = 'TRAVEL_LOCKED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This ride unlocks at a higher net worth.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class TravelNotCancellableError extends DomainError {
+  readonly code = 'TRAVEL_NOT_CANCELLABLE';
+  constructor(details: Record<string, unknown> = {}) {
+    super('This ride can no longer be cancelled.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class QuoteExpiredError extends DomainError {
+  readonly code = 'QUOTE_EXPIRED';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The quote expired or you moved. Get a new quote.', details);
+    this.httpStatus = 409;
+  }
+}
+
+export class VenueGatedError extends DomainError {
+  readonly code = 'VENUE_GATED';
+  constructor(details: Record<string, unknown> = {}) {
+    super("This venue's door is gated for you; the ride is not offered.", details);
+    this.httpStatus = 403;
+  }
+}
+
+export class NeedsHelipadError extends DomainError {
+  readonly code = 'NEEDS_HELIPAD';
+  constructor(details: Record<string, unknown> = {}) {
+    super('Helicopter rides need a home with a helipad.', details);
+    this.httpStatus = 403;
+  }
+}
+
+export class TravelNotAtPadError extends DomainError {
+  readonly code = 'TRAVEL_NOT_AT_PAD';
+  constructor(details: Record<string, unknown> = {}) {
+    super('The helicopter boards at a helipad. Walk to your home pad or a public pad first.', details);
+    this.httpStatus = 409;
+  }
+}

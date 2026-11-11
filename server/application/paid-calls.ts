@@ -327,12 +327,13 @@ export async function startPaidCall(
     );
     if ((busy.rowCount ?? 0) > 0)
       throw new ConflictError({ reason: 'call_in_progress', who: 'creator' });
-    const u = await c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [
+    const u = await c.query<{ wallet: string | null }>('SELECT wallet FROM users WHERE id = $1', [
       fanUserId,
     ]);
     return u.rows[0]?.wallet;
   });
   if (fan === undefined) throw new NotFoundError({ kind: 'user', id: fanUserId });
+  if (!fan) throw new ForbiddenError({ reason: 'wallet_required' });
   try {
     new PublicKey(fan);
   } catch {

@@ -9,12 +9,16 @@
 import type { FastifyRequest, FastifyReply, preHandlerHookHandler } from 'fastify';
 import { assertNotBannedLive } from '../../application/moderation.js';
 import {
-  AccountBannedError,
+  DomainError,
   ForbiddenError,
   SignatureInvalidError,
   TokenExpiredError,
 } from '../../shared/domain/errors.js';
 import { assertAccountActive } from '../../application/account-deletion.js';
+import {
+  resolveLoginCredential,
+  authStateUnavailable,
+} from '../../application/login-credentials.js';
 import type { AccessClaims } from '../../shared/auth/jwt.js';
 
 declare module 'fastify' {
@@ -36,21 +40,26 @@ export async function requireAuth(
     throw new SignatureInvalidError({ reason: 'missing_bearer' });
   }
   const token = header.slice(7).trim();
+  let claims: AccessClaims;
   try {
-    const claims = await req.ctx.jwt.verifyAccess(token);
-    await assertAccountActive(req.ctx.redis, claims.sub);
-    req.user = claims;
-    await assertNotBannedLive(req.ctx.redis, claims.sub);
-    return claims;
+    claims = await req.ctx.jwt.verifyAccess(token);
   } catch (e) {
-    if (e instanceof AccountBannedError) throw e;
     if (e instanceof SignatureInvalidError) throw e;
     const err = e as { code?: string; name?: string; message?: string };
-    if (err.name === 'JWTExpired' || err.code === 'ERR_JWT_EXPIRED') {
+    if (err.name === 'JWTExpired' || err.code === 'ERR_JWT_EXPIRED')
       throw new TokenExpiredError({});
-    }
-    throw new SignatureInvalidError({ reason: err.message ?? 'unknown' });
+    throw new SignatureInvalidError({ reason: 'invalid_access_token' });
   }
+  try {
+    await assertAccountActive(req.ctx.redis, claims.sub, req.ctx.db);
+    await resolveLoginCredential(req.ctx.db, claims);
+    await assertNotBannedLive(req.ctx.redis, claims.sub);
+  } catch (error) {
+    if (error instanceof DomainError) throw error;
+    throw authStateUnavailable();
+  }
+  req.user = claims;
+  return claims;
 }
 
 /** Pre-handler hook wrapper. */
@@ -68,7 +77,7 @@ export async function requireAdmin(
 ): Promise<AccessClaims> {
   const claims = await requireAuth(req, _reply);
   const adminWallets = req.ctx.config.auth.adminWallets;
-  if (!adminWallets.includes(claims.wal)) {
+  if (claims.wal === null || !adminWallets.includes(claims.wal)) {
     throw new ForbiddenError({ reason: 'admin_required' });
   }
   return claims;

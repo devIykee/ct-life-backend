@@ -63,6 +63,10 @@ async function newRoom(): Promise<Record<string, any>> {
 beforeAll(async () => {
   for (const id of [founder, dev, visitor]) {
     await pool.query(`INSERT INTO users (id, wallet) VALUES ($1, $2)`, [id, `hq-${id}`]);
+    await pool.query(
+      "INSERT INTO login_identities(id,user_id,network,address) VALUES($1,$2,'solana:mainnet',$3)",
+      [uuidv7(), id, `hq-${id}`],
+    );
   }
   await pool.query(
     `INSERT INTO balances (user_id, cash_cents) VALUES ($1, 1000000)

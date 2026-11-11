@@ -11,7 +11,11 @@ import { z } from 'zod';
 import { PublicKey, Connection, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { requireAuth } from '../middleware/auth.js';
 import { withIdempotency } from '../middleware/idempotency.js';
-import { NotFoundError, ValidationFailedError } from '../../shared/domain/errors.js';
+import {
+  ForbiddenError,
+  NotFoundError,
+  ValidationFailedError,
+} from '../../shared/domain/errors.js';
 import { markStakeSubmitted, readBoard, readOreMe } from '../../application/refinery.js';
 import {
   buildOreStakeTx,
@@ -57,10 +61,11 @@ export function registerOreRoutes(app: FastifyInstance): void {
       // The user_id (UUIDv7) is not the same as the on-chain
       // Solana pubkey. Look up the user's wallet and use that.
       const r = await req.ctx.db.withConnection((c) =>
-        c.query<{ wallet: string }>('SELECT wallet FROM users WHERE id = $1', [userId]),
+        c.query<{ wallet: string | null }>('SELECT wallet FROM users WHERE id = $1', [userId]),
       );
       const wallet = r.rows[0]?.wallet;
       if (wallet === undefined) throw new NotFoundError({ kind: 'user', id: userId });
+      if (!wallet) throw new ForbiddenError({ reason: 'wallet_required' });
       let userPubkey: PublicKey;
       try {
         userPubkey = new PublicKey(wallet);

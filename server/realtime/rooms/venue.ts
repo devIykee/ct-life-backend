@@ -45,9 +45,11 @@
  *
  * NPC brain: each venue runs at 1 Hz. The brain is fed the
  * `VenueCtx` (mood, richest players, recent events) and the room
- * applies the `BrainOutput` to the NpcState for that NPC.
+ * applies the `BrainOutput` to the NpcState for that NPC. Who spawns
+ * where is in ../npc-roster.ts (phase-2 NPCs only at LIVE_PHASE >= 2,
+ * at most 12 per instance).
  */
-import { Room, Client } from 'colyseus';
+import { Room, Client, ServerError } from 'colyseus';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -67,7 +69,7 @@ import { getMoodBps, getRecentEvents } from '../../application/world-pulse.js';
 import { BEEF_CHANNEL } from '../../application/beef-events.js';
 import {
   applyOutfitMessage,
-  authenticateJoin,
+  authenticateJoinIdentity,
   loadPlayerState,
   filterSay,
   loadSayPolicy,
@@ -92,6 +94,9 @@ import {
   type VenuePlacement,
 } from '../movement.js';
 import { BanGuard } from '../ban-guard.js';
+import { MAX_NPCS_PER_INSTANCE, npcArchetypesFor, npcSpawnPlan } from '../npc-roster.js';
+import { hostsNormieWaves, NormieWaves, type FreeSpot, type LeaveReason } from '../normie-waves.js';
+import { loadConfig } from '../../shared/config/config.js';
 import {
   clearVenueMembers,
   markVenueJoin,
@@ -159,13 +164,24 @@ interface VenueSpots {
     readonly x?: number;
     readonly z?: number;
     readonly rotY?: number;
+    readonly anim?: string;
   }>;
 }
 
 interface VenueConfig {
   readonly venues: Record<string, VenueSpots>;
   readonly anims: readonly string[];
+  /** archetype -> line ids (`<archetype>.<index>`) of its slot-free lines. */
+  readonly lineIds: ReadonlyMap<string, readonly string[]>;
+  /** Normie lines for leaving when the market dumps (`normie.<index>`). */
+  readonly normieDumpLineIds: readonly string[];
 }
+
+/** Spot kinds a normie can sit or type at, after the free stand spots. */
+const NORMIE_SEAT_KINDS = new Set(['seat', 'terminal']);
+
+/** Spot kinds an NPC can stand on (home spots and ambient wandering). */
+const NPC_SPOT_KINDS = new Set(['npc', 'standing', 'stand']);
 
 export class VenueRoom extends Room {
   private readonly ban = new BanGuard(this);
@@ -183,6 +199,8 @@ export class VenueRoom extends Room {
   private npcHomeSpots: Map<string, string> = new Map();
   /** npcId -> the anim the NPC plays while it holds its home spot. */
   private npcHomeAnims: Map<string, string> = new Map();
+  /** Market-peak normie waves; null in venues without them (../normie-waves.ts). */
+  private normies: NormieWaves | null = null;
   /** Latest world pulse, refreshed off the tick so the tick stays sync. */
   private moodBps = 0;
   private recentEvents: NpcEvent[] = [];
@@ -275,17 +293,25 @@ export class VenueRoom extends Room {
    */
   override async onJoin(client: Client, options: unknown): Promise<void> {
     // Identity and look come from the database, never from join options.
-    const userId = await authenticateJoin(options);
-    this.ban.track(client, userId);
+    const identity = await authenticateJoinIdentity(options);
+    const userId = identity.userId;
+    this.ban.track(client, identity);
+    const assertCurrent = this.ban.checkpoint(client);
     // Police custody: a jailed player may only be in CT Jail. Fails open if the
     // database cannot be reached; the REST gates still hold.
     if (this.state.venueId !== 'ct_jail' && (await isInPoliceCustody(userId))) {
       throw new Error('JAILED');
     }
+    // Entry gate (venues.json `access`: net worth, membership, jailed-only).
+    // The same check as GET /v1/venues/{venueId}/access, enforced here so a
+    // client that skips the REST call cannot walk in. Fails closed.
+    const refusal = await venueGateRefusal(userId, this.state.venueId);
+    if (refusal !== null) throw refusal;
     const player = await loadPlayerState(userId);
     const last = this.placement ? await this.readPos(userId) : null;
     // Last check, no await before the player is stored.
-    await this.ban.confirm(userId);
+    await this.ban.confirm(client);
+    assertCurrent();
 
     // Place the player on their own spot when rejoining after a drop, else
     // on the venue's entrance spot. Joining a second venue (or a street
@@ -312,21 +338,47 @@ export class VenueRoom extends Room {
     // Count the session for voice before the client hears it joined, so its
     // first POST /v1/rtc/token already finds it. Best effort: a Redis error
     // costs this player venue voice, never the join.
-    if (this.presence) {
-      try {
-        await markVenueJoin(this.presence, this.state.instanceId, userId);
-        this.members.set(client.sessionId, userId);
-      } catch {
-        // Presence is best effort.
+    let marked = false;
+    try {
+      if (this.presence) {
+        try {
+          await markVenueJoin(this.presence, this.state.instanceId, userId, () => {
+            marked = true;
+          });
+        } catch {
+          // Presence is best effort; cancellation checks below are not swallowed.
+        }
+        try {
+          assertCurrent();
+        } catch (error) {
+          if (marked)
+            await markVenueLeave(this.presence, this.state.instanceId, userId)
+              .then((left) =>
+                left === 0 ? this.removeFromVoice(this.state.instanceId, userId) : undefined,
+              )
+              .catch(() => {
+                /* The existing presence TTL remains the Redis-failure fallback. */
+              });
+          throw error;
+        }
+        if (marked) this.members.set(client.sessionId, userId);
       }
+      assertCurrent();
+      const p = this.placement;
+      client.send('welcome', {
+        serverNow: Date.now(),
+        instanceId: this.state.instanceId,
+        ...(p ? { island: { x: p.origin[0], y: p.origin[1], z: p.origin[2], yaw: p.yaw } } : {}),
+      });
+    } catch (error) {
+      if (this.state.players.get(client.sessionId) === player) this.onLeave(client);
+      throw error;
     }
-    // Welcome the joiner.
-    const p = this.placement;
-    client.send('welcome', {
-      serverNow: Date.now(),
-      instanceId: this.state.instanceId,
-      ...(p ? { island: { x: p.origin[0], y: p.origin[1], z: p.origin[2], yaw: p.yaw } } : {}),
-    });
+  }
+
+  /** Subclass continuations must not restore state after an inherited join was cancelled. */
+  protected assertJoinCurrent(client: Client): void {
+    this.ban.checkpoint(client)();
   }
 
   /**
@@ -549,6 +601,14 @@ export class VenueRoom extends Room {
     }
     const player = this.state.players.get(client.sessionId);
     if (!player) return;
+    // A normie on the seat gives it up (exit liquidity always makes way).
+    if (this.normies !== null) {
+      for (const [npcId, npc] of this.state.npcs) {
+        if (npc.spotId === parsed.data.spotId && this.normies.yieldSpot(npcId, Date.now())) {
+          this.sendNormieOut(npcId, Date.now(), 'yield');
+        }
+      }
+    }
     if (player.spotId) this.spotOccupants.delete(player.spotId);
     player.spotId = parsed.data.spotId;
     // B33 fix: Use spot.anim if present, otherwise fallback based on kind
@@ -721,14 +781,15 @@ export class VenueRoom extends Room {
   // --- NPC brains -------------------------------------------------
 
   private spawnNpcBrains(): void {
-    // Each venue has a small set of archetypes. For M2 we spawn
-    // a single NPC per archetype at a fixed seed spot; M3+ spawns
-    // the right count per venue layout.
-    const plan = this.npcSpawnPlan(this.state.venueId);
+    const livePhase = this.livePhase();
+    if (hostsNormieWaves(this.state.venueId, livePhase)) this.normies = new NormieWaves();
+    // Venues with a seating plan put each NPC on a fixed spot.
+    const plan = npcSpawnPlan(this.state.venueId, livePhase);
     if (plan.length > 0) {
       const valid = this.venueSpotIds();
       for (let i = 0; i < plan.length; i++) {
         const seat = plan[i]!;
+        if (this.state.npcs.size >= MAX_NPCS_PER_INSTANCE) break;
         // Never publish a spot the client cannot resolve.
         if (!valid.has(seat.spotId)) continue;
         const npc = new NpcState();
@@ -739,11 +800,14 @@ export class VenueRoom extends Room {
         this.npcHomeSpots.set(npcId, seat.spotId);
         this.npcHomeAnims.set(npcId, seat.animId);
         this.state.npcs.set(npcId, npc);
-        this.brains.set(npcId, createBrain(seat.archetype));
+        this.brains.set(npcId, this.brainFor(seat.archetype));
       }
       return;
     }
-    const archetypes: NpcArchetype[] = this.npcArchetypesFor(this.state.venueId);
+    const archetypes: NpcArchetype[] = npcArchetypesFor(this.state.venueId, livePhase).slice(
+      0,
+      MAX_NPCS_PER_INSTANCE,
+    );
     // Give every NPC a home spot up front. Spawning them with spotId ''
     // left the client to guess, and it used the entrance, which is also
     // where players spawn, so arriving players landed inside a crowd.
@@ -758,7 +822,27 @@ export class VenueRoom extends Room {
       npc.animId = 'loco_idle';
       if (home !== '') this.npcHomeSpots.set(npcId, home);
       this.state.npcs.set(npcId, npc);
-      this.brains.set(npcId, createBrain(archetype));
+      this.brains.set(npcId, this.brainFor(archetype));
+    }
+  }
+
+  /**
+   * A brain for one NPC, with the line ids of its archetype's set.
+   * @param archetype - The NPC's archetype.
+   */
+  private brainFor(archetype: NpcArchetype): NpcBrain {
+    return createBrain(archetype, { lineIds: this.spotsCfg.lineIds.get(archetype) ?? [] });
+  }
+
+  /**
+   * The deployment's release phase (LIVE_PHASE). Phase 1 if the config
+   * cannot be read, which spawns only the phase-1 NPCs.
+   */
+  private livePhase(): number {
+    try {
+      return loadConfig().livePhase;
+    } catch {
+      return 1;
     }
   }
 
@@ -767,9 +851,8 @@ export class VenueRoom extends Room {
    * @returns Global spot ids of the standing kinds, or [] if the venue has none.
    */
   private npcHomeSpotIds(): string[] {
-    const kinds = new Set(['npc', 'standing', 'stand']);
     return (this.spotsCfg.venues[this.state.venueId]?.spots ?? [])
-      .filter((sp) => kinds.has(sp.kind))
+      .filter((sp) => NPC_SPOT_KINDS.has(sp.kind))
       .map((sp) => sp.id);
   }
 
@@ -779,68 +862,6 @@ export class VenueRoom extends Room {
    */
   private venueSpotIds(): Set<string> {
     return new Set((this.spotsCfg.venues[this.state.venueId]?.spots ?? []).map((sp) => sp.id));
-  }
-
-  /**
-   * B17 venue patrons: who stands where, per the FE seating table.
-   *
-   * Spot ids are the global ids from spots.json and the anims come from
-   * anims.json, so the client can walk a seated NPC to the seat's approach
-   * point. Venues without a plan fall back to the round-robin below.
-   * @param venueId - The venue being created.
-   * @returns The spawn plan, or [] when the venue has none.
-   */
-  private npcSpawnPlan(
-    venueId: string,
-  ): Array<{ archetype: NpcArchetype; spotId: string; animId: string }> {
-    switch (venueId) {
-      case 'terminal_cafe':
-        return [
-          { archetype: 'barista', spotId: 'terminal_cafe.counter', animId: 'loco_idle' },
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_1', animId: 'act_type' },
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_2', animId: 'act_type' },
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_3', animId: 'act_type' },
-          // The twin-monitor desks are the traders' side of the room.
-          { archetype: 'patron', spotId: 'terminal_cafe.terminal_5', animId: 'act_type' },
-          { archetype: 'patron', spotId: 'terminal_cafe.table_1', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'terminal_cafe.table_2', animId: 'act_sit' },
-          // The wallet tracker keeps its own brain and its own terminal.
-          {
-            archetype: 'wallet_tracker',
-            spotId: 'terminal_cafe.pulse_screen',
-            animId: 'loco_idle',
-          },
-        ];
-      case 'spaces_studio':
-        return [
-          { archetype: 'spaces_host', spotId: 'spaces_studio.stage_host', animId: 'loco_idle' },
-          { archetype: 'patron', spotId: 'spaces_studio.stage_4', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.stage_5', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_1', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_2', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_3', animId: 'act_sit' },
-          { archetype: 'patron', spotId: 'spaces_studio.seat_4', animId: 'act_sit' },
-        ];
-      default:
-        return [];
-    }
-  }
-
-  private npcArchetypesFor(venueId: string): NpcArchetype[] {
-    switch (venueId) {
-      case 'timeline_square':
-        return ['town_crier', 'giveaway_guy', 'reply_guy', 'doomposter', 'spaces_host'];
-      case 'perp_pit':
-        return ['perp_degen_npc'];
-      case 'rekt_clinic':
-        return ['rekt_guy'];
-      case 'terminal_cafe':
-        return ['wallet_tracker'];
-      case 'ore_refinery':
-        return ['ore_miner'];
-      default:
-        return [];
-    }
   }
 
   /**
@@ -891,8 +912,13 @@ export class VenueRoom extends Room {
     // resolve spots of the room it is in, so anything else falls back to
     // the NPC's home spot.
     const validSpots = this.venueSpotIds();
+    const standSpots = this.npcHomeSpotIds();
     for (const [npcId, brain] of this.brains) {
-      const out: BrainOutput = brain.tick(ctx);
+      // The stand/npc spots no other NPC holds right now (ambient wandering).
+      const held = new Set<string>();
+      for (const [otherId, other] of this.state.npcs) if (otherId !== npcId) held.add(other.spotId);
+      const free = standSpots.filter((id) => !held.has(id));
+      const out: BrainOutput = brain.tick({ ...ctx, venue: { ...venue, standSpots: free } });
       const npc = this.state.npcs.get(npcId);
       if (!npc) continue;
       npc.state = out.state;
@@ -907,6 +933,104 @@ export class VenueRoom extends Room {
       npc.targetUserId = out.followUserId ?? '';
       npc.startedAt = ctx.nowMs;
     }
+    this.stepNormies(ctx.nowMs);
+  }
+
+  // --- Normie waves -----------------------------------------------
+
+  /**
+   * Spawn, send out and remove normies for this tick (../normie-waves.ts).
+   * @param nowMs - The tick time.
+   */
+  private stepNormies(nowMs: number): void {
+    if (this.normies === null) return;
+    const step = this.normies.step({
+      nowMs,
+      moodBps: this.moodBps,
+      npcCount: this.state.npcs.size,
+      freeSpots: this.freeNormieSpots(),
+      rng: this.rng,
+    });
+    for (const id of step.remove) this.removeNpc(id);
+    for (const l of step.leave) this.sendNormieOut(l.npcId, nowMs, l.reason);
+    for (const s of step.spawn) {
+      const npc = new NpcState();
+      npc.archetypeId = 'normie';
+      npc.state = 'idle';
+      npc.spotId = s.spotId;
+      npc.animId = s.animId;
+      npc.startedAt = nowMs;
+      this.npcHomeSpots.set(s.npcId, s.spotId);
+      this.npcHomeAnims.set(s.npcId, s.animId);
+      this.state.npcs.set(s.npcId, npc);
+      this.brains.set(
+        s.npcId,
+        createBrain('normie', {
+          lineIds: this.spotsCfg.lineIds.get('normie') ?? [],
+          homeAnim: s.animId === 'loco_idle' ? undefined : s.animId,
+        }),
+      );
+    }
+  }
+
+  /**
+   * Spots a normie can take: free stand/npc spots first, then seats and
+   * terminals, skipping any spot a player or another NPC holds.
+   * @returns Free spots with the anim a normie holds there.
+   */
+  private freeNormieSpots(): FreeSpot[] {
+    const held = new Set<string>(this.spotOccupants.keys());
+    for (const npc of this.state.npcs.values()) held.add(npc.spotId);
+    const spots = (this.spotsCfg.venues[this.state.venueId]?.spots ?? []).filter(
+      (sp) => !held.has(sp.id),
+    );
+    const stand = spots
+      .filter((sp) => NPC_SPOT_KINDS.has(sp.kind))
+      .map((sp) => ({ spotId: sp.id, animId: 'loco_idle' }));
+    const seats = spots
+      .filter((sp) => NORMIE_SEAT_KINDS.has(sp.kind))
+      .map((sp) => ({
+        spotId: sp.id,
+        animId: sp.anim ?? (sp.kind === 'terminal' ? 'act_type' : 'act_sit'),
+      }));
+    return [...stand, ...seats];
+  }
+
+  /**
+   * A normie walks to the exit; the wave removes it once it gets there.
+   * @param npcId - The normie.
+   * @param nowMs - The time.
+   * @param reason - `mood`: the market dropped (it says a dump line).
+   */
+  private sendNormieOut(npcId: string, nowMs: number, reason: LeaveReason): void {
+    const npc = this.state.npcs.get(npcId);
+    this.brains.delete(npcId);
+    this.npcHomeSpots.delete(npcId);
+    this.npcHomeAnims.delete(npcId);
+    if (!npc) return;
+    const valid = this.venueSpotIds();
+    const exit = [`${this.state.venueId}.exit`, `${this.state.venueId}.entrance`].find((id) =>
+      valid.has(id),
+    );
+    const dump = this.spotsCfg.normieDumpLineIds;
+    npc.state = 'leave';
+    if (exit !== undefined) npc.spotId = exit;
+    npc.animId = 'loco_walk';
+    npc.lineId = reason === 'mood' && dump.length > 0 ? dump[this.rng.int(dump.length)]! : '';
+    npc.emoteId = '';
+    npc.targetUserId = '';
+    npc.startedAt = nowMs;
+  }
+
+  /**
+   * Drop an NPC from the room state and its brain.
+   * @param npcId - The NPC.
+   */
+  private removeNpc(npcId: string): void {
+    this.state.npcs.delete(npcId);
+    this.brains.delete(npcId);
+    this.npcHomeSpots.delete(npcId);
+    this.npcHomeAnims.delete(npcId);
   }
 
   private richestPlayers(): Array<{ userId: string; netWorthCents: number }> {
@@ -926,8 +1050,105 @@ export class VenueRoom extends Room {
     const anims = JSON.parse(
       readFileSync(join(repoRoot, 'contract', 'ids', 'anims.json'), 'utf8'),
     ) as { anims: string[] };
-    return { venues: spots.venues, anims: anims.anims };
+    const lines = JSON.parse(
+      readFileSync(join(repoRoot, 'contract', 'config', 'npc_lines.json'), 'utf8'),
+    ) as Record<string, unknown>;
+    return {
+      venues: spots.venues,
+      anims: anims.anims,
+      lineIds: slotFreeLineIds(lines),
+      normieDumpLineIds: matchingLineIds(lines, 'normie', /\b(down|red|dip|cliff|dump)/i),
+    };
   }
+}
+
+/**
+ * Line ids the NPCs can speak without lineParams: `<archetype>.<index>` for
+ * every line of `npc_lines.<archetype>` that has no `{slot}` (the room does
+ * not fill lineParams yet, and the client skips a line it cannot fill).
+ * @param lines - contract/config/npc_lines.json.
+ * @returns archetype -> line ids.
+ */
+export function slotFreeLineIds(lines: Record<string, unknown>): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const [archetype, set] of Object.entries(lines)) {
+    if (!Array.isArray(set)) continue;
+    const ids: string[] = [];
+    set.forEach((line, i) => {
+      if (typeof line === 'string' && !line.includes('{')) ids.push(`${archetype}.${i}`);
+    });
+    out.set(archetype, ids);
+  }
+  return out;
+}
+
+/** Gate refusal codes on join: Colyseus `ServerError {code, message}`. */
+export const VENUE_GATE_JOIN_ERRORS = {
+  /** message = the access reasonCode (`NET_WORTH_TOO_LOW`, `NOT_A_MEMBER`, `NOT_JAILED`, ...). */
+  refused: 4403,
+  /** message `VENUE_GATE_UNAVAILABLE`: the gate could not be checked, so the join is refused. */
+  unavailable: 4503,
+} as const;
+
+/**
+ * Why a player may not join a gated venue, or null when they may (or the
+ * venue has no gate). An open venue never touches the database here; a
+ * gated venue whose check fails is refused (fail closed).
+ * @param userId - The joining player.
+ * @param venueId - The venue.
+ * @returns A ServerError to throw from onJoin, or null.
+ */
+export async function venueGateRefusal(
+  userId: string,
+  venueId: string,
+): Promise<ServerError | null> {
+  const unavailable = (): ServerError =>
+    new ServerError(VENUE_GATE_JOIN_ERRORS.unavailable, 'VENUE_GATE_UNAVAILABLE');
+  let check: () => Promise<{ allowed: boolean; reasonCode: string | null }>;
+  try {
+    const [{ buildContext }, { getVenueAccess, venueGate }] = await Promise.all([
+      import('../../application/context.js'),
+      import('../../application/venues-gating.js'),
+    ]);
+    const ctx = buildContext();
+    // venues.json is a local file (the room already read spots.json beside it);
+    // if it cannot be read we cannot tell open from gated, so refuse.
+    if (venueGate(ctx, venueId) === null) return null;
+    check = () => getVenueAccess(ctx, userId, venueId);
+  } catch {
+    return unavailable();
+  }
+  try {
+    const access = await check();
+    if (access.allowed) return null;
+    return new ServerError(VENUE_GATE_JOIN_ERRORS.refused, access.reasonCode ?? 'VENUE_GATED');
+  } catch {
+    // Database down or slow: a gated venue stays shut.
+    return unavailable();
+  }
+}
+
+/**
+ * Slot-free line ids of one archetype whose text matches a pattern.
+ * @param lines - contract/config/npc_lines.json.
+ * @param archetype - The archetype.
+ * @param pattern - What the line must say.
+ * @returns `<archetype>.<index>` ids.
+ */
+export function matchingLineIds(
+  lines: Record<string, unknown>,
+  archetype: string,
+  pattern: RegExp,
+): string[] {
+  const set = lines[archetype];
+  if (!Array.isArray(set)) return [];
+  const out: string[] = [];
+  set.forEach((line, i) => {
+    if (typeof line === 'string' && !line.includes('{') && pattern.test(line)) {
+      out.push(`${archetype}.${i}`);
+    }
+  });
+  return out;
 }
 
 /**

@@ -49,6 +49,10 @@ export function toErrorEnvelope(
       const r = (err as { retryAfterMs?: number }).retryAfterMs;
       if (r !== undefined) headers['Retry-After'] = String(Math.ceil(r / 1000));
     }
+    if (err.code === 'TRAVEL_COOLDOWN' && 'retryAfterMs' in err) {
+      const r = (err as { retryAfterMs?: number }).retryAfterMs;
+      if (r !== undefined) headers['Retry-After'] = String(Math.max(1, Math.ceil(r / 1000)));
+    }
     if (err.code === 'SERVER_BUSY' && 'retryAfterMs' in err) {
       const r = (err as { retryAfterMs?: number }).retryAfterMs;
       if (r !== undefined) headers['Retry-After'] = String(Math.ceil(r / 1000));

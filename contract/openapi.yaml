@@ -64,6 +64,8 @@ tags:
     description: Top-up, cosmetic, ad booking, season pass intents. Phase 2+.
   - name: shop
     description: Shop, inventory. Phase 4+.
+  - name: travel
+    description: Map Travel (docs/TRAVEL.md), capability `travel`. Bus and taxi rides between venues, priced by the server.
   - name: casino
     description: The Rug Room, a Cash-only play-money casino (18+). Phase 4+.
   - name: season
@@ -92,6 +94,653 @@ security:
   - bearerAuth: []
 
 paths:
+  /economy/catalog:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getEconomyCatalog',
+          'summary': 'List explicitly priced and active native-asset offers',
+          'security': [{ 'bearerAuth': [] }],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Offers; empty until merchant terms are configured',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['offers'],
+                              'properties':
+                                {
+                                  'offers':
+                                    {
+                                      'type': 'array',
+                                      'items': { '$ref': '#/components/schemas/EconomyOffer' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getEconomyOrders',
+          'summary': "Read this player's immutable purchase history",
+          'security': [{ 'bearerAuth': [] }],
+          'description': 'One database snapshot, no chain RPC or signing. Includes unresolved and completed orders for recovery after local storage loss. Cursor pagination is newest first.',
+          'parameters':
+            [
+              {
+                'name': 'limit',
+                'in': 'query',
+                'schema': { 'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 50 },
+              },
+              { 'name': 'cursor', 'in': 'query', 'schema': { 'type': 'string', 'maxLength': 256 } },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Order page',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'required': ['orders', 'nextCursor'],
+                              'properties':
+                                {
+                                  'orders':
+                                    {
+                                      'type': 'array',
+                                      'items': { '$ref': '#/components/schemas/EconomyOrder' },
+                                    },
+                                  'nextCursor': { 'type': ['string', 'null'] },
+                                },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated request error',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'createEconomyOrder',
+          'summary': 'Snapshot price, payer, recipient and delivery terms',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['offerId', 'walletLinkId'],
+                          'properties':
+                            {
+                              'offerId': { 'type': 'string', 'format': 'uuid' },
+                              'walletLinkId': { 'type': 'string', 'format': 'uuid' },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getEconomyOrder',
+          'summary': 'Read order and reconcile one durable pending attempt',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+            ],
+          'description': 'Reconciles one pending transaction without signing or broadcasting. Per-player limit: burst 5, refill one request per 2 seconds. A permanent bad reference does not block later attempts.',
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/payment-request:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'prepareEconomyPayment',
+          'summary': 'Prepare the exact unsigned native payment',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+            ],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Narrow wallet request; preparation never signs or sends funds',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyPaymentRequest' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/payment:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'recordEconomyPayment',
+          'summary': 'Verify a submitted payment and deliver once',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['transactionId'],
+                          'properties': { 'transactionId': { 'type': 'string', 'maxLength': 200 } },
+                        },
+                    },
+                },
+            },
+          'description': 'Finalized exact-price transfers only. Pending remains awaiting_payment. Cancelled or late incoming money becomes refund_due. Additional exact-price transfers create separate refundDueReceiptIds even after fulfilment. Wrong-amount transfers require operator investigation.',
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/cancel:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'cancelEconomyOrder',
+          'summary': 'Cancel an unpaid order without discarding incoming-money obligations',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': [],
+                          'properties': {},
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /economy/orders/{id}/refund:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'recordEconomyRefund',
+          'summary': 'Verify an already-sent merchant refund',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+              {
+                'name': 'Idempotency-Key',
+                'in': 'header',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+                'description': 'Required UUID. Order creation persists this key permanently per player. Receipt/cancel operations are naturally idempotent and never cache pending responses.',
+              },
+            ],
+          'description': 'Does not send money. Verifies merchant-to-original-payer transfer and allocates it to the oldest outstanding exact-price receipt. Every chain event can be consumed only once.',
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['transactionId'],
+                          'properties': { 'transactionId': { 'type': 'string', 'maxLength': 200 } },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Current immutable order and verified receipt obligations',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyOrder' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links:
+    {
+      'get':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'getWalletLinks',
+          'summary': 'List verified player wallet identities',
+          'security': [{ 'bearerAuth': [] }],
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Identity proofs grant no spending authority',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['links'],
+                              'properties':
+                                {
+                                  'links':
+                                    {
+                                      'type': 'array',
+                                      'items': { '$ref': '#/components/schemas/EconomyWalletLink' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links/challenges:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'issueWalletLinkChallenge',
+          'summary': 'Issue a five-minute domain-bound wallet proof challenge',
+          'security': [{ 'bearerAuth': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['network', 'address'],
+                          'properties':
+                            {
+                              'network': { '$ref': '#/components/schemas/EconomyNetwork' },
+                              'address': { 'type': 'string', 'minLength': 2, 'maxLength': 128 },
+                              'nearCallbackMode':
+                                {
+                                  'type': 'string',
+                                  'enum': ['none', 'uri'],
+                                  'default': 'uri',
+                                  'description': 'NEAR only. In-page connector uses none. The chosen NEP-413 option is stored in the challenge and cannot be changed in the proof.',
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '201':
+                {
+                  'description': 'Exact message to sign; NEAR includes NEP-413 payload',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyWalletChallenge' } },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links/verify:
+    {
+      'post':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'verifyWalletLink',
+          'summary': 'Consume a wallet proof once and bind it to this player',
+          'security': [{ 'bearerAuth': [] }],
+          'requestBody':
+            {
+              'required': true,
+              'content':
+                {
+                  'application/json':
+                    {
+                      'schema':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['challengeId', 'signature'],
+                          'properties':
+                            {
+                              'challengeId': { 'type': 'string', 'format': 'uuid' },
+                              'signature': { 'type': 'string', 'minLength': 1, 'maxLength': 256 },
+                              'publicKey': { 'type': 'string', 'maxLength': 64 },
+                            },
+                        },
+                    },
+                },
+            },
+          'responses':
+            {
+              '200':
+                {
+                  'description': 'Verified ownership; no allowance or spend session',
+                  'content':
+                    {
+                      'application/json':
+                        {
+                          'schema':
+                            {
+                              'type': 'object',
+                              'additionalProperties': false,
+                              'required': ['link'],
+                              'properties':
+                                { 'link': { '$ref': '#/components/schemas/EconomyWalletLink' } },
+                            },
+                        },
+                    },
+                },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
+  /me/wallet-links/{id}:
+    {
+      'delete':
+        {
+          'tags': ['economy'],
+          'x-phase': 2,
+          'operationId': 'revokeWalletLink',
+          'summary': 'Revoke a link without transferring ownership to another player',
+          'security': [{ 'bearerAuth': [] }],
+          'parameters':
+            [
+              {
+                'name': 'id',
+                'in': 'path',
+                'required': true,
+                'schema': { 'type': 'string', 'format': 'uuid' },
+              },
+            ],
+          'responses':
+            {
+              '204': { 'description': 'Revoked' },
+              'default':
+                {
+                  'description': 'Authenticated domain error; ECONOMY_CONFLICT, VALIDATION_FAILED, NOT_FOUND, CAPABILITY_OFF, RATE_LIMITED or wallet-link proof errors.',
+                  'content':
+                    {
+                      'application/json':
+                        { 'schema': { '$ref': '#/components/schemas/EconomyError' } },
+                    },
+                },
+            },
+        },
+    }
   /likeness:
     get:
       tags: [player]
@@ -513,6 +1162,335 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/LikenessUnavailable' }
+  /auth/wallet/challenge:
+    post:
+      tags: [auth]
+      operationId: issueWalletLogin
+      security: []
+      summary: Issue a purpose-bound wallet login proof.
+      description: >-
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+        Example error code: AUTH_CHALLENGE_LIMIT
+        Example error code: AUTH_ACCOUNT_UNAVAILABLE
+        Example error code: AUTH_IDENTITY_ENROLMENT_REQUIRED
+        Example error code: AUTH_IDENTITY_CONFLICT
+        Example error code: AUTH_ORIGIN_INVALID
+        Example error code: AUTH_PROOF_INVALID
+        Example error code: AUTH_CHALLENGE_INVALID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthChallengeRequest' }
+      responses:
+        '201':
+          description: Persisted signing challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletAuthChallenge' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Disallowed origin, deleted account or ban }
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/wallet/verify:
+    post:
+      tags: [auth]
+      operationId: verifyWalletLogin
+      security: []
+      summary: Verify a purpose-bound wallet login proof.
+      description: >-
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthProof' }
+      responses:
+        '200':
+          description: Verified login
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthVerifyResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Disallowed origin, deleted account or ban }
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/identities/challenge:
+    post:
+      tags: [auth]
+      operationId: issueLoginIdentity
+      security: [{ bearerAuth: [] }]
+      summary: Issue a purpose-bound wallet enrolment proof.
+      description: >-
+        Requires original verified authentication within ten minutes at both stages.
+        Refresh does not renew auth_time; missing or stale authentication returns
+        code: AUTH_REAUTH_REQUIRED (403).
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthChallengeRequest' }
+      responses:
+        '201':
+          description: Persisted signing challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WalletAuthChallenge' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Fresh sign-in required, disallowed origin, deleted account or ban
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_REAUTH_REQUIRED
+                  message: Sign in again before adding a login wallet.
+                  details: {}
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/identities/verify:
+    post:
+      tags: [auth]
+      operationId: verifyLoginIdentity
+      security: [{ bearerAuth: [] }]
+      summary: Verify a purpose-bound wallet enrolment proof.
+      description: >-
+        Requires original verified authentication within ten minutes at both stages.
+        Refresh does not renew auth_time; missing or stale authentication returns
+        code: AUTH_REAUTH_REQUIRED (403).
+        EVM EOA or NEAR finalized FullAccess only. Five-minute, single-use,
+        origin-bound challenge; payment-wallet proofs do not grant login.
+        Authenticated enrolment is bound to its initiating credential and version; revoked identities may be reactivated only by this ceremony and retain the incremented version.
+        Valid conflicts consume the proof. Retry a lost login response with a fresh challenge.
+        AUTH_CHALLENGE_INVALID, AUTH_PROOF_INVALID, AUTH_ORIGIN_INVALID,
+        AUTH_IDENTITY_CONFLICT, AUTH_IDENTITY_ENROLMENT_REQUIRED,
+        AUTH_ACCOUNT_UNAVAILABLE and AUTH_CHALLENGE_LIMIT are domain errors.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WalletAuthProof' }
+      responses:
+        '200':
+          description: Verified enrolment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginIdentityResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Fresh sign-in required, disallowed origin, deleted account or ban
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_REAUTH_REQUIRED
+                  message: Sign in again before adding a login wallet.
+                  details: {}
+        '409':
+          { description: Identity belongs to another account or explicit enrolment is required }
+        '429': { description: Per-IP login or outstanding challenge limit }
+        '503': { description: Global login semaphore is at capacity }
+  /auth/identities:
+    get:
+      tags: [auth]
+      operationId: listLoginIdentities
+      security: [{ bearerAuth: [] }]
+      summary: List the current player's active sign-in identities and latest security events.
+      description: Revoked identities retain ownership but are excluded. Events are ordered by createdAt and id descending, limited to twenty.
+      responses:
+        '200':
+          description: Login credentials, not payment authorizations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [identities, securityEvents]
+                properties:
+                  identities:
+                    type: array
+                    items: { $ref: '#/components/schemas/LoginIdentity' }
+                  securityEvents:
+                    type: array
+                    maxItems: 20
+                    items: { $ref: '#/components/schemas/AccountAccessEvent' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Per-player rate limit }
+  /auth/identities/{id}:
+    delete:
+      tags: [auth]
+      operationId: revokeLoginIdentity
+      security: [{ bearerAuth: [] }]
+      summary: Remove an EVM/NEAR login identity using a retained, recently authenticated credential.
+      description: >-
+        A ten-minute original auth_time is required. Payment links and obligations are unchanged.
+        Revocation increments credential generation; old access and refresh tokens return code: AUTH_IDENTITY_REVOKED.
+        Missing targets return code: AUTH_IDENTITY_NOT_FOUND. Keep at least one credential (code: AUTH_LAST_IDENTITY).
+        Authenticate with a retained different identity (code: AUTH_USE_ANOTHER_IDENTITY).
+        Primary Solana removal is outside scope (code: AUTH_PRIMARY_WALLET_IMMUTABLE).
+        A repeated owned removal returns 204 without incrementing generation again.
+        Supplied browser origins must remain allowed. No request body is accepted.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Removed or already removed }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401':
+          description: Invalid token or revoked credential generation
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_IDENTITY_REVOKED
+                  message: This sign-in session is no longer active. Sign in again.
+                  details: {}
+        '403': { description: Recent original authentication required or origin forbidden }
+        '404':
+          description: Unknown or unowned identity
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_IDENTITY_NOT_FOUND
+                  message: Sign-in wallet not found.
+                  details: {}
+        '409':
+          description: Credential removal would violate account access policy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                last:
+                  value:
+                    error:
+                      code: AUTH_LAST_IDENTITY
+                      message: Keep at least one sign-in wallet.
+                      details: {}
+                current:
+                  value:
+                    error:
+                      code: AUTH_USE_ANOTHER_IDENTITY
+                      message: Sign in with a wallet you are keeping before removing this one.
+                      details: {}
+                primary:
+                  value:
+                    error:
+                      code: AUTH_PRIMARY_WALLET_IMMUTABLE
+                      message: The primary Solana wallet cannot be removed.
+                      details: {}
+        '429': { description: Per-player rate limit }
+  /auth/primary-solana/challenge:
+    post:
+      tags: [auth]
+      operationId: issuePrimarySolanaChallenge
+      security: [{ bearerAuth: [] }]
+      summary: Request an explicit primary Solana attachment to the current player.
+      description: >-
+        Five-minute SIWS bytes bind owner, primary-solana-enrolment purpose, exact mainnet address,
+        current origin, and initiating credential generation. Requires recent original authentication.
+        Does not merge players or create a payment link. A different existing primary returns code: AUTH_PRIMARY_WALLET_EXISTS.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [address]
+              properties:
+                address: { type: string, minLength: 32, maxLength: 44 }
+      responses:
+        '201':
+          description: Persisted primary-wallet signing challenge
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrimarySolanaChallenge' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          { description: Fresh authentication required, account unavailable or origin forbidden }
+        '409':
+          description: Existing different primary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_PRIMARY_WALLET_EXISTS
+                  message: This player already has a primary Solana wallet.
+                  details: {}
+        '429': { description: Per-player/IP or outstanding challenge limit }
+  /auth/primary-solana/verify:
+    post:
+      tags: [auth]
+      operationId: verifyPrimarySolanaChallenge
+      security: [{ bearerAuth: [] }]
+      summary: Verify exact Solana bytes and attach to the existing UUID.
+      description: >-
+        Canonical base64 Ed25519 signature over the persisted message only. Requires the same active
+        initiating credential generation and recent original authentication. Proof is single-use.
+        No account merge, primary replacement or implicit payment link. The receipt authorizes only
+        an owner/revision/address-bound client session update; normal refresh must not permit arbitrary wallet changes.
+        A lost response requires explicit retained-credential sign-in; consumed proof replay is refused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [challengeId, signature]
+              properties:
+                challengeId: { type: string, format: uuid }
+                signature: { type: string, minLength: 88, maxLength: 88 }
+      responses:
+        '200':
+          description: Primary attached without changing the authenticating identity or original auth_time
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PrimarySolanaReceipt' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          { description: Fresh authentication required, account unavailable or origin forbidden }
+        '409': { description: Existing primary, another identity/payment owner or SGT conflict }
+        '429': { description: Per-player/IP rate limit }
+        '503': { description: Global login verifier capacity }
   /auth/challenge:
     get:
       tags: [auth]
@@ -604,8 +1582,18 @@ paths:
               example:
                 accessToken: 'eyJhbGciOiJSUzI1NiIs...'
                 refreshToken: 'rt_8f4...'
+                authMethod: siws
+                loginIdentity:
+                  id: '0192a1c2-0000-7000-8000-000000000001'
+                  network: 'solana:mainnet'
+                  address: 'Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ'
                 user:
-                  id: '0192a1c2-...'
+                  id: '0192a1c2-0000-7000-8000-000000000002'
+                  authMethod: siws
+                  loginIdentity:
+                    id: '0192a1c2-0000-7000-8000-000000000001'
+                    network: 'solana:mainnet'
+                    address: 'Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ'
                   wallet: 'Dgw3c4GbQnZe1FeaCa29vXtoyv6fxmxAVyynQw8mN2gZ'
                   isSeeker: true
                   hasCharacter: false
@@ -667,6 +1655,10 @@ paths:
       tags: [auth]
       operationId: postAuthRefresh
       summary: Rotate the refresh token and issue a new pair.
+      description: >-
+        Preserves login identity generation and original authentication time. Durable state is checked
+        before reserving the single-use token. An unreturned failed issuance releases only its own marker.
+        code: AUTH_STATE_UNAVAILABLE is a retryable authority failure; retain credentials on 503.
       x-phase: 1
       security: []
       parameters:
@@ -689,6 +1681,16 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/AuthVerifyResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503':
+          description: Account state is temporarily unavailable; retain credentials and retry
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                error:
+                  code: AUTH_STATE_UNAVAILABLE
+                  message: Account access could not be checked. Try again shortly.
+                  details: {}
 
   /auth/logout:
     post:
@@ -4244,6 +5246,10 @@ paths:
       operationId: postRtcToken
       summary: Mint a LiveKit access token.
       description: |
+        Every grant uses the authenticated login credential generation as media identity
+        `ct1:<player UUID>:<login identity UUID>:<version>`. Identity is an opaque
+        transport key; player-level lookups use the parsed player UUID. All initial
+        grants last at most 10 minutes. See docs/MEDIA-ACCESS.md for cutoff semantics.
         Returns a token scoped to the room `{kind}:{id}`; `id` may be bare or
         carry its own single `{kind}:` prefix (Space ids are `space:<uuid>`),
         and a prefix of another kind is rejected. Grants are server-derived:
@@ -4297,6 +5303,10 @@ paths:
                   url: { type: string }
                   token: { type: string }
                   expiresAt: { type: string, format: date-time }
+                  identity:
+                    type: string
+                    description: Credential-scoped LiveKit transport identity; not a player UUID.
+                  roomName: { type: string }
                   canPublish: { type: boolean }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -6699,6 +7709,313 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+
+  /travel/quote:
+    get:
+      tags: [travel]
+      operationId: getTravelQuote
+      summary: Price every way to a venue from where the server last saw you.
+      description: >-
+        Map Travel phase 1 (docs/TRAVEL.md), capability `travel` (`503 CAPABILITY_OFF` while
+        off). The origin is the caller's last accepted island position (`ctl:pos`, at most 30 s
+        old; else `409 TRAVEL_NOT_IN_WORLD`); the client never sends a price, origin or distance.
+        `distanceM` is the straight line to the destination door times `roadFactor`. Every mode
+        is listed, with `available: false` and a `reason` when it cannot be booked: `TOO_CLOSE`,
+        `NOT_AT_STOP` (bus: `stop` is the nearest stop), `INSUFFICIENT_CASH`, `LOCKED`
+        (`unlockNetWorthCents`), `COOLDOWN` (`retryAfterSec`), `TRAVEL_IN_PROGRESS`,
+        `VENUE_GATED` (only with `gatedBooking: refuse`) or `NOT_SERVED` (no street room covers
+        the arrival point). `walk` is always available and free. `gate` is the destination's
+        door access (`GET /venues/{id}/access`): with the default `gatedBooking: warn` a gated
+        destination can still be ridden to (you arrive on the street outside the rope). The
+        quote is kept for `quoteTtlSec` (60 s); book with its `quoteId`.
+        Phase 3: while `travelHeli` is also on, a `heli` row is added (flat fare, pad to pad).
+        Its reasons add `NEEDS_HELIPAD` (no live home of a `heliHomeKinds` kind) and
+        `NOT_AT_PAD` (`stop` = the nearest pad you may use); `TOO_CLOSE` when you stand on the
+        landing pad. It carries its own `arrival` (the public pad nearest the door) and, when
+        available, `pickup` (your pad); `distanceM` for heli is pad to pad (no road factor).
+      x-phase: 1
+      parameters:
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, maxLength: 64 }
+          description: A venue id from contract/ids/districts.json `venues`.
+      responses:
+        '200':
+          description: The quote
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TravelQuote' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: In CT Jail (`JAILED`) or the Barn (`SYBIL_JAILED`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The server has no fresh island position for you
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRAVEL_NOT_IN_WORLD,
+                      message: 'Your position on CT Island is not known yet. Walk a few steps and try again.',
+                      details: { reason: 'no fresh position' },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /travel/trips:
+    post:
+      tags: [travel]
+      operationId: postTravelTrips
+      summary: Book a bus or taxi ride from a quote.
+      description: >-
+        Capability `travel`. Debits the quoted fare in the same transaction that creates the
+        trip (ledger reason `travel_fare`), mirroring the Duo Shop order. A replay with the same
+        `Idempotency-Key` returns the same trip without charging again. The fresh position must
+        still be within `bookDriftM` (20 m) of the quote's `from` (else `409 QUOTE_EXPIRED
+        {reason: moved}`); the bus needs you within `busStopRadiusM` of a stop. `arriveAt` is
+        server time; join the destination street room with `{district: arrival.district,
+        tripId}` from `arriveAt` (docs/REALTIME.md "Map Travel arrival"). An unused ticket
+        expires at `expiresAt` and the fare is refunded. Walking is never booked (`mode: walk`
+        is a 400). `mode: heli` needs capability `travelHeli` (`503 CAPABILITY_OFF
+        {capability: travelHeli}`) and is re-checked in the transaction: a live pad home (`403
+        NEEDS_HELIPAD`) and the caller within `heliPadRadiusM` (15 m) of the quoted pickup pad
+        (`409 TRAVEL_NOT_AT_PAD`). A heli trip's `origin` is the pickup pad, `arrival` the
+        landing pad and `pickup` `{id, x, z}`; the ticket anchors at the landing pad.
+      x-phase: 1
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quoteId, mode]
+              properties:
+                quoteId: { type: string, format: uuid }
+                mode: { type: string, enum: [bus, taxi, heli] }
+      responses:
+        '201':
+          description: The booked trip
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TravelTrip' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402':
+          description: Not enough Cash for the fare
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: INSUFFICIENT_CASH,
+                      message: 'Cash balance is insufficient.',
+                      details: { have: '150', need: '200', shortfallCents: 50 },
+                    },
+                }
+        '403':
+          description: >-
+            `JAILED`, `SYBIL_JAILED`, `TRAVEL_LOCKED` (net worth below the mode's unlock),
+            `VENUE_GATED` (only with `gatedBooking: refuse`) or `NEEDS_HELIPAD` (heli: no live
+            pad home, or the quoted home pad is no longer yours)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                needsHelipad:
+                  value:
+                    {
+                      error:
+                        {
+                          code: NEEDS_HELIPAD,
+                          message: 'Helicopter rides need a home with a helipad.',
+                          details: {},
+                        },
+                    }
+                locked:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_LOCKED,
+                          message: 'This ride unlocks at a higher net worth.',
+                          details: { mode: taxi, unlockNetWorthCents: 1000000 },
+                        },
+                    }
+                gated:
+                  value:
+                    {
+                      error:
+                        {
+                          code: VENUE_GATED,
+                          message: "This venue's door is gated for you; the ride is not offered.",
+                          details: { to: yacht_club },
+                        },
+                    }
+        '409':
+          description: >-
+            `TRAVEL_IN_PROGRESS` (one open trip at a time), `QUOTE_EXPIRED` (`reason: expired |
+            moved`), `TRAVEL_NOT_AT_STOP` (bus away from a stop) or `TRAVEL_NOT_IN_WORLD`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              examples:
+                inProgress:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_IN_PROGRESS,
+                          message: 'You already have a ride booked. Finish or cancel it first.',
+                          details: {},
+                        },
+                    }
+                expired:
+                  value:
+                    {
+                      error:
+                        {
+                          code: QUOTE_EXPIRED,
+                          message: 'The quote expired or you moved. Get a new quote.',
+                          details: { reason: moved },
+                        },
+                    }
+                notAtPad:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_NOT_AT_PAD,
+                          message: 'The helicopter boards at a helipad. Walk to your home pad or a public pad first.',
+                          details:
+                            {
+                              radiusM: 15,
+                              pad: { id: pad_home_penthouse, x: 527.7, z: -280.2 },
+                              distanceM: 18,
+                            },
+                        },
+                    }
+                notAtStop:
+                  value:
+                    {
+                      error:
+                        {
+                          code: TRAVEL_NOT_AT_STOP,
+                          message: 'The bus only picks up at a bus stop. Walk to the nearest stop first.',
+                          details:
+                            {
+                              radiusM: 25,
+                              stop: { id: stop_timeline, x: 44.31, z: 6.07 },
+                              distanceM: 140,
+                            },
+                        },
+                    }
+        '429':
+          description: >-
+            `TRAVEL_COOLDOWN`: `cooldownSec` (10 s) after the last ride ended, or `tripsPerHour`
+            (30) reached. `Retry-After` header and `details.retryAfterSec`.
+          headers:
+            Retry-After:
+              schema: { type: integer }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRAVEL_COOLDOWN,
+                      message: 'Too many rides. Wait a moment before booking another.',
+                      details: { retryAfterSec: 8 },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /travel/trips/current:
+    get:
+      tags: [travel]
+      operationId: getTravelTripsCurrent
+      summary: My booked ride, if any (resume after an app restart).
+      description: Capability `travel`. Only a trip still `booked`; null otherwise.
+      x-phase: 1
+      responses:
+        '200':
+          description: The open trip or null
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [trip, serverNow]
+                properties:
+                  trip:
+                    oneOf:
+                      - { $ref: '#/components/schemas/TravelTrip' }
+                      - { type: 'null' }
+                  serverNow: { type: string, format: date-time }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
+
+  /travel/trips/{id}/cancel:
+    post:
+      tags: [travel]
+      operationId: postTravelTripsIdCancel
+      summary: Cancel a booked ride before it arrives.
+      description: >-
+        Capability `travel`. Owner only, while `booked` and before the ticket opens
+        (`arriveAt - arriveEarlySec`, 1 s): the ticket is taken first (it must still exist), then
+        the trip is cancelled and refunded in full (ledger reason `travel_refund`, once per trip),
+        so street joins work again from where you stood. A cancel and an arrival never both
+        succeed.
+      x-phase: 1
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Refunded
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tripId, refundedCents, cashCents]
+                properties:
+                  tripId: { type: string, format: uuid }
+                  refundedCents: { type: integer }
+                  cashCents: { type: integer }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: >-
+            Already arrived or ended, past the cutoff, or the ticket was already used
+            (`details.reason: ticket_gone | not_booked`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                {
+                  error:
+                    {
+                      code: TRAVEL_NOT_CANCELLABLE,
+                      message: 'This ride can no longer be cancelled.',
+                      details: { status: arrived },
+                    },
+                }
+        '503': { $ref: '#/components/responses/CapabilityOff' }
 
   /casino/state:
     get:
@@ -10354,6 +11671,323 @@ components:
                 },
             }
   schemas:
+    EconomyNetwork:
+      {
+        'type': 'string',
+        'enum': ['eip155:4663', 'near:mainnet', 'solana:mainnet'],
+        'description': 'Internal network identifiers; Solana value is not a CAIP-2 claim.',
+      }
+    EconomyAsset:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['chainId', 'assetId', 'symbol', 'decimals'],
+        'properties':
+          {
+            'chainId': { '$ref': '#/components/schemas/EconomyNetwork' },
+            'assetId': { 'type': 'string' },
+            'symbol': { 'type': 'string', 'enum': ['WIF', 'NEAR', 'SOL', 'ORE'] },
+            'decimals': { 'type': 'integer', 'enum': [18, 24, 9, 11] },
+          },
+      }
+    EconomyFulfilment:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required': ['kind', 'itemId'],
+        'properties':
+          {
+            'kind': { 'type': 'string', 'const': 'cosmetic' },
+            'itemId': { 'type': 'string', 'format': 'uuid' },
+          },
+      }
+    EconomyOffer:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          ['offerId', 'title', 'asset', 'amount', 'recipient', 'termsVersion', 'fulfilment'],
+        'properties':
+          {
+            'offerId': { 'type': 'string', 'format': 'uuid' },
+            'title': { 'type': 'string' },
+            'asset': { '$ref': '#/components/schemas/EconomyAsset' },
+            'amount': { 'type': 'string', 'pattern': '^[1-9][0-9]{0,77}$' },
+            'recipient': { 'type': 'string' },
+            'termsVersion': { 'type': 'string' },
+            'fulfilment': { '$ref': '#/components/schemas/EconomyFulfilment' },
+          },
+      }
+    EconomyOrder:
+      {
+        'type': 'object',
+        'required':
+          [
+            'orderId',
+            'offerId',
+            'userId',
+            'walletLinkId',
+            'asset',
+            'payer',
+            'recipient',
+            'amount',
+            'termsVersion',
+            'fulfilment',
+            'status',
+            'createdAt',
+            'expiresAt',
+            'refundDueReceiptIds',
+            'paymentReceipts',
+          ],
+        'properties':
+          {
+            'orderId': { 'type': 'string', 'format': 'uuid' },
+            'offerId': { 'type': 'string', 'format': 'uuid' },
+            'userId': { 'type': 'string', 'format': 'uuid' },
+            'walletLinkId': { 'type': 'string', 'format': 'uuid' },
+            'asset': { '$ref': '#/components/schemas/EconomyAsset' },
+            'payer': { 'type': 'string' },
+            'recipient': { 'type': 'string' },
+            'amount': { 'type': 'string', 'pattern': '^[1-9][0-9]{0,77}$' },
+            'termsVersion': { 'type': 'string' },
+            'fulfilment': { '$ref': '#/components/schemas/EconomyFulfilment' },
+            'status':
+              {
+                'type': 'string',
+                'enum':
+                  [
+                    'awaiting_payment',
+                    'cancelled',
+                    'expired',
+                    'paid',
+                    'fulfilled',
+                    'refund_due',
+                    'refunded',
+                  ],
+              },
+            'createdAt': { 'type': 'string', 'format': 'date-time' },
+            'expiresAt': { 'type': 'string', 'format': 'date-time' },
+            'paymentTransactionId': { 'type': 'string' },
+            'refundTransactionId': { 'type': 'string' },
+            'refundDueReceiptIds':
+              { 'type': 'array', 'items': { 'type': 'string', 'format': 'uuid' } },
+            'paymentReceipts':
+              {
+                'type': 'array',
+                'items': { '$ref': '#/components/schemas/EconomyPaymentReceipt' },
+              },
+          },
+      }
+    EconomyPaymentReceipt:
+      type: object
+      required: [receiptId, transactionId, disposition]
+      properties:
+        receiptId: { type: string, format: uuid }
+        transactionId: { type: string }
+        disposition: { type: string, enum: [applied, refund_due, refunded] }
+      description: Verified incoming payment only. A pending POST 200 is not acknowledgement; match the exact retained transactionId here before clearing recovery state.
+    EconomyPaymentRequest:
+      {
+        'oneOf':
+          [
+            {
+              'type': 'object',
+              'additionalProperties': false,
+              'required': ['kind', 'chainId', 'transactionBase64'],
+              'properties':
+                {
+                  'kind': { 'const': 'solana' },
+                  'chainId': { 'const': 'solana:mainnet' },
+                  'transactionBase64': { 'type': 'string' },
+                },
+            },
+            {
+              'type': 'object',
+              'additionalProperties': false,
+              'required': ['kind', 'chainId', 'transaction'],
+              'properties':
+                {
+                  'kind': { 'const': 'evm' },
+                  'chainId': { 'const': 'eip155:4663' },
+                  'transaction':
+                    {
+                      'type': 'object',
+                      'additionalProperties': false,
+                      'required': ['from', 'to', 'data', 'value', 'chainId'],
+                      'properties':
+                        {
+                          'from': { 'type': 'string' },
+                          'to': { 'type': 'string' },
+                          'data': { 'type': 'string' },
+                          'value': { 'type': 'string', 'const': '0x0' },
+                          'chainId': { 'type': 'string', 'const': '0x1237' },
+                        },
+                    },
+                },
+            },
+            {
+              'type': 'object',
+              'additionalProperties': false,
+              'required': ['kind', 'chainId', 'signerId', 'receiverId', 'actions'],
+              'properties':
+                {
+                  'kind': { 'const': 'near' },
+                  'chainId': { 'const': 'near:mainnet' },
+                  'signerId': { 'type': 'string' },
+                  'receiverId': { 'type': 'string' },
+                  'actions':
+                    {
+                      'type': 'array',
+                      'minItems': 1,
+                      'maxItems': 1,
+                      'items':
+                        {
+                          'type': 'object',
+                          'additionalProperties': false,
+                          'required': ['type', 'params'],
+                          'properties':
+                            {
+                              'type': { 'const': 'Transfer' },
+                              'params':
+                                {
+                                  'type': 'object',
+                                  'additionalProperties': false,
+                                  'required': ['deposit'],
+                                  'properties':
+                                    {
+                                      'deposit':
+                                        { 'type': 'string', 'pattern': '^[1-9][0-9]{0,38}$' },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+          ],
+      }
+    EconomyWalletLink:
+      {
+        'type': 'object',
+        'additionalProperties': false,
+        'required':
+          ['id', 'userId', 'network', 'address', 'proofScheme', 'verifiedAt', 'spendingAuthorized'],
+        'properties':
+          {
+            'id': { 'type': 'string', 'format': 'uuid' },
+            'userId': { 'type': 'string', 'format': 'uuid' },
+            'network': { '$ref': '#/components/schemas/EconomyNetwork' },
+            'address': { 'type': 'string' },
+            'proofScheme':
+              { 'type': 'string', 'enum': ['eip4361-eoa', 'nep413-ed25519', 'solana-ed25519'] },
+            'verifiedAt': { 'type': 'string', 'format': 'date-time' },
+            'spendingAuthorized': { 'type': 'boolean', 'const': false },
+          },
+      }
+    EconomyWalletChallenge:
+      {
+        'type': 'object',
+        'required': ['id', 'network', 'address', 'message', 'expiresAt'],
+        'properties':
+          {
+            'id': { 'type': 'string', 'format': 'uuid' },
+            'userId': { 'type': 'string', 'format': 'uuid' },
+            'network': { '$ref': '#/components/schemas/EconomyNetwork' },
+            'address': { 'type': 'string' },
+            'proofScheme': { 'type': 'string' },
+            'nonce': { 'type': 'string' },
+            'message': { 'type': 'string' },
+            'domain': { 'type': 'string' },
+            'uri': { 'type': 'string' },
+            'origin': { 'type': ['string', 'null'] },
+            'issuedAt': { 'type': 'string', 'format': 'date-time' },
+            'expiresAt': { 'type': 'string', 'format': 'date-time' },
+            'nearCallbackUrl': { 'type': ['string', 'null'] },
+            'nearSignMessage':
+              {
+                'type': 'object',
+                'additionalProperties': false,
+                'required': ['message', 'nonceBase64', 'recipient', 'callbackUrl', 'state'],
+                'properties':
+                  {
+                    'message': { 'type': 'string' },
+                    'nonceBase64': { 'type': 'string' },
+                    'recipient': { 'type': 'string' },
+                    'callbackUrl': { 'type': ['string', 'null'] },
+                    'state': { 'type': 'string' },
+                  },
+              },
+          },
+      }
+    EconomyError:
+      {
+        'type': 'object',
+        'properties':
+          {
+            'error':
+              {
+                'type': 'object',
+                'required': ['code', 'message', 'details'],
+                'properties':
+                  {
+                    'code': { 'type': 'string' },
+                    'message': { 'type': 'string' },
+                    'details': { 'type': 'object' },
+                  },
+              },
+          },
+        'examples':
+          [
+            {
+              'error':
+                {
+                  code: ECONOMY_CONFLICT,
+                  'message': 'The economic action cannot proceed in its current state.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_PRIMARY_REQUIRED,
+                  'message': "Only the player's primary Solana wallet can be linked.",
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_CHALLENGE_INVALID,
+                  'message': 'Wallet-link challenge is missing, expired, consumed or belongs to another player.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_CHALLENGE_LIMIT,
+                  'message': 'Too many pending wallet-link requests. Wait for them to expire.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_PROOF_INVALID,
+                  'message': 'Wallet identity proof could not be verified.',
+                  'details': {},
+                },
+            },
+            {
+              'error':
+                {
+                  code: WALLET_LINK_IDENTITY_CONFLICT,
+                  'message': 'This wallet is already linked to another player.',
+                  'details': {},
+                },
+            },
+          ],
+      }
     FactoryToken:
       type: object
       properties:
@@ -10666,6 +12300,127 @@ components:
             code: { type: string, description: 'One of the codes in contract/ids/errors.json.' }
             message: { type: string }
             details: { type: object, additionalProperties: true }
+    SessionLoginIdentity:
+      type: object
+      required: [id, network, address]
+      properties:
+        id: { type: string, format: uuid }
+        network: { type: string, enum: ['solana:mainnet', 'eip155:4663', 'near:mainnet'] }
+        address: { type: string }
+    LoginIdentity:
+      allOf:
+        - $ref: '#/components/schemas/SessionLoginIdentity'
+        - type: object
+          required: [createdAt]
+          properties:
+            createdAt: { type: string, format: date-time }
+    LoginIdentityResponse:
+      type: object
+      required: [identity]
+      properties:
+        identity: { $ref: '#/components/schemas/LoginIdentity' }
+    AccountAccessEvent:
+      type: object
+      required: [id, identityId, kind, network, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        identityId: { type: string, format: uuid }
+        kind:
+          { type: string, enum: [identity_revoked, identity_reactivated, primary_solana_enrolled] }
+        network: { type: string, enum: ['solana:mainnet', 'eip155:4663', 'near:mainnet'] }
+        createdAt: { type: string, format: date-time }
+    PrimarySolanaChallenge:
+      type: object
+      required:
+        [
+          id,
+          purpose,
+          userId,
+          network,
+          address,
+          proofScheme,
+          nonce,
+          message,
+          domain,
+          uri,
+          issuedAt,
+          expiresAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { type: string, enum: [primary-solana-enrolment] }
+        userId: { type: string, format: uuid }
+        network: { type: string, enum: ['solana:mainnet'] }
+        address: { type: string }
+        proofScheme: { type: string, enum: [siws-ed25519] }
+        nonce: { type: string, pattern: '^[0-9a-f]{64}$' }
+        message: { type: string }
+        domain: { type: string }
+        uri: { type: string, format: uri }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+    PrimarySolanaReceipt:
+      type: object
+      required: [userId, challengeId, wallet, identity]
+      properties:
+        userId: { type: string, format: uuid }
+        challengeId: { type: string, format: uuid }
+        wallet: { type: string }
+        identity: { $ref: '#/components/schemas/LoginIdentity' }
+    WalletAuthChallengeRequest:
+      type: object
+      additionalProperties: false
+      required: [network, address]
+      properties:
+        network: { type: string, enum: ['eip155:4663', 'near:mainnet'] }
+        address: { type: string, minLength: 2, maxLength: 128 }
+    WalletAuthProof:
+      type: object
+      additionalProperties: false
+      required: [challengeId, signature]
+      properties:
+        challengeId: { type: string, format: uuid }
+        signature: { type: string, minLength: 1, maxLength: 256 }
+        publicKey: { type: string, maxLength: 64, description: NEAR Ed25519 only }
+    WalletAuthChallenge:
+      type: object
+      required:
+        [
+          id,
+          purpose,
+          userId,
+          network,
+          address,
+          proofScheme,
+          nonce,
+          message,
+          domain,
+          uri,
+          issuedAt,
+          expiresAt,
+        ]
+      properties:
+        id: { type: string, format: uuid }
+        purpose: { type: string, enum: [login, enrolment] }
+        userId: { type: string, format: uuid, nullable: true }
+        network: { type: string, enum: ['eip155:4663', 'near:mainnet'] }
+        address: { type: string }
+        proofScheme: { type: string, enum: [eip4361-eoa, nep413-ed25519] }
+        nonce: { type: string, pattern: '^[0-9a-f]{64}$' }
+        message: { type: string }
+        domain: { type: string }
+        uri: { type: string, format: uri }
+        issuedAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        nearSignMessage:
+          type: object
+          required: [message, nonceBase64, recipient, callbackUrl, state]
+          properties:
+            message: { type: string }
+            nonceBase64: { type: string }
+            recipient: { type: string }
+            callbackUrl: { type: 'null' }
+            state: { type: string, format: uuid }
     AuthChallenge:
       type: object
       required: [nonce, domain, statement, uri, version, chainId, issuedAt, expirationTime]
@@ -10688,17 +12443,61 @@ components:
         nonce: { type: string }
     AuthVerifyResponse:
       type: object
-      required: [accessToken, refreshToken, user]
+      required:
+        [
+          accessToken,
+          refreshToken,
+          user,
+          authMethod,
+          loginIdentity,
+          loginIdentityVersion,
+          authenticatedAt,
+        ]
       properties:
+        authMethod: { type: string, enum: [siws, dev, wallet] }
+        loginIdentity: { $ref: '#/components/schemas/SessionLoginIdentity' }
+        loginIdentityVersion:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 2147483647,
+            description: Credential generation matching JWT liv; missing legacy liv means zero only.,
+          }
+        authenticatedAt:
+          {
+            type: integer,
+            nullable: true,
+            description: Original verified authentication Unix time matching JWT auth_time; refresh never advances it.,
+          }
         accessToken: { type: string }
         refreshToken: { type: string }
-        user: { $ref: '#/components/schemas/User' }
+        user: { $ref: '#/components/schemas/AuthenticatedUser' }
+    AuthenticatedUser:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [authMethod, loginIdentity, loginIdentityVersion, authenticatedAt]
     User:
       type: object
       required: [id, wallet, isSeeker, hasCharacter]
       properties:
         id: { type: string, format: uuid }
-        wallet: { type: string }
+        wallet: { type: string, nullable: true }
+        authMethod: { type: string, enum: [siws, dev, wallet] }
+        loginIdentity: { $ref: '#/components/schemas/SessionLoginIdentity' }
+        loginIdentityVersion:
+          {
+            type: integer,
+            minimum: 0,
+            maximum: 2147483647,
+            description: Credential generation matching JWT liv; missing legacy liv means zero only.,
+          }
+        authenticatedAt:
+          {
+            type: integer,
+            nullable: true,
+            description: Original verified authentication Unix time matching JWT auth_time; refresh never advances it.,
+          }
         isSeeker: { type: boolean }
         hasCharacter: { type: boolean }
         skrName: { type: string, nullable: true }
@@ -11271,6 +13070,65 @@ components:
             offerTtlHours: { type: integer }
             builderDiscountBps: { type: integer }
             minProjectAgeMinutes: { type: integer }
+        travel:
+          type: [object, 'null']
+          description: >-
+            Map Travel (docs/TRAVEL.md) rules the client renders, from contract/config/travel.json;
+            null while the `travel` capability is off. `walk.speedMps` is the auto-path speed,
+            `busStops` the stops (island metres, yaw degrees clockwise from north, `shelter`
+            baked = built by islandgen, kit = placed by the client). Prices always come from
+            `GET /travel/quote`.
+          required: [version, walk, busStopRadiusM, busStops, modes, minDistanceM]
+          properties:
+            version: { type: string }
+            walk:
+              type: object
+              required: [speedMps]
+              properties:
+                speedMps: { type: number }
+            busStopRadiusM: { type: number }
+            minDistanceM: { type: number }
+            busStops:
+              type: array
+              items:
+                type: object
+                required: [id, district, x, z, yaw, shelter]
+                properties:
+                  id: { type: string }
+                  district: { type: string }
+                  x: { type: number }
+                  z: { type: number }
+                  yaw: { type: number }
+                  shelter: { type: string, enum: [baked, kit] }
+            modes:
+              type: object
+              additionalProperties:
+                type: object
+                properties:
+                  baseCents: { type: integer }
+                  perHundredMCents: { type: integer }
+                  minCents: { type: integer }
+                  capCents: { type: integer }
+                  baseSec: { type: number }
+                  speedMps: { type: number }
+                  unlockNetWorthCents: { type: integer }
+                  pickup: { type: string, enum: [stop, anywhere, pad] }
+            heli:
+              type: boolean
+              description: Phase 3 - true while the `travelHeli` capability is on (heli is quoted and bookable).
+            heliPadRadiusM: { type: number }
+            heliHomeKinds:
+              type: array
+              items: { type: string }
+              description: Home kinds whose live owner has a pad and the helicopter.
+            heliPads:
+              type: array
+              description: Public helipads (island metres). Every flight lands on one.
+              items: { $ref: '#/components/schemas/TravelHeliPad' }
+            homePads:
+              type: object
+              description: The pad beside each pad-home kind; only its owner boards there.
+              additionalProperties: { $ref: '#/components/schemas/TravelHeliPad' }
         beef:
           type: [object, 'null']
           description: >-
@@ -12556,6 +14414,162 @@ components:
         message: { type: [string, 'null'] }
         status: { type: string, enum: [pending, confirmed, failed] }
         createdAt: { type: string, format: date-time }
+    TravelStreetPoint:
+      type: object
+      description: An island street point (metres, +X east, +Z north) and the district whose street room holds it.
+      required: [district, x, z]
+      properties:
+        district: { type: string }
+        x: { type: number }
+        z: { type: number }
+    TravelArrival:
+      allOf:
+        - { $ref: '#/components/schemas/TravelStreetPoint' }
+        - type: object
+          required: [yaw]
+          properties:
+            yaw:
+              type: number
+              description: Radians (PlayerState.rotY; forward = (sin yaw, cos yaw)), facing the door.
+    TravelHeliPad:
+      type: object
+      required: [id, district, x, z]
+      properties:
+        id: { type: string }
+        district: { type: string }
+        x: { type: number }
+        z: { type: number }
+    TravelQuote:
+      type: object
+      required:
+        [
+          quoteId,
+          to,
+          toKind,
+          distanceM,
+          serverNow,
+          expiresAt,
+          cashCents,
+          from,
+          arrival,
+          gate,
+          modes,
+        ]
+      properties:
+        quoteId: { type: string, format: uuid }
+        to: { type: string }
+        toKind: { type: string, enum: [venue] }
+        distanceM: { type: integer, description: Road metres (straight line x roadFactor). }
+        serverNow: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        cashCents: { type: integer }
+        from: { $ref: '#/components/schemas/TravelStreetPoint' }
+        arrival: { $ref: '#/components/schemas/TravelArrival' }
+        gate:
+          type: object
+          required: [open]
+          properties:
+            open: { type: boolean }
+            code:
+              {
+                type: string,
+                description: 'GET /venues/{id}/access reasonCode (NET_WORTH_TOO_LOW, NOT_A_MEMBER, NOT_JAILED)',
+              }
+            message: { type: string }
+        modes:
+          type: array
+          items:
+            type: object
+            required: [mode, available, fareCents, durationSec]
+            properties:
+              mode: { type: string, enum: [walk, bus, taxi, heli] }
+              available: { type: boolean }
+              reason:
+                type: string
+                enum:
+                  [
+                    TOO_CLOSE,
+                    NOT_AT_STOP,
+                    INSUFFICIENT_CASH,
+                    LOCKED,
+                    COOLDOWN,
+                    TRAVEL_IN_PROGRESS,
+                    VENUE_GATED,
+                    NOT_SERVED,
+                    NEEDS_HELIPAD,
+                    NOT_AT_PAD,
+                  ]
+              reasonMessage: { type: string }
+              fareCents: { type: integer }
+              durationSec: { type: integer }
+              stop:
+                type: object
+                description: >-
+                  Bus: the pickup stop (or the nearest one with NOT_AT_STOP). Heli with
+                  NOT_AT_PAD: the nearest pad the caller may use (own home pad or public), no
+                  yaw.
+                required: [id, x, z, distanceM]
+                properties:
+                  id: { type: string }
+                  x: { type: number }
+                  z: { type: number }
+                  yaw: { type: number, description: Degrees clockwise from north (bus stops only). }
+                  distanceM: { type: integer }
+              arrival:
+                description: >-
+                  Heli only: where the flight lands, the public pad nearest the destination door
+                  (pad centre, yaw radians facing the door). Differs from the quote's top-level
+                  `arrival` (the street outside the door, for the ground modes).
+                allOf: [{ $ref: '#/components/schemas/TravelArrival' }]
+              pickup:
+                type: object
+                description: Heli only, when available - the pad you board at.
+                required: [id, x, z]
+                properties:
+                  id: { type: string }
+                  x: { type: number }
+                  z: { type: number }
+              unlockNetWorthCents: { type: integer }
+              retryAfterSec: { type: integer }
+    TravelTrip:
+      type: object
+      required:
+        [
+          tripId,
+          status,
+          mode,
+          to,
+          fareCents,
+          cashCents,
+          departAt,
+          arriveAt,
+          expiresAt,
+          serverNow,
+          origin,
+          arrival,
+        ]
+      properties:
+        tripId: { type: string, format: uuid }
+        status: { type: string, enum: [booked, arrived, cancelled, expired_refunded] }
+        mode: { type: string, enum: [bus, taxi, heli] }
+        to: { type: string }
+        fareCents: { type: integer }
+        cashCents: { type: integer, description: Cash after the fare. }
+        departAt: { type: string, format: date-time }
+        arriveAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        serverNow: { type: string, format: date-time }
+        origin: { $ref: '#/components/schemas/TravelStreetPoint' }
+        arrival: { $ref: '#/components/schemas/TravelArrival' }
+        pickup:
+          type: object
+          description: Bus - the stop (yaw degrees). Heli - the boarding pad (no yaw).
+          required: [id, x, z]
+          properties:
+            id: { type: string }
+            x: { type: number }
+            z: { type: number }
+            yaw: { type: number }
     ShopOrder:
       type: object
       required:

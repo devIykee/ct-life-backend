@@ -45,6 +45,15 @@ export const CAPABILITY_FEATURES = [
   // Street proximity voice on CT Island: `POST /v1/rtc/token {kind: proximity}` for
   // `proximity:<district>:<instanceId>` (docs/STREET-VOICE.md). Off until LiveKit minutes allow it.
   'streetVoice',
+  // Map Travel (docs/TRAVEL.md): `travel` opens the quote / trip routes, the street-room
+  // ticket arrival and the GET /config `travel` block. `travelInstantGoOff` tells the client to
+  // stop offering the classic free instant "Go" teleport while `travel` is on (named for the
+  // non-default state: with the list fail-closed, off keeps instant Go). Nothing enforces it
+  // server-side yet; closing the teleport is Map Travel phase 2.
+  'travel',
+  'travelInstantGoOff',
+  // Map Travel phase 3: the helicopter mode (needs `travel` too; docs/TRAVEL.md).
+  'travelHeli',
 ] as const;
 
 /**
