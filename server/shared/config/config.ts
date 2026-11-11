@@ -574,8 +574,11 @@ export function loadConfig(): Config {
     economy: {
       rpcUrls: {
         'solana:mainnet': optionalEnv('ECONOMY_RPC_SOLANA', ''),
-        'eip155:4663': optionalEnv('ECONOMY_RPC_ROBINHOOD', ''),
-        'near:mainnet': optionalEnv('ECONOMY_RPC_NEAR', ''),
+        'eip155:4663': optionalEnv(
+          'ECONOMY_RPC_ROBINHOOD',
+          'https://rpc.mainnet.chain.robinhood.com',
+        ),
+        'near:mainnet': optionalEnv('ECONOMY_RPC_NEAR', 'https://free.rpc.fastnear.com'),
       },
     },
 

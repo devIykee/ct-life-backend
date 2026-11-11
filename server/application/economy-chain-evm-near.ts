@@ -45,8 +45,8 @@ export async function prepareEvmNearPayment(
   await assertNetwork(rpc, e);
   if (e.chainId === 'eip155:4663') {
     const [code, decimals] = await Promise.all([
-      rpc(e.chainId, 'eth_getCode', [e.assetId, 'finalized']),
-      rpc(e.chainId, 'eth_call', [{ to: e.assetId, data: '0x313ce567' }, 'finalized']),
+      rpc(e.chainId, 'eth_getCode', [e.assetId, 'latest']),
+      rpc(e.chainId, 'eth_call', [{ to: e.assetId, data: '0x313ce567' }, 'latest']),
     ]);
     demand(typeof code === 'string' && /^0x(?:[0-9a-fA-F]{2})+$/.test(code), 'transfer_mismatch');
     demand(BigInt(hex(decimals, 32)) === 18n, 'transfer_mismatch');

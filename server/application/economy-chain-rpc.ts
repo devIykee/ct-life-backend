@@ -1,6 +1,10 @@
 /** Explicit, bounded, read-only JSON-RPC transport for native payment evidence. */
+import dns from 'node:dns';
 import { CapabilityOffError } from '../shared/domain/errors.js';
 import type { EconomyChainId, EconomyRpc } from './economy-chain.js';
+
+// Prioritize IPv4 for dual-stack hosts to avoid undici connection timeouts on environments with broken IPv6 routes.
+dns.setDefaultResultOrder?.('ipv4first');
 
 const METHODS: Record<EconomyChainId, readonly string[]> = {
   'eip155:4663': [
