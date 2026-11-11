@@ -302,19 +302,21 @@ export class StreetRoom extends Room {
         if (marked) this.members.set(client.sessionId, userId);
       }
       assertCurrent();
-      client.send('welcome', { serverNow: now, instanceId: this.state.instanceId });
+      if (!arrival) {
+        client.send('welcome', { serverNow: now, instanceId: this.state.instanceId });
+      }
     } catch (error) {
       if (this.sessions.get(client.sessionId)?.player === player) this.onLeave(client);
       throw error;
     }
-    if (arrival) this.placeArrival(client, arrival, now);
-    client.send('welcome', {
-      serverNow: now,
-      instanceId: this.state.instanceId,
-      ...(arrival
-        ? { travel: { tripId: arrival.tripId, x: arrival.x, z: arrival.z, yaw: arrival.yaw } }
-        : {}),
-    });
+    if (arrival) {
+      this.placeArrival(client, arrival, now);
+      client.send('welcome', {
+        serverNow: now,
+        instanceId: this.state.instanceId,
+        travel: { tripId: arrival.tripId, x: arrival.x, z: arrival.z, yaw: arrival.yaw },
+      });
+    }
   }
 
   // --- Map Travel --------------------------------------------------

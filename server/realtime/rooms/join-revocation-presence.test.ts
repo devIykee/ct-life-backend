@@ -10,6 +10,11 @@ const USER = '00000000-0000-4000-8000-000000000001';
 const ID = '11111111-1111-4111-8111-111111111111';
 const mocks = vi.hoisted(() => ({ publish: vi.fn() }));
 vi.mock('../../application/context.js', () => ({ buildContext: () => ({ db: {} }) }));
+vi.mock('../../application/venues-gating.js', async (orig) => ({
+  ...(await orig<typeof import('../../application/venues-gating.js')>()),
+  getVenueAccess: async () => ({ allowed: true, reasonCode: null }),
+  venueGate: () => null,
+}));
 vi.mock('../../application/project-hq.js', () => ({
   hqAccess: async () => ({ status: 'active', role: 'founder' }),
   setHqMembersPresent: mocks.publish,

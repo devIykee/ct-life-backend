@@ -11,7 +11,14 @@ import { travelTicketKey, type TicketRedis, type TravelTicket } from '../../appl
 
 vi.mock('../player.js', async (orig) => {
   const real = await orig<typeof import('../player.js')>();
-  return { ...real, authenticateJoin: async (o: { userId: string }) => o.userId };
+  return {
+    ...real,
+    authenticateJoin: async (o: { userId: string }) => o.userId,
+    authenticateJoinIdentity: async (o: { userId: string }) => ({
+      userId: o.userId,
+      credential: null,
+    }),
+  };
 });
 
 const { StreetRoom } = await import('./street.js');

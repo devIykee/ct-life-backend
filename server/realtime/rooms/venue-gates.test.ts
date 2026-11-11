@@ -18,6 +18,11 @@ vi.mock('../player.js', async (orig) => {
   return {
     ...real,
     authenticateJoin: async () => join.userId,
+    authenticateJoinIdentity: async () => ({
+      userId: join.userId,
+      credential: null,
+    }),
+    assertJoinAllowed: async () => {},
     loadPlayerState: async (id: string) => Object.assign(new PS(), { userId: id }),
   };
 });

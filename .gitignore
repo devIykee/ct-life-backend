@@ -52,6 +52,8 @@ data/
 
 # Wallet keys (never commit)
 *.keypair.json
+*-keypair.json
+*keypair*.json
 keypairs/
 treasury-keypair.json
 admin-keypair.json
